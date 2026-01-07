@@ -1,4 +1,4 @@
-use crate::app::{Action, AppState, FocusPanel, InputMode};
+use crate::app::{Action, AppState, FocusPanel, InputMode, PendingDelete};
 use crate::models::AgentType;
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventKind};
@@ -164,12 +164,37 @@ impl EventHandler {
             InputMode::Normal => {}
         }
 
+        // Handle pending delete confirmation
+        if state.pending_delete.is_some() {
+            return match key.code {
+                KeyCode::Char('d') => {
+                    // Second 'd' confirms the delete
+                    match &state.pending_delete {
+                        Some(PendingDelete::Session(_, _)) => Action::ConfirmDeleteSession,
+                        Some(PendingDelete::Workspace(_, _)) => Action::ConfirmDeleteWorkspace,
+                        None => Action::Tick,
+                    }
+                }
+                KeyCode::Esc => Action::CancelPendingDelete,
+                _ => Action::CancelPendingDelete, // Any other key cancels
+            };
+        }
+
         // Note: ` (backtick) for JumpToNextIdle is handled in each focus handler
         // to ensure it's caught before the catch-all PTY input handlers
 
+        // Global window navigation with Shift+Left/Right arrows
+        if key.modifiers.contains(KeyModifiers::SHIFT) {
+            match key.code {
+                KeyCode::Left => return Action::FocusLeft,
+                KeyCode::Right => return Action::FocusRight,
+                _ => {}
+            }
+        }
+
         // Normal mode key handling based on focused panel
         match state.focus {
-            FocusPanel::WorkspaceList => self.handle_workspace_list_keys(key),
+            FocusPanel::WorkspaceList => self.handle_workspace_list_keys(key, state),
             FocusPanel::SessionList => self.handle_session_list_keys(key, state),
             FocusPanel::UtilitiesPane => self.handle_utilities_pane_keys(key, state),
             FocusPanel::OutputPane => self.handle_output_pane_keys(key, state),
@@ -177,7 +202,7 @@ impl EventHandler {
         }
     }
 
-    fn handle_workspace_list_keys(&self, key: KeyEvent) -> Action {
+    fn handle_workspace_list_keys(&self, key: KeyEvent, state: &AppState) -> Action {
         // ` = Jump to next idle session (global shortcut)
         if key.code == KeyCode::Char('`') {
             return Action::JumpToNextIdle;
@@ -187,12 +212,21 @@ impl EventHandler {
             // Navigation
             KeyCode::Char('j') | KeyCode::Down => Action::MoveDown,
             KeyCode::Char('k') | KeyCode::Up => Action::MoveUp,
-            KeyCode::Char('l') | KeyCode::Right => Action::FocusRight,
+            KeyCode::Char('l') => Action::FocusRight,
 
             // Actions
             KeyCode::Char('n') => Action::EnterCreateWorkspaceMode,
             KeyCode::Char('w') => Action::ToggleWorkspaceStatus,
             KeyCode::Enter => Action::FocusRight,
+
+            // Delete workspace (requires confirmation)
+            KeyCode::Char('d') => {
+                if let Some(workspace) = state.selected_workspace() {
+                    Action::InitiateDeleteWorkspace(workspace.id, workspace.name.clone())
+                } else {
+                    Action::Tick
+                }
+            }
 
             // Global
             KeyCode::Char('?') => Action::EnterHelpMode,
@@ -213,8 +247,8 @@ impl EventHandler {
             // Navigation
             KeyCode::Char('j') | KeyCode::Down => Action::MoveDown,
             KeyCode::Char('k') | KeyCode::Up => Action::MoveUp,
-            KeyCode::Char('h') | KeyCode::Left => Action::FocusLeft,
-            KeyCode::Char('l') | KeyCode::Right => Action::FocusRight,
+            KeyCode::Char('h') => Action::FocusLeft,
+            KeyCode::Char('l') => Action::FocusRight,
 
             // Actions
             KeyCode::Char('n') => Action::EnterCreateSessionMode,
@@ -256,7 +290,7 @@ impl EventHandler {
             }
             KeyCode::Char('d') => {
                 if let Some(session) = state.selected_session() {
-                    Action::DeleteSession(session.id)
+                    Action::InitiateDeleteSession(session.id, session.display_name())
                 } else {
                     Action::Tick
                 }
@@ -321,7 +355,7 @@ impl EventHandler {
     }
 
     fn handle_utilities_pane_keys(&self, key: KeyEvent, state: &AppState) -> Action {
-        use crate::app::UtilitySection;
+        use crate::app::{UtilityItem, UtilitySection};
 
         // ` = Jump to next idle session (global shortcut)
         if key.code == KeyCode::Char('`') {
@@ -332,12 +366,19 @@ impl EventHandler {
             // Navigation within current section
             KeyCode::Char('j') | KeyCode::Down => Action::SelectNextUtility,
             KeyCode::Char('k') | KeyCode::Up => Action::SelectPrevUtility,
-            KeyCode::Char('h') | KeyCode::Left => Action::FocusLeft,
+            KeyCode::Char('h') => Action::FocusLeft,
 
             // Activate/toggle based on section
-            KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter => {
+            KeyCode::Char('l') | KeyCode::Enter => {
                 match state.utility_section {
-                    UtilitySection::Utilities => Action::ActivateUtility,
+                    UtilitySection::Utilities => {
+                        // Check if selected utility is a toggle
+                        if state.selected_utility == UtilityItem::BrownNoise {
+                            Action::ToggleBrownNoise
+                        } else {
+                            Action::ActivateUtility
+                        }
+                    }
                     UtilitySection::GlobalConfig => Action::ToggleConfigItem,
                 }
             }
@@ -412,7 +453,7 @@ impl EventHandler {
         } else {
             // No active session - allow navigation
             match key.code {
-                KeyCode::Char('h') | KeyCode::Left | KeyCode::Esc => Action::FocusLeft,
+                KeyCode::Char('h') | KeyCode::Esc => Action::FocusLeft,
                 KeyCode::Char('?') => Action::EnterHelpMode,
                 KeyCode::Char('q') => Action::Quit,
                 _ => Action::Tick,
@@ -489,7 +530,7 @@ impl EventHandler {
         } else {
             // No pinned terminal in this slot - go back
             match key.code {
-                KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => Action::FocusLeft,
+                KeyCode::Esc | KeyCode::Char('h') => Action::FocusLeft,
                 _ => Action::Tick,
             }
         }

@@ -24,6 +24,13 @@ pub enum InputMode {
     Help,
 }
 
+/// Pending delete confirmation
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PendingDelete {
+    Session(Uuid, String),    // Session ID and name for display
+    Workspace(Uuid, String),  // Workspace ID and name for display
+}
+
 /// Sections in the utilities pane
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum UtilitySection {
@@ -45,6 +52,8 @@ impl UtilitySection {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum UtilityItem {
     #[default]
+    BrownNoise,
+    TopFiles,
     Calendar,
     GitHistory,
     FileTree,
@@ -52,11 +61,19 @@ pub enum UtilityItem {
 
 impl UtilityItem {
     pub fn all() -> &'static [UtilityItem] {
-        &[UtilityItem::Calendar, UtilityItem::GitHistory, UtilityItem::FileTree]
+        &[
+            UtilityItem::BrownNoise,
+            UtilityItem::TopFiles,
+            UtilityItem::Calendar,
+            UtilityItem::GitHistory,
+            UtilityItem::FileTree,
+        ]
     }
 
     pub fn name(&self) -> &'static str {
         match self {
+            UtilityItem::BrownNoise => "Brown Noise",
+            UtilityItem::TopFiles => "Top Files (LOC)",
             UtilityItem::Calendar => "Calendar",
             UtilityItem::GitHistory => "Git History",
             UtilityItem::FileTree => "File Tree",
@@ -65,10 +82,16 @@ impl UtilityItem {
 
     pub fn icon(&self) -> &'static str {
         match self {
+            UtilityItem::BrownNoise => "🔊",
+            UtilityItem::TopFiles => "📊",
             UtilityItem::Calendar => "📅",
             UtilityItem::GitHistory => "📜",
             UtilityItem::FileTree => "🌳",
         }
+    }
+
+    pub fn is_toggle(&self) -> bool {
+        matches!(self, UtilityItem::BrownNoise)
     }
 }
 
@@ -203,6 +226,12 @@ pub struct AppState {
 
     // Should quit flag
     pub should_quit: bool,
+
+    // Brown noise player state
+    pub brown_noise_playing: bool,
+
+    // Pending delete confirmation
+    pub pending_delete: Option<PendingDelete>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -260,6 +289,8 @@ impl AppState {
             banner_visible: true,
             editing_session_id: None,
             should_quit: false,
+            brown_noise_playing: false,
+            pending_delete: None,
         }
     }
 

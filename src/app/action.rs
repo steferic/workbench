@@ -20,6 +20,8 @@ pub enum Action {
     SelectWorkspace(usize),
     DeleteWorkspace(Uuid),
     ToggleWorkspaceStatus,
+    InitiateDeleteWorkspace(Uuid, String),  // (id, name) - first 'd' press
+    ConfirmDeleteWorkspace,                  // second 'd' press
 
     // Session operations
     CreateSession(AgentType),
@@ -29,6 +31,8 @@ pub enum Action {
     StopSession(Uuid),
     KillSession(Uuid),
     DeleteSession(Uuid),
+    InitiateDeleteSession(Uuid, String),    // (id, name) - first 'd' press
+    ConfirmDeleteSession,                    // second 'd' press
 
     // PTY interaction
     SendInput(Uuid, Vec<u8>),
@@ -82,9 +86,13 @@ pub enum Action {
     ActivateUtility,    // Load and display utility content in output pane
     ToggleUtilitySection, // Switch between Utilities and GlobalConfig sections
     ToggleConfigItem,   // Toggle the selected config item (e.g., banner visibility)
+    ToggleBrownNoise,   // Toggle brown noise player on/off
 
     // Mouse
     MouseClick(u16, u16), // (x, y) coordinates
+
+    // Delete confirmation
+    CancelPendingDelete,
 
     // App control
     Quit,

@@ -1,4 +1,5 @@
 use crate::app::AppState;
+use chrono::Local;
 use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
@@ -13,41 +14,64 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         return;
     }
 
-    // Get the banner text and create a scrolling view
-    let text = &state.banner_text;
-    let text_chars: Vec<char> = text.chars().collect();
-    let text_len = text_chars.len();
+    let teal_style = Style::default()
+        .fg(Color::Cyan)
+        .bg(Color::Black)
+        .add_modifier(Modifier::BOLD);
 
-    if text_len == 0 {
-        return;
-    }
+    let dim_teal_style = Style::default()
+        .fg(Color::DarkGray)
+        .bg(Color::Black);
 
-    // Create the visible portion by rotating the text
-    let mut visible: String = String::with_capacity(width);
-    for i in 0..width {
-        let char_idx = (state.banner_offset + i) % text_len;
-        visible.push(text_chars[char_idx]);
-    }
+    // Get active workspace name
+    let workspace_name = state
+        .workspaces
+        .get(state.selected_workspace_idx)
+        .map(|w| w.name.clone())
+        .unwrap_or_else(|| "No Workspace".to_string());
 
-    // Create gradient effect with colors cycling through
-    let colors = [
-        Color::Magenta,
-        Color::LightMagenta,
-        Color::Cyan,
-        Color::LightCyan,
-        Color::Blue,
-        Color::LightBlue,
+    // Format: " workspace_name "
+    let left_text = format!(" {} ", workspace_name);
+    let left_len = left_text.chars().count();
+
+    // Get current date/time
+    let now = Local::now();
+    let right_text = now.format(" %b %d %H:%M ").to_string();
+    let right_len = right_text.chars().count();
+
+    // Calculate middle section width
+    let separator_len = 3; // " | " on each side
+    let fixed_width = left_len + right_len + (separator_len * 2);
+    let middle_width = width.saturating_sub(fixed_width);
+
+    // Build the scrolling middle section
+    let middle_content = if middle_width > 0 {
+        let text = &state.banner_text;
+        let text_chars: Vec<char> = text.chars().collect();
+        let text_len = text_chars.len();
+
+        if text_len == 0 {
+            " ".repeat(middle_width)
+        } else {
+            let mut visible = String::with_capacity(middle_width);
+            for i in 0..middle_width {
+                let char_idx = (state.banner_offset + i) % text_len;
+                visible.push(text_chars[char_idx]);
+            }
+            visible
+        }
+    } else {
+        String::new()
+    };
+
+    // Build spans
+    let spans = vec![
+        Span::styled(left_text, teal_style),
+        Span::styled(" | ", dim_teal_style),
+        Span::styled(middle_content, teal_style),
+        Span::styled(" | ", dim_teal_style),
+        Span::styled(right_text, teal_style),
     ];
-
-    let mut spans = Vec::new();
-    for (i, ch) in visible.chars().enumerate() {
-        // Cycle through colors based on position + animation offset for movement effect
-        let color_idx = (i + state.banner_offset / 2) % colors.len();
-        let style = Style::default()
-            .fg(colors[color_idx])
-            .add_modifier(Modifier::BOLD);
-        spans.push(Span::styled(ch.to_string(), style));
-    }
 
     let paragraph = Paragraph::new(Line::from(spans))
         .style(Style::default().bg(Color::Black));
