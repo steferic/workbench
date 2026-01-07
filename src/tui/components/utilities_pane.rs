@@ -89,10 +89,23 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
 
                     let prefix = if is_selected { "> " } else { "  " };
 
+                    // Show toggle indicator for toggle-able utilities
+                    let toggle_indicator = match item {
+                        UtilityItem::BrownNoise => {
+                            if state.brown_noise_playing {
+                                Span::styled(" [ON]", Style::default().fg(Color::Green))
+                            } else {
+                                Span::styled(" [OFF]", Style::default().fg(Color::Red))
+                            }
+                        }
+                        _ => Span::raw(""),
+                    };
+
                     ListItem::new(Line::from(vec![
                         Span::styled(prefix, style),
                         Span::raw(format!("{} ", item.icon())),
                         Span::styled(item.name(), style),
+                        toggle_indicator,
                     ]))
                 })
                 .collect()

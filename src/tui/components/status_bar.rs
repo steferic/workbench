@@ -1,4 +1,4 @@
-use crate::app::{AppState, FocusPanel, InputMode};
+use crate::app::{AppState, FocusPanel, InputMode, PendingDelete};
 use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
@@ -8,6 +8,59 @@ use ratatui::{
 };
 
 pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
+    // Check for pending delete confirmation first
+    if let Some(pending) = &state.pending_delete {
+        let (item_type, name) = match pending {
+            PendingDelete::Session(_, name) => ("session", name.as_str()),
+            PendingDelete::Workspace(_, name) => ("workspace", name.as_str()),
+        };
+
+        let left_text = vec![
+            Span::styled(
+                " DELETE? ",
+                Style::default()
+                    .fg(Color::White)
+                    .bg(Color::Red)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" "),
+            Span::styled(
+                format!("Delete {} \"{}\"?", item_type, name),
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            ),
+        ];
+
+        let right_text = vec![
+            Span::styled(
+                "Press ",
+                Style::default().fg(Color::Gray),
+            ),
+            Span::styled(
+                "[d]",
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                " to confirm, any other key to cancel",
+                Style::default().fg(Color::Gray),
+            ),
+        ];
+
+        let left_len: usize = left_text.iter().map(|s| s.content.len()).sum();
+        let right_len: usize = right_text.iter().map(|s| s.content.len()).sum();
+        let padding = area.width.saturating_sub(left_len as u16 + right_len as u16 + 2);
+
+        let mut spans = left_text;
+        spans.push(Span::raw(" ".repeat(padding as usize)));
+        spans.extend(right_text);
+        spans.push(Span::raw(" "));
+
+        let paragraph = Paragraph::new(Line::from(spans))
+            .style(Style::default().bg(Color::DarkGray).fg(Color::White));
+
+        frame.render_widget(paragraph, area);
+        return;
+    }
+
     let (left_text, right_text) = match state.input_mode {
         InputMode::Help => (
             vec![Span::styled(
