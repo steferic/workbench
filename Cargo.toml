@@ -1,0 +1,50 @@
+[package]
+name = "workbench"
+version = "0.1.0"
+edition = "2021"
+description = "TUI for managing AI agent workspaces and sessions"
+license = "MIT"
+
+[[bin]]
+name = "workbench"
+path = "src/main.rs"
+
+[dependencies]
+# CLI argument parsing
+clap = { version = "4.4", features = ["derive", "env"] }
+
+# Async runtime
+tokio = { version = "1.35", features = ["full", "sync", "time", "io-util"] }
+
+# TUI framework
+ratatui = "0.29"
+crossterm = "0.28"
+
+# PTY support (cross-platform)
+portable-pty = "0.8"
+
+# Terminal parsing for ANSI color support
+vt100 = "0.15"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# UUIDs
+uuid = { version = "1.6", features = ["v4", "serde"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Directory utilities
+dirs = "5.0"
+
+# Async channels
+futures = "0.3"
+
+[dev-dependencies]
+tempfile = "3.9"
