@@ -93,6 +93,16 @@ async fn run_tui(initial_workspace: Option<PathBuf>) -> Result<()> {
         }
     }
 
+    // Load global config
+    match persistence::load_config() {
+        Ok(config) => {
+            state.banner_visible = config.banner_visible;
+        }
+        Err(e) => {
+            eprintln!("Warning: Could not load config: {}", e);
+        }
+    }
+
     // Get terminal size
     let size = terminal.size()?;
     state.terminal_size = (size.width, size.height);
@@ -834,6 +844,11 @@ fn process_action(
                     state.banner_visible = !state.banner_visible;
                 }
             }
+            // Save config changes
+            let config = persistence::GlobalConfig {
+                banner_visible: state.banner_visible,
+            };
+            let _ = persistence::save_config(&config);
         }
 
         // Workspace operations
