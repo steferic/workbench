@@ -31,8 +31,10 @@ pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index
     let inner_area = block.inner(area);
 
     let mut cursor_state = None;
+    let viewport_height = inner_area.height as usize;
+
     // Convert vt100 parser output to ratatui Lines
-    let lines: Vec<Line> = if let Some(parser) = state.pinned_terminal_output_at(pane_index) {
+    let (lines, actual_len): (Vec<Line>, usize) = if let Some(parser) = state.pinned_terminal_output_at(pane_index) {
         let screen = parser.screen();
         let info = get_cursor_info(screen);
         cursor_state = Some(info);
@@ -44,36 +46,36 @@ pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index
                 .unwrap_or(&default_selection),
             screen.size(),
         );
-        let mut lines = convert_vt100_to_lines(screen, selection, info.row);
-        
-        // Anti-jitter: ensure content length doesn't shrink by small amounts
-        let current_len = lines.len();
-        let prev_len = state.ui.pinned_content_lengths[pane_index];
-        if current_len < prev_len && prev_len - current_len < 5 {
-            let needed = prev_len - current_len;
-            for _ in 0..needed {
-                lines.push(Line::raw(""));
-            }
-        }
-        lines
+        let lines = convert_vt100_to_lines(screen, selection, info.row);
+        let len = lines.len();
+        (lines, len)
     } else {
         state.ui.pinned_content_lengths[pane_index] = 0;
-        vec![
+        let lines = vec![
             Line::from(""),
             Line::from(Span::styled(
                 "  No terminal in this slot",
                 Style::default().fg(Color::Gray),
             )),
-        ]
+        ];
+        let len = lines.len();
+        (lines, len)
     };
 
-    let content_length = lines.len();
-    state.ui.pinned_content_lengths[pane_index] = content_length;
-    let viewport_height = inner_area.height as usize;
+    // Anti-jitter: use high water mark for scroll calculations
+    // Don't add padding - just use the stable length for positioning
+    let prev_len = state.ui.pinned_content_lengths[pane_index];
+    let stable_len = if actual_len >= prev_len {
+        actual_len
+    } else if prev_len - actual_len >= 20 {
+        actual_len
+    } else {
+        prev_len
+    };
+    state.ui.pinned_content_lengths[pane_index] = stable_len;
 
-    // Calculate scroll position - scroll_offset is offset from bottom
-    // 0 = show bottom (latest), higher = scroll up to see older content
-    let max_scroll = content_length.saturating_sub(viewport_height);
+    // Use stable_len for scroll calculations to prevent jitter
+    let max_scroll = stable_len.saturating_sub(viewport_height);
     let scroll_from_bottom = (state.ui.pinned_scroll_offsets[pane_index] as usize).min(max_scroll);
     let scroll_offset = max_scroll.saturating_sub(scroll_from_bottom);
 
@@ -84,7 +86,7 @@ pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index
     frame.render_widget(paragraph, area);
 
     // Render scrollbar if content exceeds viewport
-    if content_length > viewport_height {
+    if stable_len > viewport_height {
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight);
         let mut scrollbar_state = ScrollbarState::new(max_scroll).position(scroll_offset);
         frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);

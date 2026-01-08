@@ -67,23 +67,25 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
 
         // Convert vt100 screen to lines
         let selection = get_selection_bounds(&state.ui.text_selection, screen.size());
-        let mut lines = convert_vt100_to_lines(screen, selection, cursor_state.row);
-        
-        // Anti-jitter: ensure content length doesn't shrink by small amounts
-        let current_len = lines.len();
-        let prev_len = state.ui.output_content_length;
-        if current_len < prev_len && prev_len - current_len < 5 {
-            let needed = prev_len - current_len;
-            for _ in 0..needed {
-                lines.push(Line::raw(""));
-            }
-        }
-        
-        let content_length = lines.len();
-        state.ui.output_content_length = content_length;
+        let lines = convert_vt100_to_lines(screen, selection, cursor_state.row);
 
-        // Scroll offset is from bottom (0 = show latest, higher = scroll up)
-        let max_scroll = content_length.saturating_sub(viewport_height);
+        // Anti-jitter: use high water mark for scroll calculations
+        // Don't add padding - just use the stable length for positioning
+        let actual_len = lines.len();
+        let prev_len = state.ui.output_content_length;
+        let stable_len = if actual_len >= prev_len {
+            actual_len
+        } else if prev_len - actual_len >= 20 {
+            // Major shrinkage (screen clear) - reset
+            actual_len
+        } else {
+            // Keep high water mark for scroll stability
+            prev_len
+        };
+        state.ui.output_content_length = stable_len;
+
+        // Use stable_len for scroll calculations to prevent jitter
+        let max_scroll = stable_len.saturating_sub(viewport_height);
         let scroll_from_bottom = (state.ui.output_scroll_offset as usize).min(max_scroll);
         let scroll_offset = max_scroll.saturating_sub(scroll_from_bottom);
 
@@ -117,7 +119,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
         frame.render_widget(paragraph, area);
 
         // Render scrollbar if content exceeds viewport
-        if content_length > viewport_height {
+        if stable_len > viewport_height {
             let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight);
             let mut scrollbar_state = ScrollbarState::new(max_scroll).position(scroll_offset);
             frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
