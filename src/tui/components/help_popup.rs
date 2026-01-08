@@ -78,10 +78,6 @@ pub fn render(frame: &mut Frame, _state: &AppState) {
             Span::raw("New Grok session"),
         ]),
         Line::from(vec![
-            Span::styled("  Shift+1-4 ", Style::default().fg(Color::Cyan)),
-            Span::raw("New session (dangerous permissions)"),
-        ]),
-        Line::from(vec![
             Span::styled("  Enter     ", Style::default().fg(Color::Cyan)),
             Span::raw("Activate selected session"),
         ]),
@@ -105,12 +101,16 @@ pub fn render(frame: &mut Frame, _state: &AppState) {
             Span::raw("Send input to active session"),
         ]),
         Line::from(vec![
-            Span::styled("  Esc       ", Style::default().fg(Color::Cyan)),
+            Span::styled("  Ctrl+H    ", Style::default().fg(Color::Cyan)),
             Span::raw("Return to session list"),
         ]),
         Line::from(vec![
+            Span::styled("  Esc       ", Style::default().fg(Color::Cyan)),
+            Span::raw("Send escape to agent (interrupt)"),
+        ]),
+        Line::from(vec![
             Span::styled("  Ctrl+C    ", Style::default().fg(Color::Cyan)),
-            Span::raw("Send interrupt to agent"),
+            Span::raw("Send interrupt signal"),
         ]),
         Line::from(""),
         Line::from(Span::styled(

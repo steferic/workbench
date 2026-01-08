@@ -47,7 +47,7 @@ pub fn extract_selected_text(
     result
 }
 
-/// Clear all pinned text selections
+/// Clear all pinned pane text selections
 pub fn clear_all_pinned_selections(state: &mut AppState) {
     for sel in state.pinned_text_selections.iter_mut() {
         *sel = TextSelection::default();
