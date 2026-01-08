@@ -15,6 +15,8 @@ pub struct Session {
     pub id: Uuid,
     pub workspace_id: Uuid,
     pub agent_type: AgentType,
+    #[serde(default = "default_dangerously_skip_permissions")]
+    pub dangerously_skip_permissions: bool,
     pub status: SessionStatus,
     pub started_at: DateTime<Utc>,
     pub stopped_at: Option<DateTime<Utc>>,
@@ -24,11 +26,16 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn new(workspace_id: Uuid, agent_type: AgentType) -> Self {
+    pub fn new(
+        workspace_id: Uuid,
+        agent_type: AgentType,
+        dangerously_skip_permissions: bool,
+    ) -> Self {
         Self {
             id: Uuid::new_v4(),
             workspace_id,
             agent_type,
+            dangerously_skip_permissions,
             status: SessionStatus::Running,
             started_at: Utc::now(),
             stopped_at: None,
@@ -85,4 +92,8 @@ impl Session {
         self.status = SessionStatus::Errored;
         self.stopped_at = Some(Utc::now());
     }
+}
+
+fn default_dangerously_skip_permissions() -> bool {
+    true
 }

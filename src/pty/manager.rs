@@ -61,8 +61,18 @@ impl PtyManager {
         rows: u16,
         cols: u16,
         action_tx: mpsc::UnboundedSender<Action>,
+        dangerously_skip_permissions: bool,
     ) -> Result<PtyHandle> {
-        self.spawn_session_with_resume(session_id, agent_type, working_dir, rows, cols, action_tx, false)
+        self.spawn_session_with_resume(
+            session_id,
+            agent_type,
+            working_dir,
+            rows,
+            cols,
+            action_tx,
+            false,
+            dangerously_skip_permissions,
+        )
     }
 
     pub fn spawn_session_with_resume(
@@ -74,6 +84,7 @@ impl PtyManager {
         cols: u16,
         action_tx: mpsc::UnboundedSender<Action>,
         resume: bool,
+        dangerously_skip_permissions: bool,
     ) -> Result<PtyHandle> {
         // Create PTY pair
         let pair = self
@@ -99,13 +110,17 @@ impl PtyManager {
         // Add agent-specific flags (not for terminals)
         match agent_type {
             AgentType::Claude => {
-                cmd.arg("--dangerously-skip-permissions");
+                if dangerously_skip_permissions {
+                    cmd.arg("--dangerously-skip-permissions");
+                }
                 if resume {
                     cmd.arg("--continue");
                 }
             }
             AgentType::Gemini => {
-                cmd.arg("--yolo");
+                if dangerously_skip_permissions {
+                    cmd.arg("--yolo");
+                }
                 if resume {
                     cmd.arg("--resume");
                 }
@@ -116,15 +131,21 @@ impl PtyManager {
                     cmd = CommandBuilder::new("codex");
                     cmd.arg("resume");
                     cmd.arg("--last");
-                    cmd.arg("--dangerously-bypass-approvals-and-sandbox");
+                    if dangerously_skip_permissions {
+                        cmd.arg("--dangerously-bypass-approvals-and-sandbox");
+                    }
                     cmd.cwd(working_dir);
                 } else {
-                    cmd.arg("--dangerously-bypass-approvals-and-sandbox");
+                    if dangerously_skip_permissions {
+                        cmd.arg("--dangerously-bypass-approvals-and-sandbox");
+                    }
                 }
             }
             AgentType::Grok => {
-                cmd.arg("--permission-mode");
-                cmd.arg("full");
+                if dangerously_skip_permissions {
+                    cmd.arg("--permission-mode");
+                    cmd.arg("full");
+                }
                 if resume {
                     cmd.arg("--continue");
                 }

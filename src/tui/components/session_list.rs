@@ -116,8 +116,10 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     };
 
     let action_bar = Paragraph::new(Line::from(vec![
-        Span::styled("1-5", key_style),
+        Span::styled("1-4", key_style),
         Span::styled(":agent ", action_style),
+        Span::styled("Shift+1-4", key_style),
+        Span::styled(":danger ", action_style),
         Span::styled("t", key_style),
         Span::styled(":term ", action_style),
         Span::styled("p", key_style),

@@ -2733,6 +2733,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tui-term"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f740cf128bd2ecffea958989646e79a546c45772dac6e42c0b86451185ec6933"
+dependencies = [
+ "ratatui-core",
+ "ratatui-widgets",
+ "vt100",
+]
+
+[[package]]
 name = "tui-textarea"
 version = "0.7.0"
 source = "git+https://github.com/0xferrous/tui-textarea?branch=update-ratatui#b6bf812d1f5edab4f311f56d405a47341e9423cf"
@@ -3481,6 +3492,7 @@ dependencies = [
  "thiserror 1.0.69",
  "time",
  "tokio",
+ "tui-term",
  "tui-textarea",
  "uuid",
  "vt100",

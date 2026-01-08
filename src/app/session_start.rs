@@ -20,12 +20,12 @@ pub fn start_workspace_sessions(
     let workspace_path = workspace.path.clone();
 
     // Find all stopped sessions in this workspace
-    let stopped_sessions: Vec<(Uuid, AgentType)> = state.sessions
+    let stopped_sessions: Vec<(Uuid, AgentType, bool)> = state.sessions
         .get(&workspace_id)
         .map(|sessions| {
             sessions.iter()
                 .filter(|s| s.status == SessionStatus::Stopped)
-                .map(|s| (s.id, s.agent_type.clone()))
+                .map(|s| (s.id, s.agent_type.clone(), s.dangerously_skip_permissions))
                 .collect()
         })
         .unwrap_or_default();
@@ -40,9 +40,9 @@ pub fn start_workspace_sessions(
     let parser_rows = 500u16;
 
     // Start each stopped session
-    for (session_id, agent_type) in stopped_sessions {
+    for (session_id, agent_type, dangerously_skip_permissions) in stopped_sessions {
         // Create vt100 parser
-        let parser = vt100::Parser::new(parser_rows, cols, 0);
+        let parser = vt100::Parser::new(parser_rows, cols, 10000);
         state.output_buffers.insert(session_id, parser);
 
         // Spawn PTY with resume flag for agents (not terminals)
@@ -55,6 +55,7 @@ pub fn start_workspace_sessions(
             cols,
             action_tx.clone(),
             resume,
+            dangerously_skip_permissions,
         ) {
             Ok(handle) => {
                 state.pty_handles.insert(session_id, handle);
@@ -92,12 +93,17 @@ pub fn start_all_working_sessions(
     // For each working workspace, start all stopped sessions
     for (workspace_id, workspace_path) in working_workspaces {
         // Find all stopped sessions in this workspace (include start_command for terminals)
-        let stopped_sessions: Vec<(Uuid, AgentType, Option<String>)> = state.sessions
+        let stopped_sessions: Vec<(Uuid, AgentType, Option<String>, bool)> = state.sessions
             .get(&workspace_id)
             .map(|sessions| {
                 sessions.iter()
                     .filter(|s| s.status == SessionStatus::Stopped)
-                    .map(|s| (s.id, s.agent_type.clone(), s.start_command.clone()))
+                    .map(|s| (
+                        s.id,
+                        s.agent_type.clone(),
+                        s.start_command.clone(),
+                        s.dangerously_skip_permissions,
+                    ))
                     .collect()
             })
             .unwrap_or_default();
@@ -112,9 +118,9 @@ pub fn start_all_working_sessions(
         let parser_rows = 500u16;
 
         // Start each stopped session
-        for (session_id, agent_type, start_command) in stopped_sessions {
+        for (session_id, agent_type, start_command, dangerously_skip_permissions) in stopped_sessions {
             // Create vt100 parser
-            let parser = vt100::Parser::new(parser_rows, cols, 0);
+            let parser = vt100::Parser::new(parser_rows, cols, 10000);
             state.output_buffers.insert(session_id, parser);
 
             // Spawn PTY with resume flag for agents (not terminals)
@@ -127,6 +133,7 @@ pub fn start_all_working_sessions(
                 cols,
                 action_tx.clone(),
                 resume,
+                dangerously_skip_permissions,
             ) {
                 Ok(handle) => {
                     state.pty_handles.insert(session_id, handle);
