@@ -9,6 +9,7 @@ use uuid::Uuid;
 pub enum FocusPanel {
     WorkspaceList,
     SessionList,
+    TodosPane,
     UtilitiesPane,
     OutputPane,
     PinnedTerminalPane(usize), // Index of focused pinned pane (0-3)
@@ -17,11 +18,48 @@ pub enum FocusPanel {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputMode {
     Normal,
-    CreateWorkspace,
+    SelectWorkspaceAction,  // Choose between Create New or Open Existing
+    CreateWorkspace,        // Browse to select existing directory (Open Existing)
+    EnterWorkspaceName,     // Enter name for new workspace (Create New)
     CreateSession,
-    CreateTerminal,
+    CreateTodo,
     SetStartCommand,
     Help,
+}
+
+/// Workspace action selection (when pressing 'n' in workspace list)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WorkspaceAction {
+    #[default]
+    CreateNew,
+    OpenExisting,
+}
+
+impl WorkspaceAction {
+    pub fn all() -> &'static [WorkspaceAction] {
+        &[WorkspaceAction::CreateNew, WorkspaceAction::OpenExisting]
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            WorkspaceAction::CreateNew => "Create New Project",
+            WorkspaceAction::OpenExisting => "Open Existing Project",
+        }
+    }
+
+    pub fn description(&self) -> &'static str {
+        match self {
+            WorkspaceAction::CreateNew => "Create a new project directory",
+            WorkspaceAction::OpenExisting => "Add an existing directory as workspace",
+        }
+    }
+
+    pub fn icon(&self) -> &'static str {
+        match self {
+            WorkspaceAction::CreateNew => "+",
+            WorkspaceAction::OpenExisting => "📂",
+        }
+    }
 }
 
 /// Pending delete confirmation
@@ -29,6 +67,7 @@ pub enum InputMode {
 pub enum PendingDelete {
     Session(Uuid, String),    // Session ID and name for display
     Workspace(Uuid, String),  // Workspace ID and name for display
+    Todo(Uuid, String),       // Todo ID and description for display
 }
 
 /// Sections in the utilities pane
@@ -37,13 +76,68 @@ pub enum UtilitySection {
     #[default]
     Utilities,
     GlobalConfig,
+    Notepad,
 }
 
 impl UtilitySection {
     pub fn toggle(&self) -> Self {
         match self {
             UtilitySection::Utilities => UtilitySection::GlobalConfig,
+            UtilitySection::GlobalConfig => UtilitySection::Notepad,
+            UtilitySection::Notepad => UtilitySection::Utilities,
+        }
+    }
+
+    pub fn next(&self) -> Self {
+        self.toggle()
+    }
+
+    pub fn prev(&self) -> Self {
+        match self {
+            UtilitySection::Utilities => UtilitySection::Notepad,
             UtilitySection::GlobalConfig => UtilitySection::Utilities,
+            UtilitySection::Notepad => UtilitySection::GlobalConfig,
+        }
+    }
+}
+
+/// Mode for the todos pane
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TodoPaneMode {
+    #[default]
+    Write,   // Manual mode - create todos and run one at a time
+    Autorun, // Auto-dispatch todos to idle agents sequentially
+}
+
+impl TodoPaneMode {
+    pub fn toggle(&self) -> Self {
+        match self {
+            TodoPaneMode::Write => TodoPaneMode::Autorun,
+            TodoPaneMode::Autorun => TodoPaneMode::Write,
+        }
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            TodoPaneMode::Write => "Write",
+            TodoPaneMode::Autorun => "Autorun",
+        }
+    }
+}
+
+/// Tab selection for the todos pane
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TodosTab {
+    #[default]
+    Active,
+    Archived,
+}
+
+impl TodosTab {
+    pub fn toggle(&self) -> Self {
+        match self {
+            TodosTab::Active => TodosTab::Archived,
+            TodosTab::Archived => TodosTab::Active,
         }
     }
 }
@@ -57,6 +151,7 @@ pub enum UtilityItem {
     Calendar,
     GitHistory,
     FileTree,
+    SuggestTodos,
 }
 
 impl UtilityItem {
@@ -67,6 +162,7 @@ impl UtilityItem {
             UtilityItem::Calendar,
             UtilityItem::GitHistory,
             UtilityItem::FileTree,
+            UtilityItem::SuggestTodos,
         ]
     }
 
@@ -77,6 +173,7 @@ impl UtilityItem {
             UtilityItem::Calendar => "Calendar",
             UtilityItem::GitHistory => "Git History",
             UtilityItem::FileTree => "File Tree",
+            UtilityItem::SuggestTodos => "Suggest Todos",
         }
     }
 
@@ -87,6 +184,7 @@ impl UtilityItem {
             UtilityItem::Calendar => "📅",
             UtilityItem::GitHistory => "📜",
             UtilityItem::FileTree => "🌳",
+            UtilityItem::SuggestTodos => "💡",
         }
     }
 
@@ -201,7 +299,9 @@ pub struct AppState {
     // Resizable pane ratios (0.0 to 1.0)
     pub left_panel_ratio: f32,       // Left panel width ratio (default 0.30)
     pub output_split_ratio: f32,     // Output/pinned split ratio (default 0.50)
-    pub workspace_ratio: f32,        // Workspace/session split ratio (default 0.40)
+    pub workspace_ratio: f32,        // Workspace/lower-left split ratio (default 0.40)
+    pub sessions_ratio: f32,         // Sessions portion of lower-left (default 0.40)
+    pub todos_ratio: f32,            // Todos portion of remaining lower-left (default 0.50)
 
     // Divider dragging state
     pub dragging_divider: Option<Divider>,
@@ -214,7 +314,13 @@ pub struct AppState {
     pub selected_config: ConfigItem,
     pub utility_content: Vec<String>,      // Cached content lines for display
     pub utility_scroll_offset: usize,
-    pub session_ratio: f32,                // Session/utilities split ratio (default 0.60)
+    pub pie_chart_data: Vec<(String, f64, ratatui::style::Color)>, // (label, value, color) for pie chart
+    pub show_calendar: bool, // Whether to show the calendar widget view
+
+    // Notepad state (per workspace)
+    pub notepad_content: HashMap<Uuid, String>, // workspace_id -> notepad text
+    pub notepad_cursor_pos: usize,       // Cursor position in current notepad
+    pub notepad_scroll_offset: usize,    // Scroll offset for notepad view
 
     // Banner / marquee state
     pub banner_text: String,
@@ -230,14 +336,29 @@ pub struct AppState {
     // Brown noise player state
     pub brown_noise_playing: bool,
 
+    // Analyzer session for suggesting todos
+    pub analyzer_session_id: Option<Uuid>,
+
     // Pending delete confirmation
     pub pending_delete: Option<PendingDelete>,
+
+    // Todos pane state
+    pub selected_todo_idx: usize,
+    pub todo_pane_mode: TodoPaneMode,
+    pub selected_todos_tab: TodosTab,
+
+    // Workspace action selection state
+    pub selected_workspace_action: WorkspaceAction,
+    // Track if we're creating new or opening existing (affects file browser behavior)
+    pub workspace_create_mode: bool, // true = Create New, false = Open Existing
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Divider {
     LeftRight,         // Between left panel and right panel
-    WorkspaceSession,  // Between workspace list and session list
+    WorkspaceSession,  // Between workspace list and session list (horizontal)
+    SessionsTodos,     // Between sessions and todos in lower-left (horizontal)
+    TodosUtilities,    // Between todos and utilities in lower-left (horizontal)
     OutputPinned,      // Between output pane and pinned terminal
     PinnedPanes(usize), // Between pinned panes (index is the pane above the divider)
 }
@@ -275,6 +396,8 @@ impl AppState {
             left_panel_ratio: 0.30,
             output_split_ratio: 0.50,
             workspace_ratio: 0.40,
+            sessions_ratio: 0.40,
+            todos_ratio: 0.50,
             dragging_divider: None,
             drag_start_pos: None,
             drag_start_ratio: 0.0,
@@ -283,14 +406,24 @@ impl AppState {
             selected_config: ConfigItem::default(),
             utility_content: Vec::new(),
             utility_scroll_offset: 0,
-            session_ratio: 0.60,
+            pie_chart_data: Vec::new(),
+            show_calendar: false,
+            notepad_content: HashMap::new(),
+            notepad_cursor_pos: 0,
+            notepad_scroll_offset: 0,
             banner_text: "✦ WORKBENCH ✦ Multi-Agent Development Environment ✦ Claude • Gemini • Codex • Grok ✦ ".to_string(),
             banner_offset: 0,
             banner_visible: true,
             editing_session_id: None,
             should_quit: false,
             brown_noise_playing: false,
+            analyzer_session_id: None,
             pending_delete: None,
+            selected_todo_idx: 0,
+            todo_pane_mode: TodoPaneMode::default(),
+            selected_todos_tab: TodosTab::default(),
+            selected_workspace_action: WorkspaceAction::default(),
+            workspace_create_mode: false,
         }
     }
 
@@ -384,6 +517,106 @@ impl AppState {
 
     pub fn selected_workspace_mut(&mut self) -> Option<&mut Workspace> {
         self.workspaces.get_mut(self.selected_workspace_idx)
+    }
+
+    /// Returns workspace indices in visual order (Working first, then Paused)
+    pub fn workspace_visual_order(&self) -> Vec<usize> {
+        let mut working: Vec<usize> = self.workspaces.iter()
+            .enumerate()
+            .filter(|(_, ws)| ws.status == WorkspaceStatus::Working)
+            .map(|(i, _)| i)
+            .collect();
+
+        let paused: Vec<usize> = self.workspaces.iter()
+            .enumerate()
+            .filter(|(_, ws)| ws.status == WorkspaceStatus::Paused)
+            .map(|(i, _)| i)
+            .collect();
+
+        working.extend(paused);
+        working
+    }
+
+    /// Navigate to previous workspace in visual order
+    pub fn select_prev_workspace(&mut self) {
+        let visual_order = self.workspace_visual_order();
+        if visual_order.is_empty() {
+            return;
+        }
+
+        // Find current position in visual order
+        if let Some(pos) = visual_order.iter().position(|&idx| idx == self.selected_workspace_idx) {
+            if pos > 0 {
+                self.selected_workspace_idx = visual_order[pos - 1];
+                self.selected_session_idx = 0;
+            }
+        }
+    }
+
+    /// Navigate to next workspace in visual order
+    pub fn select_next_workspace(&mut self) {
+        let visual_order = self.workspace_visual_order();
+        if visual_order.is_empty() {
+            return;
+        }
+
+        // Find current position in visual order
+        if let Some(pos) = visual_order.iter().position(|&idx| idx == self.selected_workspace_idx) {
+            if pos < visual_order.len() - 1 {
+                self.selected_workspace_idx = visual_order[pos + 1];
+                self.selected_session_idx = 0;
+            }
+        }
+    }
+
+    /// Returns session indices in visual order (Agents first, then Terminals)
+    pub fn session_visual_order(&self) -> Vec<usize> {
+        let sessions = self.sessions_for_selected_workspace();
+
+        let mut agents: Vec<usize> = sessions.iter()
+            .enumerate()
+            .filter(|(_, s)| !s.agent_type.is_terminal())
+            .map(|(i, _)| i)
+            .collect();
+
+        let terminals: Vec<usize> = sessions.iter()
+            .enumerate()
+            .filter(|(_, s)| s.agent_type.is_terminal())
+            .map(|(i, _)| i)
+            .collect();
+
+        agents.extend(terminals);
+        agents
+    }
+
+    /// Navigate to previous session in visual order
+    pub fn select_prev_session(&mut self) {
+        let visual_order = self.session_visual_order();
+        if visual_order.is_empty() {
+            return;
+        }
+
+        // Find current position in visual order
+        if let Some(pos) = visual_order.iter().position(|&idx| idx == self.selected_session_idx) {
+            if pos > 0 {
+                self.selected_session_idx = visual_order[pos - 1];
+            }
+        }
+    }
+
+    /// Navigate to next session in visual order
+    pub fn select_next_session(&mut self) {
+        let visual_order = self.session_visual_order();
+        if visual_order.is_empty() {
+            return;
+        }
+
+        // Find current position in visual order
+        if let Some(pos) = visual_order.iter().position(|&idx| idx == self.selected_session_idx) {
+            if pos < visual_order.len() - 1 {
+                self.selected_session_idx = visual_order[pos + 1];
+            }
+        }
     }
 
     pub fn sessions_for_selected_workspace(&self) -> Vec<&Session> {
@@ -549,6 +782,28 @@ impl AppState {
             .find(|s| s.id == session_id)
     }
 
+    /// Get the workspace ID that contains a session
+    pub fn workspace_id_for_session(&self, session_id: Uuid) -> Option<Uuid> {
+        self.sessions.iter()
+            .find_map(|(ws_id, sessions)| {
+                if sessions.iter().any(|s| s.id == session_id) {
+                    Some(*ws_id)
+                } else {
+                    None
+                }
+            })
+    }
+
+    /// Get mutable reference to workspace by ID
+    pub fn get_workspace_mut(&mut self, workspace_id: Uuid) -> Option<&mut Workspace> {
+        self.workspaces.iter_mut().find(|ws| ws.id == workspace_id)
+    }
+
+    /// Get reference to workspace by ID
+    pub fn get_workspace(&self, workspace_id: Uuid) -> Option<&Workspace> {
+        self.workspaces.iter().find(|ws| ws.id == workspace_id)
+    }
+
     pub fn delete_session(&mut self, session_id: Uuid) {
         for sessions in self.sessions.values_mut() {
             sessions.retain(|s| s.id != session_id);
@@ -599,7 +854,8 @@ impl AppState {
 
     /// Update idle queue based on current session states
     /// Only includes sessions from "Working" workspaces
-    pub fn update_idle_queue(&mut self) {
+    /// Returns IDs of sessions that just became idle (new to the queue)
+    pub fn update_idle_queue(&mut self) -> Vec<Uuid> {
         use crate::models::SessionStatus;
 
         // Get IDs of "Working" workspaces only
@@ -627,16 +883,21 @@ impl AppState {
             running_agent_sessions.contains(id) && !working_sessions.contains(id)
         });
 
+        // Track which sessions are newly idle
+        let mut newly_idle = Vec::new();
+
         // Add newly idle sessions (running but not working, not already in queue)
-        let active = self.active_session_id;
+        // Note: Active session CAN be idle - we need it for todo dispatch
         for session_id in running_agent_sessions {
             if !working_sessions.contains(&session_id)
                 && !self.idle_queue.contains(&session_id)
-                && active != Some(session_id) // Don't queue the active session
             {
                 self.idle_queue.push(session_id);
+                newly_idle.push(session_id);
             }
         }
+
+        newly_idle
     }
 
     /// Get the next idle session from the queue
@@ -683,6 +944,333 @@ impl AppState {
                     .count()
             })
             .unwrap_or(0)
+    }
+
+    /// Check if any agent in a workspace is actively working
+    pub fn is_workspace_working(&self, workspace_id: Uuid) -> bool {
+        self.sessions
+            .get(&workspace_id)
+            .map(|sessions| {
+                sessions
+                    .iter()
+                    .filter(|s| !s.agent_type.is_terminal()) // Only check agents, not terminals
+                    .any(|s| self.is_session_working(s.id))
+            })
+            .unwrap_or(false)
+    }
+
+    /// Get notepad content for the current workspace
+    pub fn current_notepad(&self) -> &str {
+        self.selected_workspace()
+            .and_then(|ws| self.notepad_content.get(&ws.id))
+            .map(|s| s.as_str())
+            .unwrap_or("")
+    }
+
+    /// Get mutable notepad content for the current workspace (creates if missing)
+    pub fn current_notepad_mut(&mut self) -> Option<&mut String> {
+        let ws_id = self.selected_workspace().map(|ws| ws.id)?;
+        Some(self.notepad_content.entry(ws_id).or_insert_with(String::new))
+    }
+
+    /// Insert a character at the cursor position in the notepad
+    pub fn notepad_insert_char(&mut self, c: char) {
+        let ws_id = match self.selected_workspace() {
+            Some(ws) => ws.id,
+            None => return,
+        };
+        let content = self.notepad_content.entry(ws_id).or_insert_with(String::new);
+        // Clamp cursor position to valid range for this workspace's content
+        let cursor_pos = self.notepad_cursor_pos.min(content.len());
+        content.insert(cursor_pos, c);
+        self.notepad_cursor_pos = cursor_pos + c.len_utf8();
+    }
+
+    /// Delete character before cursor (backspace)
+    pub fn notepad_backspace(&mut self) {
+        let ws_id = match self.selected_workspace() {
+            Some(ws) => ws.id,
+            None => return,
+        };
+        let content = self.notepad_content.entry(ws_id).or_insert_with(String::new);
+        // Clamp cursor position to valid range
+        let cursor_pos = self.notepad_cursor_pos.min(content.len());
+        if cursor_pos == 0 {
+            return;
+        }
+        // Find the previous character boundary
+        let mut new_pos = cursor_pos - 1;
+        while new_pos > 0 && !content.is_char_boundary(new_pos) {
+            new_pos -= 1;
+        }
+        content.remove(new_pos);
+        self.notepad_cursor_pos = new_pos;
+    }
+
+    /// Delete character at cursor (delete key)
+    pub fn notepad_delete(&mut self) {
+        let ws_id = match self.selected_workspace() {
+            Some(ws) => ws.id,
+            None => return,
+        };
+        let content = self.notepad_content.entry(ws_id).or_insert_with(String::new);
+        // Clamp cursor position to valid range
+        let cursor_pos = self.notepad_cursor_pos.min(content.len());
+        self.notepad_cursor_pos = cursor_pos;
+        if cursor_pos < content.len() {
+            content.remove(cursor_pos);
+        }
+    }
+
+    /// Move cursor left
+    pub fn notepad_cursor_left(&mut self) {
+        let content_bytes: Vec<u8> = self.current_notepad().bytes().collect();
+        if self.notepad_cursor_pos > 0 {
+            let mut new_pos = self.notepad_cursor_pos - 1;
+            // Find char boundary (check if byte is not a continuation byte)
+            while new_pos > 0 && (content_bytes.get(new_pos).map(|b| b & 0xC0 == 0x80).unwrap_or(false)) {
+                new_pos -= 1;
+            }
+            self.notepad_cursor_pos = new_pos;
+        }
+    }
+
+    /// Move cursor right
+    pub fn notepad_cursor_right(&mut self) {
+        let content_len = self.current_notepad().len();
+        let content_bytes: Vec<u8> = self.current_notepad().bytes().collect();
+        if self.notepad_cursor_pos < content_len {
+            let mut new_pos = self.notepad_cursor_pos + 1;
+            // Find char boundary
+            while new_pos < content_len && (content_bytes.get(new_pos).map(|b| b & 0xC0 == 0x80).unwrap_or(false)) {
+                new_pos += 1;
+            }
+            self.notepad_cursor_pos = new_pos;
+        }
+    }
+
+    /// Move cursor to start of line
+    pub fn notepad_cursor_home(&mut self) {
+        let content = self.current_notepad().to_string();
+        let cursor_pos = self.notepad_cursor_pos.min(content.len());
+        // Find the start of the current line
+        let before_cursor = &content[..cursor_pos];
+        if let Some(newline_pos) = before_cursor.rfind('\n') {
+            self.notepad_cursor_pos = newline_pos + 1;
+        } else {
+            self.notepad_cursor_pos = 0;
+        }
+    }
+
+    /// Move cursor to end of line
+    pub fn notepad_cursor_end(&mut self) {
+        let content = self.current_notepad().to_string();
+        let cursor_pos = self.notepad_cursor_pos.min(content.len());
+        // Find the end of the current line
+        let after_cursor = &content[cursor_pos..];
+        if let Some(newline_pos) = after_cursor.find('\n') {
+            self.notepad_cursor_pos = cursor_pos + newline_pos;
+        } else {
+            self.notepad_cursor_pos = content.len();
+        }
+    }
+
+    /// Reset notepad cursor when switching workspaces
+    pub fn reset_notepad_cursor(&mut self) {
+        self.notepad_cursor_pos = self.current_notepad().len();
+        self.notepad_scroll_offset = 0;
+    }
+
+    /// Delete word before cursor (Option+Backspace)
+    pub fn notepad_delete_word(&mut self) {
+        let ws_id = match self.selected_workspace() {
+            Some(ws) => ws.id,
+            None => return,
+        };
+        let content = self.notepad_content.entry(ws_id).or_insert_with(String::new);
+        let cursor_pos = self.notepad_cursor_pos.min(content.len());
+        if cursor_pos == 0 {
+            return;
+        }
+
+        // Find start of word (skip whitespace then skip word chars)
+        let before = &content[..cursor_pos];
+        let mut new_pos = cursor_pos;
+
+        // Skip trailing whitespace
+        for (i, c) in before.char_indices().rev() {
+            if !c.is_whitespace() {
+                new_pos = i + c.len_utf8();
+                break;
+            }
+            new_pos = i;
+        }
+
+        // Skip word characters
+        let before_word = &content[..new_pos];
+        for (i, c) in before_word.char_indices().rev() {
+            if c.is_whitespace() {
+                new_pos = i + c.len_utf8();
+                break;
+            }
+            new_pos = i;
+            if i == 0 {
+                new_pos = 0;
+            }
+        }
+
+        // Remove the word
+        content.replace_range(new_pos..cursor_pos, "");
+        self.notepad_cursor_pos = new_pos;
+    }
+
+    /// Delete to start of line (Cmd+Backspace)
+    pub fn notepad_delete_line(&mut self) {
+        let ws_id = match self.selected_workspace() {
+            Some(ws) => ws.id,
+            None => return,
+        };
+        let content = self.notepad_content.entry(ws_id).or_insert_with(String::new);
+        let cursor_pos = self.notepad_cursor_pos.min(content.len());
+
+        // Find the start of the current line
+        let before_cursor = &content[..cursor_pos];
+        let line_start = before_cursor.rfind('\n')
+            .map(|pos| pos + 1)
+            .unwrap_or(0);
+
+        // Remove from line start to cursor
+        content.replace_range(line_start..cursor_pos, "");
+        self.notepad_cursor_pos = line_start;
+    }
+
+    /// Delete word after cursor (Option+Delete)
+    pub fn notepad_delete_word_forward(&mut self) {
+        let ws_id = match self.selected_workspace() {
+            Some(ws) => ws.id,
+            None => return,
+        };
+        let content = self.notepad_content.entry(ws_id).or_insert_with(String::new);
+        let cursor_pos = self.notepad_cursor_pos.min(content.len());
+        if cursor_pos >= content.len() {
+            return;
+        }
+
+        // Find end of word (skip word chars then skip whitespace)
+        let after = &content[cursor_pos..];
+        let mut delete_len = 0;
+
+        // Skip word characters first
+        let mut chars = after.chars().peekable();
+        while let Some(c) = chars.peek() {
+            if c.is_whitespace() {
+                break;
+            }
+            delete_len += c.len_utf8();
+            chars.next();
+        }
+
+        // Then skip whitespace
+        while let Some(c) = chars.peek() {
+            if !c.is_whitespace() {
+                break;
+            }
+            delete_len += c.len_utf8();
+            chars.next();
+        }
+
+        // Remove the word
+        content.replace_range(cursor_pos..(cursor_pos + delete_len), "");
+        // Cursor position stays the same
+    }
+
+    /// Delete to end of line (Cmd+Delete or Ctrl+K)
+    pub fn notepad_delete_to_end(&mut self) {
+        let ws_id = match self.selected_workspace() {
+            Some(ws) => ws.id,
+            None => return,
+        };
+        let content = self.notepad_content.entry(ws_id).or_insert_with(String::new);
+        let cursor_pos = self.notepad_cursor_pos.min(content.len());
+
+        // Find the end of the current line
+        let after_cursor = &content[cursor_pos..];
+        let line_end = after_cursor.find('\n')
+            .map(|pos| cursor_pos + pos)
+            .unwrap_or(content.len());
+
+        // Remove from cursor to line end
+        content.replace_range(cursor_pos..line_end, "");
+        // Cursor position stays the same
+    }
+
+    /// Move cursor to previous word (Option+Left)
+    pub fn notepad_word_left(&mut self) {
+        let content = self.current_notepad().to_string();
+        let cursor_pos = self.notepad_cursor_pos.min(content.len());
+        if cursor_pos == 0 {
+            return;
+        }
+
+        let before = &content[..cursor_pos];
+        let mut new_pos = cursor_pos;
+
+        // Skip trailing whitespace
+        for (i, c) in before.char_indices().rev() {
+            if !c.is_whitespace() {
+                new_pos = i + c.len_utf8();
+                break;
+            }
+            new_pos = i;
+        }
+
+        // Skip word characters to find start of word
+        let before_word = &content[..new_pos];
+        for (i, c) in before_word.char_indices().rev() {
+            if c.is_whitespace() {
+                new_pos = i + c.len_utf8();
+                break;
+            }
+            new_pos = i;
+            if i == 0 {
+                new_pos = 0;
+            }
+        }
+
+        self.notepad_cursor_pos = new_pos;
+    }
+
+    /// Move cursor to next word (Option+Right)
+    pub fn notepad_word_right(&mut self) {
+        let content = self.current_notepad().to_string();
+        let cursor_pos = self.notepad_cursor_pos.min(content.len());
+        if cursor_pos >= content.len() {
+            return;
+        }
+
+        let after = &content[cursor_pos..];
+        let mut move_len = 0;
+
+        // Skip word characters first
+        let mut chars = after.chars().peekable();
+        while let Some(c) = chars.peek() {
+            if c.is_whitespace() {
+                break;
+            }
+            move_len += c.len_utf8();
+            chars.next();
+        }
+
+        // Then skip whitespace
+        while let Some(c) = chars.peek() {
+            if !c.is_whitespace() {
+                break;
+            }
+            move_len += c.len_utf8();
+            chars.next();
+        }
+
+        self.notepad_cursor_pos = cursor_pos + move_len;
     }
 }
 

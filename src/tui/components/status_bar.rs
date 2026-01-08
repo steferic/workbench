@@ -13,6 +13,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         let (item_type, name) = match pending {
             PendingDelete::Session(_, name) => ("session", name.as_str()),
             PendingDelete::Workspace(_, name) => ("workspace", name.as_str()),
+            PendingDelete::Todo(_, name) => ("todo", name.as_str()),
         };
 
         let left_text = vec![
@@ -101,33 +102,6 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
                 Style::default().fg(Color::Gray),
             )],
         ),
-        InputMode::CreateTerminal => {
-            let name_preview = if state.input_buffer.is_empty() {
-                "terminal".to_string()
-            } else {
-                state.input_buffer.clone()
-            };
-            (
-                vec![
-                    Span::styled(
-                        " NEW TERMINAL ",
-                        Style::default()
-                            .fg(Color::Black)
-                            .bg(Color::Blue)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::raw(" "),
-                    Span::styled(
-                        format!("Name: {}_", name_preview),
-                        Style::default().fg(Color::Cyan),
-                    ),
-                ],
-                vec![Span::styled(
-                    "Enter name, press Enter to create, Esc to cancel",
-                    Style::default().fg(Color::Gray),
-                )],
-            )
-        }
         InputMode::SetStartCommand => {
             (
                 vec![
@@ -150,6 +124,61 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
                 )],
             )
         }
+        InputMode::CreateTodo => {
+            (
+                vec![
+                    Span::styled(
+                        " NEW TODO ",
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw(" "),
+                    Span::styled(
+                        format!("{}_", state.input_buffer),
+                        Style::default().fg(Color::White),
+                    ),
+                ],
+                vec![Span::styled(
+                    "Enter todo description, press Enter to create, Esc to cancel",
+                    Style::default().fg(Color::Gray),
+                )],
+            )
+        }
+        InputMode::SelectWorkspaceAction => (
+            vec![Span::styled(
+                " ADD WORKSPACE ",
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )],
+            vec![Span::styled(
+                "↑/↓ Navigate  Enter to select  Esc to cancel",
+                Style::default().fg(Color::Gray),
+            )],
+        ),
+        InputMode::EnterWorkspaceName => (
+            vec![
+                Span::styled(
+                    " CREATE PROJECT ",
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" "),
+                Span::styled(
+                    format!("{}_", state.input_buffer),
+                    Style::default().fg(Color::White),
+                ),
+            ],
+            vec![Span::styled(
+                "Enter project name, press Enter to create, Esc to cancel",
+                Style::default().fg(Color::Gray),
+            )],
+        ),
         InputMode::Normal => {
             let context_hints = match state.focus {
                 FocusPanel::WorkspaceList => vec![
@@ -164,13 +193,25 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
                 ],
                 FocusPanel::SessionList => vec![
                     Span::styled("[1-4]", Style::default().fg(Color::Cyan)),
-                    Span::raw(" New  "),
+                    Span::raw(" Agent  "),
+                    Span::styled("[t]", Style::default().fg(Color::Cyan)),
+                    Span::raw(" Terminal  "),
                     Span::styled("[Enter]", Style::default().fg(Color::Cyan)),
                     Span::raw(" Activate  "),
-                    Span::styled("[Tab]", Style::default().fg(Color::Cyan)),
-                    Span::raw(" Utilities  "),
                     Span::styled("[s]", Style::default().fg(Color::Cyan)),
                     Span::raw(" Stop"),
+                ],
+                FocusPanel::TodosPane => vec![
+                    Span::styled("[n]", Style::default().fg(Color::Cyan)),
+                    Span::raw(" New  "),
+                    Span::styled("[Enter]", Style::default().fg(Color::Cyan)),
+                    Span::raw(" Run  "),
+                    Span::styled("[x]", Style::default().fg(Color::Cyan)),
+                    Span::raw(" Done  "),
+                    Span::styled("[a]", Style::default().fg(Color::Cyan)),
+                    Span::raw(" Autorun  "),
+                    Span::styled("[d]", Style::default().fg(Color::Cyan)),
+                    Span::raw(" Del"),
                 ],
                 FocusPanel::OutputPane => {
                     if state.active_session_id.is_some() {

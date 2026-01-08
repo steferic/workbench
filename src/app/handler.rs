@@ -1,6 +1,6 @@
 use crate::app::{
-    Action, AppState, ConfigItem, Divider, FocusPanel, InputMode, PendingDelete, TextSelection,
-    UtilityItem, UtilitySection,
+    Action, AppState, ConfigItem, Divider, FocusPanel, InputMode, PendingDelete,
+    TextSelection, TodosTab, UtilityItem, UtilitySection,
 };
 use crate::models::{AgentType, Session, Workspace};
 use crate::persistence;
@@ -8,6 +8,7 @@ use crate::pty::PtyManager;
 use anyhow::Result;
 use std::path::PathBuf;
 use tokio::sync::mpsc;
+use uuid::Uuid;
 
 use super::pty_ops::resize_ptys_to_panes;
 use super::selection::{clear_all_pinned_selections, copy_to_clipboard, extract_selected_text};
@@ -25,8 +26,97 @@ pub fn process_action(
             state.should_quit = true;
         }
         Action::Tick => {
+            use crate::app::TodoPaneMode;
+
             state.tick_animation();
-            state.update_idle_queue();
+            let newly_idle = state.update_idle_queue();
+
+            // Check if analyzer session went idle
+            if let Some(analyzer_id) = state.analyzer_session_id {
+                if newly_idle.contains(&analyzer_id) {
+                    // Parse output for TODO: lines
+                    if let Some(parser) = state.output_buffers.get(&analyzer_id) {
+                        let screen = parser.screen();
+                        let mut todos_to_add: Vec<String> = Vec::new();
+
+                        // Get full screen contents as text
+                        let full_contents = screen.contents();
+
+                        // Scan for TODO: lines
+                        for line in full_contents.lines() {
+                            // Look for "TODO: " pattern
+                            if let Some(idx) = line.find("TODO: ") {
+                                let todo_text = line[idx + 6..].trim();
+                                if !todo_text.is_empty() {
+                                    // Clean up any control characters
+                                    let clean_text: String = todo_text
+                                        .chars()
+                                        .filter(|c| !c.is_control())
+                                        .collect();
+                                    if !clean_text.is_empty() && clean_text.len() > 5 {
+                                        todos_to_add.push(clean_text);
+                                    }
+                                }
+                            }
+                        }
+
+                        // Add each TODO as a suggested todo
+                        for todo_desc in todos_to_add {
+                            let _ = action_tx.send(Action::AddSuggestedTodo(todo_desc));
+                        }
+                    }
+
+                    // Clear analyzer session
+                    state.analyzer_session_id = None;
+                }
+            }
+
+            // Process newly idle sessions - mark their todos as ready for review
+            for session_id in &newly_idle {
+                if let Some(workspace_id) = state.workspace_id_for_session(*session_id) {
+                    let has_in_progress_todo = state.get_workspace(workspace_id)
+                        .and_then(|ws| ws.todo_for_session(*session_id))
+                        .map(|todo| todo.is_in_progress())
+                        .unwrap_or(false);
+
+                    if has_in_progress_todo {
+                        if let Some(ws) = state.get_workspace_mut(workspace_id) {
+                            if let Some(todo) = ws.todo_for_session_mut(*session_id) {
+                                let todo_id = todo.id;
+                                let _ = action_tx.send(Action::MarkTodoReadyForReview(todo_id));
+                            }
+                        }
+                    }
+                }
+            }
+
+            // In Autorun mode, check ALL idle sessions for pending todos (not just newly idle)
+            if state.todo_pane_mode == TodoPaneMode::Autorun {
+                // Get the current idle queue
+                let idle_sessions: Vec<Uuid> = state.idle_queue.clone();
+
+                for session_id in idle_sessions {
+                    if let Some(workspace_id) = state.workspace_id_for_session(session_id) {
+                        // Check if session already has an in-progress todo
+                        let has_in_progress = state.get_workspace(workspace_id)
+                            .and_then(|ws| ws.todo_for_session(session_id))
+                            .map(|t| t.is_in_progress())
+                            .unwrap_or(false);
+
+                        if !has_in_progress {
+                            // Find next pending todo for this workspace
+                            let pending_todo_info = state.get_workspace(workspace_id)
+                                .and_then(|ws| ws.next_pending_todo())
+                                .map(|todo| (todo.id, todo.description.clone()));
+
+                            if let Some((todo_id, description)) = pending_todo_info {
+                                let _ = action_tx.send(Action::DispatchTodoToSession(session_id, todo_id, description));
+                                break; // Only dispatch one todo per tick to avoid overwhelming
+                            }
+                        }
+                    }
+                }
+            }
         }
         Action::Resize(w, h) => {
             state.terminal_size = (w, h);
@@ -56,6 +146,30 @@ pub fn process_action(
                 state.dragging_divider = Some(Divider::WorkspaceSession);
                 state.drag_start_pos = Some((x, y));
                 state.drag_start_ratio = state.workspace_ratio;
+                return Ok(());
+            }
+
+            // Sessions-Todos divider (within lower-left area)
+            let lower_left_height = main_height.saturating_sub(workspace_height);
+            let sessions_height = (lower_left_height as f32 * state.sessions_ratio) as u16;
+            let sessions_todos_divider_y = workspace_height + sessions_height;
+
+            if x < left_width && y >= sessions_todos_divider_y.saturating_sub(divider_tolerance) && y <= sessions_todos_divider_y + divider_tolerance {
+                state.dragging_divider = Some(Divider::SessionsTodos);
+                state.drag_start_pos = Some((x, y));
+                state.drag_start_ratio = state.sessions_ratio;
+                return Ok(());
+            }
+
+            // Todos-Utilities divider (within lower-left area)
+            let remaining_height = lower_left_height.saturating_sub(sessions_height);
+            let todos_height = (remaining_height as f32 * state.todos_ratio) as u16;
+            let todos_utilities_divider_y = sessions_todos_divider_y + todos_height;
+
+            if x < left_width && y >= todos_utilities_divider_y.saturating_sub(divider_tolerance) && y <= todos_utilities_divider_y + divider_tolerance {
+                state.dragging_divider = Some(Divider::TodosUtilities);
+                state.drag_start_pos = Some((x, y));
+                state.drag_start_ratio = state.todos_ratio;
                 return Ok(());
             }
 
@@ -102,13 +216,12 @@ pub fn process_action(
                     if y < workspace_height {
                         state.focus = FocusPanel::WorkspaceList;
                     } else {
-                        // Lower left is split between sessions and utilities
-                        let lower_left_height = main_height.saturating_sub(workspace_height);
-                        let session_height = (lower_left_height as f32 * state.session_ratio) as u16;
-                        let session_end_y = workspace_height + session_height;
-
-                        if y < session_end_y {
+                        // Lower left is split: sessions | todos | utilities (using dynamic ratios)
+                        // Reuse the already calculated values from divider detection
+                        if y < sessions_todos_divider_y {
                             state.focus = FocusPanel::SessionList;
+                        } else if y < todos_utilities_divider_y {
+                            state.focus = FocusPanel::TodosPane;
                         } else {
                             state.focus = FocusPanel::UtilitiesPane;
                         }
@@ -190,6 +303,24 @@ pub fn process_action(
                         let new_ratio = (y as f32 / main_height as f32).clamp(0.20, 0.80);
                         state.workspace_ratio = new_ratio;
                     }
+                    Divider::SessionsTodos => {
+                        // Calculate new sessions_ratio based on y position within lower_left
+                        let workspace_height = (main_height as f32 * state.workspace_ratio) as u16;
+                        let lower_left_height = main_height.saturating_sub(workspace_height);
+                        let y_in_lower_left = y.saturating_sub(workspace_height);
+                        let new_ratio = (y_in_lower_left as f32 / lower_left_height as f32).clamp(0.15, 0.70);
+                        state.sessions_ratio = new_ratio;
+                    }
+                    Divider::TodosUtilities => {
+                        // Calculate new todos_ratio based on y position within remaining area
+                        let workspace_height = (main_height as f32 * state.workspace_ratio) as u16;
+                        let lower_left_height = main_height.saturating_sub(workspace_height);
+                        let sessions_height = (lower_left_height as f32 * state.sessions_ratio) as u16;
+                        let remaining_height = lower_left_height.saturating_sub(sessions_height);
+                        let y_in_remaining = y.saturating_sub(workspace_height).saturating_sub(sessions_height);
+                        let new_ratio = (y_in_remaining as f32 / remaining_height as f32).clamp(0.20, 0.80);
+                        state.todos_ratio = new_ratio;
+                    }
                     Divider::OutputPinned => {
                         // Calculate new ratio within right panel
                         let left_width = (w as f32 * state.left_panel_ratio) as u16;
@@ -262,6 +393,16 @@ pub fn process_action(
                 state.drag_start_pos = None;
                 // Resize PTYs to match new pane sizes
                 resize_ptys_to_panes(state);
+                // Save pane ratios to config
+                let config = persistence::GlobalConfig {
+                    banner_visible: state.banner_visible,
+                    left_panel_ratio: state.left_panel_ratio,
+                    workspace_ratio: state.workspace_ratio,
+                    sessions_ratio: state.sessions_ratio,
+                    todos_ratio: state.todos_ratio,
+                    output_split_ratio: state.output_split_ratio,
+                };
+                let _ = persistence::save_config(&config);
                 return Ok(());
             }
 
@@ -418,40 +559,35 @@ pub fn process_action(
         Action::MoveUp => match state.focus {
             FocusPanel::WorkspaceList => {
                 let prev_idx = state.selected_workspace_idx;
-                state.selected_workspace_idx = state.selected_workspace_idx.saturating_sub(1);
-                state.selected_session_idx = 0;
+                state.select_prev_workspace(); // Navigate in visual order
                 // Start all stopped sessions if workspace changed
                 if state.selected_workspace_idx != prev_idx {
                     start_workspace_sessions(state, pty_manager, action_tx);
+                    state.reset_notepad_cursor(); // Reset cursor for new workspace's notepad
                 }
             }
             FocusPanel::SessionList => {
-                state.selected_session_idx = state.selected_session_idx.saturating_sub(1);
+                state.select_prev_session(); // Navigate in visual order (agents first, then terminals)
             }
             _ => {}
         },
         Action::MoveDown => match state.focus {
             FocusPanel::WorkspaceList => {
                 let prev_idx = state.selected_workspace_idx;
-                if state.selected_workspace_idx < state.workspaces.len().saturating_sub(1) {
-                    state.selected_workspace_idx += 1;
-                    state.selected_session_idx = 0;
-                }
+                state.select_next_workspace(); // Navigate in visual order
                 // Start all stopped sessions if workspace changed
                 if state.selected_workspace_idx != prev_idx {
                     start_workspace_sessions(state, pty_manager, action_tx);
+                    state.reset_notepad_cursor(); // Reset cursor for new workspace's notepad
                 }
             }
             FocusPanel::SessionList => {
-                let session_count = state.sessions_for_selected_workspace().len();
-                if state.selected_session_idx < session_count.saturating_sub(1) {
-                    state.selected_session_idx += 1;
-                }
+                state.select_next_session(); // Navigate in visual order (agents first, then terminals)
             }
             _ => {}
         },
         Action::FocusLeft => {
-            // Cycle: WorkspaceList <- SessionList <- UtilitiesPane <- OutputPane <- PinnedPanes <- (wrap)
+            // Cycle: WorkspaceList <- SessionList <- TodosPane <- UtilitiesPane <- OutputPane <- PinnedPanes <- (wrap)
             let pinned_count = state.pinned_count();
             state.focus = match state.focus {
                 FocusPanel::WorkspaceList => {
@@ -463,7 +599,8 @@ pub fn process_action(
                     }
                 }
                 FocusPanel::SessionList => FocusPanel::WorkspaceList,
-                FocusPanel::UtilitiesPane => FocusPanel::SessionList,
+                FocusPanel::TodosPane => FocusPanel::SessionList,
+                FocusPanel::UtilitiesPane => FocusPanel::TodosPane,
                 FocusPanel::OutputPane => FocusPanel::UtilitiesPane,
                 FocusPanel::PinnedTerminalPane(idx) => {
                     if idx == 0 {
@@ -475,12 +612,13 @@ pub fn process_action(
             };
         }
         Action::FocusRight => {
-            // Cycle: WorkspaceList -> SessionList -> UtilitiesPane -> OutputPane -> PinnedPanes -> (wrap)
+            // Cycle: WorkspaceList -> SessionList -> TodosPane -> UtilitiesPane -> OutputPane -> PinnedPanes -> (wrap)
             let pinned_count = state.pinned_count();
             let prev_focus = state.focus;
             state.focus = match state.focus {
                 FocusPanel::WorkspaceList => FocusPanel::SessionList,
-                FocusPanel::SessionList => FocusPanel::UtilitiesPane,
+                FocusPanel::SessionList => FocusPanel::TodosPane,
+                FocusPanel::TodosPane => FocusPanel::UtilitiesPane,
                 FocusPanel::UtilitiesPane => FocusPanel::OutputPane,
                 FocusPanel::OutputPane => {
                     if state.should_show_split() && pinned_count > 0 {
@@ -535,33 +673,51 @@ pub fn process_action(
             }
         }
         Action::JumpToNextIdle => {
-            state.update_idle_queue();
-            if let Some(session_id) = state.pop_next_idle() {
-                // Find which workspace this session belongs to
-                let workspace_info = state.sessions.iter()
-                    .find_map(|(ws_id, sessions)| {
-                        sessions.iter().position(|s| s.id == session_id)
-                            .map(|session_idx| (*ws_id, session_idx))
-                    });
+            use crate::models::WorkspaceStatus;
 
-                if let Some((workspace_id, session_idx)) = workspace_info {
-                    // Find workspace index
-                    if let Some(ws_idx) = state.workspaces.iter().position(|w| w.id == workspace_id) {
-                        state.selected_workspace_idx = ws_idx;
-                        state.selected_session_idx = session_idx;
+            // Get indices of all Working workspaces
+            let working_indices: Vec<usize> = state.workspaces.iter()
+                .enumerate()
+                .filter(|(_, ws)| ws.status == WorkspaceStatus::Working)
+                .map(|(idx, _)| idx)
+                .collect();
+
+            if working_indices.is_empty() {
+                return Ok(());
+            }
+
+            // Find current position in working workspaces and rotate to next
+            let current_pos = working_indices.iter()
+                .position(|&idx| idx == state.selected_workspace_idx);
+
+            let next_idx = match current_pos {
+                Some(pos) => working_indices[(pos + 1) % working_indices.len()],
+                None => working_indices[0], // Not on a working workspace, go to first one
+            };
+
+            // Switch to the next working workspace
+            state.selected_workspace_idx = next_idx;
+            state.selected_session_idx = 0;
+
+            // Activate first session if available
+            if let Some(ws) = state.workspaces.get(next_idx) {
+                if let Some(sessions) = state.sessions.get(&ws.id) {
+                    if let Some(session) = sessions.first() {
+                        state.active_session_id = Some(session.id);
+                        state.focus = FocusPanel::OutputPane;
+                        state.output_scroll_offset = 0;
                     }
                 }
-
-                // Activate the session
-                state.active_session_id = Some(session_id);
-                state.focus = FocusPanel::OutputPane;
-                state.output_scroll_offset = 0;
             }
         }
 
         // Mode changes
         Action::EnterHelpMode => {
             state.input_mode = InputMode::Help;
+        }
+        Action::EnterWorkspaceActionMode => {
+            state.input_mode = InputMode::SelectWorkspaceAction;
+            state.selected_workspace_action = crate::app::WorkspaceAction::default();
         }
         Action::EnterCreateWorkspaceMode => {
             state.input_mode = InputMode::CreateWorkspace;
@@ -570,15 +726,13 @@ pub fn process_action(
             state.file_browser_path = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
             state.refresh_file_browser();
         }
+        Action::EnterWorkspaceNameMode => {
+            state.input_mode = InputMode::EnterWorkspaceName;
+            state.input_buffer.clear();
+        }
         Action::EnterCreateSessionMode => {
             if state.selected_workspace().is_some() {
                 state.input_mode = InputMode::CreateSession;
-            }
-        }
-        Action::EnterCreateTerminalMode => {
-            if state.selected_workspace().is_some() {
-                state.input_mode = InputMode::CreateTerminal;
-                state.input_buffer.clear();
             }
         }
         Action::ExitMode => {
@@ -667,6 +821,58 @@ pub fn process_action(
             }
         }
 
+        // Workspace action selection
+        Action::SelectNextWorkspaceAction => {
+            use crate::app::WorkspaceAction;
+            let actions = WorkspaceAction::all();
+            let current_idx = actions.iter().position(|a| *a == state.selected_workspace_action).unwrap_or(0);
+            if current_idx < actions.len() - 1 {
+                state.selected_workspace_action = actions[current_idx + 1];
+            }
+        }
+        Action::SelectPrevWorkspaceAction => {
+            use crate::app::WorkspaceAction;
+            let actions = WorkspaceAction::all();
+            let current_idx = actions.iter().position(|a| *a == state.selected_workspace_action).unwrap_or(0);
+            if current_idx > 0 {
+                state.selected_workspace_action = actions[current_idx - 1];
+            }
+        }
+        Action::ConfirmWorkspaceAction => {
+            use crate::app::WorkspaceAction;
+            match state.selected_workspace_action {
+                WorkspaceAction::CreateNew => {
+                    // Go to file browser first to select parent directory
+                    state.workspace_create_mode = true;
+                    state.input_mode = InputMode::CreateWorkspace;
+                    state.input_buffer.clear();
+                    state.file_browser_path = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
+                    state.refresh_file_browser();
+                }
+                WorkspaceAction::OpenExisting => {
+                    // Go directly to file browser for selecting existing
+                    state.workspace_create_mode = false;
+                    state.input_mode = InputMode::CreateWorkspace;
+                    state.input_buffer.clear();
+                    state.file_browser_path = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
+                    state.refresh_file_browser();
+                }
+            }
+        }
+        Action::CreateNewWorkspace(name) => {
+            // Create the new directory in the current file browser path
+            let new_path = state.file_browser_path.join(&name);
+            if !new_path.exists() {
+                if std::fs::create_dir_all(&new_path).is_ok() {
+                    let workspace = Workspace::from_path(new_path);
+                    state.add_workspace(workspace);
+                    state.input_mode = InputMode::Normal;
+                    // Auto-save
+                    let _ = persistence::save(&state.workspaces, &state.sessions);
+                }
+            }
+        }
+
         // Utilities pane actions
         Action::SelectNextUtility => {
             match state.utility_section {
@@ -683,6 +889,9 @@ pub fn process_action(
                     if current_idx < configs.len() - 1 {
                         state.selected_config = configs[current_idx + 1];
                     }
+                }
+                UtilitySection::Notepad => {
+                    // Notepad doesn't have items to navigate
                 }
             }
         }
@@ -702,14 +911,66 @@ pub fn process_action(
                         state.selected_config = configs[current_idx - 1];
                     }
                 }
+                UtilitySection::Notepad => {
+                    // Notepad doesn't have items to navigate
+                }
             }
         }
         Action::ActivateUtility => {
-            // Load utility content based on selected utility
-            load_utility_content(state);
-            // Clear active session so utility content shows
-            state.active_session_id = None;
-            state.focus = FocusPanel::OutputPane;
+            // Special handling for SuggestTodos - trigger analyzer
+            if state.selected_utility == UtilityItem::SuggestTodos {
+                // Find an idle agent session from the current workspace
+                let idle_agent = state.selected_workspace().and_then(|ws| {
+                    state.sessions.get(&ws.id).and_then(|sessions| {
+                        sessions.iter()
+                            .find(|s| s.agent_type.is_agent() && state.idle_queue.contains(&s.id))
+                            .map(|s| s.id)
+                    })
+                });
+
+                if let Some(session_id) = idle_agent {
+                    // Mark this session as the analyzer
+                    state.analyzer_session_id = Some(session_id);
+
+                    // Send the analysis prompt
+                    let prompt = r#"Analyze this codebase and suggest 3-5 potential improvements, new features, or refactoring opportunities.
+
+For each suggestion, output it on its own line in this exact format:
+TODO: [DIFFICULTY] [IMPORTANCE] <description>
+
+Where:
+- DIFFICULTY is one of: EASY, MED, HARD
+- IMPORTANCE is one of: LOW, MED, HIGH, CRITICAL
+
+Examples:
+TODO: [EASY] [HIGH] Add input validation for user email fields
+TODO: [MED] [CRITICAL] Implement rate limiting on API endpoints
+TODO: [HARD] [MED] Refactor database layer to use connection pooling
+
+Focus on practical, actionable items. Be specific about what needs to be done."#;
+
+                    let text_bytes: Vec<u8> = prompt.bytes().collect();
+                    let _ = action_tx.send(Action::SendInput(session_id, text_bytes));
+                    let _ = action_tx.send(Action::SendInput(session_id, vec![b'\r']));
+
+                    // Remove from idle queue
+                    state.idle_queue.retain(|&id| id != session_id);
+
+                    // Switch to viewing the analyzer session
+                    state.active_session_id = Some(session_id);
+                    state.focus = FocusPanel::OutputPane;
+                } else {
+                    // No idle agent available, just show info
+                    load_utility_content(state);
+                    state.active_session_id = None;
+                }
+            } else {
+                // Load utility content based on selected utility
+                load_utility_content(state);
+                // Clear active session so utility content shows
+                state.active_session_id = None;
+            }
+            // Keep focus on utilities pane - user can navigate to output if needed
         }
         Action::ToggleUtilitySection => {
             state.utility_section = state.utility_section.toggle();
@@ -723,12 +984,82 @@ pub fn process_action(
             // Save config changes
             let config = persistence::GlobalConfig {
                 banner_visible: state.banner_visible,
+                left_panel_ratio: state.left_panel_ratio,
+                workspace_ratio: state.workspace_ratio,
+                sessions_ratio: state.sessions_ratio,
+                todos_ratio: state.todos_ratio,
+                output_split_ratio: state.output_split_ratio,
             };
             let _ = persistence::save_config(&config);
         }
         Action::ToggleBrownNoise => {
             state.brown_noise_playing = !state.brown_noise_playing;
             // Audio player is managed by runtime
+        }
+
+        // Notepad operations
+        Action::NotepadChar(c) => {
+            state.notepad_insert_char(c);
+            // Auto-save notepad changes
+            let _ = persistence::save_with_notepad(&state.workspaces, &state.sessions, &state.notepad_content);
+        }
+        Action::NotepadBackspace => {
+            state.notepad_backspace();
+            let _ = persistence::save_with_notepad(&state.workspaces, &state.sessions, &state.notepad_content);
+        }
+        Action::NotepadDelete => {
+            state.notepad_delete();
+            let _ = persistence::save_with_notepad(&state.workspaces, &state.sessions, &state.notepad_content);
+        }
+        Action::NotepadNewline => {
+            state.notepad_insert_char('\n');
+            let _ = persistence::save_with_notepad(&state.workspaces, &state.sessions, &state.notepad_content);
+        }
+        Action::NotepadCursorLeft => {
+            state.notepad_cursor_left();
+        }
+        Action::NotepadCursorRight => {
+            state.notepad_cursor_right();
+        }
+        Action::NotepadCursorHome => {
+            state.notepad_cursor_home();
+        }
+        Action::NotepadCursorEnd => {
+            state.notepad_cursor_end();
+        }
+        Action::NotepadPaste => {
+            // Try to paste from clipboard
+            if let Ok(mut ctx) = arboard::Clipboard::new() {
+                if let Ok(text) = ctx.get_text() {
+                    for c in text.chars() {
+                        state.notepad_insert_char(c);
+                    }
+                    // Save after paste
+                    let _ = persistence::save_with_notepad(&state.workspaces, &state.sessions, &state.notepad_content);
+                }
+            }
+        }
+        Action::NotepadDeleteWord => {
+            state.notepad_delete_word();
+            let _ = persistence::save_with_notepad(&state.workspaces, &state.sessions, &state.notepad_content);
+        }
+        Action::NotepadDeleteLine => {
+            state.notepad_delete_line();
+            let _ = persistence::save_with_notepad(&state.workspaces, &state.sessions, &state.notepad_content);
+        }
+        Action::NotepadDeleteWordForward => {
+            state.notepad_delete_word_forward();
+            let _ = persistence::save_with_notepad(&state.workspaces, &state.sessions, &state.notepad_content);
+        }
+        Action::NotepadDeleteToEnd => {
+            state.notepad_delete_to_end();
+            let _ = persistence::save_with_notepad(&state.workspaces, &state.sessions, &state.notepad_content);
+        }
+        Action::NotepadWordLeft => {
+            state.notepad_word_left();
+        }
+        Action::NotepadWordRight => {
+            state.notepad_word_right();
         }
 
         // Workspace operations
@@ -827,7 +1158,13 @@ pub fn process_action(
                         state.pty_handles.insert(session_id, handle);
                         state.add_session(session);
                         state.active_session_id = Some(session_id);
-                        state.focus = FocusPanel::OutputPane;
+                        // Keep focus on sessions pane when creating new sessions
+                        state.focus = FocusPanel::SessionList;
+                        // Select the newly created session in the list
+                        let session_count = state.sessions_for_selected_workspace().len();
+                        if session_count > 0 {
+                            state.selected_session_idx = session_count - 1;
+                        }
                         // Auto-save
                         let _ = persistence::save(&state.workspaces, &state.sessions);
                     }
@@ -840,8 +1177,15 @@ pub fn process_action(
                 state.input_mode = InputMode::Normal;
             }
         }
-        Action::CreateTerminal(name) => {
+        Action::CreateTerminal => {
             if let Some(workspace) = state.selected_workspace() {
+                // Count existing terminals to auto-generate name
+                let terminal_count = state.sessions_for_selected_workspace()
+                    .iter()
+                    .filter(|s| s.agent_type.is_terminal())
+                    .count();
+                let name = format!("{}", terminal_count + 1);
+
                 let agent_type = AgentType::Terminal(name);
                 let session = Session::new(workspace.id, agent_type.clone());
                 let session_id = session.id;
@@ -875,7 +1219,13 @@ pub fn process_action(
                         state.pty_handles.insert(session_id, handle);
                         state.add_session(session);
                         state.active_session_id = Some(session_id);
-                        state.focus = FocusPanel::OutputPane;
+                        // Keep focus on sessions pane when creating new sessions
+                        state.focus = FocusPanel::SessionList;
+                        // Select the newly created session in the list
+                        let session_count = state.sessions_for_selected_workspace().len();
+                        if session_count > 0 {
+                            state.selected_session_idx = session_count - 1;
+                        }
                         // Auto-save
                         let _ = persistence::save(&state.workspaces, &state.sessions);
                     }
@@ -884,8 +1234,6 @@ pub fn process_action(
                         state.output_buffers.remove(&session_id);
                     }
                 }
-
-                state.input_mode = InputMode::Normal;
             }
         }
         Action::SelectSession(idx) => {
@@ -896,8 +1244,8 @@ pub fn process_action(
         }
         Action::ActivateSession(session_id) => {
             state.active_session_id = Some(session_id);
-            state.focus = FocusPanel::OutputPane;
             state.output_scroll_offset = 0;
+            // Keep focus on session list - user can navigate to output if needed
         }
         Action::RestartSession(session_id) => {
             // Find the session and its workspace, including start_command for terminals
@@ -1068,6 +1416,269 @@ pub fn process_action(
             }
             // Auto-save
             let _ = persistence::save(&state.workspaces, &state.sessions);
+        }
+
+        // Todo operations
+        Action::SelectNextTodo => {
+            if let Some(ws) = state.selected_workspace() {
+                // Count todos based on current tab
+                let count = ws.todos.iter().filter(|t| {
+                    match state.selected_todos_tab {
+                        TodosTab::Active => !t.is_archived(),
+                        TodosTab::Archived => t.is_archived(),
+                    }
+                }).count();
+                if count > 0 {
+                    state.selected_todo_idx = (state.selected_todo_idx + 1).min(count - 1);
+                }
+            }
+        }
+        Action::SelectPrevTodo => {
+            if state.selected_todo_idx > 0 {
+                state.selected_todo_idx -= 1;
+            }
+        }
+        Action::EnterCreateTodoMode => {
+            state.input_mode = InputMode::CreateTodo;
+            state.input_buffer.clear();
+        }
+        Action::CreateTodo(description) => {
+            if let Some(ws) = state.workspaces.get_mut(state.selected_workspace_idx) {
+                ws.add_todo(description);
+                let _ = persistence::save(&state.workspaces, &state.sessions);
+            }
+            state.input_mode = InputMode::Normal;
+            state.input_buffer.clear();
+        }
+        Action::MarkTodoDone => {
+            // Get the todo ID from the filtered list (Active tab only)
+            let todo_id = state.selected_workspace()
+                .and_then(|ws| {
+                    ws.todos.iter()
+                        .filter(|t| !t.is_archived())
+                        .nth(state.selected_todo_idx)
+                        .map(|t| t.id)
+                });
+
+            if let Some(id) = todo_id {
+                if let Some(ws) = state.workspaces.get_mut(state.selected_workspace_idx) {
+                    if let Some(todo) = ws.get_todo_mut(id) {
+                        todo.mark_done();
+                        let _ = persistence::save(&state.workspaces, &state.sessions);
+                    }
+                }
+            }
+        }
+        Action::RunSelectedTodo => {
+            use crate::app::TodoPaneMode;
+            use crate::models::SessionStatus;
+
+            // Get the selected todo from filtered list (Active tab only, non-archived)
+            let selected_todo = state.selected_workspace()
+                .and_then(|ws| {
+                    ws.todos.iter()
+                        .filter(|t| !t.is_archived())
+                        .nth(state.selected_todo_idx)
+                        .map(|t| (t.id, t.description.clone(), t.is_pending(), t.is_queued()))
+                });
+
+            let (todo_id, description, is_pending, is_queued) = match selected_todo {
+                Some(data) => data,
+                None => return Ok(()),
+            };
+
+            // Check if dispatchable
+            if !is_pending && !is_queued {
+                return Ok(());
+            }
+
+            // Check if there's already an in-progress todo in this workspace
+            let has_in_progress = state.workspaces.get(state.selected_workspace_idx)
+                .map(|ws| ws.has_in_progress_todo())
+                .unwrap_or(false);
+
+            // Count filtered todos for navigation
+            let todo_count = state.selected_workspace()
+                .map(|ws| ws.todos.iter().filter(|t| !t.is_archived()).count())
+                .unwrap_or(0);
+
+            // In autorun mode with an in-progress todo, queue this one instead
+            if state.todo_pane_mode == TodoPaneMode::Autorun && has_in_progress {
+                if let Some(ws) = state.workspaces.get_mut(state.selected_workspace_idx) {
+                    if let Some(todo) = ws.get_todo_mut(todo_id) {
+                        if todo.is_pending() {
+                            todo.mark_queued();
+                            let _ = persistence::save(&state.workspaces, &state.sessions);
+                        }
+                    }
+                }
+                // Move to next todo
+                if state.selected_todo_idx + 1 < todo_count {
+                    state.selected_todo_idx += 1;
+                }
+                return Ok(());
+            }
+
+            // Find an idle session to dispatch to
+            let current_workspace_id = state.workspaces.get(state.selected_workspace_idx)
+                .map(|ws| ws.id);
+
+            let target_session_id = state.active_session_id
+                .filter(|id| state.idle_queue.contains(id))
+                .or_else(|| {
+                    current_workspace_id.and_then(|ws_id| {
+                        state.sessions.get(&ws_id)
+                            .and_then(|sessions| {
+                                sessions.iter()
+                                    .find(|s| {
+                                        s.agent_type.is_agent() &&
+                                        s.status == SessionStatus::Running &&
+                                        state.idle_queue.contains(&s.id)
+                                    })
+                                    .map(|s| s.id)
+                            })
+                    })
+                });
+
+            if let Some(session_id) = target_session_id {
+                // Mark as in-progress and assign to session
+                if let Some(ws) = state.workspaces.get_mut(state.selected_workspace_idx) {
+                    if let Some(todo) = ws.get_todo_mut(todo_id) {
+                        todo.assign_to(session_id);
+                    }
+                }
+                // Remove from idle queue since it's now working
+                state.idle_queue.retain(|&id| id != session_id);
+
+                // Queue the text + Enter as SendInput actions
+                let text_bytes: Vec<u8> = description.bytes().collect();
+                let _ = action_tx.send(Action::SendInput(session_id, text_bytes));
+                let _ = action_tx.send(Action::SendInput(session_id, vec![b'\r']));
+                let _ = persistence::save(&state.workspaces, &state.sessions);
+
+                // Move to next todo if available
+                if state.selected_todo_idx + 1 < todo_count {
+                    state.selected_todo_idx += 1;
+                }
+            } else if state.todo_pane_mode == TodoPaneMode::Autorun {
+                // No idle session available, queue this todo for later
+                if let Some(ws) = state.workspaces.get_mut(state.selected_workspace_idx) {
+                    if let Some(todo) = ws.get_todo_mut(todo_id) {
+                        if todo.is_pending() {
+                            todo.mark_queued();
+                            let _ = persistence::save(&state.workspaces, &state.sessions);
+                        }
+                    }
+                }
+                if state.selected_todo_idx + 1 < todo_count {
+                    state.selected_todo_idx += 1;
+                }
+            }
+        }
+        Action::ToggleTodoPaneMode => {
+            state.todo_pane_mode = state.todo_pane_mode.toggle();
+        }
+        Action::InitiateDeleteTodo(id, desc) => {
+            state.pending_delete = Some(PendingDelete::Todo(id, desc));
+        }
+        Action::ConfirmDeleteTodo => {
+            if let Some(PendingDelete::Todo(id, _)) = state.pending_delete.take() {
+                if let Some(ws) = state.workspaces.get_mut(state.selected_workspace_idx) {
+                    ws.remove_todo(id);
+                    // Adjust selection based on filtered list count
+                    let filtered_count = ws.todos.iter().filter(|t| {
+                        match state.selected_todos_tab {
+                            TodosTab::Active => !t.is_archived(),
+                            TodosTab::Archived => t.is_archived(),
+                        }
+                    }).count();
+                    if filtered_count > 0 && state.selected_todo_idx >= filtered_count {
+                        state.selected_todo_idx = filtered_count - 1;
+                    } else if filtered_count == 0 {
+                        state.selected_todo_idx = 0;
+                    }
+                    let _ = persistence::save(&state.workspaces, &state.sessions);
+                }
+            }
+        }
+
+        // Auto-dispatch todo to an idle agent
+        Action::DispatchTodoToSession(session_id, todo_id, description) => {
+            // Find the workspace containing this session
+            if let Some(workspace_id) = state.workspace_id_for_session(session_id) {
+                // Mark the todo as in-progress
+                if let Some(ws) = state.get_workspace_mut(workspace_id) {
+                    if let Some(todo) = ws.get_todo_mut(todo_id) {
+                        todo.assign_to(session_id);
+                    }
+                }
+
+                // Remove from idle queue since it's now working
+                state.idle_queue.retain(|&id| id != session_id);
+
+                // Queue the text + Enter as SendInput actions (same path as manual typing)
+                let text_bytes: Vec<u8> = description.bytes().collect();
+                let _ = action_tx.send(Action::SendInput(session_id, text_bytes));
+                let _ = action_tx.send(Action::SendInput(session_id, vec![b'\r']));
+
+                // Save state
+                let _ = persistence::save(&state.workspaces, &state.sessions);
+            }
+        }
+
+        // Mark todo as ready for review (agent went idle after dispatch)
+        Action::MarkTodoReadyForReview(todo_id) => {
+            // Find the workspace containing this todo
+            for ws in state.workspaces.iter_mut() {
+                if let Some(todo) = ws.get_todo_mut(todo_id) {
+                    todo.mark_ready_for_review();
+                    let _ = persistence::save(&state.workspaces, &state.sessions);
+                    break;
+                }
+            }
+        }
+
+        // Todo suggestion actions
+        Action::TriggerTodoSuggestion => {
+            // Handled in utilities.rs via load_utility_content for SuggestTodos
+            // This action is sent when SuggestTodos utility is activated
+        }
+        Action::AddSuggestedTodo(description) => {
+            if let Some(ws) = state.workspaces.get_mut(state.selected_workspace_idx) {
+                ws.add_suggested_todo(description);
+                let _ = persistence::save(&state.workspaces, &state.sessions);
+            }
+        }
+        Action::ApproveSuggestedTodo(todo_id) => {
+            if let Some(ws) = state.workspaces.get_mut(state.selected_workspace_idx) {
+                if let Some(todo) = ws.get_todo_mut(todo_id) {
+                    todo.approve();
+                    let _ = persistence::save(&state.workspaces, &state.sessions);
+                }
+            }
+        }
+        Action::ApproveAllSuggestedTodos => {
+            if let Some(ws) = state.workspaces.get_mut(state.selected_workspace_idx) {
+                for todo in ws.todos.iter_mut() {
+                    if todo.is_suggested() {
+                        todo.approve();
+                    }
+                }
+                let _ = persistence::save(&state.workspaces, &state.sessions);
+            }
+        }
+        Action::ArchiveTodo(todo_id) => {
+            if let Some(ws) = state.workspaces.get_mut(state.selected_workspace_idx) {
+                if let Some(todo) = ws.get_todo_mut(todo_id) {
+                    todo.archive();
+                    let _ = persistence::save(&state.workspaces, &state.sessions);
+                }
+            }
+        }
+
+        Action::ToggleTodosTab => {
+            state.selected_todos_tab = state.selected_todos_tab.toggle();
+            state.selected_todo_idx = 0; // Reset selection when switching tabs
         }
     }
 

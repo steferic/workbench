@@ -4,6 +4,7 @@ use crate::models::Workspace;
 use crate::persistence;
 use crate::pty::PtyManager;
 use crate::tui;
+use crate::tui::effects::EffectsManager;
 use crate::tui::event::EventHandler;
 use anyhow::Result;
 use std::path::PathBuf;
@@ -24,6 +25,7 @@ pub async fn run_tui(initial_workspace: Option<PathBuf>) -> Result<()> {
         Ok(persisted) => {
             state.workspaces = persisted.workspaces;
             state.sessions = persisted.sessions;
+            state.notepad_content = persisted.notepad_content;
         }
         Err(e) => {
             eprintln!("Warning: Could not load saved state: {}", e);
@@ -34,6 +36,12 @@ pub async fn run_tui(initial_workspace: Option<PathBuf>) -> Result<()> {
     match persistence::load_config() {
         Ok(config) => {
             state.banner_visible = config.banner_visible;
+            // Apply persisted pane ratios
+            state.left_panel_ratio = config.left_panel_ratio;
+            state.workspace_ratio = config.workspace_ratio;
+            state.sessions_ratio = config.sessions_ratio;
+            state.todos_ratio = config.todos_ratio;
+            state.output_split_ratio = config.output_split_ratio;
         }
         Err(e) => {
             eprintln!("Warning: Could not load config: {}", e);
@@ -71,8 +79,26 @@ pub async fn run_tui(initial_workspace: Option<PathBuf>) -> Result<()> {
     // Auto-start all sessions in "Working" workspaces
     start_all_working_sessions(&mut state, &pty_manager, &action_tx);
 
+    // Auto-activate first agent session in currently selected workspace (if it's Working)
+    if let Some(ws) = state.selected_workspace() {
+        if ws.status == crate::models::WorkspaceStatus::Working {
+            let workspace_id = ws.id;
+            // Find first agent session (not terminal) in this workspace
+            if let Some(sessions) = state.sessions.get(&workspace_id) {
+                if let Some(first_agent) = sessions.iter()
+                    .find(|s| !s.agent_type.is_terminal())
+                {
+                    state.active_session_id = Some(first_agent.id);
+                }
+            }
+        }
+    }
+
+    // Create effects manager for animations
+    let mut effects = EffectsManager::new();
+
     // Main loop
-    let result = run_main_loop(&mut terminal, &mut state, &mut events, &pty_manager, action_tx).await;
+    let result = run_main_loop(&mut terminal, &mut state, &mut events, &pty_manager, action_tx, &mut effects).await;
 
     // Restore terminal
     tui::restore()?;
@@ -86,14 +112,15 @@ async fn run_main_loop(
     events: &mut EventHandler,
     pty_manager: &PtyManager,
     action_tx: mpsc::UnboundedSender<Action>,
+    effects: &mut EffectsManager,
 ) -> Result<()> {
     // Audio player for brown noise (created lazily)
     let mut audio_player: Option<AudioPlayer> = None;
     let mut audio_was_playing = false;
 
     loop {
-        // Draw UI
-        terminal.draw(|frame| tui::ui::draw(frame, state))?;
+        // Draw UI with effects
+        terminal.draw(|frame| tui::ui::draw(frame, state, effects))?;
 
         // Handle events
         let action = events.next(state).await?;

@@ -40,12 +40,19 @@ pub enum Action {
     SessionExited(Uuid, i32),
 
     // UI modes
-    EnterCreateWorkspaceMode,
+    EnterWorkspaceActionMode,    // Opens the Create/Open workspace selector
+    EnterCreateWorkspaceMode,    // File browser for opening existing workspace
+    EnterWorkspaceNameMode,      // Text input for naming new workspace
     EnterCreateSessionMode,
-    EnterCreateTerminalMode,
     EnterSetStartCommandMode,
     EnterHelpMode,
     ExitMode,
+
+    // Workspace action selection
+    SelectNextWorkspaceAction,
+    SelectPrevWorkspaceAction,
+    ConfirmWorkspaceAction,      // Confirm selected action (Create New or Open Existing)
+    CreateNewWorkspace(String),  // Create new workspace with given name in current dir
 
     // Start command
     SetStartCommand(Uuid, String),
@@ -66,7 +73,7 @@ pub enum Action {
     PrevPinnedPane,           // Move focus to previous pinned pane
 
     // Terminal creation
-    CreateTerminal(String), // Terminal with name
+    CreateTerminal, // Auto-named terminal
 
     // Input handling
     InputChar(char),
@@ -87,6 +94,46 @@ pub enum Action {
     ToggleUtilitySection, // Switch between Utilities and GlobalConfig sections
     ToggleConfigItem,   // Toggle the selected config item (e.g., banner visibility)
     ToggleBrownNoise,   // Toggle brown noise player on/off
+
+    // Notepad operations
+    NotepadChar(char),      // Insert character at cursor
+    NotepadBackspace,       // Delete character before cursor
+    NotepadDelete,          // Delete character at cursor
+    NotepadNewline,         // Insert newline
+    NotepadCursorLeft,      // Move cursor left
+    NotepadCursorRight,     // Move cursor right
+    NotepadCursorHome,      // Move cursor to start of line
+    NotepadCursorEnd,       // Move cursor to end of line
+    NotepadPaste,           // Paste from clipboard
+    NotepadDeleteWord,      // Delete word before cursor (Option+Backspace)
+    NotepadDeleteLine,      // Delete to start of line (Cmd+Backspace)
+    NotepadDeleteWordForward, // Delete word after cursor (Option+Delete)
+    NotepadDeleteToEnd,     // Delete to end of line (Cmd+Delete / Ctrl+K)
+    NotepadWordLeft,        // Move cursor to previous word (Option+Left)
+    NotepadWordRight,       // Move cursor to next word (Option+Right)
+
+    // Todo operations
+    SelectNextTodo,
+    SelectPrevTodo,
+    EnterCreateTodoMode,       // Enter mode to type a new todo
+    CreateTodo(String),        // Create a new todo with description
+    MarkTodoDone,              // Mark selected todo as done
+    RunSelectedTodo,           // Dispatch selected todo to active session
+    ToggleTodoPaneMode,        // Toggle between Write and Autorun modes
+    InitiateDeleteTodo(Uuid, String),  // First 'd' press on todo
+    ConfirmDeleteTodo,                  // Second 'd' press
+
+    // Auto-dispatch todos
+    DispatchTodoToSession(Uuid, Uuid, String),  // (session_id, todo_id, description)
+    MarkTodoReadyForReview(Uuid),               // (todo_id) - agent went idle after dispatch
+
+    // Todo suggestion
+    TriggerTodoSuggestion,                      // Spawn analyzer to suggest todos
+    AddSuggestedTodo(String),                   // Add a suggested todo (from analyzer)
+    ApproveSuggestedTodo(Uuid),                 // Approve suggested todo -> becomes Pending
+    ApproveAllSuggestedTodos,                   // Approve all suggested todos at once
+    ArchiveTodo(Uuid),                          // Archive a todo (hide from main list)
+    ToggleTodosTab,                             // Switch between Active and Archived tabs
 
     // Mouse
     MouseClick(u16, u16), // (x, y) coordinates

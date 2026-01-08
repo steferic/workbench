@@ -1,3 +1,4 @@
+use super::todo::Todo;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use uuid::Uuid;
@@ -28,6 +29,9 @@ pub struct Workspace {
     /// Last time this workspace had activity (session created, input sent, etc.)
     #[serde(default)]
     pub last_active_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Todo items for this workspace
+    #[serde(default)]
+    pub todos: Vec<Todo>,
 }
 
 impl Workspace {
@@ -41,6 +45,7 @@ impl Workspace {
             pinned_terminal_ids: Vec::new(),
             status: WorkspaceStatus::default(),
             last_active_at: Some(now),
+            todos: Vec::new(),
         }
     }
 
@@ -136,5 +141,89 @@ impl Workspace {
                 s.to_string()
             })
             .unwrap_or_else(|| self.path.display().to_string())
+    }
+
+    // ============ Todo Management ============
+
+    /// Add a new todo item
+    pub fn add_todo(&mut self, description: impl Into<String>) -> Uuid {
+        let todo = Todo::new(description);
+        let id = todo.id;
+        self.todos.push(todo);
+        id
+    }
+
+    /// Add a suggested todo item (from analyzer)
+    pub fn add_suggested_todo(&mut self, description: impl Into<String>) -> Uuid {
+        let todo = Todo::suggested(description);
+        let id = todo.id;
+        self.todos.push(todo);
+        id
+    }
+
+    /// Remove a todo by ID
+    pub fn remove_todo(&mut self, todo_id: Uuid) -> bool {
+        let len_before = self.todos.len();
+        self.todos.retain(|t| t.id != todo_id);
+        self.todos.len() < len_before
+    }
+
+    /// Get a todo by ID
+    pub fn get_todo(&self, todo_id: Uuid) -> Option<&Todo> {
+        self.todos.iter().find(|t| t.id == todo_id)
+    }
+
+    /// Get a mutable todo by ID
+    pub fn get_todo_mut(&mut self, todo_id: Uuid) -> Option<&mut Todo> {
+        self.todos.iter_mut().find(|t| t.id == todo_id)
+    }
+
+    /// Get the next dispatchable todo (Queued first, then Pending)
+    pub fn next_pending_todo(&self) -> Option<&Todo> {
+        // Queued todos take priority
+        self.todos.iter().find(|t| t.is_queued())
+            .or_else(|| self.todos.iter().find(|t| t.is_pending()))
+    }
+
+    /// Get the next dispatchable todo mutably
+    pub fn next_pending_todo_mut(&mut self) -> Option<&mut Todo> {
+        // Check for queued first
+        if self.todos.iter().any(|t| t.is_queued()) {
+            self.todos.iter_mut().find(|t| t.is_queued())
+        } else {
+            self.todos.iter_mut().find(|t| t.is_pending())
+        }
+    }
+
+    /// Check if there's an in-progress todo in this workspace
+    pub fn has_in_progress_todo(&self) -> bool {
+        self.todos.iter().any(|t| t.is_in_progress())
+    }
+
+    /// Count todos by status
+    pub fn pending_todo_count(&self) -> usize {
+        self.todos.iter().filter(|t| t.is_pending()).count()
+    }
+
+    pub fn in_progress_todo_count(&self) -> usize {
+        self.todos.iter().filter(|t| t.is_in_progress()).count()
+    }
+
+    pub fn review_todo_count(&self) -> usize {
+        self.todos.iter().filter(|t| t.is_ready_for_review()).count()
+    }
+
+    /// Get the IN-PROGRESS todo for a session (not ReadyForReview or Done)
+    pub fn todo_for_session(&self, session_id: Uuid) -> Option<&Todo> {
+        self.todos.iter().find(|t| {
+            t.is_in_progress() && t.assigned_session_id() == Some(session_id)
+        })
+    }
+
+    /// Get mutable IN-PROGRESS todo for a session
+    pub fn todo_for_session_mut(&mut self, session_id: Uuid) -> Option<&mut Todo> {
+        self.todos.iter_mut().find(|t| {
+            t.is_in_progress() && t.assigned_session_id() == Some(session_id)
+        })
     }
 }

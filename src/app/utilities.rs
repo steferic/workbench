@@ -7,11 +7,15 @@ pub fn load_utility_content(state: &mut AppState) {
         Some(ws) => ws.path.clone(),
         None => {
             state.utility_content = vec!["No workspace selected".to_string()];
+            state.pie_chart_data.clear();
             return;
         }
     };
 
     state.utility_scroll_offset = 0;
+    // Clear special view flags (only specific utilities set these)
+    state.pie_chart_data.clear();
+    state.show_calendar = false;
 
     match state.selected_utility {
         UtilityItem::BrownNoise => {
@@ -37,11 +41,45 @@ pub fn load_utility_content(state: &mut AppState) {
         UtilityItem::FileTree => {
             load_file_tree(&workspace_path, state);
         }
+        UtilityItem::SuggestTodos => {
+            load_suggest_todos_info(state);
+        }
     }
 }
 
-/// Load calendar showing when workspace was worked on
+/// Show info about the Suggest Todos utility
+fn load_suggest_todos_info(state: &mut AppState) {
+    let content = vec![
+        "".to_string(),
+        "  Suggest Todos".to_string(),
+        "  ==============".to_string(),
+        "".to_string(),
+        "  This utility analyzes your codebase and suggests".to_string(),
+        "  potential features, improvements, and refactoring".to_string(),
+        "  opportunities as todo items.".to_string(),
+        "".to_string(),
+        "  Suggested todos appear with a (?) icon and can be:".to_string(),
+        "  - Approved with 'y' to become pending todos".to_string(),
+        "  - Deleted with 'd' if not relevant".to_string(),
+        "".to_string(),
+        "  Press Enter to analyze the codebase...".to_string(),
+        "".to_string(),
+        if state.analyzer_session_id.is_some() {
+            "  Status: Analysis in progress...".to_string()
+        } else {
+            "  Status: Ready".to_string()
+        },
+    ];
+    state.utility_content = content;
+}
+
+/// Load calendar with work history
 fn load_calendar_content(state: &mut AppState) {
+    // Set flag to show calendar widget
+    state.show_calendar = true;
+
+    // The calendar widget will be rendered in output_pane
+    // We just need some minimal content for the legend/info section
     let mut content = vec![
         "".to_string(),
         "  Work History".to_string(),
@@ -52,8 +90,8 @@ fn load_calendar_content(state: &mut AppState) {
     // Show last active for each workspace
     for ws in &state.workspaces {
         let status_icon = match ws.status {
-            crate::models::WorkspaceStatus::Working => "[W]",
-            crate::models::WorkspaceStatus::Paused => "[P]",
+            crate::models::WorkspaceStatus::Working => "●",
+            crate::models::WorkspaceStatus::Paused => "○",
         };
         let last_active = ws.last_active_display();
         content.push(format!("  {} {} - {}", status_icon, ws.name, last_active));
@@ -64,7 +102,8 @@ fn load_calendar_content(state: &mut AppState) {
     }
 
     content.push("".to_string());
-    content.push("  [W] = Working, [P] = Paused".to_string());
+    content.push("  ● = Working, ○ = Paused".to_string());
+    content.push("  Today is highlighted in blue".to_string());
 
     state.utility_content = content;
 }
@@ -212,15 +251,19 @@ fn load_file_tree(workspace_path: &PathBuf, state: &mut AppState) {
     state.utility_content = content;
 }
 
-/// Load top 20 files by lines of code
+/// Load top 20 files by lines of code with pie chart visualization
 fn load_top_files(workspace_path: &PathBuf, state: &mut AppState) {
+    use ratatui::style::Color;
     use std::fs::File;
     use std::io::{BufRead, BufReader};
 
+    // Clear previous pie chart data
+    state.pie_chart_data.clear();
+
     let mut content = vec![
         "".to_string(),
-        "  Top 20 Files by Lines of Code".to_string(),
-        "  ==============================".to_string(),
+        "  Top Files by Lines of Code".to_string(),
+        "  ==========================".to_string(),
         "".to_string(),
     ];
 
@@ -265,8 +308,8 @@ fn load_top_files(workspace_path: &PathBuf, state: &mut AppState) {
     // Sort by line count descending
     file_lines.sort_by(|a, b| b.1.cmp(&a.1));
 
-    // Take top 20
-    let top_files: Vec<_> = file_lines.into_iter().take(20).collect();
+    // Take top 10 for pie chart
+    let top_files: Vec<_> = file_lines.iter().take(10).cloned().collect();
 
     if top_files.is_empty() {
         content.push("  (no files found)".to_string());
@@ -274,33 +317,96 @@ fn load_top_files(workspace_path: &PathBuf, state: &mut AppState) {
         return;
     }
 
+    // Colors for the pie chart slices
+    let colors = [
+        Color::Cyan,
+        Color::Green,
+        Color::Yellow,
+        Color::Blue,
+        Color::Magenta,
+        Color::Red,
+        Color::LightCyan,
+        Color::LightGreen,
+        Color::LightYellow,
+        Color::LightBlue,
+    ];
+
+    // Calculate total for top files and "other"
+    let top_total: usize = top_files.iter().map(|(_, c)| c).sum();
+    let all_total: usize = file_lines.iter().map(|(_, c)| c).sum();
+    let other_total = all_total.saturating_sub(top_total);
+
+    // Populate pie chart data
+    for (i, (path, lines)) in top_files.iter().enumerate() {
+        // Get file name only for label
+        let label = path
+            .split('/')
+            .last()
+            .unwrap_or(path)
+            .to_string();
+        state.pie_chart_data.push((
+            label,
+            *lines as f64,
+            colors[i % colors.len()],
+        ));
+    }
+
+    // Add "Other" slice if there are more files
+    if other_total > 0 {
+        state.pie_chart_data.push((
+            "Other".to_string(),
+            other_total as f64,
+            Color::DarkGray,
+        ));
+    }
+
+    // Text summary below the chart
+    content.push("  Legend:".to_string());
+    content.push("".to_string());
+
     // Find max line count for padding
     let max_lines = top_files.first().map(|(_, c)| *c).unwrap_or(0);
     let line_width = max_lines.to_string().len();
 
-    // Render the list
+    // Render the list with color indicators
     for (i, (path, lines)) in top_files.iter().enumerate() {
-        let rank = i + 1;
+        let color_char = match colors[i % colors.len()] {
+            Color::Cyan => "●",
+            Color::Green => "●",
+            Color::Yellow => "●",
+            Color::Blue => "●",
+            Color::Magenta => "●",
+            Color::Red => "●",
+            Color::LightCyan => "○",
+            Color::LightGreen => "○",
+            Color::LightYellow => "○",
+            Color::LightBlue => "○",
+            _ => "●",
+        };
+        let pct = (*lines as f64 / all_total as f64 * 100.0) as usize;
         content.push(format!(
-            "  {:>2}. {:>width$} lines  {}",
-            rank,
+            "  {} {:>width$} ({:>2}%)  {}",
+            color_char,
             lines,
+            pct,
             path,
             width = line_width
         ));
     }
 
-    // Total lines
-    let total_lines: usize = files.iter()
-        .filter_map(|f| {
-            let full_path = workspace_path.join(f);
-            File::open(&full_path).ok()
-                .map(|file| BufReader::new(file).lines().count())
-        })
-        .sum();
+    if other_total > 0 {
+        let pct = (other_total as f64 / all_total as f64 * 100.0) as usize;
+        content.push(format!(
+            "  ● {:>width$} ({:>2}%)  Other ({} files)",
+            other_total,
+            pct,
+            file_lines.len().saturating_sub(10),
+            width = line_width
+        ));
+    }
 
     content.push("".to_string());
-    content.push(format!("  Total: {} lines across {} files", total_lines, files.len()));
+    content.push(format!("  Total: {} lines across {} files", all_total, files.len()));
 
     state.utility_content = content;
 }

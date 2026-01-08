@@ -1,4 +1,4 @@
-use crate::app::{Action, AppState, FocusPanel, InputMode, PendingDelete};
+use crate::app::{Action, AppState, FocusPanel, InputMode, PendingDelete, TodosTab};
 use crate::models::AgentType;
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventKind};
@@ -107,6 +107,31 @@ impl EventHandler {
                     _ => Action::Tick,
                 };
             }
+            InputMode::SelectWorkspaceAction => {
+                return match key.code {
+                    KeyCode::Esc => Action::ExitMode,
+                    KeyCode::Char('j') | KeyCode::Down => Action::SelectNextWorkspaceAction,
+                    KeyCode::Char('k') | KeyCode::Up => Action::SelectPrevWorkspaceAction,
+                    KeyCode::Enter => Action::ConfirmWorkspaceAction,
+                    _ => Action::Tick,
+                };
+            }
+            InputMode::EnterWorkspaceName => {
+                return match key.code {
+                    KeyCode::Esc => Action::ExitMode,
+                    KeyCode::Enter => {
+                        let name = state.input_buffer.clone();
+                        if name.is_empty() {
+                            Action::Tick // Don't allow empty names
+                        } else {
+                            Action::CreateNewWorkspace(name)
+                        }
+                    }
+                    KeyCode::Backspace => Action::InputBackspace,
+                    KeyCode::Char(c) => Action::InputChar(c),
+                    _ => Action::Tick,
+                };
+            }
             InputMode::CreateWorkspace => {
                 return match key.code {
                     KeyCode::Esc => Action::ExitMode,
@@ -114,7 +139,15 @@ impl EventHandler {
                     KeyCode::Char('k') | KeyCode::Up => Action::FileBrowserUp,
                     KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter => Action::FileBrowserEnter,
                     KeyCode::Char('h') | KeyCode::Left | KeyCode::Backspace => Action::FileBrowserBack,
-                    KeyCode::Char(' ') | KeyCode::Tab => Action::FileBrowserSelect,
+                    KeyCode::Char(' ') | KeyCode::Tab => {
+                        if state.workspace_create_mode {
+                            // In "Create New" mode, go to name input
+                            Action::EnterWorkspaceNameMode
+                        } else {
+                            // In "Open Existing" mode, select directory
+                            Action::FileBrowserSelect
+                        }
+                    }
                     _ => Action::Tick,
                 };
             }
@@ -125,23 +158,7 @@ impl EventHandler {
                     KeyCode::Char('2') => Action::CreateSession(AgentType::Gemini),
                     KeyCode::Char('3') => Action::CreateSession(AgentType::Codex),
                     KeyCode::Char('4') => Action::CreateSession(AgentType::Grok),
-                    KeyCode::Char('t') => Action::EnterCreateTerminalMode,
-                    _ => Action::Tick,
-                };
-            }
-            InputMode::CreateTerminal => {
-                return match key.code {
-                    KeyCode::Esc => Action::ExitMode,
-                    KeyCode::Enter => {
-                        let name = state.input_buffer.clone();
-                        if name.is_empty() {
-                            Action::CreateTerminal("terminal".to_string())
-                        } else {
-                            Action::CreateTerminal(name)
-                        }
-                    }
-                    KeyCode::Backspace => Action::InputBackspace,
-                    KeyCode::Char(c) => Action::InputChar(c),
+                    KeyCode::Char('t') => Action::CreateTerminal,
                     _ => Action::Tick,
                 };
             }
@@ -161,6 +178,22 @@ impl EventHandler {
                     _ => Action::Tick,
                 };
             }
+            InputMode::CreateTodo => {
+                return match key.code {
+                    KeyCode::Esc => Action::ExitMode,
+                    KeyCode::Enter => {
+                        let desc = state.input_buffer.clone();
+                        if desc.is_empty() {
+                            Action::ExitMode
+                        } else {
+                            Action::CreateTodo(desc)
+                        }
+                    }
+                    KeyCode::Backspace => Action::InputBackspace,
+                    KeyCode::Char(c) => Action::InputChar(c),
+                    _ => Action::Tick,
+                };
+            }
             InputMode::Normal => {}
         }
 
@@ -172,6 +205,7 @@ impl EventHandler {
                     match &state.pending_delete {
                         Some(PendingDelete::Session(_, _)) => Action::ConfirmDeleteSession,
                         Some(PendingDelete::Workspace(_, _)) => Action::ConfirmDeleteWorkspace,
+                        Some(PendingDelete::Todo(_, _)) => Action::ConfirmDeleteTodo,
                         None => Action::Tick,
                     }
                 }
@@ -196,6 +230,7 @@ impl EventHandler {
         match state.focus {
             FocusPanel::WorkspaceList => self.handle_workspace_list_keys(key, state),
             FocusPanel::SessionList => self.handle_session_list_keys(key, state),
+            FocusPanel::TodosPane => self.handle_todos_pane_keys(key, state),
             FocusPanel::UtilitiesPane => self.handle_utilities_pane_keys(key, state),
             FocusPanel::OutputPane => self.handle_output_pane_keys(key, state),
             FocusPanel::PinnedTerminalPane(idx) => self.handle_pinned_terminal_keys(key, state, idx),
@@ -215,7 +250,7 @@ impl EventHandler {
             KeyCode::Char('l') => Action::FocusRight,
 
             // Actions
-            KeyCode::Char('n') => Action::EnterCreateWorkspaceMode,
+            KeyCode::Char('n') => Action::EnterWorkspaceActionMode,
             KeyCode::Char('w') => Action::ToggleWorkspaceStatus,
             KeyCode::Enter => Action::FocusRight,
 
@@ -302,13 +337,12 @@ impl EventHandler {
             KeyCode::Char('3') => Action::CreateSession(AgentType::Codex),
             KeyCode::Char('4') => Action::CreateSession(AgentType::Grok),
 
-            // Terminal shortcut
-            KeyCode::Char('t') => Action::EnterCreateTerminalMode,
+            // Terminal shortcut (auto-named)
+            KeyCode::Char('t') => Action::CreateTerminal,
 
             // Set start command for terminal sessions
             KeyCode::Char('c') => {
                 if let Some(session) = state.selected_session() {
-                    // Only allow setting command for terminal sessions
                     if session.agent_type.is_terminal() {
                         Action::EnterSetStartCommandMode
                     } else {
@@ -328,7 +362,6 @@ impl EventHandler {
                 }
             }
             KeyCode::Char('u') => {
-                // Unpin the selected terminal if it's pinned
                 if let Some(session) = state.selected_session() {
                     if state.pinned_terminal_ids().contains(&session.id) {
                         Action::UnpinSession(session.id)
@@ -340,11 +373,99 @@ impl EventHandler {
                 }
             }
 
-            // Toggle split view (\ or /)
+            // Toggle split view
             KeyCode::Char('\\') | KeyCode::Char('/') => Action::ToggleSplitView,
 
-            // Tab to switch to utilities pane
-            KeyCode::Tab => Action::FocusUtilitiesPane,
+            // Global
+            KeyCode::Char('?') => Action::EnterHelpMode,
+            KeyCode::Char('q') => Action::Quit,
+
+            _ => Action::Tick,
+        }
+    }
+
+    fn handle_todos_pane_keys(&self, key: KeyEvent, state: &AppState) -> Action {
+        // ` = Jump to next idle session (global shortcut)
+        if key.code == KeyCode::Char('`') {
+            return Action::JumpToNextIdle;
+        }
+
+        // Helper to get the selected todo based on current tab
+        let get_selected_todo = || -> Option<&crate::models::Todo> {
+            state.selected_workspace().and_then(|ws| {
+                ws.todos.iter()
+                    .filter(|t| match state.selected_todos_tab {
+                        TodosTab::Active => !t.is_archived(),
+                        TodosTab::Archived => t.is_archived(),
+                    })
+                    .nth(state.selected_todo_idx)
+            })
+        };
+
+        match key.code {
+            // Navigation
+            KeyCode::Char('j') | KeyCode::Down => Action::SelectNextTodo,
+            KeyCode::Char('k') | KeyCode::Up => Action::SelectPrevTodo,
+            KeyCode::Char('h') => Action::FocusLeft,
+            KeyCode::Char('l') => Action::FocusRight,
+
+            // Tab switching
+            KeyCode::Tab => Action::ToggleTodosTab,
+
+            // Actions (only in Active tab)
+            KeyCode::Char('n') if state.selected_todos_tab == TodosTab::Active => {
+                Action::EnterCreateTodoMode
+            }
+            KeyCode::Enter if state.selected_todos_tab == TodosTab::Active => {
+                Action::RunSelectedTodo
+            }
+            KeyCode::Char('y') if state.selected_todos_tab == TodosTab::Active => {
+                // Approve suggested todo (convert to Pending)
+                if let Some(todo) = get_selected_todo() {
+                    if todo.is_suggested() {
+                        Action::ApproveSuggestedTodo(todo.id)
+                    } else {
+                        Action::Tick
+                    }
+                } else {
+                    Action::Tick
+                }
+            }
+            KeyCode::Char('Y') if state.selected_todos_tab == TodosTab::Active => {
+                Action::ApproveAllSuggestedTodos
+            }
+            KeyCode::Char('x') if state.selected_todos_tab == TodosTab::Active => {
+                Action::MarkTodoDone
+            }
+            KeyCode::Char('X') if state.selected_todos_tab == TodosTab::Active => {
+                // Archive todo (for review/done items)
+                if let Some(todo) = get_selected_todo() {
+                    if todo.is_ready_for_review() || todo.is_done() {
+                        Action::ArchiveTodo(todo.id)
+                    } else {
+                        Action::Tick
+                    }
+                } else {
+                    Action::Tick
+                }
+            }
+            KeyCode::Char('a') if state.selected_todos_tab == TodosTab::Active => {
+                Action::ToggleTodoPaneMode
+            }
+
+            // Delete works in both tabs
+            KeyCode::Char('d') => {
+                if let Some(todo) = get_selected_todo() {
+                    let desc = if todo.description.len() > 30 {
+                        format!("{}...", &todo.description[..30])
+                    } else {
+                        todo.description.clone()
+                    };
+                    Action::InitiateDeleteTodo(todo.id, desc)
+                } else {
+                    Action::Tick
+                }
+            }
 
             // Global
             KeyCode::Char('?') => Action::EnterHelpMode,
@@ -360,6 +481,82 @@ impl EventHandler {
         // ` = Jump to next idle session (global shortcut)
         if key.code == KeyCode::Char('`') {
             return Action::JumpToNextIdle;
+        }
+
+        // Special handling for Notepad section - capture all input
+        if state.utility_section == UtilitySection::Notepad {
+            // Tab still switches sections
+            if key.code == KeyCode::Tab {
+                return Action::ToggleUtilitySection;
+            }
+            // Escape exits notepad focus
+            if key.code == KeyCode::Esc {
+                return Action::ToggleUtilitySection;
+            }
+
+            // Handle modifier key combinations first
+            let has_alt = key.modifiers.contains(KeyModifiers::ALT);
+            let has_super = key.modifiers.contains(KeyModifiers::SUPER);
+            let has_ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+
+            // Word/line deletion shortcuts
+            if key.code == KeyCode::Backspace {
+                if has_super {
+                    return Action::NotepadDeleteLine; // Cmd+Backspace: delete to start of line
+                } else if has_alt {
+                    return Action::NotepadDeleteWord; // Option+Backspace: delete word before cursor
+                }
+                return Action::NotepadBackspace;
+            }
+
+            if key.code == KeyCode::Delete {
+                if has_super {
+                    return Action::NotepadDeleteToEnd; // Cmd+Delete: delete to end of line
+                } else if has_alt {
+                    return Action::NotepadDeleteWordForward; // Option+Delete: delete word after cursor
+                }
+                return Action::NotepadDelete;
+            }
+
+            // Word navigation shortcuts
+            if key.code == KeyCode::Left {
+                if has_alt {
+                    return Action::NotepadWordLeft; // Option+Left: move to previous word
+                }
+                return Action::NotepadCursorLeft;
+            }
+
+            if key.code == KeyCode::Right {
+                if has_alt {
+                    return Action::NotepadWordRight; // Option+Right: move to next word
+                }
+                return Action::NotepadCursorRight;
+            }
+
+            // Ctrl+K for delete to end of line (emacs style)
+            if has_ctrl {
+                if let KeyCode::Char('k') = key.code {
+                    return Action::NotepadDeleteToEnd;
+                }
+            }
+
+            // Handle notepad input
+            return match key.code {
+                KeyCode::Char(c) => {
+                    // Ctrl+V for paste
+                    if has_ctrl && c == 'v' {
+                        Action::NotepadPaste
+                    } else if has_ctrl && c == 'q' {
+                        Action::Quit
+                    } else {
+                        Action::NotepadChar(c)
+                    }
+                }
+                KeyCode::Enter => Action::NotepadNewline,
+                KeyCode::Home => Action::NotepadCursorHome,
+                KeyCode::End => Action::NotepadCursorEnd,
+                _ => Action::Tick,
+            };
         }
 
         match key.code {
@@ -380,6 +577,7 @@ impl EventHandler {
                         }
                     }
                     UtilitySection::GlobalConfig => Action::ToggleConfigItem,
+                    UtilitySection::Notepad => Action::Tick, // Handled above
                 }
             }
 
