@@ -34,7 +34,8 @@ pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index
     // Convert vt100 parser output to ratatui Lines
     let lines: Vec<Line> = if let Some(parser) = state.pinned_terminal_output_at(pane_index) {
         let screen = parser.screen();
-        cursor_state = Some(get_cursor_info(screen));
+        let info = get_cursor_info(screen);
+        cursor_state = Some(info);
         let default_selection = TextSelection::default();
         let selection = get_selection_bounds(
             state
@@ -43,7 +44,18 @@ pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index
                 .unwrap_or(&default_selection),
             screen.size(),
         );
-        convert_vt100_to_lines(screen, selection)
+        let mut lines = convert_vt100_to_lines(screen, selection, info.row);
+        
+        // Anti-jitter: ensure content length doesn't shrink by small amounts
+        let current_len = lines.len();
+        let prev_len = state.ui.pinned_content_lengths[pane_index];
+        if current_len < prev_len && prev_len - current_len < 5 {
+            let needed = prev_len - current_len;
+            for _ in 0..needed {
+                lines.push(Line::raw(""));
+            }
+        }
+        lines
     } else {
         state.ui.pinned_content_lengths[pane_index] = 0;
         vec![
