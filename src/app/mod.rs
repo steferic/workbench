@@ -1,5 +1,6 @@
 mod action;
 mod handler;
+pub mod handlers;
 mod pty_ops;
 mod runtime;
 mod selection;

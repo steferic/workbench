@@ -8,7 +8,7 @@ use ratatui::{
 };
 
 pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
-    let is_focused = state.focus == FocusPanel::UtilitiesPane;
+    let is_focused = state.ui.focus == FocusPanel::UtilitiesPane;
     let border_style = if is_focused {
         Style::default().fg(Color::Cyan)
     } else {
@@ -34,9 +34,9 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
     let action_area = chunks[2];
 
     // Render horizontal tabs
-    let utils_active = state.utility_section == UtilitySection::Utilities;
-    let config_active = state.utility_section == UtilitySection::GlobalConfig;
-    let notepad_active = state.utility_section == UtilitySection::Notepad;
+    let utils_active = state.ui.utility_section == UtilitySection::Utilities;
+    let config_active = state.ui.utility_section == UtilitySection::GlobalConfig;
+    let notepad_active = state.ui.utility_section == UtilitySection::Notepad;
 
     let tab_style = |active: bool| {
         if active && is_focused {
@@ -63,7 +63,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
     frame.render_widget(tabs, tabs_area);
 
     // Render content based on active section
-    match state.utility_section {
+    match state.ui.utility_section {
         UtilitySection::Utilities => {
             render_utilities_list(frame, content_area, state, is_focused);
         }
@@ -87,7 +87,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
         Style::default().fg(Color::DarkGray)
     };
 
-    let action_bar = match state.utility_section {
+    let action_bar = match state.ui.utility_section {
         UtilitySection::Notepad => {
             Paragraph::new(Line::from(vec![
                 Span::styled("tab", key_style),
@@ -113,7 +113,7 @@ fn render_utilities_list(frame: &mut Frame, area: Rect, state: &AppState, is_foc
     let items: Vec<ListItem> = UtilityItem::all()
         .iter()
         .map(|item| {
-            let is_selected = *item == state.selected_utility;
+            let is_selected = *item == state.ui.selected_utility;
 
             let style = if is_selected && is_focused {
                 Style::default()
@@ -130,7 +130,7 @@ fn render_utilities_list(frame: &mut Frame, area: Rect, state: &AppState, is_foc
             // Show toggle indicator for toggle-able utilities
             let toggle_indicator = match item {
                 UtilityItem::BrownNoise => {
-                    if state.brown_noise_playing {
+                    if state.system.brown_noise_playing {
                         Span::styled(" [ON]", Style::default().fg(Color::Green))
                     } else {
                         Span::styled(" [OFF]", Style::default().fg(Color::Red))
@@ -154,7 +154,7 @@ fn render_utilities_list(frame: &mut Frame, area: Rect, state: &AppState, is_foc
     let mut list_state = ListState::default();
     let selected_idx = UtilityItem::all()
         .iter()
-        .position(|i| *i == state.selected_utility);
+        .position(|i| *i == state.ui.selected_utility);
     list_state.select(selected_idx);
 
     frame.render_stateful_widget(list, area, &mut list_state);
@@ -164,7 +164,7 @@ fn render_config_list(frame: &mut Frame, area: Rect, state: &AppState, is_focuse
     let items: Vec<ListItem> = ConfigItem::all()
         .iter()
         .map(|item| {
-            let is_selected = *item == state.selected_config;
+            let is_selected = *item == state.ui.selected_config;
 
             let style = if is_selected && is_focused {
                 Style::default()
@@ -181,7 +181,7 @@ fn render_config_list(frame: &mut Frame, area: Rect, state: &AppState, is_focuse
             // Show toggle state
             let toggle_indicator = match item {
                 ConfigItem::ToggleBanner => {
-                    if state.banner_visible {
+                    if state.ui.banner_visible {
                         Span::styled(" [ON]", Style::default().fg(Color::Green))
                     } else {
                         Span::styled(" [OFF]", Style::default().fg(Color::Red))
@@ -204,7 +204,7 @@ fn render_config_list(frame: &mut Frame, area: Rect, state: &AppState, is_focuse
     let mut list_state = ListState::default();
     let selected_idx = ConfigItem::all()
         .iter()
-        .position(|i| *i == state.selected_config);
+        .position(|i| *i == state.ui.selected_config);
     list_state.select(selected_idx);
 
     frame.render_stateful_widget(list, area, &mut list_state);

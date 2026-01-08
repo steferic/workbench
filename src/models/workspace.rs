@@ -113,11 +113,6 @@ impl Workspace {
         self.pinned_terminal_ids.retain(|id| *id != session_id);
     }
 
-    /// Check if a terminal is pinned
-    pub fn is_pinned(&self, session_id: Uuid) -> bool {
-        self.pinned_terminal_ids.contains(&session_id)
-    }
-
     pub fn from_path(path: PathBuf) -> Self {
         let name = path
             .file_name()
@@ -125,22 +120,6 @@ impl Workspace {
             .unwrap_or("unknown")
             .to_string();
         Self::new(name, path)
-    }
-
-    pub fn display_path(&self) -> String {
-        self.path
-            .to_str()
-            .map(|s| {
-                if let Some(home) = dirs::home_dir() {
-                    if let Some(home_str) = home.to_str() {
-                        if s.starts_with(home_str) {
-                            return format!("~{}", &s[home_str.len()..]);
-                        }
-                    }
-                }
-                s.to_string()
-            })
-            .unwrap_or_else(|| self.path.display().to_string())
     }
 
     // ============ Todo Management ============
@@ -168,11 +147,6 @@ impl Workspace {
         self.todos.len() < len_before
     }
 
-    /// Get a todo by ID
-    pub fn get_todo(&self, todo_id: Uuid) -> Option<&Todo> {
-        self.todos.iter().find(|t| t.id == todo_id)
-    }
-
     /// Get a mutable todo by ID
     pub fn get_todo_mut(&mut self, todo_id: Uuid) -> Option<&mut Todo> {
         self.todos.iter_mut().find(|t| t.id == todo_id)
@@ -185,32 +159,9 @@ impl Workspace {
             .or_else(|| self.todos.iter().find(|t| t.is_pending()))
     }
 
-    /// Get the next dispatchable todo mutably
-    pub fn next_pending_todo_mut(&mut self) -> Option<&mut Todo> {
-        // Check for queued first
-        if self.todos.iter().any(|t| t.is_queued()) {
-            self.todos.iter_mut().find(|t| t.is_queued())
-        } else {
-            self.todos.iter_mut().find(|t| t.is_pending())
-        }
-    }
-
     /// Check if there's an in-progress todo in this workspace
     pub fn has_in_progress_todo(&self) -> bool {
         self.todos.iter().any(|t| t.is_in_progress())
-    }
-
-    /// Count todos by status
-    pub fn pending_todo_count(&self) -> usize {
-        self.todos.iter().filter(|t| t.is_pending()).count()
-    }
-
-    pub fn in_progress_todo_count(&self) -> usize {
-        self.todos.iter().filter(|t| t.is_in_progress()).count()
-    }
-
-    pub fn review_todo_count(&self) -> usize {
-        self.todos.iter().filter(|t| t.is_ready_for_review()).count()
     }
 
     /// Get the IN-PROGRESS todo for a session (not ReadyForReview or Done)

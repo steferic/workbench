@@ -35,8 +35,6 @@ pub enum PaneId {
     Utilities,
     Output,
     Pinned(usize),
-    StatusBar,
-    Banner,
 }
 
 /// Manages visual effects for the TUI
@@ -147,15 +145,6 @@ impl EffectsManager {
         self.last_frame = Instant::now();
     }
 
-    /// Add an evolve effect for a new pane (applies to inner area, excluding borders)
-    pub fn add_effect_for_pane(&mut self, pane_id: PaneId, area: Rect) {
-        // Remove any existing effect for this pane
-        self.effects.retain(|(id, _, _)| *id != pane_id);
-
-        let inner = inner_area(area);
-        self.effects.push((pane_id, self.create_pane_effect(inner, 0), inner));
-    }
-
     /// Process and render all active effects on the frame
     pub fn process(&mut self, frame: &mut Frame) {
         let now = Instant::now();
@@ -198,7 +187,5 @@ pub struct StartupAreas {
     pub todos: Rect,
     pub utilities: Rect,
     pub output: Rect,
-    pub status_bar: Rect,
-    pub banner: Option<Rect>,
     pub pinned: Vec<Rect>,
 }

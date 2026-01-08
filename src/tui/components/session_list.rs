@@ -9,7 +9,7 @@ use ratatui::{
 };
 
 pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
-    let is_focused = state.focus == FocusPanel::SessionList;
+    let is_focused = state.ui.focus == FocusPanel::SessionList;
     let border_style = if is_focused {
         Style::default().fg(Color::Cyan)
     } else {
@@ -69,7 +69,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         let session = &sessions[session_idx];
         let item = create_session_item(state, session_idx, session, is_focused, &pinned_ids);
         items.push(item);
-        if session_idx == state.selected_session_idx {
+        if session_idx == state.ui.selected_session_idx {
             selected_visual_idx = Some(current_visual_idx);
         }
         current_visual_idx += 1;
@@ -89,7 +89,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         let session = &sessions[session_idx];
         let item = create_session_item(state, session_idx, session, is_focused, &pinned_ids);
         items.push(item);
-        if session_idx == state.selected_session_idx {
+        if session_idx == state.ui.selected_session_idx {
             selected_visual_idx = Some(current_visual_idx);
         }
         current_visual_idx += 1;
@@ -150,8 +150,8 @@ fn create_session_item<'a>(
     is_focused: bool,
     pinned_ids: &[uuid::Uuid],
 ) -> ListItem<'a> {
-    let is_selected = session_idx == state.selected_session_idx && is_focused;
-    let is_active = state.active_session_id == Some(session.id);
+    let is_selected = session_idx == state.ui.selected_session_idx && is_focused;
+    let is_active = state.ui.active_session_id == Some(session.id);
     let is_working = state.is_session_working(session.id);
     let is_pinned = pinned_ids.contains(&session.id);
 
@@ -203,7 +203,7 @@ fn create_session_item<'a>(
 
     let prefix = if is_active {
         "* "
-    } else if session_idx == state.selected_session_idx {
+    } else if session_idx == state.ui.selected_session_idx {
         "> "
     } else {
         "  "

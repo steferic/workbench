@@ -23,8 +23,8 @@ pub async fn run_tui(initial_workspace: Option<PathBuf>) -> Result<()> {
     // Load persisted state
     match persistence::load() {
         Ok(persisted) => {
-            state.workspaces = persisted.workspaces;
-            state.sessions = persisted.sessions;
+            state.data.workspaces = persisted.workspaces;
+            state.data.sessions = persisted.sessions;
             // Load notepad content into TextArea widgets
             for (ws_id, content) in persisted.notepad_content {
                 state.load_notepad_content(ws_id, content);
@@ -32,7 +32,7 @@ pub async fn run_tui(initial_workspace: Option<PathBuf>) -> Result<()> {
             // Select first workspace in visual order (Working workspaces first)
             let visual_order = state.workspace_visual_order();
             if let Some(&first_idx) = visual_order.first() {
-                state.selected_workspace_idx = first_idx;
+                state.ui.selected_workspace_idx = first_idx;
             }
         }
         Err(e) => {
@@ -43,13 +43,13 @@ pub async fn run_tui(initial_workspace: Option<PathBuf>) -> Result<()> {
     // Load global config
     match persistence::load_config() {
         Ok(config) => {
-            state.banner_visible = config.banner_visible;
+            state.ui.banner_visible = config.banner_visible;
             // Apply persisted pane ratios
-            state.left_panel_ratio = config.left_panel_ratio;
-            state.workspace_ratio = config.workspace_ratio;
-            state.sessions_ratio = config.sessions_ratio;
-            state.todos_ratio = config.todos_ratio;
-            state.output_split_ratio = config.output_split_ratio;
+            state.ui.left_panel_ratio = config.left_panel_ratio;
+            state.ui.workspace_ratio = config.workspace_ratio;
+            state.ui.sessions_ratio = config.sessions_ratio;
+            state.ui.todos_ratio = config.todos_ratio;
+            state.ui.output_split_ratio = config.output_split_ratio;
         }
         Err(e) => {
             eprintln!("Warning: Could not load config: {}", e);
@@ -58,7 +58,7 @@ pub async fn run_tui(initial_workspace: Option<PathBuf>) -> Result<()> {
 
     // Get terminal size
     let size = terminal.size()?;
-    state.terminal_size = (size.width, size.height);
+    state.system.terminal_size = (size.width, size.height);
 
     // Add initial workspace if provided (and not already present)
     if let Some(path) = initial_workspace {
@@ -69,7 +69,7 @@ pub async fn run_tui(initial_workspace: Option<PathBuf>) -> Result<()> {
         };
         if abs_path.exists() && abs_path.is_dir() {
             // Check if workspace already exists
-            let already_exists = state.workspaces.iter().any(|w| w.path == abs_path);
+            let already_exists = state.data.workspaces.iter().any(|w| w.path == abs_path);
             if !already_exists {
                 let workspace = Workspace::from_path(abs_path);
                 state.add_workspace(workspace);
@@ -92,11 +92,11 @@ pub async fn run_tui(initial_workspace: Option<PathBuf>) -> Result<()> {
         if ws.status == crate::models::WorkspaceStatus::Working {
             let workspace_id = ws.id;
             // Find first agent session (not terminal) in this workspace
-            if let Some(sessions) = state.sessions.get(&workspace_id) {
+            if let Some(sessions) = state.data.sessions.get(&workspace_id) {
                 if let Some(first_agent) = sessions.iter()
                     .find(|s| !s.agent_type.is_terminal())
                 {
-                    state.active_session_id = Some(first_agent.id);
+                    state.ui.active_session_id = Some(first_agent.id);
                 }
             }
         }
@@ -137,8 +137,8 @@ async fn run_main_loop(
         process_action(state, action, pty_manager, &action_tx)?;
 
         // Sync audio player with state
-        if state.brown_noise_playing != audio_was_playing {
-            if state.brown_noise_playing {
+        if state.system.brown_noise_playing != audio_was_playing {
+            if state.system.brown_noise_playing {
                 // Start playing
                 if audio_player.is_none() {
                     audio_player = AudioPlayer::new().ok();
@@ -152,10 +152,10 @@ async fn run_main_loop(
                     player.pause();
                 }
             }
-            audio_was_playing = state.brown_noise_playing;
+            audio_was_playing = state.system.brown_noise_playing;
         }
 
-        if state.should_quit {
+        if state.system.should_quit {
             break;
         }
     }

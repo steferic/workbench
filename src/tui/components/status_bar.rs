@@ -9,7 +9,7 @@ use ratatui::{
 
 pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     // Check for pending delete confirmation first
-    if let Some(pending) = &state.pending_delete {
+    if let Some(pending) = &state.ui.pending_delete {
         let (item_type, name) = match pending {
             PendingDelete::Session(_, name) => ("session", name.as_str()),
             PendingDelete::Workspace(_, name) => ("workspace", name.as_str()),
@@ -62,7 +62,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         return;
     }
 
-    let (left_text, right_text) = match state.input_mode {
+    let (left_text, right_text) = match state.ui.input_mode {
         InputMode::Help => (
             vec![Span::styled(
                 " HELP ",
@@ -114,7 +114,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
                     ),
                     Span::raw(" $ "),
                     Span::styled(
-                        format!("{}_", state.input_buffer),
+                        format!("{}_", state.ui.input_buffer),
                         Style::default().fg(Color::White),
                     ),
                 ],
@@ -136,7 +136,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
                     ),
                     Span::raw(" "),
                     Span::styled(
-                        format!("{}_", state.input_buffer),
+                        format!("{}_", state.ui.input_buffer),
                         Style::default().fg(Color::White),
                     ),
                 ],
@@ -170,7 +170,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
                 ),
                 Span::raw(" "),
                 Span::styled(
-                    format!("{}_", state.input_buffer),
+                    format!("{}_", state.ui.input_buffer),
                     Style::default().fg(Color::White),
                 ),
             ],
@@ -180,7 +180,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
             )],
         ),
         InputMode::Normal => {
-            let context_hints = match state.focus {
+            let context_hints = match state.ui.focus {
                 FocusPanel::WorkspaceList => vec![
                     Span::styled("[n]", Style::default().fg(Color::Cyan)),
                     Span::raw(" New  "),
@@ -218,7 +218,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
                     Span::raw(" Del"),
                 ],
                 FocusPanel::OutputPane => {
-                    if state.active_session_id.is_some() {
+                    if state.ui.active_session_id.is_some() {
                         vec![
                             Span::styled("[Esc]", Style::default().fg(Color::Cyan)),
                             Span::raw(" Back  "),
@@ -261,7 +261,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
             };
 
             let running = state.running_session_count();
-            let total_sessions: usize = state.sessions.values().map(|s| s.len()).sum();
+            let total_sessions: usize = state.data.sessions.values().map(|s| s.len()).sum();
             let idle_count = state.idle_queue_count();
 
             let mut status = vec![
@@ -274,7 +274,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
                 ),
                 Span::raw(" "),
                 Span::styled(
-                    format!("{} workspaces", state.workspaces.len()),
+                    format!("{} workspaces", state.data.workspaces.len()),
                     Style::default().fg(Color::Gray),
                 ),
                 Span::raw(" | "),

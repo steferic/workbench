@@ -9,7 +9,7 @@ use ratatui::{
 };
 
 pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
-    let is_focused = state.focus == FocusPanel::TodosPane;
+    let is_focused = state.ui.focus == FocusPanel::TodosPane;
     let border_style = if is_focused {
         Style::default().fg(Color::Cyan)
     } else {
@@ -28,11 +28,11 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         .unwrap_or(0);
 
     // Build title with mode indicator
-    let mode_indicator = match state.todo_pane_mode {
+    let mode_indicator = match state.ui.todo_pane_mode {
         TodoPaneMode::Write => "[W]",
         TodoPaneMode::Autorun => "[A]",
     };
-    let mode_color = match state.todo_pane_mode {
+    let mode_color = match state.ui.todo_pane_mode {
         TodoPaneMode::Write => Color::Blue,
         TodoPaneMode::Autorun => Color::Green,
     };
@@ -93,7 +93,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     };
     let inactive_tab_style = tab_style;
 
-    let (active_style, archived_style) = match state.selected_todos_tab {
+    let (active_style, archived_style) = match state.ui.selected_todos_tab {
         TodosTab::Active => (active_tab_style, inactive_tab_style),
         TodosTab::Archived => (inactive_tab_style, active_tab_style),
     };
@@ -111,7 +111,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     let todos: Vec<_> = state.selected_workspace()
         .map(|ws| {
             ws.todos.iter().filter(|t| {
-                match state.selected_todos_tab {
+                match state.ui.selected_todos_tab {
                     TodosTab::Active => !t.is_archived(),
                     TodosTab::Archived => t.is_archived(),
                 }
@@ -131,7 +131,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         Style::default().fg(Color::DarkGray)
     };
 
-    let action_bar = match state.selected_todos_tab {
+    let action_bar = match state.ui.selected_todos_tab {
         TodosTab::Active => Paragraph::new(Line::from(vec![
             Span::styled("Tab", key_style),
             Span::styled(":arc ", action_style),
@@ -156,7 +156,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     frame.render_widget(action_bar, action_area);
 
     if todos.is_empty() {
-        let msg = match state.selected_todos_tab {
+        let msg = match state.ui.selected_todos_tab {
             TodosTab::Active => Paragraph::new(Line::from(vec![
                 Span::styled("  No todos. Press ", Style::default().fg(Color::DarkGray)),
                 Span::styled("[n]", Style::default().fg(Color::Cyan)),
@@ -177,7 +177,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         .iter()
         .enumerate()
         .map(|(i, todo)| {
-            let is_selected = i == state.selected_todo_idx && is_focused;
+            let is_selected = i == state.ui.selected_todo_idx && is_focused;
 
             let (status_icon, status_color) = match &todo.status {
                 TodoStatus::Suggested => ("?", Color::Cyan),
@@ -335,7 +335,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
 
     let mut list_state = ListState::default();
     if !todos.is_empty() {
-        list_state.select(Some(state.selected_todo_idx));
+        list_state.select(Some(state.ui.selected_todo_idx));
     }
 
     frame.render_stateful_widget(list, list_area, &mut list_state);

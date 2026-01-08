@@ -52,36 +52,10 @@ impl AgentType {
     pub fn is_agent(&self) -> bool {
         !self.is_terminal()
     }
-
-    pub fn all() -> &'static [AgentType] {
-        &[
-            AgentType::Claude,
-            AgentType::Gemini,
-            AgentType::Codex,
-            AgentType::Grok,
-        ]
-    }
-
-    pub fn from_number(n: u8) -> Option<AgentType> {
-        match n {
-            1 => Some(AgentType::Claude),
-            2 => Some(AgentType::Gemini),
-            3 => Some(AgentType::Codex),
-            4 => Some(AgentType::Grok),
-            _ => None,
-        }
-    }
 }
 
 impl std::fmt::Display for AgentType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.display_name())
-    }
-}
-
-impl AgentType {
-    /// Create a new terminal with the given name
-    pub fn terminal(name: impl Into<String>) -> Self {
-        AgentType::Terminal(name.into())
     }
 }

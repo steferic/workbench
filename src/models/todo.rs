@@ -20,15 +20,6 @@ impl Difficulty {
             _ => None,
         }
     }
-
-    /// Short display label
-    pub fn label(&self) -> &'static str {
-        match self {
-            Difficulty::Easy => "E",
-            Difficulty::Med => "M",
-            Difficulty::Hard => "H",
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -49,16 +40,6 @@ impl Importance {
             "HIGH" => Some(Importance::High),
             "CRITICAL" | "CRIT" => Some(Importance::Critical),
             _ => None,
-        }
-    }
-
-    /// Short display label
-    pub fn label(&self) -> &'static str {
-        match self {
-            Importance::Low => "L",
-            Importance::Med => "M",
-            Importance::High => "H",
-            Importance::Critical => "!",
         }
     }
 }
@@ -175,11 +156,6 @@ impl Todo {
         matches!(self.status, TodoStatus::Queued)
     }
 
-    /// Returns true if pending or queued (can be dispatched)
-    pub fn is_dispatchable(&self) -> bool {
-        matches!(self.status, TodoStatus::Pending | TodoStatus::Queued)
-    }
-
     pub fn is_in_progress(&self) -> bool {
         matches!(self.status, TodoStatus::InProgress { .. })
     }
@@ -225,11 +201,6 @@ impl Todo {
         self.status = TodoStatus::Archived;
     }
 
-    /// Reset to pending (e.g., if session died or user wants to reassign)
-    pub fn reset_to_pending(&mut self) {
-        self.status = TodoStatus::Pending;
-    }
-
     /// Approve a suggested todo (converts to Pending)
     pub fn approve(&mut self) {
         if self.is_suggested() {
@@ -243,19 +214,6 @@ impl Todo {
             TodoStatus::InProgress { session_id } => Some(*session_id),
             TodoStatus::ReadyForReview { session_id } => Some(*session_id),
             _ => None,
-        }
-    }
-
-    /// Status display string
-    pub fn status_display(&self) -> &'static str {
-        match &self.status {
-            TodoStatus::Suggested => "Suggested",
-            TodoStatus::Pending => "Pending",
-            TodoStatus::Queued => "Queued",
-            TodoStatus::InProgress { .. } => "In Progress",
-            TodoStatus::ReadyForReview { .. } => "Review",
-            TodoStatus::Done => "Done",
-            TodoStatus::Archived => "Archived",
         }
     }
 }

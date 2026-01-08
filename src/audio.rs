@@ -87,8 +87,4 @@ impl AudioPlayer {
     pub fn play(&self) {
         self.sink.play();
     }
-
-    pub fn is_paused(&self) -> bool {
-        self.sink.is_paused()
-    }
 }

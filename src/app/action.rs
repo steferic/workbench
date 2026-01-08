@@ -1,6 +1,5 @@
 use crate::models::AgentType;
 use crossterm::event::KeyEvent;
-use std::path::PathBuf;
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -10,28 +9,21 @@ pub enum Action {
     MoveDown,
     FocusLeft,
     FocusRight,
-    FocusUtilitiesPane,
     ScrollOutputUp,
     ScrollOutputDown,
-    ScrollOutputToBottom,
     JumpToNextIdle,
 
     // Workspace operations
-    CreateWorkspace(PathBuf),
-    SelectWorkspace(usize),
-    DeleteWorkspace(Uuid),
     ToggleWorkspaceStatus,
     InitiateDeleteWorkspace(Uuid, String),  // (id, name) - first 'd' press
     ConfirmDeleteWorkspace,                  // second 'd' press
 
     // Session operations
     CreateSession(AgentType, bool), // bool = dangerously_skip_permissions
-    SelectSession(usize),
     ActivateSession(Uuid),
     RestartSession(Uuid),
     StopSession(Uuid),
     KillSession(Uuid),
-    DeleteSession(Uuid),
     InitiateDeleteSession(Uuid, String),    // (id, name) - first 'd' press
     ConfirmDeleteSession,                    // second 'd' press
 
@@ -43,7 +35,6 @@ pub enum Action {
 
     // UI modes
     EnterWorkspaceActionMode,    // Opens the Create/Open workspace selector
-    EnterCreateWorkspaceMode,    // File browser for opening existing workspace
     EnterWorkspaceNameMode,      // Text input for naming new workspace
     EnterCreateSessionMode,
     EnterSetStartCommandMode,
@@ -70,7 +61,6 @@ pub enum Action {
     UnpinSession(Uuid),       // Remove a specific terminal from pinned list
     UnpinFocusedSession,      // Remove the currently focused pinned terminal
     ToggleSplitView,          // Toggle between split and full-width view
-    FocusPinnedPane(usize),   // Focus a specific pinned pane by index
     NextPinnedPane,           // Move focus to next pinned pane
     PrevPinnedPane,           // Move focus to previous pinned pane
 
@@ -80,7 +70,6 @@ pub enum Action {
     // Input handling
     InputChar(char),
     InputBackspace,
-    InputSubmit,
 
     // File browser
     FileBrowserUp,
@@ -116,7 +105,6 @@ pub enum Action {
     MarkTodoReadyForReview(Uuid),               // (todo_id) - agent went idle after dispatch
 
     // Todo suggestion
-    TriggerTodoSuggestion,                      // Spawn analyzer to suggest todos
     AddSuggestedTodo(String),                   // Add a suggested todo (from analyzer)
     ApproveSuggestedTodo(Uuid),                 // Approve suggested todo -> becomes Pending
     ApproveAllSuggestedTodos,                   // Approve all suggested todos at once

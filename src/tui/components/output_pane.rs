@@ -1,4 +1,5 @@
-use crate::app::{AppState, FocusPanel, InputMode, TextSelection};
+use crate::app::{AppState, FocusPanel, InputMode};
+use crate::tui::utils::{convert_vt100_to_lines, get_cursor_info, get_selection_bounds, render_cursor};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -14,7 +15,7 @@ use ratatui::{
 use time::{Date, Month, OffsetDateTime};
 
 pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
-    let is_focused = state.focus == FocusPanel::OutputPane;
+    let is_focused = state.ui.focus == FocusPanel::OutputPane;
 
     let border_style = if is_focused {
         Style::default().fg(Color::Cyan)
@@ -29,8 +30,8 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
             session.short_id(),
             session.duration_string()
         )
-    } else if !state.utility_content.is_empty() {
-        format!(" {} ", state.selected_utility.name())
+    } else if !state.ui.utility_content.is_empty() {
+        format!(" {} ", state.ui.selected_utility.name())
     } else {
         " No Active Session ".to_string()
     };
@@ -40,22 +41,19 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
         .borders(Borders::ALL)
         .border_style(border_style);
 
-    // Store the output pane area for mouse coordinate conversion
-    state.output_pane_area = Some((area.x, area.y, area.width, area.height));
-
     // Check if we should render a pie chart (TopFiles utility)
-    let has_pie_chart = !state.pie_chart_data.is_empty() && state.active_session_id.is_none();
+    let has_pie_chart = !state.ui.pie_chart_data.is_empty() && state.ui.active_session_id.is_none();
 
     if has_pie_chart {
-        state.output_content_length = 0;
+        state.ui.output_content_length = 0;
         // Render pie chart view with split layout
         render_pie_chart_view(frame, area, state, block);
         return;
     }
 
     // Check if we should render a calendar (Calendar utility)
-    if state.show_calendar && state.active_session_id.is_none() {
-        state.output_content_length = 0;
+    if state.ui.show_calendar && state.ui.active_session_id.is_none() {
+        state.ui.output_content_length = 0;
         render_calendar_view(frame, area, state, block);
         return;
     }
@@ -63,19 +61,19 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
     // Render terminal output with scrolling support
     if let Some(parser) = state.active_output() {
         let screen = parser.screen();
-        let cursor_state = cursor_info(screen);
+        let cursor_state = get_cursor_info(screen);
         let inner_area = block.inner(area);
         let viewport_height = inner_area.height as usize;
 
         // Convert vt100 screen to lines
-        let selection = selection_bounds(&state.text_selection, screen.size());
+        let selection = get_selection_bounds(&state.ui.text_selection, screen.size());
         let lines = convert_vt100_to_lines(screen, selection);
         let content_length = lines.len();
-        state.output_content_length = content_length;
+        state.ui.output_content_length = content_length;
 
         // Scroll offset is from bottom (0 = show latest, higher = scroll up)
         let max_scroll = content_length.saturating_sub(viewport_height);
-        let scroll_from_bottom = (state.output_scroll_offset as usize).min(max_scroll);
+        let scroll_from_bottom = (state.ui.output_scroll_offset as usize).min(max_scroll);
         let scroll_offset = max_scroll.saturating_sub(scroll_from_bottom);
 
         // Show scroll indicator in title if scrolled
@@ -114,17 +112,17 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
             frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
         }
 
-        if is_focused && state.input_mode == InputMode::Normal && scroll_from_bottom == 0 {
+        if is_focused && state.ui.input_mode == InputMode::Normal && scroll_from_bottom == 0 {
             render_cursor(frame, inner_area, cursor_state, scroll_offset);
         }
         return;
     }
 
     // No active session - show utility content or hints
-    let lines: Vec<Line> = if !state.utility_content.is_empty() {
+    let lines: Vec<Line> = if !state.ui.utility_content.is_empty() {
         // Show utility content when no active session
         state
-            .utility_content
+            .ui.utility_content
             .iter()
             .map(|line| Line::from(Span::styled(line.clone(), Style::default().fg(Color::Gray))))
             .collect()
@@ -134,12 +132,12 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
 
     let inner_area = block.inner(area);
     let content_length = lines.len();
-    state.output_content_length = 0;
+    state.ui.output_content_length = 0;
     let viewport_height = inner_area.height as usize;
 
     // Calculate max scroll offset (can't scroll past content)
     let max_scroll = content_length.saturating_sub(viewport_height);
-    let scroll_offset = (state.output_scroll_offset as usize).min(max_scroll);
+    let scroll_offset = (state.ui.output_scroll_offset as usize).min(max_scroll);
 
     let paragraph = Paragraph::new(lines)
         .block(block)
@@ -157,7 +155,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
 
 /// Render hint text when no session is active
 fn render_hints(state: &AppState) -> Vec<Line<'static>> {
-    if state.workspaces.is_empty() {
+    if state.data.workspaces.is_empty() {
         vec![
             Line::from(""),
             Line::from(Span::styled(
@@ -204,195 +202,6 @@ fn render_hints(state: &AppState) -> Vec<Line<'static>> {
     }
 }
 
-/// Convert vt100 screen to ratatui Lines with proper styling
-#[derive(Clone, Copy)]
-struct SelectionBounds {
-    start_row: usize,
-    start_col: usize,
-    end_row: usize,
-    end_col: usize,
-}
-
-fn selection_bounds(
-    selection: &TextSelection,
-    (rows, cols): (u16, u16),
-) -> Option<SelectionBounds> {
-    let start = selection.start?;
-    let end = selection.end?;
-    if rows == 0 || cols == 0 {
-        return None;
-    }
-
-    let (mut start_row, mut start_col) = start;
-    let (mut end_row, mut end_col) = end;
-
-    if start_row > end_row || (start_row == end_row && start_col > end_col) {
-        std::mem::swap(&mut start_row, &mut end_row);
-        std::mem::swap(&mut start_col, &mut end_col);
-    }
-
-    let max_row = rows.saturating_sub(1) as usize;
-    let max_col = cols.saturating_sub(1) as usize;
-
-    Some(SelectionBounds {
-        start_row: start_row.min(max_row),
-        start_col: start_col.min(max_col),
-        end_row: end_row.min(max_row),
-        end_col: end_col.min(max_col),
-    })
-}
-
-fn cell_is_selected(row: usize, col: usize, bounds: SelectionBounds) -> bool {
-    if row < bounds.start_row || row > bounds.end_row {
-        return false;
-    }
-
-    if bounds.start_row == bounds.end_row {
-        return col >= bounds.start_col && col <= bounds.end_col;
-    }
-
-    if row == bounds.start_row {
-        return col >= bounds.start_col;
-    }
-    if row == bounds.end_row {
-        return col <= bounds.end_col;
-    }
-
-    true
-}
-
-fn convert_vt100_to_lines(
-    screen: &vt100::Screen,
-    selection: Option<SelectionBounds>,
-) -> Vec<Line<'static>> {
-    let mut all_lines = Vec::new();
-    let (rows, cols) = screen.size();
-
-    for row in 0..rows {
-        let mut spans = Vec::new();
-        let mut current_text = String::new();
-        let mut current_style = Style::default();
-        let row_has_selection = selection
-            .map(|bounds| (row as usize) >= bounds.start_row && (row as usize) <= bounds.end_row)
-            .unwrap_or(false);
-
-        for col in 0..cols {
-            if let Some(cell) = screen.cell(row, col) {
-                let char_str = cell.contents();
-                let mut cell_style = convert_vt100_cell_style(&cell);
-                if let Some(bounds) = selection {
-                    if cell_is_selected(row as usize, col as usize, bounds) {
-                        cell_style = cell_style.add_modifier(Modifier::REVERSED);
-                    }
-                }
-
-                if cell_style != current_style && !current_text.is_empty() {
-                    spans.push(Span::styled(current_text.clone(), current_style));
-                    current_text.clear();
-                }
-                current_style = cell_style;
-                current_text.push_str(&char_str);
-            }
-        }
-
-        if !current_text.is_empty() {
-            let text = if row_has_selection {
-                current_text
-            } else {
-                current_text.trim_end().to_string()
-            };
-            if !text.is_empty() {
-                spans.push(Span::styled(text, current_style));
-            }
-        }
-
-        all_lines.push(Line::from(spans));
-    }
-
-    // Remove trailing empty lines
-    while all_lines.last().map(|l| l.spans.is_empty()).unwrap_or(false) {
-        all_lines.pop();
-    }
-
-    all_lines
-}
-
-#[derive(Clone, Copy)]
-struct CursorInfo {
-    row: u16,
-    col: u16,
-    hidden: bool,
-}
-
-fn cursor_info(screen: &vt100::Screen) -> CursorInfo {
-    let (row, col) = screen.cursor_position();
-    CursorInfo {
-        row,
-        col,
-        hidden: screen.hide_cursor(),
-    }
-}
-
-fn render_cursor(
-    frame: &mut Frame,
-    inner_area: Rect,
-    cursor: CursorInfo,
-    scroll_offset: usize,
-) {
-    if cursor.hidden || inner_area.width == 0 || inner_area.height == 0 {
-        return;
-    }
-
-    let row = cursor.row as usize;
-    if row < scroll_offset {
-        return;
-    }
-
-    let row_in_view = row - scroll_offset;
-    if row_in_view >= inner_area.height as usize {
-        return;
-    }
-
-    let max_col = inner_area.width.saturating_sub(1) as usize;
-    let x = inner_area.x + (cursor.col as usize).min(max_col) as u16;
-    let y = inner_area.y + row_in_view as u16;
-    frame.set_cursor_position((x, y));
-}
-
-fn convert_vt100_cell_style(cell: &vt100::Cell) -> Style {
-    let mut style = Style::default();
-
-    let fg = cell.fgcolor();
-    if !matches!(fg, vt100::Color::Default) {
-        style = style.fg(convert_vt100_color(fg));
-    }
-
-    let bg = cell.bgcolor();
-    if !matches!(bg, vt100::Color::Default) {
-        style = style.bg(convert_vt100_color(bg));
-    }
-
-    if cell.bold() {
-        style = style.add_modifier(Modifier::BOLD);
-    }
-    if cell.italic() {
-        style = style.add_modifier(Modifier::ITALIC);
-    }
-    if cell.underline() {
-        style = style.add_modifier(Modifier::UNDERLINED);
-    }
-
-    style
-}
-
-fn convert_vt100_color(color: vt100::Color) -> Color {
-    match color {
-        vt100::Color::Default => Color::Reset,
-        vt100::Color::Idx(i) => Color::Indexed(i),
-        vt100::Color::Rgb(r, g, b) => Color::Rgb(r, g, b),
-    }
-}
-
 /// Render a bar chart view with chart on top and legend below
 fn render_pie_chart_view(frame: &mut Frame, area: Rect, state: &AppState, block: Block) {
     let inner_area = block.inner(area);
@@ -411,9 +220,9 @@ fn render_pie_chart_view(frame: &mut Frame, area: Rect, state: &AppState, block:
     let legend_area = chunks[1];
 
     // Build bars from state data
-    if !state.pie_chart_data.is_empty() {
+    if !state.ui.pie_chart_data.is_empty() {
         let bars: Vec<Bar> = state
-            .pie_chart_data
+            .ui.pie_chart_data
             .iter()
             .map(|(label, value, color)| {
                 // Truncate label to fit
@@ -437,7 +246,7 @@ fn render_pie_chart_view(frame: &mut Frame, area: Rect, state: &AppState, block:
 
     // Render the text content (legend) below the chart
     let lines: Vec<Line> = state
-        .utility_content
+        .ui.utility_content
         .iter()
         .enumerate()
         .map(|(i, line)| {
@@ -445,15 +254,15 @@ fn render_pie_chart_view(frame: &mut Frame, area: Rect, state: &AppState, block:
             if line.contains('●') || line.contains('○') {
                 // Find which color this line should have
                 let color_idx = state
-                    .utility_content
+                    .ui.utility_content
                     .iter()
                     .take(i + 1)
                     .filter(|l| l.contains('●') || l.contains('○'))
                     .count()
                     .saturating_sub(1);
 
-                if color_idx < state.pie_chart_data.len() {
-                    let (_, _, color) = &state.pie_chart_data[color_idx];
+                if color_idx < state.ui.pie_chart_data.len() {
+                    let (_, _, color) = &state.ui.pie_chart_data[color_idx];
                     // Replace bullet with colored version
                     let colored_line = line.replacen('●', "●", 1).replacen('○', "○", 1);
                     return Line::from(vec![
@@ -472,7 +281,7 @@ fn render_pie_chart_view(frame: &mut Frame, area: Rect, state: &AppState, block:
         })
         .collect();
 
-    let paragraph = Paragraph::new(lines).scroll((state.utility_scroll_offset as u16, 0));
+    let paragraph = Paragraph::new(lines).scroll((state.ui.utility_scroll_offset as u16, 0));
 
     frame.render_widget(paragraph, legend_area);
 }
@@ -578,12 +387,12 @@ fn render_calendar_view(frame: &mut Frame, area: Rect, state: &AppState, block: 
 
     // Render the legend/workspace info below
     let lines: Vec<Line> = state
-        .utility_content
+        .ui.utility_content
         .iter()
         .map(|line| Line::from(Span::styled(line.clone(), Style::default().fg(Color::Gray))))
         .collect();
 
-    let paragraph = Paragraph::new(lines).scroll((state.utility_scroll_offset as u16, 0));
+    let paragraph = Paragraph::new(lines).scroll((state.ui.utility_scroll_offset as u16, 0));
     frame.render_widget(paragraph, legend_area);
 }
 
