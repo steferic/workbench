@@ -116,6 +116,7 @@ pub fn handle_session_action(
         Action::ActivateSession(session_id) => {
             state.ui.active_session_id = Some(session_id);
             state.ui.output_scroll_offset = 0;
+            state.ui.output_content_length = 0;
         }
         Action::RestartSession(session_id) => {
             let session_info = state.data.sessions.values().flatten()
@@ -260,6 +261,7 @@ pub fn handle_session_action(
                     state.ui.split_view_enabled = true;
                     let new_idx = state.data.workspaces[ws_idx].pinned_terminal_ids.len().saturating_sub(1);
                     state.ui.focused_pinned_pane = new_idx;
+                    state.ui.pinned_content_lengths[new_idx] = 0; // Reset length for stabilization
                     resize_ptys_to_panes(state);
                     let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
                 }
@@ -272,6 +274,7 @@ pub fn handle_session_action(
                 if state.ui.focused_pinned_pane >= count && count > 0 {
                     state.ui.focused_pinned_pane = count - 1;
                 }
+                state.ui.pinned_content_lengths = [0; crate::models::MAX_PINNED_TERMINALS]; // Reset all lengths on shift
                 resize_ptys_to_panes(state);
                 let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
             }
@@ -287,6 +290,7 @@ pub fn handle_session_action(
                 if count == 0 {
                     state.ui.focus = FocusPanel::SessionList;
                 }
+                state.ui.pinned_content_lengths = [0; crate::models::MAX_PINNED_TERMINALS]; // Reset all lengths on shift
                 resize_ptys_to_panes(state);
                 let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
             }

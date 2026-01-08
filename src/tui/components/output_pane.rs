@@ -67,7 +67,18 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
 
         // Convert vt100 screen to lines
         let selection = get_selection_bounds(&state.ui.text_selection, screen.size());
-        let lines = convert_vt100_to_lines(screen, selection);
+        let mut lines = convert_vt100_to_lines(screen, selection, cursor_state.row);
+        
+        // Anti-jitter: ensure content length doesn't shrink by small amounts
+        let current_len = lines.len();
+        let prev_len = state.ui.output_content_length;
+        if current_len < prev_len && prev_len - current_len < 5 {
+            let needed = prev_len - current_len;
+            for _ in 0..needed {
+                lines.push(Line::raw(""));
+            }
+        }
+        
         let content_length = lines.len();
         state.ui.output_content_length = content_length;
 

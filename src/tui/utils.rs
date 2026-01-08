@@ -107,6 +107,7 @@ pub fn cell_is_selected(row: usize, col: usize, bounds: SelectionBounds) -> bool
 pub fn convert_vt100_to_lines(
     screen: &vt100::Screen,
     selection: Option<SelectionBounds>,
+    cursor_row: u16,
 ) -> Vec<Line<'static>> {
     let mut all_lines = Vec::new();
     let (rows, cols) = screen.size();
@@ -152,8 +153,10 @@ pub fn convert_vt100_to_lines(
         all_lines.push(Line::from(spans));
     }
 
-    // Remove trailing empty lines
-    while all_lines.last().map(|l| l.spans.is_empty()).unwrap_or(false) {
+    // Remove trailing empty lines, but preserve lines up to the cursor
+    while all_lines.len() > (cursor_row as usize + 1)
+        && all_lines.last().map(|l| l.spans.is_empty()).unwrap_or(false)
+    {
         all_lines.pop();
     }
 
