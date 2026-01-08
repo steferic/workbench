@@ -24,10 +24,10 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     let inner_area = block.inner(area);
     frame.render_widget(block, area);
 
-    // Split inner area: list + action bar (1 row)
+    // Split inner area: list + action bars (2 rows)
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .constraints([Constraint::Min(1), Constraint::Length(2)])
         .split(inner_area);
 
     let list_area = chunks[0];
@@ -103,7 +103,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
 
     frame.render_stateful_widget(list, list_area, &mut list_state);
 
-    // Render action bar (1 row, compact)
+    // Render action bars (2 rows)
     let action_style = if is_focused {
         Style::default().fg(Color::DarkGray)
     } else {
@@ -115,20 +115,30 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         Style::default().fg(Color::DarkGray)
     };
 
-    let action_bar = Paragraph::new(Line::from(vec![
-        Span::styled("1-4", key_style),
-        Span::styled(":agent ", action_style),
-        Span::styled("Shift+1-4", key_style),
-        Span::styled(":danger ", action_style),
-        Span::styled("t", key_style),
-        Span::styled(":term ", action_style),
-        Span::styled("p", key_style),
-        Span::styled(":pin ", action_style),
-        Span::styled("s", key_style),
-        Span::styled(":stop ", action_style),
-        Span::styled("d", key_style),
-        Span::styled(":del", action_style),
-    ]));
+    let action_bar = Paragraph::new(vec![
+        Line::from(vec![
+            Span::styled("c", key_style),
+            Span::styled(":set terminal start cmd ", action_style),
+            Span::styled("s", key_style),
+            Span::styled(":stop ", action_style),
+            Span::styled("d", key_style),
+            Span::styled(":del", action_style),
+        ]),
+        Line::from(vec![
+            Span::styled("1", key_style),
+            Span::styled(":Claude ", action_style),
+            Span::styled("2", key_style),
+            Span::styled(":Gemini ", action_style),
+            Span::styled("3", key_style),
+            Span::styled(":Codex ", action_style),
+            Span::styled("4", key_style),
+            Span::styled(":Grok ", action_style),
+            Span::styled("t", key_style),
+            Span::styled(":term ", action_style),
+            Span::styled("p", key_style),
+            Span::styled(":pin", action_style),
+        ]),
+    ]);
 
     frame.render_widget(action_bar, action_area);
 }
