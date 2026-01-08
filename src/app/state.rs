@@ -3,6 +3,7 @@ use crate::pty::PtyHandle;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Instant;
+use tui_textarea::TextArea;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -289,6 +290,10 @@ pub struct AppState {
     // Pinned terminal pane areas (for mouse clicks, per-pane)
     pub pinned_pane_areas: [Option<(u16, u16, u16, u16)>; MAX_PINNED_TERMINALS],
 
+    // Cached content lengths for selection/scroll mapping
+    pub output_content_length: usize,
+    pub pinned_content_lengths: [usize; MAX_PINNED_TERMINALS],
+
     // Split view enabled (show pinned terminal alongside active session)
     pub split_view_enabled: bool,
 
@@ -317,10 +322,8 @@ pub struct AppState {
     pub pie_chart_data: Vec<(String, f64, ratatui::style::Color)>, // (label, value, color) for pie chart
     pub show_calendar: bool, // Whether to show the calendar widget view
 
-    // Notepad state (per workspace)
-    pub notepad_content: HashMap<Uuid, String>, // workspace_id -> notepad text
-    pub notepad_cursor_pos: usize,       // Cursor position in current notepad
-    pub notepad_scroll_offset: usize,    // Scroll offset for notepad view
+    // Notepad state (per workspace) - TextArea handles cursor, scrolling, undo/redo
+    pub notepads: HashMap<Uuid, TextArea<'static>>,
 
     // Banner / marquee state
     pub banner_text: String,
@@ -391,6 +394,8 @@ impl AppState {
             pinned_text_selections: [TextSelection::default(); MAX_PINNED_TERMINALS],
             output_pane_area: None,
             pinned_pane_areas: [None; MAX_PINNED_TERMINALS],
+            output_content_length: 0,
+            pinned_content_lengths: [0; MAX_PINNED_TERMINALS],
             split_view_enabled: true, // Default to split view when pinned terminal exists
             pinned_pane_ratios: [0.25; MAX_PINNED_TERMINALS], // Equal distribution
             left_panel_ratio: 0.30,
@@ -408,9 +413,7 @@ impl AppState {
             utility_scroll_offset: 0,
             pie_chart_data: Vec::new(),
             show_calendar: false,
-            notepad_content: HashMap::new(),
-            notepad_cursor_pos: 0,
-            notepad_scroll_offset: 0,
+            notepads: HashMap::new(),
             banner_text: "✦ WORKBENCH ✦ Multi-Agent Development Environment ✦ Claude • Gemini • Codex • Grok ✦ ".to_string(),
             banner_offset: 0,
             banner_visible: true,
@@ -959,318 +962,33 @@ impl AppState {
             .unwrap_or(false)
     }
 
-    /// Get notepad content for the current workspace
-    pub fn current_notepad(&self) -> &str {
-        self.selected_workspace()
-            .and_then(|ws| self.notepad_content.get(&ws.id))
-            .map(|s| s.as_str())
-            .unwrap_or("")
-    }
-
-    /// Get mutable notepad content for the current workspace (creates if missing)
-    pub fn current_notepad_mut(&mut self) -> Option<&mut String> {
+    /// Get or create the TextArea for the current workspace
+    pub fn current_notepad(&mut self) -> Option<&mut TextArea<'static>> {
         let ws_id = self.selected_workspace().map(|ws| ws.id)?;
-        Some(self.notepad_content.entry(ws_id).or_insert_with(String::new))
+        Some(self.notepads.entry(ws_id).or_insert_with(TextArea::default))
     }
 
-    /// Insert a character at the cursor position in the notepad
-    pub fn notepad_insert_char(&mut self, c: char) {
-        let ws_id = match self.selected_workspace() {
-            Some(ws) => ws.id,
-            None => return,
-        };
-        let content = self.notepad_content.entry(ws_id).or_insert_with(String::new);
-        // Clamp cursor position to valid range for this workspace's content
-        let cursor_pos = self.notepad_cursor_pos.min(content.len());
-        content.insert(cursor_pos, c);
-        self.notepad_cursor_pos = cursor_pos + c.len_utf8();
+    /// Get notepad content as string for persistence
+    pub fn notepad_content_for_persistence(&self) -> HashMap<Uuid, String> {
+        self.notepads.iter()
+            .map(|(id, ta)| (*id, ta.lines().join("\n")))
+            .filter(|(_, content)| !content.is_empty())
+            .collect()
     }
 
-    /// Delete character before cursor (backspace)
-    pub fn notepad_backspace(&mut self) {
-        let ws_id = match self.selected_workspace() {
-            Some(ws) => ws.id,
-            None => return,
-        };
-        let content = self.notepad_content.entry(ws_id).or_insert_with(String::new);
-        // Clamp cursor position to valid range
-        let cursor_pos = self.notepad_cursor_pos.min(content.len());
-        if cursor_pos == 0 {
-            return;
-        }
-        // Find the previous character boundary
-        let mut new_pos = cursor_pos - 1;
-        while new_pos > 0 && !content.is_char_boundary(new_pos) {
-            new_pos -= 1;
-        }
-        content.remove(new_pos);
-        self.notepad_cursor_pos = new_pos;
-    }
-
-    /// Delete character at cursor (delete key)
-    pub fn notepad_delete(&mut self) {
-        let ws_id = match self.selected_workspace() {
-            Some(ws) => ws.id,
-            None => return,
-        };
-        let content = self.notepad_content.entry(ws_id).or_insert_with(String::new);
-        // Clamp cursor position to valid range
-        let cursor_pos = self.notepad_cursor_pos.min(content.len());
-        self.notepad_cursor_pos = cursor_pos;
-        if cursor_pos < content.len() {
-            content.remove(cursor_pos);
-        }
-    }
-
-    /// Move cursor left
-    pub fn notepad_cursor_left(&mut self) {
-        let content_bytes: Vec<u8> = self.current_notepad().bytes().collect();
-        if self.notepad_cursor_pos > 0 {
-            let mut new_pos = self.notepad_cursor_pos - 1;
-            // Find char boundary (check if byte is not a continuation byte)
-            while new_pos > 0 && (content_bytes.get(new_pos).map(|b| b & 0xC0 == 0x80).unwrap_or(false)) {
-                new_pos -= 1;
-            }
-            self.notepad_cursor_pos = new_pos;
-        }
-    }
-
-    /// Move cursor right
-    pub fn notepad_cursor_right(&mut self) {
-        let content_len = self.current_notepad().len();
-        let content_bytes: Vec<u8> = self.current_notepad().bytes().collect();
-        if self.notepad_cursor_pos < content_len {
-            let mut new_pos = self.notepad_cursor_pos + 1;
-            // Find char boundary
-            while new_pos < content_len && (content_bytes.get(new_pos).map(|b| b & 0xC0 == 0x80).unwrap_or(false)) {
-                new_pos += 1;
-            }
-            self.notepad_cursor_pos = new_pos;
-        }
-    }
-
-    /// Move cursor to start of line
-    pub fn notepad_cursor_home(&mut self) {
-        let content = self.current_notepad().to_string();
-        let cursor_pos = self.notepad_cursor_pos.min(content.len());
-        // Find the start of the current line
-        let before_cursor = &content[..cursor_pos];
-        if let Some(newline_pos) = before_cursor.rfind('\n') {
-            self.notepad_cursor_pos = newline_pos + 1;
+    /// Load notepad content from persisted string
+    pub fn load_notepad_content(&mut self, ws_id: Uuid, content: String) {
+        let lines: Vec<String> = if content.is_empty() {
+            vec![]
         } else {
-            self.notepad_cursor_pos = 0;
-        }
-    }
-
-    /// Move cursor to end of line
-    pub fn notepad_cursor_end(&mut self) {
-        let content = self.current_notepad().to_string();
-        let cursor_pos = self.notepad_cursor_pos.min(content.len());
-        // Find the end of the current line
-        let after_cursor = &content[cursor_pos..];
-        if let Some(newline_pos) = after_cursor.find('\n') {
-            self.notepad_cursor_pos = cursor_pos + newline_pos;
+            content.lines().map(|s| s.to_string()).collect()
+        };
+        let textarea = if lines.is_empty() {
+            TextArea::default()
         } else {
-            self.notepad_cursor_pos = content.len();
-        }
-    }
-
-    /// Reset notepad cursor when switching workspaces
-    pub fn reset_notepad_cursor(&mut self) {
-        self.notepad_cursor_pos = self.current_notepad().len();
-        self.notepad_scroll_offset = 0;
-    }
-
-    /// Delete word before cursor (Option+Backspace)
-    pub fn notepad_delete_word(&mut self) {
-        let ws_id = match self.selected_workspace() {
-            Some(ws) => ws.id,
-            None => return,
+            TextArea::new(lines)
         };
-        let content = self.notepad_content.entry(ws_id).or_insert_with(String::new);
-        let cursor_pos = self.notepad_cursor_pos.min(content.len());
-        if cursor_pos == 0 {
-            return;
-        }
-
-        // Find start of word (skip whitespace then skip word chars)
-        let before = &content[..cursor_pos];
-        let mut new_pos = cursor_pos;
-
-        // Skip trailing whitespace
-        for (i, c) in before.char_indices().rev() {
-            if !c.is_whitespace() {
-                new_pos = i + c.len_utf8();
-                break;
-            }
-            new_pos = i;
-        }
-
-        // Skip word characters
-        let before_word = &content[..new_pos];
-        for (i, c) in before_word.char_indices().rev() {
-            if c.is_whitespace() {
-                new_pos = i + c.len_utf8();
-                break;
-            }
-            new_pos = i;
-            if i == 0 {
-                new_pos = 0;
-            }
-        }
-
-        // Remove the word
-        content.replace_range(new_pos..cursor_pos, "");
-        self.notepad_cursor_pos = new_pos;
-    }
-
-    /// Delete to start of line (Cmd+Backspace)
-    pub fn notepad_delete_line(&mut self) {
-        let ws_id = match self.selected_workspace() {
-            Some(ws) => ws.id,
-            None => return,
-        };
-        let content = self.notepad_content.entry(ws_id).or_insert_with(String::new);
-        let cursor_pos = self.notepad_cursor_pos.min(content.len());
-
-        // Find the start of the current line
-        let before_cursor = &content[..cursor_pos];
-        let line_start = before_cursor.rfind('\n')
-            .map(|pos| pos + 1)
-            .unwrap_or(0);
-
-        // Remove from line start to cursor
-        content.replace_range(line_start..cursor_pos, "");
-        self.notepad_cursor_pos = line_start;
-    }
-
-    /// Delete word after cursor (Option+Delete)
-    pub fn notepad_delete_word_forward(&mut self) {
-        let ws_id = match self.selected_workspace() {
-            Some(ws) => ws.id,
-            None => return,
-        };
-        let content = self.notepad_content.entry(ws_id).or_insert_with(String::new);
-        let cursor_pos = self.notepad_cursor_pos.min(content.len());
-        if cursor_pos >= content.len() {
-            return;
-        }
-
-        // Find end of word (skip word chars then skip whitespace)
-        let after = &content[cursor_pos..];
-        let mut delete_len = 0;
-
-        // Skip word characters first
-        let mut chars = after.chars().peekable();
-        while let Some(c) = chars.peek() {
-            if c.is_whitespace() {
-                break;
-            }
-            delete_len += c.len_utf8();
-            chars.next();
-        }
-
-        // Then skip whitespace
-        while let Some(c) = chars.peek() {
-            if !c.is_whitespace() {
-                break;
-            }
-            delete_len += c.len_utf8();
-            chars.next();
-        }
-
-        // Remove the word
-        content.replace_range(cursor_pos..(cursor_pos + delete_len), "");
-        // Cursor position stays the same
-    }
-
-    /// Delete to end of line (Cmd+Delete or Ctrl+K)
-    pub fn notepad_delete_to_end(&mut self) {
-        let ws_id = match self.selected_workspace() {
-            Some(ws) => ws.id,
-            None => return,
-        };
-        let content = self.notepad_content.entry(ws_id).or_insert_with(String::new);
-        let cursor_pos = self.notepad_cursor_pos.min(content.len());
-
-        // Find the end of the current line
-        let after_cursor = &content[cursor_pos..];
-        let line_end = after_cursor.find('\n')
-            .map(|pos| cursor_pos + pos)
-            .unwrap_or(content.len());
-
-        // Remove from cursor to line end
-        content.replace_range(cursor_pos..line_end, "");
-        // Cursor position stays the same
-    }
-
-    /// Move cursor to previous word (Option+Left)
-    pub fn notepad_word_left(&mut self) {
-        let content = self.current_notepad().to_string();
-        let cursor_pos = self.notepad_cursor_pos.min(content.len());
-        if cursor_pos == 0 {
-            return;
-        }
-
-        let before = &content[..cursor_pos];
-        let mut new_pos = cursor_pos;
-
-        // Skip trailing whitespace
-        for (i, c) in before.char_indices().rev() {
-            if !c.is_whitespace() {
-                new_pos = i + c.len_utf8();
-                break;
-            }
-            new_pos = i;
-        }
-
-        // Skip word characters to find start of word
-        let before_word = &content[..new_pos];
-        for (i, c) in before_word.char_indices().rev() {
-            if c.is_whitespace() {
-                new_pos = i + c.len_utf8();
-                break;
-            }
-            new_pos = i;
-            if i == 0 {
-                new_pos = 0;
-            }
-        }
-
-        self.notepad_cursor_pos = new_pos;
-    }
-
-    /// Move cursor to next word (Option+Right)
-    pub fn notepad_word_right(&mut self) {
-        let content = self.current_notepad().to_string();
-        let cursor_pos = self.notepad_cursor_pos.min(content.len());
-        if cursor_pos >= content.len() {
-            return;
-        }
-
-        let after = &content[cursor_pos..];
-        let mut move_len = 0;
-
-        // Skip word characters first
-        let mut chars = after.chars().peekable();
-        while let Some(c) = chars.peek() {
-            if c.is_whitespace() {
-                break;
-            }
-            move_len += c.len_utf8();
-            chars.next();
-        }
-
-        // Then skip whitespace
-        while let Some(c) = chars.peek() {
-            if !c.is_whitespace() {
-                break;
-            }
-            move_len += c.len_utf8();
-            chars.next();
-        }
-
-        self.notepad_cursor_pos = cursor_pos + move_len;
+        self.notepads.insert(ws_id, textarea);
     }
 }
 

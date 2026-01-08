@@ -8,6 +8,7 @@ use tokio::sync::mpsc;
 /// Internal event type for terminal events
 enum TerminalEvent {
     Key(KeyEvent),
+    Paste(String),
     MouseDown(u16, u16),
     MouseDrag(u16, u16),
     MouseUp(u16, u16),
@@ -50,6 +51,7 @@ impl EventHandler {
                             _ => TerminalEvent::Tick,
                         },
                         Ok(Event::Resize(w, h)) => TerminalEvent::Resize(w, h),
+                        Ok(Event::Paste(data)) => TerminalEvent::Paste(data),
                         _ => TerminalEvent::Tick,
                     }
                 } else {
@@ -79,6 +81,7 @@ impl EventHandler {
             Some(event) = self.terminal_rx.recv() => {
                 match event {
                     TerminalEvent::Key(key) => Ok(self.handle_key_event(key, state)),
+                    TerminalEvent::Paste(data) => Ok(Action::Paste(data)),
                     TerminalEvent::MouseDown(x, y) => Ok(Action::MouseClick(x, y)),
                     TerminalEvent::MouseDrag(x, y) => Ok(Action::MouseDrag(x, y)),
                     TerminalEvent::MouseUp(x, y) => Ok(Action::MouseUp(x, y)),
@@ -152,12 +155,12 @@ impl EventHandler {
                 };
             }
             InputMode::CreateSession => {
+                if let Some((agent_type, dangerously_skip_permissions)) = Self::agent_shortcut(&key)
+                {
+                    return Action::CreateSession(agent_type, dangerously_skip_permissions);
+                }
                 return match key.code {
                     KeyCode::Esc => Action::ExitMode,
-                    KeyCode::Char('1') => Action::CreateSession(AgentType::Claude),
-                    KeyCode::Char('2') => Action::CreateSession(AgentType::Gemini),
-                    KeyCode::Char('3') => Action::CreateSession(AgentType::Codex),
-                    KeyCode::Char('4') => Action::CreateSession(AgentType::Grok),
                     KeyCode::Char('t') => Action::CreateTerminal,
                     _ => Action::Tick,
                 };
@@ -278,6 +281,10 @@ impl EventHandler {
             return Action::JumpToNextIdle;
         }
 
+        if let Some((agent_type, dangerously_skip_permissions)) = Self::agent_shortcut(&key) {
+            return Action::CreateSession(agent_type, dangerously_skip_permissions);
+        }
+
         match key.code {
             // Navigation
             KeyCode::Char('j') | KeyCode::Down => Action::MoveDown,
@@ -330,12 +337,6 @@ impl EventHandler {
                     Action::Tick
                 }
             }
-
-            // Agent shortcuts
-            KeyCode::Char('1') => Action::CreateSession(AgentType::Claude),
-            KeyCode::Char('2') => Action::CreateSession(AgentType::Gemini),
-            KeyCode::Char('3') => Action::CreateSession(AgentType::Codex),
-            KeyCode::Char('4') => Action::CreateSession(AgentType::Grok),
 
             // Terminal shortcut (auto-named)
             KeyCode::Char('t') => Action::CreateTerminal,
@@ -483,9 +484,9 @@ impl EventHandler {
             return Action::JumpToNextIdle;
         }
 
-        // Special handling for Notepad section - capture all input
+        // Special handling for Notepad section - pass keys to TextArea
         if state.utility_section == UtilitySection::Notepad {
-            // Tab still switches sections
+            // Tab switches sections
             if key.code == KeyCode::Tab {
                 return Action::ToggleUtilitySection;
             }
@@ -493,70 +494,12 @@ impl EventHandler {
             if key.code == KeyCode::Esc {
                 return Action::ToggleUtilitySection;
             }
-
-            // Handle modifier key combinations first
-            let has_alt = key.modifiers.contains(KeyModifiers::ALT);
-            let has_super = key.modifiers.contains(KeyModifiers::SUPER);
-            let has_ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-
-            // Word/line deletion shortcuts
-            if key.code == KeyCode::Backspace {
-                if has_super {
-                    return Action::NotepadDeleteLine; // Cmd+Backspace: delete to start of line
-                } else if has_alt {
-                    return Action::NotepadDeleteWord; // Option+Backspace: delete word before cursor
-                }
-                return Action::NotepadBackspace;
+            // Ctrl+Q quits
+            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('q') {
+                return Action::Quit;
             }
-
-            if key.code == KeyCode::Delete {
-                if has_super {
-                    return Action::NotepadDeleteToEnd; // Cmd+Delete: delete to end of line
-                } else if has_alt {
-                    return Action::NotepadDeleteWordForward; // Option+Delete: delete word after cursor
-                }
-                return Action::NotepadDelete;
-            }
-
-            // Word navigation shortcuts
-            if key.code == KeyCode::Left {
-                if has_alt {
-                    return Action::NotepadWordLeft; // Option+Left: move to previous word
-                }
-                return Action::NotepadCursorLeft;
-            }
-
-            if key.code == KeyCode::Right {
-                if has_alt {
-                    return Action::NotepadWordRight; // Option+Right: move to next word
-                }
-                return Action::NotepadCursorRight;
-            }
-
-            // Ctrl+K for delete to end of line (emacs style)
-            if has_ctrl {
-                if let KeyCode::Char('k') = key.code {
-                    return Action::NotepadDeleteToEnd;
-                }
-            }
-
-            // Handle notepad input
-            return match key.code {
-                KeyCode::Char(c) => {
-                    // Ctrl+V for paste
-                    if has_ctrl && c == 'v' {
-                        Action::NotepadPaste
-                    } else if has_ctrl && c == 'q' {
-                        Action::Quit
-                    } else {
-                        Action::NotepadChar(c)
-                    }
-                }
-                KeyCode::Enter => Action::NotepadNewline,
-                KeyCode::Home => Action::NotepadCursorHome,
-                KeyCode::End => Action::NotepadCursorEnd,
-                _ => Action::Tick,
-            };
+            // Pass all other keys to TextArea (handles Ctrl+K, word nav, undo/redo, etc.)
+            return Action::NotepadInput(key);
         }
 
         match key.code {
@@ -602,6 +545,13 @@ impl EventHandler {
         if state.text_selection.start.is_some() {
             match key.code {
                 KeyCode::Char('y') => return Action::CopySelection,
+                KeyCode::Char('c') | KeyCode::Char('C')
+                    if key.modifiers.contains(KeyModifiers::SUPER)
+                        || (key.modifiers.contains(KeyModifiers::CONTROL)
+                            && key.modifiers.contains(KeyModifiers::SHIFT)) =>
+                {
+                    return Action::CopySelection;
+                }
                 KeyCode::Esc => return Action::ClearSelection,
                 _ => {} // Fall through to normal handling
             }
@@ -610,8 +560,8 @@ impl EventHandler {
         // If there's an active session, send input to PTY
         if let Some(session_id) = state.active_session_id {
             match key.code {
-                // Escape to leave output pane (only if no selection)
-                KeyCode::Esc => Action::FocusLeft,
+                // Escape sends to PTY (for interrupting Claude Code, etc.)
+                KeyCode::Esc => Action::SendInput(session_id, vec![0x1b]),
 
                 // Scrolling with Shift+Up/Down or PageUp/PageDown
                 KeyCode::Up if key.modifiers.contains(KeyModifiers::SHIFT) => {
@@ -623,28 +573,117 @@ impl EventHandler {
                 KeyCode::PageUp => Action::ScrollOutputUp,
                 KeyCode::PageDown => Action::ScrollOutputDown,
 
-                // Panel navigation with Ctrl+H
+                // Panel navigation with Ctrl+H (Ctrl+Esc to leave)
                 KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     Action::FocusLeft
                 }
 
-                // Send to PTY
+                // Send to PTY with proper escape sequences for modifiers
                 KeyCode::Char(c) => {
                     let data = if key.modifiers.contains(KeyModifiers::CONTROL) {
                         // Convert to control character
                         vec![(c as u8) & 0x1f]
+                    } else if key.modifiers.contains(KeyModifiers::ALT) {
+                        // Alt+char sends ESC followed by char (meta key)
+                        vec![0x1b, c as u8]
                     } else {
                         c.to_string().into_bytes()
                     };
                     Action::SendInput(session_id, data)
                 }
                 KeyCode::Enter => Action::SendInput(session_id, vec![b'\r']),
-                KeyCode::Backspace => Action::SendInput(session_id, vec![0x7f]),
+                KeyCode::Backspace => {
+                    if key.modifiers.contains(KeyModifiers::ALT) {
+                        // Alt+Backspace: delete word backward (ESC + DEL)
+                        Action::SendInput(session_id, vec![0x1b, 0x7f])
+                    } else if key.modifiers.contains(KeyModifiers::SUPER) {
+                        // Cmd+Backspace: delete to start of line (Ctrl+U)
+                        Action::SendInput(session_id, vec![0x15])
+                    } else {
+                        Action::SendInput(session_id, vec![0x7f])
+                    }
+                }
+                KeyCode::Delete => {
+                    if key.modifiers.contains(KeyModifiers::ALT) {
+                        // Alt+Delete: delete word forward (ESC + d)
+                        Action::SendInput(session_id, vec![0x1b, b'd'])
+                    } else {
+                        // Delete forward
+                        Action::SendInput(session_id, b"\x1b[3~".to_vec())
+                    }
+                }
                 KeyCode::Tab => Action::SendInput(session_id, vec![b'\t']),
-                KeyCode::Up => Action::SendInput(session_id, vec![0x1b, b'[', b'A']),
-                KeyCode::Down => Action::SendInput(session_id, vec![0x1b, b'[', b'B']),
-                KeyCode::Right => Action::SendInput(session_id, vec![0x1b, b'[', b'C']),
-                KeyCode::Left => Action::SendInput(session_id, vec![0x1b, b'[', b'D']),
+                KeyCode::Up => {
+                    if key.modifiers.contains(KeyModifiers::ALT) {
+                        // Alt+Up: scroll up or command history (CSI 1;3 A)
+                        Action::SendInput(session_id, b"\x1b[1;3A".to_vec())
+                    } else {
+                        Action::SendInput(session_id, b"\x1b[A".to_vec())
+                    }
+                }
+                KeyCode::Down => {
+                    if key.modifiers.contains(KeyModifiers::ALT) {
+                        // Alt+Down (CSI 1;3 B)
+                        Action::SendInput(session_id, b"\x1b[1;3B".to_vec())
+                    } else {
+                        Action::SendInput(session_id, b"\x1b[B".to_vec())
+                    }
+                }
+                KeyCode::Right => {
+                    if key.modifiers.contains(KeyModifiers::ALT) {
+                        // Alt+Right: move word forward (ESC f or CSI 1;3 C)
+                        Action::SendInput(session_id, vec![0x1b, b'f'])
+                    } else if key.modifiers.contains(KeyModifiers::SUPER) {
+                        // Cmd+Right: end of line (Ctrl+E)
+                        Action::SendInput(session_id, vec![0x05])
+                    } else {
+                        Action::SendInput(session_id, b"\x1b[C".to_vec())
+                    }
+                }
+                KeyCode::Left => {
+                    if key.modifiers.contains(KeyModifiers::ALT) {
+                        // Alt+Left: move word backward (ESC b or CSI 1;3 D)
+                        Action::SendInput(session_id, vec![0x1b, b'b'])
+                    } else if key.modifiers.contains(KeyModifiers::SUPER) {
+                        // Cmd+Left: start of line (Ctrl+A)
+                        Action::SendInput(session_id, vec![0x01])
+                    } else {
+                        Action::SendInput(session_id, b"\x1b[D".to_vec())
+                    }
+                }
+                KeyCode::Home => {
+                    // Home: start of line
+                    Action::SendInput(session_id, vec![0x01])
+                }
+                KeyCode::End => {
+                    // End: end of line
+                    Action::SendInput(session_id, vec![0x05])
+                }
+                // Function keys
+                KeyCode::F(n) => {
+                    let seq = match n {
+                        1 => b"\x1bOP".to_vec(),
+                        2 => b"\x1bOQ".to_vec(),
+                        3 => b"\x1bOR".to_vec(),
+                        4 => b"\x1bOS".to_vec(),
+                        5 => b"\x1b[15~".to_vec(),
+                        6 => b"\x1b[17~".to_vec(),
+                        7 => b"\x1b[18~".to_vec(),
+                        8 => b"\x1b[19~".to_vec(),
+                        9 => b"\x1b[20~".to_vec(),
+                        10 => b"\x1b[21~".to_vec(),
+                        11 => b"\x1b[23~".to_vec(),
+                        12 => b"\x1b[24~".to_vec(),
+                        _ => vec![],
+                    };
+                    if seq.is_empty() {
+                        Action::Tick
+                    } else {
+                        Action::SendInput(session_id, seq)
+                    }
+                }
+                // Insert key
+                KeyCode::Insert => Action::SendInput(session_id, b"\x1b[2~".to_vec()),
 
                 _ => Action::Tick,
             }
@@ -669,6 +708,13 @@ impl EventHandler {
         if state.pinned_text_selections.get(pane_idx).map(|s| s.start.is_some()).unwrap_or(false) {
             match key.code {
                 KeyCode::Char('y') => return Action::CopySelection,
+                KeyCode::Char('c') | KeyCode::Char('C')
+                    if key.modifiers.contains(KeyModifiers::SUPER)
+                        || (key.modifiers.contains(KeyModifiers::CONTROL)
+                            && key.modifiers.contains(KeyModifiers::SHIFT)) =>
+                {
+                    return Action::CopySelection;
+                }
                 KeyCode::Esc => return Action::ClearSelection,
                 _ => {} // Fall through to normal handling
             }
@@ -677,8 +723,9 @@ impl EventHandler {
         // Get the pinned terminal ID for this pane
         if let Some(session_id) = state.pinned_terminal_id_at(pane_idx) {
             match key.code {
-                // Escape or Ctrl+H to leave pinned pane
-                KeyCode::Esc => Action::FocusLeft,
+                // Escape sends to PTY (for interrupting Claude Code, etc.)
+                KeyCode::Esc => Action::SendInput(session_id, vec![0x1b]),
+                // Ctrl+H to leave pinned pane
                 KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     Action::FocusLeft
                 }
@@ -706,22 +753,94 @@ impl EventHandler {
                 KeyCode::PageUp => Action::ScrollOutputUp,
                 KeyCode::PageDown => Action::ScrollOutputDown,
 
-                // Send to pinned terminal PTY
+                // Send to pinned terminal PTY with proper escape sequences
                 KeyCode::Char(c) => {
                     let data = if key.modifiers.contains(KeyModifiers::CONTROL) {
                         vec![(c as u8) & 0x1f]
+                    } else if key.modifiers.contains(KeyModifiers::ALT) {
+                        vec![0x1b, c as u8]
                     } else {
                         c.to_string().into_bytes()
                     };
                     Action::SendInput(session_id, data)
                 }
                 KeyCode::Enter => Action::SendInput(session_id, vec![b'\r']),
-                KeyCode::Backspace => Action::SendInput(session_id, vec![0x7f]),
+                KeyCode::Backspace => {
+                    if key.modifiers.contains(KeyModifiers::ALT) {
+                        Action::SendInput(session_id, vec![0x1b, 0x7f])
+                    } else if key.modifiers.contains(KeyModifiers::SUPER) {
+                        Action::SendInput(session_id, vec![0x15])
+                    } else {
+                        Action::SendInput(session_id, vec![0x7f])
+                    }
+                }
+                KeyCode::Delete => {
+                    if key.modifiers.contains(KeyModifiers::ALT) {
+                        Action::SendInput(session_id, vec![0x1b, b'd'])
+                    } else {
+                        Action::SendInput(session_id, b"\x1b[3~".to_vec())
+                    }
+                }
                 KeyCode::Tab => Action::SendInput(session_id, vec![b'\t']),
-                KeyCode::Up => Action::SendInput(session_id, vec![0x1b, b'[', b'A']),
-                KeyCode::Down => Action::SendInput(session_id, vec![0x1b, b'[', b'B']),
-                KeyCode::Right => Action::SendInput(session_id, vec![0x1b, b'[', b'C']),
-                KeyCode::Left => Action::SendInput(session_id, vec![0x1b, b'[', b'D']),
+                KeyCode::Up => {
+                    if key.modifiers.contains(KeyModifiers::ALT) {
+                        Action::SendInput(session_id, b"\x1b[1;3A".to_vec())
+                    } else {
+                        Action::SendInput(session_id, b"\x1b[A".to_vec())
+                    }
+                }
+                KeyCode::Down => {
+                    if key.modifiers.contains(KeyModifiers::ALT) {
+                        Action::SendInput(session_id, b"\x1b[1;3B".to_vec())
+                    } else {
+                        Action::SendInput(session_id, b"\x1b[B".to_vec())
+                    }
+                }
+                KeyCode::Right => {
+                    if key.modifiers.contains(KeyModifiers::ALT) {
+                        Action::SendInput(session_id, vec![0x1b, b'f'])
+                    } else if key.modifiers.contains(KeyModifiers::SUPER) {
+                        Action::SendInput(session_id, vec![0x05])
+                    } else {
+                        Action::SendInput(session_id, b"\x1b[C".to_vec())
+                    }
+                }
+                KeyCode::Left => {
+                    if key.modifiers.contains(KeyModifiers::ALT) {
+                        Action::SendInput(session_id, vec![0x1b, b'b'])
+                    } else if key.modifiers.contains(KeyModifiers::SUPER) {
+                        Action::SendInput(session_id, vec![0x01])
+                    } else {
+                        Action::SendInput(session_id, b"\x1b[D".to_vec())
+                    }
+                }
+                KeyCode::Home => Action::SendInput(session_id, vec![0x01]),
+                KeyCode::End => Action::SendInput(session_id, vec![0x05]),
+                // Function keys
+                KeyCode::F(n) => {
+                    let seq = match n {
+                        1 => b"\x1bOP".to_vec(),
+                        2 => b"\x1bOQ".to_vec(),
+                        3 => b"\x1bOR".to_vec(),
+                        4 => b"\x1bOS".to_vec(),
+                        5 => b"\x1b[15~".to_vec(),
+                        6 => b"\x1b[17~".to_vec(),
+                        7 => b"\x1b[18~".to_vec(),
+                        8 => b"\x1b[19~".to_vec(),
+                        9 => b"\x1b[20~".to_vec(),
+                        10 => b"\x1b[21~".to_vec(),
+                        11 => b"\x1b[23~".to_vec(),
+                        12 => b"\x1b[24~".to_vec(),
+                        _ => vec![],
+                    };
+                    if seq.is_empty() {
+                        Action::Tick
+                    } else {
+                        Action::SendInput(session_id, seq)
+                    }
+                }
+                // Insert key
+                KeyCode::Insert => Action::SendInput(session_id, b"\x1b[2~".to_vec()),
 
                 _ => Action::Tick,
             }
@@ -731,6 +850,28 @@ impl EventHandler {
                 KeyCode::Esc | KeyCode::Char('h') => Action::FocusLeft,
                 _ => Action::Tick,
             }
+        }
+    }
+
+    fn agent_shortcut(key: &KeyEvent) -> Option<(AgentType, bool)> {
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            || key.modifiers.contains(KeyModifiers::ALT)
+        {
+            return None;
+        }
+
+        let shifted = key.modifiers.contains(KeyModifiers::SHIFT);
+
+        match key.code {
+            KeyCode::Char('1') => Some((AgentType::Claude, shifted)),
+            KeyCode::Char('2') => Some((AgentType::Gemini, shifted)),
+            KeyCode::Char('3') => Some((AgentType::Codex, shifted)),
+            KeyCode::Char('4') => Some((AgentType::Grok, shifted)),
+            KeyCode::Char('!') => Some((AgentType::Claude, true)),
+            KeyCode::Char('@') => Some((AgentType::Gemini, true)),
+            KeyCode::Char('#') => Some((AgentType::Codex, true)),
+            KeyCode::Char('$') => Some((AgentType::Grok, true)),
+            _ => None,
         }
     }
 }

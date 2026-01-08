@@ -25,7 +25,15 @@ pub async fn run_tui(initial_workspace: Option<PathBuf>) -> Result<()> {
         Ok(persisted) => {
             state.workspaces = persisted.workspaces;
             state.sessions = persisted.sessions;
-            state.notepad_content = persisted.notepad_content;
+            // Load notepad content into TextArea widgets
+            for (ws_id, content) in persisted.notepad_content {
+                state.load_notepad_content(ws_id, content);
+            }
+            // Select first workspace in visual order (Working workspaces first)
+            let visual_order = state.workspace_visual_order();
+            if let Some(&first_idx) = visual_order.first() {
+                state.selected_workspace_idx = first_idx;
+            }
         }
         Err(e) => {
             eprintln!("Warning: Could not load saved state: {}", e);

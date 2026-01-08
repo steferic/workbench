@@ -5,7 +5,7 @@ pub mod ui;
 
 use anyhow::Result;
 use crossterm::{
-    event::{DisableMouseCapture, EnableMouseCapture},
+    event::{DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -16,7 +16,12 @@ pub type Terminal = ratatui::Terminal<CrosstermBackend<io::Stdout>>;
 
 pub fn init() -> Result<Terminal> {
     enable_raw_mode()?;
-    execute!(stdout(), EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(
+        stdout(),
+        EnterAlternateScreen,
+        EnableMouseCapture,
+        EnableBracketedPaste
+    )?;
     let backend = CrosstermBackend::new(stdout());
     let terminal = ratatui::Terminal::new(backend)?;
     Ok(terminal)
@@ -24,6 +29,11 @@ pub fn init() -> Result<Terminal> {
 
 pub fn restore() -> Result<()> {
     disable_raw_mode()?;
-    execute!(stdout(), LeaveAlternateScreen, DisableMouseCapture)?;
+    execute!(
+        stdout(),
+        LeaveAlternateScreen,
+        DisableMouseCapture,
+        DisableBracketedPaste
+    )?;
     Ok(())
 }

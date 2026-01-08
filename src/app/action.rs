@@ -1,4 +1,5 @@
 use crate::models::AgentType;
+use crossterm::event::KeyEvent;
 use std::path::PathBuf;
 use uuid::Uuid;
 
@@ -24,7 +25,7 @@ pub enum Action {
     ConfirmDeleteWorkspace,                  // second 'd' press
 
     // Session operations
-    CreateSession(AgentType),
+    CreateSession(AgentType, bool), // bool = dangerously_skip_permissions
     SelectSession(usize),
     ActivateSession(Uuid),
     RestartSession(Uuid),
@@ -36,6 +37,7 @@ pub enum Action {
 
     // PTY interaction
     SendInput(Uuid, Vec<u8>),
+    Paste(String),
     PtyOutput(Uuid, Vec<u8>),
     SessionExited(Uuid, i32),
 
@@ -95,22 +97,8 @@ pub enum Action {
     ToggleConfigItem,   // Toggle the selected config item (e.g., banner visibility)
     ToggleBrownNoise,   // Toggle brown noise player on/off
 
-    // Notepad operations
-    NotepadChar(char),      // Insert character at cursor
-    NotepadBackspace,       // Delete character before cursor
-    NotepadDelete,          // Delete character at cursor
-    NotepadNewline,         // Insert newline
-    NotepadCursorLeft,      // Move cursor left
-    NotepadCursorRight,     // Move cursor right
-    NotepadCursorHome,      // Move cursor to start of line
-    NotepadCursorEnd,       // Move cursor to end of line
-    NotepadPaste,           // Paste from clipboard
-    NotepadDeleteWord,      // Delete word before cursor (Option+Backspace)
-    NotepadDeleteLine,      // Delete to start of line (Cmd+Backspace)
-    NotepadDeleteWordForward, // Delete word after cursor (Option+Delete)
-    NotepadDeleteToEnd,     // Delete to end of line (Cmd+Delete / Ctrl+K)
-    NotepadWordLeft,        // Move cursor to previous word (Option+Left)
-    NotepadWordRight,       // Move cursor to next word (Option+Right)
+    // Notepad operations (tui-textarea handles all editing)
+    NotepadInput(KeyEvent),  // Pass key event to TextArea widget
 
     // Todo operations
     SelectNextTodo,

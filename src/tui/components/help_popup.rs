@@ -78,6 +78,10 @@ pub fn render(frame: &mut Frame, _state: &AppState) {
             Span::raw("New Grok session"),
         ]),
         Line::from(vec![
+            Span::styled("  Shift+1-4 ", Style::default().fg(Color::Cyan)),
+            Span::raw("New session (dangerous permissions)"),
+        ]),
+        Line::from(vec![
             Span::styled("  Enter     ", Style::default().fg(Color::Cyan)),
             Span::raw("Activate selected session"),
         ]),

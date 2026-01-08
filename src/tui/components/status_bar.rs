@@ -98,7 +98,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
                     .add_modifier(Modifier::BOLD),
             )],
             vec![Span::styled(
-                "1=Claude  2=Gemini  3=Codex  4=Grok  t=Terminal  Esc=Cancel",
+                "1-4=Agent  Shift+1-4=Danger  t=Terminal  Esc=Cancel",
                 Style::default().fg(Color::Gray),
             )],
         ),
@@ -194,6 +194,8 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
                 FocusPanel::SessionList => vec![
                     Span::styled("[1-4]", Style::default().fg(Color::Cyan)),
                     Span::raw(" Agent  "),
+                    Span::styled("[Shift+1-4]", Style::default().fg(Color::Cyan)),
+                    Span::raw(" Danger  "),
                     Span::styled("[t]", Style::default().fg(Color::Cyan)),
                     Span::raw(" Terminal  "),
                     Span::styled("[Enter]", Style::default().fg(Color::Cyan)),

@@ -15,6 +15,90 @@ use super::selection::{clear_all_pinned_selections, copy_to_clipboard, extract_s
 use super::session_start::start_workspace_sessions;
 use super::utilities::load_utility_content;
 
+fn pane_text_position(
+    area: (u16, u16, u16, u16),
+    x: u16,
+    y: u16,
+    content_length: usize,
+    scroll_from_bottom: u16,
+) -> Option<(usize, usize)> {
+    let (area_x, area_y, area_w, area_h) = area;
+    let inner_w = area_w.saturating_sub(2);
+    let inner_h = area_h.saturating_sub(2);
+
+    if inner_w == 0 || inner_h == 0 || content_length == 0 {
+        return None;
+    }
+
+    let right_edge = area_x.saturating_add(area_w).saturating_sub(1);
+    let bottom_edge = area_y.saturating_add(area_h).saturating_sub(1);
+    if x <= area_x || x >= right_edge || y <= area_y || y >= bottom_edge {
+        return None;
+    }
+
+    let col_in_view = x.saturating_sub(area_x).saturating_sub(1) as usize;
+    let row_in_view = y.saturating_sub(area_y).saturating_sub(1) as usize;
+
+    if col_in_view >= inner_w as usize || row_in_view >= inner_h as usize {
+        return None;
+    }
+
+    let viewport_height = inner_h as usize;
+    let max_scroll = content_length.saturating_sub(viewport_height);
+    let scroll_from_bottom = (scroll_from_bottom as usize).min(max_scroll);
+    let scroll_offset = max_scroll.saturating_sub(scroll_from_bottom);
+
+    let row = scroll_offset
+        .saturating_add(row_in_view)
+        .min(content_length.saturating_sub(1));
+
+    Some((row, col_in_view))
+}
+
+fn copy_active_selection(state: &mut AppState) -> bool {
+    if let (Some(parser), Some(start), Some(end)) = (
+        state.active_output(),
+        state.text_selection.start,
+        state.text_selection.end,
+    ) {
+        if start != end {
+            let text = extract_selected_text(parser.screen(), start, end);
+            copy_to_clipboard(&text);
+            return true;
+        }
+    }
+
+    for idx in 0..state.pinned_count() {
+        let sel = &state.pinned_text_selections[idx];
+        if let (Some(start), Some(end)) = (sel.start, sel.end) {
+            if start != end {
+                if let Some(parser) = state.pinned_terminal_output_at(idx) {
+                    let text = extract_selected_text(parser.screen(), start, end);
+                    copy_to_clipboard(&text);
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
+}
+
+fn bracketed_paste_payload(text: &str) -> Vec<u8> {
+    let mut data = Vec::with_capacity(text.len() + 10);
+    data.extend_from_slice(b"\x1b[200~");
+    data.extend_from_slice(text.as_bytes());
+    data.extend_from_slice(b"\x1b[201~");
+    data
+}
+
+fn paste_target_session_id(state: &AppState) -> Option<Uuid> {
+    match state.focus {
+        FocusPanel::PinnedTerminalPane(idx) => state.pinned_terminal_id_at(idx),
+        _ => state.active_session_id,
+    }
+}
+
 pub fn process_action(
     state: &mut AppState,
     action: Action,
@@ -246,35 +330,46 @@ pub fn process_action(
                     if let Some(idx) = clicked_pinned_idx {
                         state.focus = FocusPanel::PinnedTerminalPane(idx);
                         state.focused_pinned_pane = idx;
-
-                        // Start selection in pinned pane
-                        if let Some((area_x, area_y, _, _)) = state.pinned_pane_areas[idx] {
-                            let text_col = (x.saturating_sub(area_x).saturating_sub(1)) as usize;
-                            let text_row = (y.saturating_sub(area_y).saturating_sub(1)) as usize;
-
-                            if let Some(sel) = state.pinned_text_selections.get_mut(idx) {
-                                *sel = TextSelection {
-                                    start: Some((text_row, text_col)),
-                                    end: Some((text_row, text_col)),
-                                    is_dragging: true,
-                                };
+                        let has_output = state.pinned_terminal_output_at(idx).is_some();
+                        if has_output {
+                            if let Some(area) = state.pinned_pane_areas[idx] {
+                                if let Some((row, col)) = pane_text_position(
+                                    area,
+                                    x,
+                                    y,
+                                    state.pinned_content_lengths[idx],
+                                    state.pinned_scroll_offsets[idx],
+                                ) {
+                                    if let Some(sel) = state.pinned_text_selections.get_mut(idx) {
+                                        *sel = TextSelection {
+                                            start: Some((row, col)),
+                                            end: Some((row, col)),
+                                            is_dragging: true,
+                                        };
+                                    }
+                                }
                             }
                         }
                     } else {
-                        // Output pane - start selection
+                        // Output pane - just focus it
                         state.focus = FocusPanel::OutputPane;
-
-                        // Convert screen coordinates to text position
-                        if let Some((area_x, area_y, _, _)) = state.output_pane_area {
-                            // Account for border (1 pixel)
-                            let text_col = (x.saturating_sub(area_x).saturating_sub(1)) as usize;
-                            let text_row = (y.saturating_sub(area_y).saturating_sub(1) + state.output_scroll_offset) as usize;
-
-                            state.text_selection = TextSelection {
-                                start: Some((text_row, text_col)),
-                                end: Some((text_row, text_col)),
-                                is_dragging: true,
-                            };
+                        let has_output = state.active_output().is_some();
+                        if has_output {
+                            if let Some(area) = state.output_pane_area {
+                                if let Some((row, col)) = pane_text_position(
+                                    area,
+                                    x,
+                                    y,
+                                    state.output_content_length,
+                                    state.output_scroll_offset,
+                                ) {
+                                    state.text_selection = TextSelection {
+                                        start: Some((row, col)),
+                                        end: Some((row, col)),
+                                        is_dragging: true,
+                                    };
+                                }
+                            }
                         }
                     }
                 }
@@ -366,20 +461,32 @@ pub fn process_action(
 
             // Handle text selection dragging in output pane
             if state.text_selection.is_dragging {
-                if let Some((area_x, area_y, _, _)) = state.output_pane_area {
-                    let text_col = (x.saturating_sub(area_x).saturating_sub(1)) as usize;
-                    let text_row = (y.saturating_sub(area_y).saturating_sub(1) + state.output_scroll_offset) as usize;
-                    state.text_selection.end = Some((text_row, text_col));
+                if let Some(area) = state.output_pane_area {
+                    if let Some((row, col)) = pane_text_position(
+                        area,
+                        x,
+                        y,
+                        state.output_content_length,
+                        state.output_scroll_offset,
+                    ) {
+                        state.text_selection.end = Some((row, col));
+                    }
                 }
             }
 
             // Handle text selection dragging in pinned panes
             for (idx, sel) in state.pinned_text_selections.iter_mut().enumerate() {
                 if sel.is_dragging {
-                    if let Some((area_x, area_y, _, _)) = state.pinned_pane_areas[idx] {
-                        let text_col = (x.saturating_sub(area_x).saturating_sub(1)) as usize;
-                        let text_row = (y.saturating_sub(area_y).saturating_sub(1)) as usize;
-                        sel.end = Some((text_row, text_col));
+                    if let Some(area) = state.pinned_pane_areas[idx] {
+                        if let Some((row, col)) = pane_text_position(
+                            area,
+                            x,
+                            y,
+                            state.pinned_content_lengths[idx],
+                            state.pinned_scroll_offsets[idx],
+                        ) {
+                            sel.end = Some((row, col));
+                        }
                     }
                 }
             }
@@ -408,10 +515,16 @@ pub fn process_action(
 
             // Finalize text selection in output pane
             if state.text_selection.is_dragging {
-                if let Some((area_x, area_y, _, _)) = state.output_pane_area {
-                    let text_col = (x.saturating_sub(area_x).saturating_sub(1)) as usize;
-                    let text_row = (y.saturating_sub(area_y).saturating_sub(1) + state.output_scroll_offset) as usize;
-                    state.text_selection.end = Some((text_row, text_col));
+                if let Some(area) = state.output_pane_area {
+                    if let Some((row, col)) = pane_text_position(
+                        area,
+                        x,
+                        y,
+                        state.output_content_length,
+                        state.output_scroll_offset,
+                    ) {
+                        state.text_selection.end = Some((row, col));
+                    }
                 }
                 state.text_selection.is_dragging = false;
 
@@ -424,10 +537,16 @@ pub fn process_action(
             // Finalize text selection in pinned panes
             for (idx, sel) in state.pinned_text_selections.iter_mut().enumerate() {
                 if sel.is_dragging {
-                    if let Some((area_x, area_y, _, _)) = state.pinned_pane_areas[idx] {
-                        let text_col = (x.saturating_sub(area_x).saturating_sub(1)) as usize;
-                        let text_row = (y.saturating_sub(area_y).saturating_sub(1)) as usize;
-                        sel.end = Some((text_row, text_col));
+                    if let Some(area) = state.pinned_pane_areas[idx] {
+                        if let Some((row, col)) = pane_text_position(
+                            area,
+                            x,
+                            y,
+                            state.pinned_content_lengths[idx],
+                            state.pinned_scroll_offsets[idx],
+                        ) {
+                            sel.end = Some((row, col));
+                        }
                     }
                     sel.is_dragging = false;
 
@@ -442,29 +561,34 @@ pub fn process_action(
         // Copy selected text to clipboard
         Action::CopySelection => {
             // Check if copying from output pane
-            if let (Some(parser), Some(start), Some(end)) = (
-                state.active_output(),
-                state.text_selection.start,
-                state.text_selection.end,
-            ) {
-                let text = extract_selected_text(parser.screen(), start, end);
-                copy_to_clipboard(&text);
-            }
-            // Check if copying from any pinned pane
-            for idx in 0..state.pinned_count() {
-                let sel = &state.pinned_text_selections[idx];
-                if let (Some(parser), Some(start), Some(end)) = (
-                    state.pinned_terminal_output_at(idx),
-                    sel.start,
-                    sel.end,
-                ) {
-                    let text = extract_selected_text(parser.screen(), start, end);
-                    copy_to_clipboard(&text);
-                    break; // Only copy from one pane
-                }
-            }
+            let _ = copy_active_selection(state);
             state.text_selection = TextSelection::default();
             clear_all_pinned_selections(state);
+        }
+
+        Action::Paste(text) => {
+            if state.input_mode != InputMode::Normal {
+                return Ok(());
+            }
+            if let Some(session_id) = paste_target_session_id(state) {
+                let data = bracketed_paste_payload(&text);
+                if let Some(handle) = state.pty_handles.get_mut(&session_id) {
+                    let _ = handle.send_input(&data);
+                }
+                if let Some(workspace_id) = state.sessions.iter()
+                    .find_map(|(ws_id, sessions)| {
+                        if sessions.iter().any(|s| s.id == session_id) {
+                            Some(*ws_id)
+                        } else {
+                            None
+                        }
+                    })
+                {
+                    if let Some(ws) = state.workspaces.iter_mut().find(|ws| ws.id == workspace_id) {
+                        ws.touch();
+                    }
+                }
+            }
         }
 
         // Clear selection
@@ -563,7 +687,6 @@ pub fn process_action(
                 // Start all stopped sessions if workspace changed
                 if state.selected_workspace_idx != prev_idx {
                     start_workspace_sessions(state, pty_manager, action_tx);
-                    state.reset_notepad_cursor(); // Reset cursor for new workspace's notepad
                 }
             }
             FocusPanel::SessionList => {
@@ -578,7 +701,6 @@ pub fn process_action(
                 // Start all stopped sessions if workspace changed
                 if state.selected_workspace_idx != prev_idx {
                     start_workspace_sessions(state, pty_manager, action_tx);
-                    state.reset_notepad_cursor(); // Reset cursor for new workspace's notepad
                 }
             }
             FocusPanel::SessionList => {
@@ -644,26 +766,27 @@ pub fn process_action(
             state.focus = FocusPanel::UtilitiesPane;
         }
         Action::ScrollOutputUp => {
-            // Scroll the focused pane
+            // Scroll up (into history) - increase offset from bottom
             if let FocusPanel::PinnedTerminalPane(idx) = state.focus {
                 if let Some(offset) = state.pinned_scroll_offsets.get_mut(idx) {
-                    *offset = offset.saturating_add(1);
+                    *offset = offset.saturating_add(3);
                 }
             } else {
-                state.output_scroll_offset = state.output_scroll_offset.saturating_sub(1);
+                state.output_scroll_offset = state.output_scroll_offset.saturating_add(3);
             }
         }
         Action::ScrollOutputDown => {
-            // Scroll the focused pane
+            // Scroll down (towards current) - decrease offset from bottom
             if let FocusPanel::PinnedTerminalPane(idx) = state.focus {
                 if let Some(offset) = state.pinned_scroll_offsets.get_mut(idx) {
-                    *offset = offset.saturating_sub(1);
+                    *offset = offset.saturating_sub(3);
                 }
             } else {
-                state.output_scroll_offset = state.output_scroll_offset.saturating_add(1);
+                state.output_scroll_offset = state.output_scroll_offset.saturating_sub(3);
             }
         }
         Action::ScrollOutputToBottom => {
+            // Reset to bottom (current output)
             if let FocusPanel::PinnedTerminalPane(idx) = state.focus {
                 if let Some(offset) = state.pinned_scroll_offsets.get_mut(idx) {
                     *offset = 0;
@@ -997,69 +1120,44 @@ Focus on practical, actionable items. Be specific about what needs to be done."#
             // Audio player is managed by runtime
         }
 
-        // Notepad operations
-        Action::NotepadChar(c) => {
-            state.notepad_insert_char(c);
-            // Auto-save notepad changes
-            let _ = persistence::save_with_notepad(&state.workspaces, &state.sessions, &state.notepad_content);
-        }
-        Action::NotepadBackspace => {
-            state.notepad_backspace();
-            let _ = persistence::save_with_notepad(&state.workspaces, &state.sessions, &state.notepad_content);
-        }
-        Action::NotepadDelete => {
-            state.notepad_delete();
-            let _ = persistence::save_with_notepad(&state.workspaces, &state.sessions, &state.notepad_content);
-        }
-        Action::NotepadNewline => {
-            state.notepad_insert_char('\n');
-            let _ = persistence::save_with_notepad(&state.workspaces, &state.sessions, &state.notepad_content);
-        }
-        Action::NotepadCursorLeft => {
-            state.notepad_cursor_left();
-        }
-        Action::NotepadCursorRight => {
-            state.notepad_cursor_right();
-        }
-        Action::NotepadCursorHome => {
-            state.notepad_cursor_home();
-        }
-        Action::NotepadCursorEnd => {
-            state.notepad_cursor_end();
-        }
-        Action::NotepadPaste => {
-            // Try to paste from clipboard
-            if let Ok(mut ctx) = arboard::Clipboard::new() {
-                if let Ok(text) = ctx.get_text() {
-                    for c in text.chars() {
-                        state.notepad_insert_char(c);
-                    }
-                    // Save after paste
-                    let _ = persistence::save_with_notepad(&state.workspaces, &state.sessions, &state.notepad_content);
-                }
+        // Notepad operations (using tui-textarea)
+        Action::NotepadInput(key) => {
+            // Convert crossterm KeyEvent to tui-textarea Input (avoids version mismatch)
+            use crossterm::event::{KeyCode, KeyModifiers};
+            use tui_textarea::{Input, Key};
+
+            let tui_key = match key.code {
+                KeyCode::Char(c) => Key::Char(c),
+                KeyCode::Backspace => Key::Backspace,
+                KeyCode::Enter => Key::Enter,
+                KeyCode::Left => Key::Left,
+                KeyCode::Right => Key::Right,
+                KeyCode::Up => Key::Up,
+                KeyCode::Down => Key::Down,
+                KeyCode::Tab => Key::Tab,
+                KeyCode::Delete => Key::Delete,
+                KeyCode::Home => Key::Home,
+                KeyCode::End => Key::End,
+                KeyCode::PageUp => Key::PageUp,
+                KeyCode::PageDown => Key::PageDown,
+                KeyCode::Esc => Key::Esc,
+                KeyCode::F(n) => Key::F(n),
+                _ => Key::Null,
+            };
+
+            let input = Input {
+                key: tui_key,
+                ctrl: key.modifiers.contains(KeyModifiers::CONTROL),
+                alt: key.modifiers.contains(KeyModifiers::ALT),
+                shift: key.modifiers.contains(KeyModifiers::SHIFT),
+            };
+
+            if let Some(textarea) = state.current_notepad() {
+                textarea.input(input);
             }
-        }
-        Action::NotepadDeleteWord => {
-            state.notepad_delete_word();
-            let _ = persistence::save_with_notepad(&state.workspaces, &state.sessions, &state.notepad_content);
-        }
-        Action::NotepadDeleteLine => {
-            state.notepad_delete_line();
-            let _ = persistence::save_with_notepad(&state.workspaces, &state.sessions, &state.notepad_content);
-        }
-        Action::NotepadDeleteWordForward => {
-            state.notepad_delete_word_forward();
-            let _ = persistence::save_with_notepad(&state.workspaces, &state.sessions, &state.notepad_content);
-        }
-        Action::NotepadDeleteToEnd => {
-            state.notepad_delete_to_end();
-            let _ = persistence::save_with_notepad(&state.workspaces, &state.sessions, &state.notepad_content);
-        }
-        Action::NotepadWordLeft => {
-            state.notepad_word_left();
-        }
-        Action::NotepadWordRight => {
-            state.notepad_word_right();
+            // Auto-save notepad changes
+            let notepad_contents = state.notepad_content_for_persistence();
+            let _ = persistence::save_with_notepad(&state.workspaces, &state.sessions, &notepad_contents);
         }
 
         // Workspace operations
@@ -1124,9 +1222,13 @@ Focus on practical, actionable items. Be specific about what needs to be done."#
         }
 
         // Session operations
-        Action::CreateSession(agent_type) => {
+        Action::CreateSession(agent_type, dangerously_skip_permissions) => {
             if let Some(workspace) = state.selected_workspace() {
-                let session = Session::new(workspace.id, agent_type.clone());
+                let session = Session::new(
+                    workspace.id,
+                    agent_type.clone(),
+                    dangerously_skip_permissions,
+                );
                 let session_id = session.id;
                 let workspace_path = workspace.path.clone();
                 let ws_idx = state.selected_workspace_idx;
@@ -1142,7 +1244,7 @@ Focus on practical, actionable items. Be specific about what needs to be done."#
 
                 // Create vt100 parser with many more rows for scrollback
                 let parser_rows = 500;
-                let parser = vt100::Parser::new(parser_rows, cols, 0);
+                let parser = vt100::Parser::new(parser_rows, cols, 10000);
                 state.output_buffers.insert(session_id, parser);
 
                 // Spawn PTY with actual viewport size
@@ -1153,6 +1255,7 @@ Focus on practical, actionable items. Be specific about what needs to be done."#
                     pty_rows,
                     cols,
                     action_tx.clone(),
+                    dangerously_skip_permissions,
                 ) {
                     Ok(handle) => {
                         state.pty_handles.insert(session_id, handle);
@@ -1187,7 +1290,7 @@ Focus on practical, actionable items. Be specific about what needs to be done."#
                 let name = format!("{}", terminal_count + 1);
 
                 let agent_type = AgentType::Terminal(name);
-                let session = Session::new(workspace.id, agent_type.clone());
+                let session = Session::new(workspace.id, agent_type.clone(), false);
                 let session_id = session.id;
                 let workspace_path = workspace.path.clone();
                 let ws_idx = state.selected_workspace_idx;
@@ -1203,7 +1306,7 @@ Focus on practical, actionable items. Be specific about what needs to be done."#
 
                 // Create vt100 parser with many more rows for scrollback
                 let parser_rows = 500;
-                let parser = vt100::Parser::new(parser_rows, cols, 0);
+                let parser = vt100::Parser::new(parser_rows, cols, 10000);
                 state.output_buffers.insert(session_id, parser);
 
                 // Spawn PTY (terminals don't resume)
@@ -1214,6 +1317,7 @@ Focus on practical, actionable items. Be specific about what needs to be done."#
                     pty_rows,
                     cols,
                     action_tx.clone(),
+                    false,
                 ) {
                     Ok(handle) => {
                         state.pty_handles.insert(session_id, handle);
@@ -1251,9 +1355,14 @@ Focus on practical, actionable items. Be specific about what needs to be done."#
             // Find the session and its workspace, including start_command for terminals
             let session_info = state.sessions.values().flatten()
                 .find(|s| s.id == session_id)
-                .map(|s| (s.agent_type.clone(), s.workspace_id, s.start_command.clone()));
+                .map(|s| (
+                    s.agent_type.clone(),
+                    s.workspace_id,
+                    s.start_command.clone(),
+                    s.dangerously_skip_permissions,
+                ));
 
-            if let Some((agent_type, workspace_id, start_command)) = session_info {
+            if let Some((agent_type, workspace_id, start_command, dangerously_skip_permissions)) = session_info {
                 // Find the workspace path
                 let workspace_path = state.workspaces.iter()
                     .find(|w| w.id == workspace_id)
@@ -1266,7 +1375,7 @@ Focus on practical, actionable items. Be specific about what needs to be done."#
 
                     // Create new vt100 parser with large buffer for scrollback
                     let parser_rows = 500;
-                    let parser = vt100::Parser::new(parser_rows, cols, 0);
+                    let parser = vt100::Parser::new(parser_rows, cols, 10000);
                     state.output_buffers.insert(session_id, parser);
 
                     // For terminals, don't resume. For agents, resume.
@@ -1281,6 +1390,7 @@ Focus on practical, actionable items. Be specific about what needs to be done."#
                         cols,
                         action_tx.clone(),
                         resume,
+                        dangerously_skip_permissions,
                     ) {
                         Ok(handle) => {
                             state.pty_handles.insert(session_id, handle);

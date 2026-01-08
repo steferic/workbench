@@ -1,4 +1,4 @@
-use crate::app::{AppState, FocusPanel, TextSelection};
+use crate::app::{AppState, FocusPanel, InputMode, TextSelection};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -15,19 +15,14 @@ use time::{Date, Month, OffsetDateTime};
 
 pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
     let is_focused = state.focus == FocusPanel::OutputPane;
-    let has_selection = state.text_selection.start.is_some();
 
-    let border_style = if has_selection {
-        Style::default().fg(Color::Yellow)
-    } else if is_focused {
+    let border_style = if is_focused {
         Style::default().fg(Color::Cyan)
     } else {
         Style::default().fg(Color::DarkGray)
     };
 
-    let title = if has_selection {
-        " SELECT - y: copy, Esc: cancel ".to_string()
-    } else if let Some(session) = state.active_session() {
+    let title = if let Some(session) = state.active_session() {
         format!(
             " {} - {} - {} ",
             session.agent_type.display_name(),
@@ -45,8 +40,6 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
         .borders(Borders::ALL)
         .border_style(border_style);
 
-    let inner_area = block.inner(area);
-
     // Store the output pane area for mouse coordinate conversion
     state.output_pane_area = Some((area.x, area.y, area.width, area.height));
 
@@ -54,6 +47,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
     let has_pie_chart = !state.pie_chart_data.is_empty() && state.active_session_id.is_none();
 
     if has_pie_chart {
+        state.output_content_length = 0;
         // Render pie chart view with split layout
         render_pie_chart_view(frame, area, state, block);
         return;
@@ -61,77 +55,86 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
 
     // Check if we should render a calendar (Calendar utility)
     if state.show_calendar && state.active_session_id.is_none() {
+        state.output_content_length = 0;
         render_calendar_view(frame, area, state, block);
         return;
     }
 
-    // Convert vt100 parser output to ratatui Lines
-    let lines: Vec<Line> = if let Some(parser) = state.active_output() {
+    // Render terminal output with scrolling support
+    if let Some(parser) = state.active_output() {
         let screen = parser.screen();
-        if has_selection {
-            convert_vt100_to_lines_with_selection(
-                screen,
-                &state.text_selection,
-                state.output_scroll_offset as usize,
+        let cursor_state = cursor_info(screen);
+        let inner_area = block.inner(area);
+        let viewport_height = inner_area.height as usize;
+
+        // Convert vt100 screen to lines
+        let selection = selection_bounds(&state.text_selection, screen.size());
+        let lines = convert_vt100_to_lines(screen, selection);
+        let content_length = lines.len();
+        state.output_content_length = content_length;
+
+        // Scroll offset is from bottom (0 = show latest, higher = scroll up)
+        let max_scroll = content_length.saturating_sub(viewport_height);
+        let scroll_from_bottom = (state.output_scroll_offset as usize).min(max_scroll);
+        let scroll_offset = max_scroll.saturating_sub(scroll_from_bottom);
+
+        // Show scroll indicator in title if scrolled
+        let title = if scroll_from_bottom > 0 {
+            format!(
+                " {} - {} - {} [↑{}] ",
+                state.active_session().map(|s| s.agent_type.display_name()).unwrap_or("Session".to_string()),
+                state.active_session().map(|s| s.short_id()).unwrap_or_default(),
+                state.active_session().map(|s| s.duration_string()).unwrap_or_default(),
+                scroll_from_bottom
             )
         } else {
-            convert_vt100_to_lines(screen)
+            format!(
+                " {} - {} - {} ",
+                state.active_session().map(|s| s.agent_type.display_name()).unwrap_or("Session".to_string()),
+                state.active_session().map(|s| s.short_id()).unwrap_or_default(),
+                state.active_session().map(|s| s.duration_string()).unwrap_or_default()
+            )
+        };
+
+        let block = Block::default()
+            .title(title)
+            .borders(Borders::ALL)
+            .border_style(border_style);
+
+        let paragraph = Paragraph::new(lines)
+            .block(block)
+            .scroll((scroll_offset as u16, 0));
+
+        frame.render_widget(paragraph, area);
+
+        // Render scrollbar if content exceeds viewport
+        if content_length > viewport_height {
+            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight);
+            let mut scrollbar_state = ScrollbarState::new(max_scroll).position(scroll_offset);
+            frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
         }
-    } else if !state.utility_content.is_empty() {
+
+        if is_focused && state.input_mode == InputMode::Normal && scroll_from_bottom == 0 {
+            render_cursor(frame, inner_area, cursor_state, scroll_offset);
+        }
+        return;
+    }
+
+    // No active session - show utility content or hints
+    let lines: Vec<Line> = if !state.utility_content.is_empty() {
         // Show utility content when no active session
-        state.utility_content.iter()
+        state
+            .utility_content
+            .iter()
             .map(|line| Line::from(Span::styled(line.clone(), Style::default().fg(Color::Gray))))
             .collect()
     } else {
-        let hint = if state.workspaces.is_empty() {
-            vec![
-                Line::from(""),
-                Line::from(Span::styled(
-                    "  Welcome to Workbench!",
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                )),
-                Line::from(""),
-                Line::from(Span::styled(
-                    "  Press 'n' to create a new workspace",
-                    Style::default().fg(Color::Gray),
-                )),
-                Line::from(Span::styled(
-                    "  Press '?' for help",
-                    Style::default().fg(Color::Gray),
-                )),
-            ]
-        } else if state.sessions_for_selected_workspace().is_empty() {
-            vec![
-                Line::from(""),
-                Line::from(Span::styled(
-                    "  No sessions in this workspace",
-                    Style::default().fg(Color::Gray),
-                )),
-                Line::from(""),
-                Line::from(Span::styled(
-                    "  Press 1-4 to start a new session:",
-                    Style::default().fg(Color::Gray),
-                )),
-                Line::from(Span::styled(
-                    "    1 = Claude, 2 = Gemini, 3 = Codex, 4 = Grok",
-                    Style::default().fg(Color::DarkGray),
-                )),
-            ]
-        } else {
-            vec![
-                Line::from(""),
-                Line::from(Span::styled(
-                    "  Select a session and press Enter to view output",
-                    Style::default().fg(Color::Gray),
-                )),
-            ]
-        };
-        hint
+        render_hints(state)
     };
 
+    let inner_area = block.inner(area);
     let content_length = lines.len();
+    state.output_content_length = 0;
     let viewport_height = inner_area.height as usize;
 
     // Calculate max scroll offset (can't scroll past content)
@@ -152,20 +155,136 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
     }
 }
 
-fn convert_vt100_to_lines(screen: &vt100::Screen) -> Vec<Line<'static>> {
+/// Render hint text when no session is active
+fn render_hints(state: &AppState) -> Vec<Line<'static>> {
+    if state.workspaces.is_empty() {
+        vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                "  Welcome to Workbench!",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "  Press 'n' to create a new workspace",
+                Style::default().fg(Color::Gray),
+            )),
+            Line::from(Span::styled(
+                "  Press '?' for help",
+                Style::default().fg(Color::Gray),
+            )),
+        ]
+    } else if state.sessions_for_selected_workspace().is_empty() {
+        vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                "  No sessions in this workspace",
+                Style::default().fg(Color::Gray),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "  Press 1-4 to start a new session:",
+                Style::default().fg(Color::Gray),
+            )),
+            Line::from(Span::styled(
+                "    1 = Claude, 2 = Gemini, 3 = Codex, 4 = Grok",
+                Style::default().fg(Color::DarkGray),
+            )),
+        ]
+    } else {
+        vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                "  Select a session and press Enter to view output",
+                Style::default().fg(Color::Gray),
+            )),
+        ]
+    }
+}
+
+/// Convert vt100 screen to ratatui Lines with proper styling
+#[derive(Clone, Copy)]
+struct SelectionBounds {
+    start_row: usize,
+    start_col: usize,
+    end_row: usize,
+    end_col: usize,
+}
+
+fn selection_bounds(
+    selection: &TextSelection,
+    (rows, cols): (u16, u16),
+) -> Option<SelectionBounds> {
+    let start = selection.start?;
+    let end = selection.end?;
+    if rows == 0 || cols == 0 {
+        return None;
+    }
+
+    let (mut start_row, mut start_col) = start;
+    let (mut end_row, mut end_col) = end;
+
+    if start_row > end_row || (start_row == end_row && start_col > end_col) {
+        std::mem::swap(&mut start_row, &mut end_row);
+        std::mem::swap(&mut start_col, &mut end_col);
+    }
+
+    let max_row = rows.saturating_sub(1) as usize;
+    let max_col = cols.saturating_sub(1) as usize;
+
+    Some(SelectionBounds {
+        start_row: start_row.min(max_row),
+        start_col: start_col.min(max_col),
+        end_row: end_row.min(max_row),
+        end_col: end_col.min(max_col),
+    })
+}
+
+fn cell_is_selected(row: usize, col: usize, bounds: SelectionBounds) -> bool {
+    if row < bounds.start_row || row > bounds.end_row {
+        return false;
+    }
+
+    if bounds.start_row == bounds.end_row {
+        return col >= bounds.start_col && col <= bounds.end_col;
+    }
+
+    if row == bounds.start_row {
+        return col >= bounds.start_col;
+    }
+    if row == bounds.end_row {
+        return col <= bounds.end_col;
+    }
+
+    true
+}
+
+fn convert_vt100_to_lines(
+    screen: &vt100::Screen,
+    selection: Option<SelectionBounds>,
+) -> Vec<Line<'static>> {
     let mut all_lines = Vec::new();
     let (rows, cols) = screen.size();
 
-    // Get visible screen lines
     for row in 0..rows {
         let mut spans = Vec::new();
         let mut current_text = String::new();
         let mut current_style = Style::default();
+        let row_has_selection = selection
+            .map(|bounds| (row as usize) >= bounds.start_row && (row as usize) <= bounds.end_row)
+            .unwrap_or(false);
 
         for col in 0..cols {
             if let Some(cell) = screen.cell(row, col) {
                 let char_str = cell.contents();
-                let cell_style = convert_vt100_style(&cell);
+                let mut cell_style = convert_vt100_cell_style(&cell);
+                if let Some(bounds) = selection {
+                    if cell_is_selected(row as usize, col as usize, bounds) {
+                        cell_style = cell_style.add_modifier(Modifier::REVERSED);
+                    }
+                }
 
                 if cell_style != current_style && !current_text.is_empty() {
                     spans.push(Span::styled(current_text.clone(), current_style));
@@ -177,10 +296,13 @@ fn convert_vt100_to_lines(screen: &vt100::Screen) -> Vec<Line<'static>> {
         }
 
         if !current_text.is_empty() {
-            // Trim trailing spaces
-            let trimmed = current_text.trim_end();
-            if !trimmed.is_empty() {
-                spans.push(Span::styled(trimmed.to_string(), current_style));
+            let text = if row_has_selection {
+                current_text
+            } else {
+                current_text.trim_end().to_string()
+            };
+            if !text.is_empty() {
+                spans.push(Span::styled(text, current_style));
             }
         }
 
@@ -195,119 +317,61 @@ fn convert_vt100_to_lines(screen: &vt100::Screen) -> Vec<Line<'static>> {
     all_lines
 }
 
-fn convert_vt100_to_lines_with_selection(
-    screen: &vt100::Screen,
-    selection: &TextSelection,
-    _scroll_offset: usize,
-) -> Vec<Line<'static>> {
-    let mut all_lines = Vec::new();
-    let (rows, cols) = screen.size();
-
-    // Determine selection range if any
-    let selection_range = match (selection.start, selection.end) {
-        (Some(start), Some(end)) => {
-            // Order the selection (start should be before end)
-            if start.0 < end.0 || (start.0 == end.0 && start.1 <= end.1) {
-                Some((start.0, start.1, end.0, end.1))
-            } else {
-                Some((end.0, end.1, start.0, start.1))
-            }
-        }
-        _ => None,
-    };
-
-    // Get visible screen lines
-    for row in 0..rows {
-        let row_idx = row as usize;
-        let mut spans = Vec::new();
-        let mut current_text = String::new();
-        let mut current_style = Style::default();
-        let mut current_selected = false;
-
-        for col in 0..cols {
-            let col_idx = col as usize;
-
-            // Check if this cell is within selection
-            // Selection coordinates already include scroll offset (absolute row in buffer)
-            // row_idx is the absolute row in the vt100 buffer, so compare directly
-            let is_selected =
-                if let Some((start_row, start_col, end_row, end_col)) = selection_range {
-                    if row_idx > start_row && row_idx < end_row {
-                        true
-                    } else if row_idx == start_row && row_idx == end_row {
-                        col_idx >= start_col && col_idx <= end_col
-                    } else if row_idx == start_row {
-                        col_idx >= start_col
-                    } else if row_idx == end_row {
-                        col_idx <= end_col
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
-
-            if let Some(cell) = screen.cell(row, col) {
-                let char_str = cell.contents();
-                let mut cell_style = convert_vt100_style(&cell);
-
-                // Apply selection highlighting
-                if is_selected {
-                    cell_style = cell_style.bg(Color::LightBlue).fg(Color::Black);
-                }
-
-                let selected_changed = is_selected != current_selected;
-
-                if (cell_style != current_style || selected_changed) && !current_text.is_empty() {
-                    spans.push(Span::styled(current_text.clone(), current_style));
-                    current_text.clear();
-                }
-
-                current_style = cell_style;
-                current_selected = is_selected;
-                current_text.push_str(&char_str);
-            }
-        }
-
-        if !current_text.is_empty() {
-            // Trim trailing spaces unless within selection
-            if current_selected {
-                spans.push(Span::styled(current_text, current_style));
-            } else {
-                let trimmed = current_text.trim_end();
-                if !trimmed.is_empty() {
-                    spans.push(Span::styled(trimmed.to_string(), current_style));
-                }
-            }
-        }
-
-        all_lines.push(Line::from(spans));
-    }
-
-    // Remove trailing empty lines
-    while all_lines.last().map(|l| l.spans.is_empty()).unwrap_or(false) {
-        all_lines.pop();
-    }
-
-    all_lines
+#[derive(Clone, Copy)]
+struct CursorInfo {
+    row: u16,
+    col: u16,
+    hidden: bool,
 }
 
-fn convert_vt100_style(cell: &vt100::Cell) -> Style {
+fn cursor_info(screen: &vt100::Screen) -> CursorInfo {
+    let (row, col) = screen.cursor_position();
+    CursorInfo {
+        row,
+        col,
+        hidden: screen.hide_cursor(),
+    }
+}
+
+fn render_cursor(
+    frame: &mut Frame,
+    inner_area: Rect,
+    cursor: CursorInfo,
+    scroll_offset: usize,
+) {
+    if cursor.hidden || inner_area.width == 0 || inner_area.height == 0 {
+        return;
+    }
+
+    let row = cursor.row as usize;
+    if row < scroll_offset {
+        return;
+    }
+
+    let row_in_view = row - scroll_offset;
+    if row_in_view >= inner_area.height as usize {
+        return;
+    }
+
+    let max_col = inner_area.width.saturating_sub(1) as usize;
+    let x = inner_area.x + (cursor.col as usize).min(max_col) as u16;
+    let y = inner_area.y + row_in_view as u16;
+    frame.set_cursor_position((x, y));
+}
+
+fn convert_vt100_cell_style(cell: &vt100::Cell) -> Style {
     let mut style = Style::default();
 
-    // Foreground color
     let fg = cell.fgcolor();
     if !matches!(fg, vt100::Color::Default) {
         style = style.fg(convert_vt100_color(fg));
     }
 
-    // Background color
     let bg = cell.bgcolor();
     if !matches!(bg, vt100::Color::Default) {
         style = style.bg(convert_vt100_color(bg));
     }
 
-    // Modifiers
     if cell.bold() {
         style = style.add_modifier(Modifier::BOLD);
     }
@@ -422,8 +486,8 @@ fn render_calendar_view(frame: &mut Frame, area: Rect, state: &AppState, block: 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(12),     // Calendar (needs at least 12 rows for 3 months)
-            Constraint::Length(8),   // Legend/workspace info
+            Constraint::Min(12),   // Calendar (needs at least 12 rows for 3 months)
+            Constraint::Length(8), // Legend/workspace info
         ])
         .split(inner_area);
 
@@ -431,8 +495,7 @@ fn render_calendar_view(frame: &mut Frame, area: Rect, state: &AppState, block: 
     let legend_area = chunks[1];
 
     // Get current date
-    let now = OffsetDateTime::now_local()
-        .unwrap_or_else(|_| OffsetDateTime::now_utc());
+    let now = OffsetDateTime::now_local().unwrap_or_else(|_| OffsetDateTime::now_utc());
     let today = now.date();
     let current_year = today.year();
     let current_month = today.month();
