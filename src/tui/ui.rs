@@ -11,7 +11,7 @@ use ratatui::{
 };
 
 pub fn draw(frame: &mut Frame, state: &mut AppState, effects: &mut EffectsManager) {
-    let (banner_area, main_area, status_area) = if state.banner_visible {
+    let (banner_area, main_area, status_area) = if state.ui.banner_visible {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -33,7 +33,7 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, effects: &mut EffectsManage
     };
 
     // Split main area: left panel | right panel (using dynamic ratios)
-    let left_pct = (state.left_panel_ratio * 100.0) as u16;
+    let left_pct = (state.ui.left_panel_ratio * 100.0) as u16;
     let horizontal = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -46,7 +46,7 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, effects: &mut EffectsManage
     let right_panel = horizontal[1];
 
     // Split left panel: workspace list | sessions + utilities (using workspace_ratio)
-    let ws_pct = (state.workspace_ratio * 100.0) as u16;
+    let ws_pct = (state.ui.workspace_ratio * 100.0) as u16;
     let left_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -61,9 +61,9 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, effects: &mut EffectsManage
     // Split lower left into: sessions | todos | utilities (using dynamic ratios)
     // sessions_ratio controls how much of lower_left goes to sessions
     // todos_ratio controls how the remainder is split between todos and utilities
-    let sessions_pct = (state.sessions_ratio * 100.0) as u16;
+    let sessions_pct = (state.ui.sessions_ratio * 100.0) as u16;
     let remaining_pct = 100 - sessions_pct;
-    let todos_pct = ((state.todos_ratio * remaining_pct as f32) / 100.0 * 100.0) as u16;
+    let todos_pct = ((state.ui.todos_ratio * remaining_pct as f32) / 100.0 * 100.0) as u16;
     let utilities_pct = remaining_pct - todos_pct;
 
     let lower_chunks = Layout::default()
@@ -79,6 +79,12 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, effects: &mut EffectsManage
     let todos_area = lower_chunks[1];
     let utilities_area = lower_chunks[2];
 
+    // Store areas in state for mouse interaction
+    state.ui.workspace_area = Some((workspace_area.x, workspace_area.y, workspace_area.width, workspace_area.height));
+    state.ui.session_area = Some((session_area.x, session_area.y, session_area.width, session_area.height));
+    state.ui.todos_area = Some((todos_area.x, todos_area.y, todos_area.width, todos_area.height));
+    state.ui.utilities_area = Some((utilities_area.x, utilities_area.y, utilities_area.width, utilities_area.height));
+
     // Render left components
     workspace_list::render(frame, workspace_area, state);
     session_list::render(frame, session_area, state);
@@ -88,7 +94,7 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, effects: &mut EffectsManage
     // Render right panel - split if pinned terminals exist and split view is enabled
     if state.should_show_split() {
         // Split right panel: active session | pinned terminals (using dynamic ratio)
-        let output_pct = (state.output_split_ratio * 100.0) as u16;
+        let output_pct = (state.ui.output_split_ratio * 100.0) as u16;
         let right_split = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
@@ -97,7 +103,9 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, effects: &mut EffectsManage
             ])
             .split(right_panel);
 
-        output_pane::render(frame, right_split[0], state);
+        let output_area = right_split[0];
+        state.ui.output_pane_area = Some((output_area.x, output_area.y, output_area.width, output_area.height));
+        output_pane::render(frame, output_area, state);
 
         // Render multiple pinned panes stacked vertically
         let pinned_count = state.pinned_count();
@@ -105,12 +113,18 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, effects: &mut EffectsManage
             let pinned_areas = split_pinned_area(right_split[1], state);
             for (idx, area) in pinned_areas.iter().enumerate() {
                 if idx < pinned_count {
+                    state.ui.pinned_pane_areas[idx] = Some((area.x, area.y, area.width, area.height));
                     pinned_terminal_pane::render_at(frame, *area, state, idx);
                 }
             }
         }
     } else {
         // Single pane - full width
+        state.ui.output_pane_area = Some((right_panel.x, right_panel.y, right_panel.width, right_panel.height));
+        // Clear pinned areas if not in split view
+        for area in state.ui.pinned_pane_areas.iter_mut() {
+            *area = None;
+        }
         output_pane::render(frame, right_panel, state);
     }
 
@@ -120,7 +134,7 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, effects: &mut EffectsManage
     status_bar::render(frame, status_area, state);
 
     // Render modal overlays
-    match state.input_mode {
+    match state.ui.input_mode {
         InputMode::Help => {
             help_popup::render(frame, state);
         }
@@ -149,7 +163,7 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, effects: &mut EffectsManage
     if !effects.startup_complete() && !effects.has_active_effects() {
         // Collect all pane areas for startup animation
         let pinned_areas = if state.should_show_split() {
-            let output_pct = (state.output_split_ratio * 100.0) as u16;
+            let output_pct = (state.ui.output_split_ratio * 100.0) as u16;
             let right_split = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([
@@ -168,7 +182,7 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, effects: &mut EffectsManage
             todos: todos_area,
             utilities: utilities_area,
             output: if state.should_show_split() {
-                let output_pct = (state.output_split_ratio * 100.0) as u16;
+                let output_pct = (state.ui.output_split_ratio * 100.0) as u16;
                 Layout::default()
                     .direction(Direction::Horizontal)
                     .constraints([
@@ -179,8 +193,6 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, effects: &mut EffectsManage
             } else {
                 right_panel
             },
-            status_bar: status_area,
-            banner: banner_area,
             pinned: pinned_areas,
         };
         effects.trigger_startup(&areas);

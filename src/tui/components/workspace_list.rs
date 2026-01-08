@@ -9,14 +9,14 @@ use ratatui::{
 };
 
 pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
-    let is_focused = state.focus == FocusPanel::WorkspaceList;
+    let is_focused = state.ui.focus == FocusPanel::WorkspaceList;
     let border_style = if is_focused {
         Style::default().fg(Color::Cyan)
     } else {
         Style::default().fg(Color::DarkGray)
     };
 
-    let title = format!(" Workspaces ({}) ", state.workspaces.len());
+    let title = format!(" Workspaces ({}) ", state.data.workspaces.len());
 
     let block = Block::default()
         .title(title)
@@ -36,13 +36,13 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     let action_area = chunks[1];
 
     // Separate workspaces into working and paused
-    let working_indices: Vec<usize> = state.workspaces.iter()
+    let working_indices: Vec<usize> = state.data.workspaces.iter()
         .enumerate()
         .filter(|(_, ws)| ws.status == WorkspaceStatus::Working)
         .map(|(i, _)| i)
         .collect();
 
-    let paused_indices: Vec<usize> = state.workspaces.iter()
+    let paused_indices: Vec<usize> = state.data.workspaces.iter()
         .enumerate()
         .filter(|(_, ws)| ws.status == WorkspaceStatus::Paused)
         .map(|(i, _)| i)
@@ -63,9 +63,9 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
 
     // Working workspaces
     for &ws_idx in &working_indices {
-        let ws = &state.workspaces[ws_idx];
+        let ws = &state.data.workspaces[ws_idx];
         items.push(create_workspace_item(state, ws_idx, ws, is_focused, false));
-        if ws_idx == state.selected_workspace_idx {
+        if ws_idx == state.ui.selected_workspace_idx {
             selected_visual_idx = Some(current_visual_idx);
         }
         current_visual_idx += 1;
@@ -82,9 +82,9 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
 
     // Paused workspaces (dimmed)
     for &ws_idx in &paused_indices {
-        let ws = &state.workspaces[ws_idx];
+        let ws = &state.data.workspaces[ws_idx];
         items.push(create_workspace_item(state, ws_idx, ws, is_focused, true));
-        if ws_idx == state.selected_workspace_idx {
+        if ws_idx == state.ui.selected_workspace_idx {
             selected_visual_idx = Some(current_visual_idx);
         }
         current_visual_idx += 1;
@@ -145,7 +145,7 @@ fn create_workspace_item<'a>(
     let last_active = ws.last_active_display();
     let time_info = format!(" {}", last_active);
 
-    let is_selected = ws_idx == state.selected_workspace_idx;
+    let is_selected = ws_idx == state.ui.selected_workspace_idx;
 
     // Different styling for selected/focused vs paused
     let style = if is_selected && is_focused {

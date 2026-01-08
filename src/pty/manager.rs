@@ -9,7 +9,6 @@ use crate::app::Action;
 use crate::models::AgentType;
 
 pub struct PtyHandle {
-    pub session_id: Uuid,
     pub master: Box<dyn MasterPty + Send>,
     pub child: Box<dyn Child + Send + Sync>,
     pub writer: Box<dyn Write + Send>,
@@ -30,10 +29,6 @@ impl PtyHandle {
             pixel_height: 0,
         })?;
         Ok(())
-    }
-
-    pub fn is_alive(&mut self) -> bool {
-        self.child.try_wait().ok().flatten().is_none()
     }
 
     pub fn kill(&mut self) -> Result<()> {
@@ -182,7 +177,6 @@ impl PtyManager {
         });
 
         Ok(PtyHandle {
-            session_id,
             master: pair.master,
             child,
             writer,

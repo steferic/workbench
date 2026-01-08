@@ -6,22 +6,22 @@ pub fn load_utility_content(state: &mut AppState) {
     let workspace_path = match state.selected_workspace() {
         Some(ws) => ws.path.clone(),
         None => {
-            state.utility_content = vec!["No workspace selected".to_string()];
-            state.pie_chart_data.clear();
+            state.ui.utility_content = vec!["No workspace selected".to_string()];
+            state.ui.pie_chart_data.clear();
             return;
         }
     };
 
-    state.utility_scroll_offset = 0;
+    state.ui.utility_scroll_offset = 0;
     // Clear special view flags (only specific utilities set these)
-    state.pie_chart_data.clear();
-    state.show_calendar = false;
+    state.ui.pie_chart_data.clear();
+    state.ui.show_calendar = false;
 
-    match state.selected_utility {
+    match state.ui.selected_utility {
         UtilityItem::BrownNoise => {
             // Brown noise is a toggle, not a content utility
             // This shouldn't be called for toggles, but handle it gracefully
-            state.utility_content = vec![
+            state.ui.utility_content = vec![
                 "".to_string(),
                 "  Brown Noise".to_string(),
                 "  ===========".to_string(),
@@ -64,19 +64,19 @@ fn load_suggest_todos_info(state: &mut AppState) {
         "".to_string(),
         "  Press Enter to analyze the codebase...".to_string(),
         "".to_string(),
-        if state.analyzer_session_id.is_some() {
+        if state.ui.analyzer_session_id.is_some() {
             "  Status: Analysis in progress...".to_string()
         } else {
             "  Status: Ready".to_string()
         },
     ];
-    state.utility_content = content;
+    state.ui.utility_content = content;
 }
 
 /// Load calendar with work history
 fn load_calendar_content(state: &mut AppState) {
     // Set flag to show calendar widget
-    state.show_calendar = true;
+    state.ui.show_calendar = true;
 
     // The calendar widget will be rendered in output_pane
     // We just need some minimal content for the legend/info section
@@ -88,7 +88,7 @@ fn load_calendar_content(state: &mut AppState) {
     ];
 
     // Show last active for each workspace
-    for ws in &state.workspaces {
+    for ws in &state.data.workspaces {
         let status_icon = match ws.status {
             crate::models::WorkspaceStatus::Working => "●",
             crate::models::WorkspaceStatus::Paused => "○",
@@ -97,7 +97,7 @@ fn load_calendar_content(state: &mut AppState) {
         content.push(format!("  {} {} - {}", status_icon, ws.name, last_active));
     }
 
-    if state.workspaces.is_empty() {
+    if state.data.workspaces.is_empty() {
         content.push("  No workspaces yet".to_string());
     }
 
@@ -105,7 +105,7 @@ fn load_calendar_content(state: &mut AppState) {
     content.push("  ● = Working, ○ = Paused".to_string());
     content.push("  Today is highlighted in blue".to_string());
 
-    state.utility_content = content;
+    state.ui.utility_content = content;
 }
 
 /// Load git history for the workspace
@@ -140,7 +140,7 @@ fn load_git_history(workspace_path: &PathBuf, state: &mut AppState) {
         }
     }
 
-    state.utility_content = content;
+    state.ui.utility_content = content;
 }
 
 /// Load file tree for the workspace using git ls-files (respects .gitignore)
@@ -177,7 +177,7 @@ fn load_file_tree(workspace_path: &PathBuf, state: &mut AppState) {
             // Fallback: manual directory walk (limited)
             content.push(format!("  {}/", ws_name));
             content.push("  (not a git repository)".to_string());
-            state.utility_content = content;
+            state.ui.utility_content = content;
             return;
         }
     };
@@ -185,7 +185,7 @@ fn load_file_tree(workspace_path: &PathBuf, state: &mut AppState) {
     if files.is_empty() {
         content.push(format!("  {}/", ws_name));
         content.push("  (no tracked files)".to_string());
-        state.utility_content = content;
+        state.ui.utility_content = content;
         return;
     }
 
@@ -248,7 +248,7 @@ fn load_file_tree(workspace_path: &PathBuf, state: &mut AppState) {
     content.push("".to_string());
     content.push(format!("  {} files tracked", files.len()));
 
-    state.utility_content = content;
+    state.ui.utility_content = content;
 }
 
 /// Load top 20 files by lines of code with pie chart visualization
@@ -258,7 +258,7 @@ fn load_top_files(workspace_path: &PathBuf, state: &mut AppState) {
     use std::io::{BufRead, BufReader};
 
     // Clear previous pie chart data
-    state.pie_chart_data.clear();
+    state.ui.pie_chart_data.clear();
 
     let mut content = vec![
         "".to_string(),
@@ -282,14 +282,14 @@ fn load_top_files(workspace_path: &PathBuf, state: &mut AppState) {
         }
         _ => {
             content.push("  (not a git repository)".to_string());
-            state.utility_content = content;
+            state.ui.utility_content = content;
             return;
         }
     };
 
     if files.is_empty() {
         content.push("  (no tracked files)".to_string());
-        state.utility_content = content;
+        state.ui.utility_content = content;
         return;
     }
 
@@ -313,7 +313,7 @@ fn load_top_files(workspace_path: &PathBuf, state: &mut AppState) {
 
     if top_files.is_empty() {
         content.push("  (no files found)".to_string());
-        state.utility_content = content;
+        state.ui.utility_content = content;
         return;
     }
 
@@ -344,7 +344,7 @@ fn load_top_files(workspace_path: &PathBuf, state: &mut AppState) {
             .last()
             .unwrap_or(path)
             .to_string();
-        state.pie_chart_data.push((
+        state.ui.pie_chart_data.push((
             label,
             *lines as f64,
             colors[i % colors.len()],
@@ -353,7 +353,7 @@ fn load_top_files(workspace_path: &PathBuf, state: &mut AppState) {
 
     // Add "Other" slice if there are more files
     if other_total > 0 {
-        state.pie_chart_data.push((
+        state.ui.pie_chart_data.push((
             "Other".to_string(),
             other_total as f64,
             Color::DarkGray,
@@ -408,5 +408,5 @@ fn load_top_files(workspace_path: &PathBuf, state: &mut AppState) {
     content.push("".to_string());
     content.push(format!("  Total: {} lines across {} files", all_total, files.len()));
 
-    state.utility_content = content;
+    state.ui.utility_content = content;
 }

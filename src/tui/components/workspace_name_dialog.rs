@@ -40,7 +40,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
 
     // Show parent path
     let path_display = state
-        .file_browser_path
+        .ui.file_browser_path
         .to_str()
         .map(|s| {
             if let Some(home) = dirs::home_dir() {
@@ -69,7 +69,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     let input_inner = input_block.inner(input_area);
     frame.render_widget(input_block, input_area);
 
-    let cursor_char = if state.input_buffer.is_empty() {
+    let cursor_char = if state.ui.input_buffer.is_empty() {
         "_"
     } else {
         ""
@@ -77,7 +77,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
 
     let input_text = Paragraph::new(Line::from(vec![
         Span::styled(
-            &state.input_buffer,
+            &state.ui.input_buffer,
             Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
         ),
         Span::styled(cursor_char, Style::default().fg(Color::Yellow).add_modifier(Modifier::SLOW_BLINK)),
@@ -85,10 +85,10 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     frame.render_widget(input_text, input_inner);
 
     // Show preview of full path
-    let preview_path = if state.input_buffer.is_empty() {
+    let preview_path = if state.ui.input_buffer.is_empty() {
         "<enter project name>".to_string()
     } else {
-        state.file_browser_path.join(&state.input_buffer)
+        state.ui.file_browser_path.join(&state.ui.input_buffer)
             .to_str()
             .map(|s| {
                 if let Some(home) = dirs::home_dir() {
@@ -103,7 +103,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
             .unwrap_or_else(|| "?".to_string())
     };
 
-    let preview_style = if state.input_buffer.is_empty() {
+    let preview_style = if state.ui.input_buffer.is_empty() {
         Style::default().fg(Color::DarkGray)
     } else {
         Style::default().fg(Color::Green)

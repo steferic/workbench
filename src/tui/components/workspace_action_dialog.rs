@@ -38,7 +38,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     let items: Vec<ListItem> = WorkspaceAction::all()
         .iter()
         .map(|action| {
-            let is_selected = *action == state.selected_workspace_action;
+            let is_selected = *action == state.ui.selected_workspace_action;
 
             let style = if is_selected {
                 Style::default()

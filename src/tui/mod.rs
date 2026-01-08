@@ -2,6 +2,7 @@ pub mod components;
 pub mod effects;
 pub mod event;
 pub mod ui;
+pub mod utils;
 
 use anyhow::Result;
 use crossterm::{

@@ -20,7 +20,7 @@ pub fn start_workspace_sessions(
     let workspace_path = workspace.path.clone();
 
     // Find all stopped sessions in this workspace
-    let stopped_sessions: Vec<(Uuid, AgentType, bool)> = state.sessions
+    let stopped_sessions: Vec<(Uuid, AgentType, bool)> = state.data.sessions
         .get(&workspace_id)
         .map(|sessions| {
             sessions.iter()
@@ -43,7 +43,7 @@ pub fn start_workspace_sessions(
     for (session_id, agent_type, dangerously_skip_permissions) in stopped_sessions {
         // Create vt100 parser
         let parser = vt100::Parser::new(parser_rows, cols, 10000);
-        state.output_buffers.insert(session_id, parser);
+        state.system.output_buffers.insert(session_id, parser);
 
         // Spawn PTY with resume flag for agents (not terminals)
         let resume: bool = agent_type.is_agent();
@@ -58,7 +58,7 @@ pub fn start_workspace_sessions(
             dangerously_skip_permissions,
         ) {
             Ok(handle) => {
-                state.pty_handles.insert(session_id, handle);
+                state.system.pty_handles.insert(session_id, handle);
                 // Mark session as running
                 if let Some(session) = state.get_session_mut(session_id) {
                     session.status = SessionStatus::Running;
@@ -66,16 +66,16 @@ pub fn start_workspace_sessions(
             }
             Err(e) => {
                 eprintln!("Failed to start session: {}", e);
-                state.output_buffers.remove(&session_id);
+                state.system.output_buffers.remove(&session_id);
             }
         }
     }
 
     // Touch workspace and save
-    if let Some(ws) = state.workspaces.iter_mut().find(|ws| ws.id == workspace_id) {
+    if let Some(ws) = state.data.workspaces.iter_mut().find(|ws| ws.id == workspace_id) {
         ws.touch();
     }
-    let _ = persistence::save(&state.workspaces, &state.sessions);
+    let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
 }
 
 /// Start all sessions in "Working" workspaces on startup
@@ -85,7 +85,7 @@ pub fn start_all_working_sessions(
     action_tx: &mpsc::UnboundedSender<Action>,
 ) {
     // Get all Working workspace IDs and their paths
-    let working_workspaces: Vec<(Uuid, std::path::PathBuf)> = state.workspaces.iter()
+    let working_workspaces: Vec<(Uuid, std::path::PathBuf)> = state.data.workspaces.iter()
         .filter(|ws| ws.status == WorkspaceStatus::Working)
         .map(|ws| (ws.id, ws.path.clone()))
         .collect();
@@ -93,7 +93,7 @@ pub fn start_all_working_sessions(
     // For each working workspace, start all stopped sessions
     for (workspace_id, workspace_path) in working_workspaces {
         // Find all stopped sessions in this workspace (include start_command for terminals)
-        let stopped_sessions: Vec<(Uuid, AgentType, Option<String>, bool)> = state.sessions
+        let stopped_sessions: Vec<(Uuid, AgentType, Option<String>, bool)> = state.data.sessions
             .get(&workspace_id)
             .map(|sessions| {
                 sessions.iter()
@@ -121,7 +121,7 @@ pub fn start_all_working_sessions(
         for (session_id, agent_type, start_command, dangerously_skip_permissions) in stopped_sessions {
             // Create vt100 parser
             let parser = vt100::Parser::new(parser_rows, cols, 10000);
-            state.output_buffers.insert(session_id, parser);
+            state.system.output_buffers.insert(session_id, parser);
 
             // Spawn PTY with resume flag for agents (not terminals)
             let resume: bool = agent_type.is_agent();
@@ -136,7 +136,7 @@ pub fn start_all_working_sessions(
                 dangerously_skip_permissions,
             ) {
                 Ok(handle) => {
-                    state.pty_handles.insert(session_id, handle);
+                    state.system.pty_handles.insert(session_id, handle);
                     // Mark session as running
                     if let Some(session) = state.get_session_mut(session_id) {
                         session.status = SessionStatus::Running;
@@ -160,17 +160,17 @@ pub fn start_all_working_sessions(
                 }
                 Err(e) => {
                     eprintln!("Failed to auto-start session: {}", e);
-                    state.output_buffers.remove(&session_id);
+                    state.system.output_buffers.remove(&session_id);
                 }
             }
         }
 
         // Touch workspace
-        if let Some(ws) = state.workspaces.iter_mut().find(|ws| ws.id == workspace_id) {
+        if let Some(ws) = state.data.workspaces.iter_mut().find(|ws| ws.id == workspace_id) {
             ws.touch();
         }
     }
 
     // Save state after starting sessions
-    let _ = persistence::save(&state.workspaces, &state.sessions);
+    let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
 }

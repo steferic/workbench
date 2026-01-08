@@ -25,8 +25,8 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
 
     // Get active workspace name
     let workspace_name = state
-        .workspaces
-        .get(state.selected_workspace_idx)
+        .data.workspaces
+        .get(state.ui.selected_workspace_idx)
         .map(|w| w.name.clone())
         .unwrap_or_else(|| "No Workspace".to_string());
 
@@ -46,7 +46,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
 
     // Build the scrolling middle section
     let middle_content = if middle_width > 0 {
-        let text = &state.banner_text;
+        let text = &state.ui.banner_text;
         let text_chars: Vec<char> = text.chars().collect();
         let text_len = text_chars.len();
 
@@ -55,7 +55,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         } else {
             let mut visible = String::with_capacity(middle_width);
             for i in 0..middle_width {
-                let char_idx = (state.banner_offset + i) % text_len;
+                let char_idx = (state.ui.banner_offset + i) % text_len;
                 visible.push(text_chars[char_idx]);
             }
             visible

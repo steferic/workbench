@@ -12,7 +12,7 @@ pub fn resize_ptys_to_panes(state: &mut AppState) {
     let pinned_ids = state.pinned_terminal_ids();
 
     // Resize each PTY and parser based on which pane it belongs to
-    for (session_id, handle) in state.pty_handles.iter() {
+    for (session_id, handle) in state.system.pty_handles.iter() {
         let cols = if pinned_ids.contains(session_id) {
             pinned_cols
         } else {
@@ -23,7 +23,7 @@ pub fn resize_ptys_to_panes(state: &mut AppState) {
         let _ = handle.resize(rows, cols);
 
         // Resize the vt100 parser
-        if let Some(parser) = state.output_buffers.get_mut(session_id) {
+        if let Some(parser) = state.system.output_buffers.get_mut(session_id) {
             parser.set_size(parser_rows, cols);
         }
     }

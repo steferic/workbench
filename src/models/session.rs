@@ -87,11 +87,6 @@ impl Session {
         self.status = SessionStatus::Stopped;
         self.stopped_at = Some(Utc::now());
     }
-
-    pub fn mark_errored(&mut self) {
-        self.status = SessionStatus::Errored;
-        self.stopped_at = Some(Utc::now());
-    }
 }
 
 fn default_dangerously_skip_permissions() -> bool {
