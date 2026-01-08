@@ -10,22 +10,61 @@ use uuid::Uuid;
 pub struct PersistedState {
     pub workspaces: Vec<Workspace>,
     pub sessions: HashMap<Uuid, Vec<Session>>,
+    #[serde(default)]
+    pub notepad_content: HashMap<Uuid, String>, // workspace_id -> notepad text
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlobalConfig {
     #[serde(default = "default_banner_visible")]
     pub banner_visible: bool,
+
+    // Pane ratios (persisted across sessions)
+    #[serde(default = "default_left_panel_ratio")]
+    pub left_panel_ratio: f32,
+    #[serde(default = "default_workspace_ratio")]
+    pub workspace_ratio: f32,
+    #[serde(default = "default_sessions_ratio")]
+    pub sessions_ratio: f32,
+    #[serde(default = "default_todos_ratio")]
+    pub todos_ratio: f32,
+    #[serde(default = "default_output_split_ratio")]
+    pub output_split_ratio: f32,
 }
 
 fn default_banner_visible() -> bool {
     true
 }
 
+fn default_left_panel_ratio() -> f32 {
+    0.30
+}
+
+fn default_workspace_ratio() -> f32 {
+    0.40
+}
+
+fn default_sessions_ratio() -> f32 {
+    0.40
+}
+
+fn default_todos_ratio() -> f32 {
+    0.50
+}
+
+fn default_output_split_ratio() -> f32 {
+    0.50
+}
+
 impl Default for GlobalConfig {
     fn default() -> Self {
         Self {
-            banner_visible: true,
+            banner_visible: default_banner_visible(),
+            left_panel_ratio: default_left_panel_ratio(),
+            workspace_ratio: default_workspace_ratio(),
+            sessions_ratio: default_sessions_ratio(),
+            todos_ratio: default_todos_ratio(),
+            output_split_ratio: default_output_split_ratio(),
         }
     }
 }
@@ -35,6 +74,7 @@ impl PersistedState {
         Self {
             workspaces: Vec::new(),
             sessions: HashMap::new(),
+            notepad_content: HashMap::new(),
         }
     }
 }
@@ -74,12 +114,24 @@ pub fn load() -> Result<PersistedState> {
     Ok(state)
 }
 
-pub fn save(workspaces: &[Workspace], sessions: &HashMap<Uuid, Vec<Session>>) -> Result<()> {
+pub fn save(
+    workspaces: &[Workspace],
+    sessions: &HashMap<Uuid, Vec<Session>>,
+) -> Result<()> {
+    save_with_notepad(workspaces, sessions, &HashMap::new())
+}
+
+pub fn save_with_notepad(
+    workspaces: &[Workspace],
+    sessions: &HashMap<Uuid, Vec<Session>>,
+    notepad_content: &HashMap<Uuid, String>,
+) -> Result<()> {
     let path = config_path()?;
 
     let state = PersistedState {
         workspaces: workspaces.to_vec(),
         sessions: sessions.clone(),
+        notepad_content: notepad_content.clone(),
     };
 
     let contents = serde_json::to_string_pretty(&state)?;

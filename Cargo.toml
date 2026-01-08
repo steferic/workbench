@@ -17,8 +17,9 @@ clap = { version = "4.4", features = ["derive", "env"] }
 tokio = { version = "1.35", features = ["full", "sync", "time", "io-util"] }
 
 # TUI framework
-ratatui = "0.29"
-crossterm = "0.28"
+ratatui = { version = "0.30", features = ["unstable-widget-ref"] }
+crossterm = "0.29"
+tachyonfx = "0.22"
 
 # PTY support (cross-platform)
 portable-pty = "0.8"
@@ -32,6 +33,7 @@ serde_json = "1.0"
 
 # Time handling
 chrono = { version = "0.4", features = ["serde"] }
+time = { version = "0.3", features = ["local-offset", "macros"] }
 
 # UUIDs
 uuid = { version = "1.6", features = ["v4", "serde"] }
@@ -51,6 +53,15 @@ rodio = "0.19"
 
 # Random number generation
 rand = "0.8"
+
+# Regex for parsing
+regex = "1.10"
+
+# Clipboard support
+arboard = "3.4"
+
+# Text area widget for notepad (using PR branch with ratatui 0.30 support)
+tui-textarea = { git = "https://github.com/0xferrous/tui-textarea", branch = "update-ratatui" }
 
 [dev-dependencies]
 tempfile = "3.9"

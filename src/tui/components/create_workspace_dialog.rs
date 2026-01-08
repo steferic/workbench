@@ -13,20 +13,32 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     // Clear the background
     frame.render_widget(Clear, area);
 
+    let title = if state.workspace_create_mode {
+        " Select Parent Directory (Create New) "
+    } else {
+        " Select Workspace Directory (Open Existing) "
+    };
+
+    let border_color = if state.workspace_create_mode {
+        Color::Yellow
+    } else {
+        Color::Green
+    };
+
     let block = Block::default()
-        .title(" Select Workspace Directory ")
+        .title(title)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Green))
+        .border_style(Style::default().fg(border_color))
         .style(Style::default().bg(Color::Black));
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    // Split into: current path + workspace name preview, file list, help
+    // Split into: current path + info, file list, help
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3), // Current path + workspace name
+            Constraint::Length(3), // Current path + info
             Constraint::Min(5),    // File list
             Constraint::Length(3), // Help
         ])
@@ -67,25 +79,42 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         })
         .to_string();
 
-    let path_widget = Paragraph::new(vec![
-        Line::from(vec![
-            Span::styled(" Path: ", Style::default().fg(Color::Gray)),
-            Span::styled(
-                path_display,
-                Style::default().fg(Color::Cyan),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled(" Name: ", Style::default().fg(Color::Gray)),
-            Span::styled(
-                workspace_name,
-                Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(" (will be created)", Style::default().fg(Color::DarkGray)),
-        ]),
-    ]);
+    let path_widget = if state.workspace_create_mode {
+        // Create new mode: show parent path info
+        Paragraph::new(vec![
+            Line::from(vec![
+                Span::styled(" Parent: ", Style::default().fg(Color::Gray)),
+                Span::styled(
+                    path_display,
+                    Style::default().fg(Color::Yellow),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(" New project will be created in this folder", Style::default().fg(Color::DarkGray)),
+            ]),
+        ])
+    } else {
+        // Open existing mode: show what will be selected
+        Paragraph::new(vec![
+            Line::from(vec![
+                Span::styled(" Path: ", Style::default().fg(Color::Gray)),
+                Span::styled(
+                    path_display,
+                    Style::default().fg(Color::Cyan),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(" Name: ", Style::default().fg(Color::Gray)),
+                Span::styled(
+                    workspace_name,
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(" (will be added)", Style::default().fg(Color::DarkGray)),
+            ]),
+        ])
+    };
     frame.render_widget(path_widget, path_area);
 
     // Render directory list
@@ -163,25 +192,46 @@ pub fn render(frame: &mut Frame, state: &AppState) {
 
     frame.render_stateful_widget(list, list_area, &mut list_state);
 
-    // Render help
-    let help = Paragraph::new(vec![
-        Line::from(vec![
-            Span::styled("[↑/k]", Style::default().fg(Color::Cyan)),
-            Span::raw(" Up  "),
-            Span::styled("[↓/j]", Style::default().fg(Color::Cyan)),
-            Span::raw(" Down  "),
-            Span::styled("[←/h]", Style::default().fg(Color::Cyan)),
-            Span::raw(" Parent  "),
-            Span::styled("[→/Enter]", Style::default().fg(Color::Cyan)),
-            Span::raw(" Open"),
-        ]),
-        Line::from(vec![
-            Span::styled("[Space/Tab]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
-            Span::styled(" Select current directory as workspace  ", Style::default().fg(Color::White)),
-            Span::styled("[Esc]", Style::default().fg(Color::Yellow)),
-            Span::raw(" Cancel"),
-        ]),
-    ]);
+    // Render help based on mode
+    let help = if state.workspace_create_mode {
+        Paragraph::new(vec![
+            Line::from(vec![
+                Span::styled("[↑/k]", Style::default().fg(Color::Cyan)),
+                Span::raw(" Up  "),
+                Span::styled("[↓/j]", Style::default().fg(Color::Cyan)),
+                Span::raw(" Down  "),
+                Span::styled("[←/h]", Style::default().fg(Color::Cyan)),
+                Span::raw(" Parent  "),
+                Span::styled("[→/Enter]", Style::default().fg(Color::Cyan)),
+                Span::raw(" Open"),
+            ]),
+            Line::from(vec![
+                Span::styled("[Space/Tab]", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Span::styled(" Create here → Enter name  ", Style::default().fg(Color::White)),
+                Span::styled("[Esc]", Style::default().fg(Color::Yellow)),
+                Span::raw(" Cancel"),
+            ]),
+        ])
+    } else {
+        Paragraph::new(vec![
+            Line::from(vec![
+                Span::styled("[↑/k]", Style::default().fg(Color::Cyan)),
+                Span::raw(" Up  "),
+                Span::styled("[↓/j]", Style::default().fg(Color::Cyan)),
+                Span::raw(" Down  "),
+                Span::styled("[←/h]", Style::default().fg(Color::Cyan)),
+                Span::raw(" Parent  "),
+                Span::styled("[→/Enter]", Style::default().fg(Color::Cyan)),
+                Span::raw(" Open"),
+            ]),
+            Line::from(vec![
+                Span::styled("[Space/Tab]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                Span::styled(" Select as workspace  ", Style::default().fg(Color::White)),
+                Span::styled("[Esc]", Style::default().fg(Color::Yellow)),
+                Span::raw(" Cancel"),
+            ]),
+        ])
+    };
     frame.render_widget(help, help_area);
 }
 

@@ -1,14 +1,16 @@
 use crate::app::{AppState, InputMode};
 use crate::tui::components::{
     banner, create_session_dialog, create_workspace_dialog, help_popup, output_pane,
-    pinned_terminal_pane, session_list, status_bar, utilities_pane, workspace_list,
+    pinned_terminal_pane, session_list, status_bar, todos_pane, utilities_pane,
+    workspace_action_dialog, workspace_list, workspace_name_dialog,
 };
+use crate::tui::effects::{EffectsManager, StartupAreas};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     Frame,
 };
 
-pub fn draw(frame: &mut Frame, state: &mut AppState) {
+pub fn draw(frame: &mut Frame, state: &mut AppState, effects: &mut EffectsManager) {
     let (banner_area, main_area, status_area) = if state.banner_visible {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -56,22 +58,31 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
     let workspace_area = left_chunks[0];
     let lower_left = left_chunks[1];
 
-    // Split lower left: session list | utilities pane (using session_ratio)
-    let session_pct = (state.session_ratio * 100.0) as u16;
+    // Split lower left into: sessions | todos | utilities (using dynamic ratios)
+    // sessions_ratio controls how much of lower_left goes to sessions
+    // todos_ratio controls how the remainder is split between todos and utilities
+    let sessions_pct = (state.sessions_ratio * 100.0) as u16;
+    let remaining_pct = 100 - sessions_pct;
+    let todos_pct = ((state.todos_ratio * remaining_pct as f32) / 100.0 * 100.0) as u16;
+    let utilities_pct = remaining_pct - todos_pct;
+
     let lower_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Percentage(session_pct),
-            Constraint::Percentage(100 - session_pct),
+            Constraint::Percentage(sessions_pct),
+            Constraint::Percentage(todos_pct),
+            Constraint::Percentage(utilities_pct),
         ])
         .split(lower_left);
 
     let session_area = lower_chunks[0];
-    let utilities_area = lower_chunks[1];
+    let todos_area = lower_chunks[1];
+    let utilities_area = lower_chunks[2];
 
     // Render left components
     workspace_list::render(frame, workspace_area, state);
     session_list::render(frame, session_area, state);
+    todos_pane::render(frame, todos_area, state);
     utilities_pane::render(frame, utilities_area, state);
 
     // Render right panel - split if pinned terminals exist and split view is enabled
@@ -113,20 +124,70 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
         InputMode::Help => {
             help_popup::render(frame, state);
         }
+        InputMode::SelectWorkspaceAction => {
+            workspace_action_dialog::render(frame, state);
+        }
         InputMode::CreateWorkspace => {
             create_workspace_dialog::render(frame, state);
+        }
+        InputMode::EnterWorkspaceName => {
+            workspace_name_dialog::render(frame, state);
         }
         InputMode::CreateSession => {
             create_session_dialog::render(frame, state);
         }
-        InputMode::CreateTerminal => {
-            // Terminal name input is shown in the status bar
-        }
         InputMode::SetStartCommand => {
             // Start command input is shown in the status bar
         }
+        InputMode::CreateTodo => {
+            // Todo input is shown in the status bar
+        }
         InputMode::Normal => {}
     }
+
+    // Trigger startup animation on first draw
+    if !effects.startup_complete() && !effects.has_active_effects() {
+        // Collect all pane areas for startup animation
+        let pinned_areas = if state.should_show_split() {
+            let output_pct = (state.output_split_ratio * 100.0) as u16;
+            let right_split = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(output_pct),
+                    Constraint::Percentage(100 - output_pct),
+                ])
+                .split(right_panel);
+            split_pinned_area(right_split[1], state)
+        } else {
+            vec![]
+        };
+
+        let areas = StartupAreas {
+            workspace: workspace_area,
+            session: session_area,
+            todos: todos_area,
+            utilities: utilities_area,
+            output: if state.should_show_split() {
+                let output_pct = (state.output_split_ratio * 100.0) as u16;
+                Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([
+                        Constraint::Percentage(output_pct),
+                        Constraint::Percentage(100 - output_pct),
+                    ])
+                    .split(right_panel)[0]
+            } else {
+                right_panel
+            },
+            status_bar: status_area,
+            banner: banner_area,
+            pinned: pinned_areas,
+        };
+        effects.trigger_startup(&areas);
+    }
+
+    // Process active effects
+    effects.process(frame);
 }
 
 /// Split the pinned terminal area into multiple vertically stacked panes
