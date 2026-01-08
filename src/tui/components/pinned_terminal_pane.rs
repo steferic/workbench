@@ -62,17 +62,25 @@ pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index
         (lines, len)
     };
 
-    // Anti-jitter: use high water mark for scroll calculations
-    // Don't add padding - just use the stable length for positioning
+    // Anti-jitter: use high water mark for content length
     let prev_len = state.ui.pinned_content_lengths[pane_index];
     let stable_len = if actual_len >= prev_len {
         actual_len
     } else if prev_len - actual_len >= 20 {
+        // Major shrinkage (screen clear) - reset
         actual_len
     } else {
+        // Keep high water mark for scroll stability
         prev_len
     };
     state.ui.pinned_content_lengths[pane_index] = stable_len;
+
+    // Always pad to stable_len so the lines vector has consistent size
+    // This prevents flickering from lines appearing/disappearing
+    let mut lines = lines;
+    while lines.len() < stable_len {
+        lines.push(Line::raw(""));
+    }
 
     // Use stable_len for scroll calculations to prevent jitter
     let max_scroll = stable_len.saturating_sub(viewport_height);

@@ -67,10 +67,9 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
 
         // Convert vt100 screen to lines
         let selection = get_selection_bounds(&state.ui.text_selection, screen.size());
-        let lines = convert_vt100_to_lines(screen, selection, cursor_state.row);
+        let mut lines = convert_vt100_to_lines(screen, selection, cursor_state.row);
 
-        // Anti-jitter: use high water mark for scroll calculations
-        // Don't add padding - just use the stable length for positioning
+        // Anti-jitter: use high water mark for content length
         let actual_len = lines.len();
         let prev_len = state.ui.output_content_length;
         let stable_len = if actual_len >= prev_len {
@@ -84,7 +83,13 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
         };
         state.ui.output_content_length = stable_len;
 
-        // Use stable_len for scroll calculations to prevent jitter
+        // Always pad to stable_len so the lines vector has consistent size
+        // This prevents flickering from lines appearing/disappearing
+        while lines.len() < stable_len {
+            lines.push(Line::raw(""));
+        }
+
+        // Use stable_len for scroll calculations
         let max_scroll = stable_len.saturating_sub(viewport_height);
         let scroll_from_bottom = (state.ui.output_scroll_offset as usize).min(max_scroll);
         let scroll_offset = max_scroll.saturating_sub(scroll_from_bottom);
