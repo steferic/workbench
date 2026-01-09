@@ -45,7 +45,7 @@ pub fn handle_session_action(
                 ) {
                     Ok(handle) => {
                         state.system.pty_handles.insert(session_id, handle);
-                        state.add_session(session);
+                                                state.add_session(session);
                         state.ui.active_session_id = Some(session_id);
                         state.ui.focus = FocusPanel::SessionList;
                         let session_count = state.sessions_for_selected_workspace().len();
@@ -97,7 +97,7 @@ pub fn handle_session_action(
                 ) {
                     Ok(handle) => {
                         state.system.pty_handles.insert(session_id, handle);
-                        state.add_session(session);
+                                                state.add_session(session);
                         state.ui.active_session_id = Some(session_id);
                         state.ui.focus = FocusPanel::SessionList;
                         let session_count = state.sessions_for_selected_workspace().len();
@@ -154,7 +154,7 @@ pub fn handle_session_action(
                     ) {
                         Ok(handle) => {
                             state.system.pty_handles.insert(session_id, handle);
-                            if let Some(session) = state.get_session_mut(session_id) {
+                                                        if let Some(session) = state.get_session_mut(session_id) {
                                 session.status = crate::models::SessionStatus::Running;
                             }
                             state.ui.active_session_id = Some(session_id);
