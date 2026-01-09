@@ -90,8 +90,17 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         current_visual_idx += 1;
     }
 
+    // Highlight style with full row background when focused
+    let highlight_style = if is_focused {
+        Style::default()
+            .bg(Color::Rgb(40, 50, 60))
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+    };
+
     let list = List::new(items)
-        .highlight_style(Style::default().add_modifier(Modifier::BOLD));
+        .highlight_style(highlight_style);
 
     // Use ListState for automatic scrolling
     let mut list_state = ListState::default();

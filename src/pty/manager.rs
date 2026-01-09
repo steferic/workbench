@@ -2,8 +2,13 @@ use anyhow::{Context, Result};
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize, PtySystem};
 use std::io::{Read, Write};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use uuid::Uuid;
+
+#[cfg(unix)]
+use std::os::unix::io::{FromRawFd, RawFd};
 
 use crate::app::Action;
 use crate::models::AgentType;
@@ -169,10 +174,22 @@ impl PtyManager {
             .take_writer()
             .context("Failed to take PTY writer")?;
 
+        // Get raw fd for immediate DSR response (Unix only)
+        #[cfg(unix)]
+        let master_fd = pair.master.as_raw_fd();
+
+        // Flag to ensure we only respond to DSR once per session
+        let dsr_responded = Arc::new(AtomicBool::new(false));
+        let dsr_responded_clone = dsr_responded.clone();
+
         // Spawn async task to read PTY output
         let tx = action_tx.clone();
         let sid = session_id;
+        let pty_rows = rows;
         std::thread::spawn(move || {
+            #[cfg(unix)]
+            Self::read_pty_output_with_dsr(sid, &mut reader, tx, master_fd, dsr_responded_clone, pty_rows);
+            #[cfg(not(unix))]
             Self::read_pty_output(sid, &mut reader, tx);
         });
 
@@ -183,6 +200,135 @@ impl PtyManager {
         })
     }
 
+    /// Read PTY output with immediate DSR response (Unix only)
+    #[cfg(unix)]
+    fn read_pty_output_with_dsr(
+        session_id: Uuid,
+        reader: &mut Box<dyn Read + Send>,
+        action_tx: mpsc::UnboundedSender<Action>,
+        master_fd: Option<RawFd>,
+        dsr_responded: Arc<AtomicBool>,
+        _rows: u16,
+    ) {
+        // Terminal query patterns
+        const DSR_QUERY: &[u8] = b"\x1b[6n";       // Cursor position query
+        const DA_QUERY: &[u8] = b"\x1b[c";          // Primary Device Attributes query
+        const DA_QUERY2: &[u8] = b"\x1b[0c";        // Primary DA (alternate)
+        const DA2_QUERY: &[u8] = b"\x1b[>c";        // Secondary Device Attributes query
+        const DA2_QUERY2: &[u8] = b"\x1b[>0c";      // Secondary DA (alternate)
+
+        // Responses - use simple VT102 identification
+        // DSR: report cursor at 1,1 (simple, expected position)
+        const DSR_RESPONSE: &[u8] = b"\x1b[1;1R";
+        // Primary DA: VT102 (simpler than VT100 with AVO)
+        const DA_RESPONSE: &[u8] = b"\x1b[?6c";
+        // Secondary DA: VT102 version 1.0 (>0;0;0c format: terminal;firmware;keyboard)
+        const DA2_RESPONSE: &[u8] = b"\x1b[>0;0;0c";
+
+        let mut buf = [0u8; 4096];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => {
+                    // EOF - process exited
+                    let _ = action_tx.send(Action::SessionExited(session_id, 0));
+                    break;
+                }
+                Ok(n) => {
+                    let mut data = buf[..n].to_vec();
+
+                    // Handle terminal queries
+                    if let Some(fd) = master_fd {
+                        let has_dsr = data.windows(DSR_QUERY.len()).any(|w| w == DSR_QUERY);
+                        let has_da = data.windows(DA_QUERY.len()).any(|w| w == DA_QUERY)
+                            || data.windows(DA_QUERY2.len()).any(|w| w == DA_QUERY2);
+                        let has_da2 = data.windows(DA2_QUERY.len()).any(|w| w == DA2_QUERY)
+                            || data.windows(DA2_QUERY2.len()).any(|w| w == DA2_QUERY2);
+
+                        if has_dsr || has_da || has_da2 {
+                            let mut file = std::mem::ManuallyDrop::new(unsafe {
+                                std::fs::File::from_raw_fd(fd)
+                            });
+
+                            // Respond to DSR only once (for startup check)
+                            if has_dsr && !dsr_responded.swap(true, Ordering::SeqCst) {
+                                let _ = file.write_all(DSR_RESPONSE);
+                            }
+
+                            // Respond to primary DA
+                            if has_da {
+                                let _ = file.write_all(DA_RESPONSE);
+                            }
+
+                            // Respond to secondary DA
+                            if has_da2 {
+                                let _ = file.write_all(DA2_RESPONSE);
+                            }
+
+                            let _ = file.flush();
+
+                            // Strip queries from output
+                            data = Self::strip_terminal_queries(&data);
+                        }
+                    }
+
+                    if !data.is_empty() {
+                        if action_tx.send(Action::PtyOutput(session_id, data)).is_err() {
+                            break;
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("PTY read error for session {}: {}", session_id, e);
+                    let _ = action_tx.send(Action::SessionExited(session_id, 1));
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Strip terminal query sequences from data
+    #[cfg(unix)]
+    fn strip_terminal_queries(data: &[u8]) -> Vec<u8> {
+        const DSR_QUERY: &[u8] = b"\x1b[6n";
+        const DA_QUERY: &[u8] = b"\x1b[c";
+        const DA_QUERY2: &[u8] = b"\x1b[0c";
+        const DA2_QUERY: &[u8] = b"\x1b[>c";
+        const DA2_QUERY2: &[u8] = b"\x1b[>0c";
+
+        let mut result = Vec::with_capacity(data.len());
+        let mut i = 0;
+        while i < data.len() {
+            // Check for DSR query
+            if i + DSR_QUERY.len() <= data.len() && &data[i..i + DSR_QUERY.len()] == DSR_QUERY {
+                i += DSR_QUERY.len();
+                continue;
+            }
+            // Check for secondary DA query (longer ones first)
+            if i + DA2_QUERY2.len() <= data.len() && &data[i..i + DA2_QUERY2.len()] == DA2_QUERY2 {
+                i += DA2_QUERY2.len();
+                continue;
+            }
+            if i + DA2_QUERY.len() <= data.len() && &data[i..i + DA2_QUERY.len()] == DA2_QUERY {
+                i += DA2_QUERY.len();
+                continue;
+            }
+            // Check for primary DA query (longer one first)
+            if i + DA_QUERY2.len() <= data.len() && &data[i..i + DA_QUERY2.len()] == DA_QUERY2 {
+                i += DA_QUERY2.len();
+                continue;
+            }
+            if i + DA_QUERY.len() <= data.len() && &data[i..i + DA_QUERY.len()] == DA_QUERY {
+                i += DA_QUERY.len();
+                continue;
+            }
+            result.push(data[i]);
+            i += 1;
+        }
+        result
+    }
+
+    /// Read PTY output (non-Unix fallback, no DSR handling)
+    #[cfg(not(unix))]
     fn read_pty_output(
         session_id: Uuid,
         reader: &mut Box<dyn Read + Send>,
@@ -192,7 +338,6 @@ impl PtyManager {
         loop {
             match reader.read(&mut buf) {
                 Ok(0) => {
-                    // EOF - process exited
                     let _ = action_tx.send(Action::SessionExited(session_id, 0));
                     break;
                 }
