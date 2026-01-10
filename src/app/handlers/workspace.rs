@@ -1,4 +1,5 @@
 use crate::app::{Action, AppState, InputMode, PendingDelete, WorkspaceAction};
+use crate::app::handlers::session::terminate_session_handle;
 use crate::models::Workspace;
 use crate::persistence;
 use anyhow::Result;
@@ -21,8 +22,8 @@ pub fn handle_workspace_action(state: &mut AppState, action: Action) -> Result<(
                 // Remove all sessions and PTYs for this workspace
                 if let Some(sessions) = state.data.sessions.remove(&id) {
                     for session in sessions {
-                        if let Some(mut handle) = state.system.pty_handles.remove(&session.id) {
-                            let _ = handle.kill();
+                        if let Some(handle) = state.system.pty_handles.remove(&session.id) {
+                            terminate_session_handle(handle, session.agent_type.is_terminal());
                         }
                         state.system.output_buffers.remove(&session.id);
                     }

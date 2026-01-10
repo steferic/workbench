@@ -11,6 +11,7 @@ pub fn process_action(
     action: Action,
     pty_manager: &PtyManager,
     action_tx: &mpsc::UnboundedSender<Action>,
+    pty_tx: &mpsc::Sender<Action>,
 ) -> Result<()> {
     match action {
         Action::Quit => {
@@ -117,6 +118,13 @@ pub fn process_action(
                 }
             }
         }
+        Action::UtilityContentLoaded(payload) => {
+            if payload.request_id == state.ui.utility_request_id {
+                state.ui.utility_content = payload.content;
+                state.ui.pie_chart_data = payload.pie_chart_data;
+                state.ui.show_calendar = payload.show_calendar;
+            }
+        }
         Action::Resize(w, h) => {
             state.system.terminal_size = (w, h);
             resize_ptys_to_panes(state);
@@ -149,7 +157,7 @@ pub fn process_action(
                 Action::EnterSetStartCommandMode | Action::SetStartCommand(_, _) | Action::PinSession(_) |
                 Action::UnpinSession(_) | Action::UnpinFocusedSession | Action::ToggleSplitView |
                 Action::SessionExited(_, _) | Action::PtyOutput(_, _) | Action::SendInput(_, _) => {
-                    session::handle_session_action(state, action, pty_manager, action_tx)?;
+                    session::handle_session_action(state, action, pty_manager, action_tx, pty_tx)?;
                 }
 
                 // Todo actions
@@ -171,7 +179,7 @@ pub fn process_action(
                 Action::Paste(_) | Action::ClearSelection | Action::SelectNextUtility |
                 Action::SelectPrevUtility | Action::ToggleUtilitySection | Action::ToggleConfigItem |
                 Action::ToggleBrownNoise => {
-                    navigation::handle_navigation_action(state, action, pty_manager, action_tx)?;
+                    navigation::handle_navigation_action(state, action, pty_manager, pty_tx)?;
                 }
 
                 // Input actions
@@ -187,17 +195,96 @@ pub fn process_action(
 
                 // Parallel task execution actions
                 Action::StartParallelTask | Action::CancelParallelTask(_) |
-                Action::SelectParallelWinner(_) | Action::ParallelAttemptCompleted(_) |
+                Action::ParallelAttemptCompleted(_) |
+                Action::ParallelWorktreesReady { .. } | Action::ParallelWorktreesFailed { .. } |
+                Action::ParallelMergeFinished { .. } |
                 Action::SelectNextReport | Action::SelectPrevReport |
                 Action::ViewReport | Action::MergeSelectedReport => {
-                    parallel::handle_parallel_action(state, action, pty_manager, action_tx)?;
+                    parallel::handle_parallel_action(state, action, pty_manager, action_tx, pty_tx)?;
                 }
 
                 // Global already handled
-                Action::Quit | Action::Tick | Action::Resize(_, _) => {}
+                Action::Quit | Action::Tick | Action::Resize(_, _) | Action::UtilityContentLoaded(_) => {}
             }
         }
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::process_action;
+    use crate::app::{Action, AppState, UtilityContentPayload};
+    use crate::pty::PtyManager;
+    use ratatui::style::Color;
+    use tokio::sync::mpsc;
+
+    #[test]
+    fn utility_content_loaded_ignores_stale_request() {
+        let mut state = AppState::default();
+        state.ui.utility_request_id = 2;
+        state.ui.utility_content = vec!["old".to_string()];
+        state.ui.pie_chart_data = vec![("old".to_string(), 1.0, Color::Blue)];
+        state.ui.show_calendar = true;
+
+        let payload = UtilityContentPayload {
+            request_id: 1,
+            content: vec!["new".to_string()],
+            pie_chart_data: vec![("new".to_string(), 2.0, Color::Red)],
+            show_calendar: false,
+        };
+
+        let pty_manager = PtyManager::new();
+        let (action_tx, _) = mpsc::unbounded_channel();
+        let (pty_tx, _) = mpsc::channel(1);
+
+        process_action(
+            &mut state,
+            Action::UtilityContentLoaded(payload),
+            &pty_manager,
+            &action_tx,
+            &pty_tx,
+        )
+        .unwrap();
+
+        assert_eq!(state.ui.utility_content, vec!["old".to_string()]);
+        assert_eq!(state.ui.pie_chart_data.len(), 1);
+        assert_eq!(state.ui.pie_chart_data[0].0, "old");
+        assert!(state.ui.show_calendar);
+    }
+
+    #[test]
+    fn utility_content_loaded_updates_current_request() {
+        let mut state = AppState::default();
+        state.ui.utility_request_id = 3;
+        state.ui.utility_content = vec!["old".to_string()];
+        state.ui.pie_chart_data = vec![("old".to_string(), 1.0, Color::Blue)];
+        state.ui.show_calendar = false;
+
+        let payload = UtilityContentPayload {
+            request_id: 3,
+            content: vec!["new".to_string()],
+            pie_chart_data: vec![("new".to_string(), 2.0, Color::Red)],
+            show_calendar: true,
+        };
+
+        let pty_manager = PtyManager::new();
+        let (action_tx, _) = mpsc::unbounded_channel();
+        let (pty_tx, _) = mpsc::channel(1);
+
+        process_action(
+            &mut state,
+            Action::UtilityContentLoaded(payload),
+            &pty_manager,
+            &action_tx,
+            &pty_tx,
+        )
+        .unwrap();
+
+        assert_eq!(state.ui.utility_content, vec!["new".to_string()]);
+        assert_eq!(state.ui.pie_chart_data.len(), 1);
+        assert_eq!(state.ui.pie_chart_data[0].0, "new");
+        assert!(state.ui.show_calendar);
+    }
 }

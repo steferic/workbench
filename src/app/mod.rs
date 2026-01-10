@@ -8,6 +8,6 @@ mod session_start;
 mod state;
 mod utilities;
 
-pub use action::Action;
+pub use action::{Action, ParallelMergePlan, ParallelWorktreeSpec, UtilityContentPayload};
 pub use runtime::run_tui;
 pub use state::{AppState, ConfigItem, Divider, FocusPanel, InputMode, PendingDelete, TextSelection, TodoPaneMode, TodosTab, UtilityItem, UtilitySection, WorkspaceAction};

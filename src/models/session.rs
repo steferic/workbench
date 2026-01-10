@@ -67,11 +67,6 @@ impl Session {
         }
     }
 
-    /// Check if this session is part of a parallel task
-    pub fn is_parallel(&self) -> bool {
-        self.parallel_attempt_id.is_some()
-    }
-
     pub fn display_name(&self) -> String {
         format!(
             "{} ({})",
@@ -114,6 +109,11 @@ impl Session {
 
     pub fn mark_stopped(&mut self) {
         self.status = SessionStatus::Stopped;
+        self.stopped_at = Some(Utc::now());
+    }
+
+    pub fn mark_errored(&mut self) {
+        self.status = SessionStatus::Errored;
         self.stopped_at = Some(Utc::now());
     }
 }

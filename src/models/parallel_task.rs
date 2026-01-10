@@ -52,11 +52,6 @@ impl ParallelTask {
         }
     }
 
-    /// Get the short ID (first 8 characters) for display and directory naming
-    pub fn short_id(&self) -> String {
-        self.id.to_string()[..8].to_string()
-    }
-
     /// Add an attempt to this task
     pub fn add_attempt(&mut self, attempt: ParallelTaskAttempt) {
         self.attempts.push(attempt);
@@ -67,38 +62,12 @@ impl ParallelTask {
         self.attempts.iter().find(|a| a.id == attempt_id)
     }
 
-    /// Get a mutable reference to an attempt by ID
-    pub fn get_attempt_mut(&mut self, attempt_id: Uuid) -> Option<&mut ParallelTaskAttempt> {
-        self.attempts.iter_mut().find(|a| a.id == attempt_id)
-    }
-
-    /// Get an attempt by session ID
-    pub fn get_attempt_by_session(&self, session_id: Uuid) -> Option<&ParallelTaskAttempt> {
-        self.attempts.iter().find(|a| a.session_id == session_id)
-    }
-
     /// Check if all attempts are completed (either done or failed)
     pub fn all_attempts_finished(&self) -> bool {
         !self.attempts.is_empty()
             && self.attempts.iter().all(|a| {
                 matches!(a.status, AttemptStatus::Completed | AttemptStatus::Failed)
             })
-    }
-
-    /// Get the number of completed attempts
-    pub fn completed_count(&self) -> usize {
-        self.attempts
-            .iter()
-            .filter(|a| matches!(a.status, AttemptStatus::Completed))
-            .count()
-    }
-
-    /// Get the number of running attempts
-    pub fn running_count(&self) -> usize {
-        self.attempts
-            .iter()
-            .filter(|a| matches!(a.status, AttemptStatus::Running))
-            .count()
     }
 
     /// Mark the task as awaiting selection (all agents done)
@@ -117,16 +86,6 @@ impl ParallelTask {
     pub fn mark_cancelled(&mut self) {
         self.status = ParallelTaskStatus::Cancelled;
         self.completed_at = Some(Utc::now());
-    }
-
-    /// Get a truncated prompt for display (first line, max 50 chars)
-    pub fn prompt_preview(&self) -> String {
-        let first_line = self.prompt.lines().next().unwrap_or(&self.prompt);
-        if first_line.len() > 50 {
-            format!("{}...", &first_line[..47])
-        } else {
-            first_line.to_string()
-        }
     }
 
     /// Get the full prompt to send to agents, including report instructions if requested
@@ -153,28 +112,6 @@ pub enum ParallelTaskStatus {
     Completed,
     /// Task was cancelled by user
     Cancelled,
-}
-
-impl ParallelTaskStatus {
-    /// Get a display string for the status
-    pub fn display(&self) -> &'static str {
-        match self {
-            Self::Running => "Running",
-            Self::AwaitingSelection => "Awaiting Selection",
-            Self::Completed => "Completed",
-            Self::Cancelled => "Cancelled",
-        }
-    }
-
-    /// Get a status icon
-    pub fn icon(&self) -> &'static str {
-        match self {
-            Self::Running => "⠋",
-            Self::AwaitingSelection => "◆",
-            Self::Completed => "✓",
-            Self::Cancelled => "✗",
-        }
-    }
 }
 
 /// An individual agent's attempt at a parallel task
@@ -212,16 +149,6 @@ impl ParallelTaskAttempt {
             report_content: None,
             prompt_sent: false,
         }
-    }
-
-    /// Mark the attempt as completed
-    pub fn mark_completed(&mut self) {
-        self.status = AttemptStatus::Completed;
-    }
-
-    /// Mark the attempt as failed
-    pub fn mark_failed(&mut self) {
-        self.status = AttemptStatus::Failed;
     }
 
     /// Set the report content
@@ -263,35 +190,6 @@ impl AttemptStatus {
         }
     }
 
-    /// Get a status icon
-    pub fn icon(&self) -> &'static str {
-        match self {
-            Self::Running => "⠋",
-            Self::Completed => "◆",
-            Self::Failed => "✗",
-        }
-    }
-}
-
-/// Configuration for parallel task defaults
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ParallelTaskConfig {
-    /// Default agents to use for parallel tasks
-    pub default_agents: Vec<AgentType>,
-    /// Filename for agent reports
-    pub report_filename: String,
-    /// Whether to automatically clean up worktrees after task completion
-    pub auto_cleanup_worktrees: bool,
-}
-
-impl Default for ParallelTaskConfig {
-    fn default() -> Self {
-        Self {
-            default_agents: vec![AgentType::Claude, AgentType::Codex, AgentType::Gemini],
-            report_filename: "PARALLEL_REPORT.md".to_string(),
-            auto_cleanup_worktrees: true,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -345,20 +243,10 @@ mod tests {
     }
 
     #[test]
-    fn test_parallel_task_short_id() {
-        let task = create_test_task();
-        let short_id = task.short_id();
-
-        assert_eq!(short_id.len(), 8);
-        assert!(task.id.to_string().starts_with(&short_id));
-    }
-
-    #[test]
     fn test_add_and_get_attempt() {
         let mut task = create_test_task();
         let attempt = create_test_attempt(task.id, AgentType::Claude);
         let attempt_id = attempt.id;
-        let session_id = attempt.session_id;
 
         task.add_attempt(attempt);
 
@@ -368,11 +256,6 @@ mod tests {
         let found = task.get_attempt(attempt_id);
         assert!(found.is_some());
         assert_eq!(found.unwrap().agent_type, AgentType::Claude);
-
-        // Get by session ID
-        let found_by_session = task.get_attempt_by_session(session_id);
-        assert!(found_by_session.is_some());
-        assert_eq!(found_by_session.unwrap().id, attempt_id);
 
         // Get non-existent
         assert!(task.get_attempt(Uuid::new_v4()).is_none());
@@ -391,7 +274,7 @@ mod tests {
         assert!(!task.all_attempts_finished());
 
         // Mark as completed
-        task.attempts[0].mark_completed();
+        task.attempts[0].status = AttemptStatus::Completed;
         assert!(task.all_attempts_finished());
 
         // Add another running attempt
@@ -400,29 +283,8 @@ mod tests {
         assert!(!task.all_attempts_finished());
 
         // Mark second as failed
-        task.attempts[1].mark_failed();
+        task.attempts[1].status = AttemptStatus::Failed;
         assert!(task.all_attempts_finished());
-    }
-
-    #[test]
-    fn test_completed_and_running_counts() {
-        let mut task = create_test_task();
-
-        task.add_attempt(create_test_attempt(task.id, AgentType::Claude));
-        task.add_attempt(create_test_attempt(task.id, AgentType::Gemini));
-        task.add_attempt(create_test_attempt(task.id, AgentType::Codex));
-
-        assert_eq!(task.running_count(), 3);
-        assert_eq!(task.completed_count(), 0);
-
-        task.attempts[0].mark_completed();
-        assert_eq!(task.running_count(), 2);
-        assert_eq!(task.completed_count(), 1);
-
-        task.attempts[1].mark_completed();
-        task.attempts[2].mark_failed();
-        assert_eq!(task.running_count(), 0);
-        assert_eq!(task.completed_count(), 2);
     }
 
     #[test]
@@ -450,44 +312,6 @@ mod tests {
         assert_eq!(task.status, ParallelTaskStatus::Cancelled);
         assert!(task.completed_at.is_some());
         assert!(task.winner_attempt_id.is_none());
-    }
-
-    #[test]
-    fn test_prompt_preview_short() {
-        let task = ParallelTask::new(
-            Uuid::new_v4(),
-            "Short prompt".to_string(),
-            "main".to_string(),
-            "abc".to_string(),
-            false,
-        );
-        assert_eq!(task.prompt_preview(), "Short prompt");
-    }
-
-    #[test]
-    fn test_prompt_preview_long() {
-        let task = ParallelTask::new(
-            Uuid::new_v4(),
-            "This is a very long prompt that should be truncated because it exceeds fifty characters".to_string(),
-            "main".to_string(),
-            "abc".to_string(),
-            false,
-        );
-        let preview = task.prompt_preview();
-        assert!(preview.ends_with("..."));
-        assert!(preview.len() <= 50);
-    }
-
-    #[test]
-    fn test_prompt_preview_multiline() {
-        let task = ParallelTask::new(
-            Uuid::new_v4(),
-            "First line\nSecond line\nThird line".to_string(),
-            "main".to_string(),
-            "abc".to_string(),
-            false,
-        );
-        assert_eq!(task.prompt_preview(), "First line");
     }
 
     // ==================== ParallelTaskAttempt Tests ====================
@@ -552,22 +376,6 @@ mod tests {
     }
 
     #[test]
-    fn test_attempt_status_transitions() {
-        let mut attempt = create_test_attempt(Uuid::new_v4(), AgentType::Codex);
-        assert_eq!(attempt.status, AttemptStatus::Running);
-
-        attempt.mark_completed();
-        assert_eq!(attempt.status, AttemptStatus::Completed);
-    }
-
-    #[test]
-    fn test_attempt_failure() {
-        let mut attempt = create_test_attempt(Uuid::new_v4(), AgentType::Claude);
-        attempt.mark_failed();
-        assert_eq!(attempt.status, AttemptStatus::Failed);
-    }
-
-    #[test]
     fn test_attempt_report_content() {
         let mut attempt = create_test_attempt(Uuid::new_v4(), AgentType::Gemini);
         assert!(attempt.report_content.is_none());
@@ -592,40 +400,10 @@ mod tests {
     // ==================== Status Display Tests ====================
 
     #[test]
-    fn test_parallel_task_status_display() {
-        assert_eq!(ParallelTaskStatus::Running.display(), "Running");
-        assert_eq!(ParallelTaskStatus::AwaitingSelection.display(), "Awaiting Selection");
-        assert_eq!(ParallelTaskStatus::Completed.display(), "Completed");
-        assert_eq!(ParallelTaskStatus::Cancelled.display(), "Cancelled");
-    }
-
-    #[test]
-    fn test_parallel_task_status_icons() {
-        assert!(!ParallelTaskStatus::Running.icon().is_empty());
-        assert!(!ParallelTaskStatus::AwaitingSelection.icon().is_empty());
-        assert!(!ParallelTaskStatus::Completed.icon().is_empty());
-        assert!(!ParallelTaskStatus::Cancelled.icon().is_empty());
-    }
-
-    #[test]
     fn test_attempt_status_display() {
         assert_eq!(AttemptStatus::Running.display(), "Running");
         assert_eq!(AttemptStatus::Completed.display(), "Completed");
         assert_eq!(AttemptStatus::Failed.display(), "Failed");
-    }
-
-    // ==================== Config Tests ====================
-
-    #[test]
-    fn test_config_defaults() {
-        let config = ParallelTaskConfig::default();
-
-        assert_eq!(config.default_agents.len(), 3);
-        assert!(config.default_agents.contains(&AgentType::Claude));
-        assert!(config.default_agents.contains(&AgentType::Codex));
-        assert!(config.default_agents.contains(&AgentType::Gemini));
-        assert_eq!(config.report_filename, "PARALLEL_REPORT.md");
-        assert!(config.auto_cleanup_worktrees);
     }
 
     // ==================== Reports Feature Tests ====================
@@ -695,13 +473,13 @@ mod tests {
         task.add_attempt(create_test_attempt(task.id, AgentType::Codex));
 
         // Mark attempts as completed with reports
-        task.attempts[0].mark_completed();
+        task.attempts[0].status = AttemptStatus::Completed;
         task.attempts[0].set_report("Claude's solution: refactored the login module.".to_string());
 
-        task.attempts[1].mark_completed();
+        task.attempts[1].status = AttemptStatus::Completed;
         task.attempts[1].set_report("Gemini's approach: added new authentication layer.".to_string());
 
-        task.attempts[2].mark_failed();
+        task.attempts[2].status = AttemptStatus::Failed;
 
         // Verify reports are accessible
         assert!(task.attempts[0].report_content.is_some());
@@ -715,37 +493,6 @@ mod tests {
     }
 
     // ==================== Edge Cases ====================
-
-    #[test]
-    fn test_empty_prompt() {
-        let task = ParallelTask::new(
-            Uuid::new_v4(),
-            "".to_string(),
-            "main".to_string(),
-            "abc".to_string(),
-            false,
-        );
-        assert_eq!(task.prompt_preview(), "");
-    }
-
-    #[test]
-    fn test_get_mutable_attempt() {
-        let mut task = create_test_task();
-        let attempt = create_test_attempt(task.id, AgentType::Claude);
-        let attempt_id = attempt.id;
-        task.add_attempt(attempt);
-
-        // Modify via mutable reference
-        if let Some(attempt) = task.get_attempt_mut(attempt_id) {
-            attempt.prompt_sent = true;
-            attempt.mark_completed();
-        }
-
-        // Verify changes persisted
-        let attempt = task.get_attempt(attempt_id).unwrap();
-        assert!(attempt.prompt_sent);
-        assert_eq!(attempt.status, AttemptStatus::Completed);
-    }
 
     #[test]
     fn test_serialization_roundtrip() {

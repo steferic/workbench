@@ -21,12 +21,16 @@ enum TerminalEvent {
 pub struct EventHandler {
     action_tx: mpsc::UnboundedSender<Action>,
     action_rx: mpsc::UnboundedReceiver<Action>,
+    pty_tx: mpsc::Sender<Action>,
+    pty_rx: mpsc::Receiver<Action>,
     terminal_rx: mpsc::UnboundedReceiver<TerminalEvent>,
 }
 
 impl EventHandler {
     pub fn new() -> Self {
+        const PTY_QUEUE_SIZE: usize = 256;
         let (action_tx, action_rx) = mpsc::unbounded_channel();
+        let (pty_tx, pty_rx) = mpsc::channel(PTY_QUEUE_SIZE);
         let (terminal_tx, terminal_rx) = mpsc::unbounded_channel();
 
         // Spawn dedicated thread for terminal events
@@ -67,6 +71,8 @@ impl EventHandler {
         Self {
             action_tx,
             action_rx,
+            pty_tx,
+            pty_rx,
             terminal_rx,
         }
     }
@@ -75,9 +81,13 @@ impl EventHandler {
         self.action_tx.clone()
     }
 
-    /// Try to receive an action without blocking (for batch processing)
-    pub fn try_recv_action(&mut self) -> Result<Action, mpsc::error::TryRecvError> {
-        self.action_rx.try_recv()
+    pub fn pty_sender(&self) -> mpsc::Sender<Action> {
+        self.pty_tx.clone()
+    }
+
+    /// Try to receive a PTY action without blocking (for batch processing)
+    pub fn try_recv_pty_action(&mut self) -> Result<Action, mpsc::error::TryRecvError> {
+        self.pty_rx.try_recv()
     }
 
     pub async fn next(&mut self, state: &AppState) -> Result<Action> {
@@ -95,6 +105,12 @@ impl EventHandler {
                 TerminalEvent::Resize(w, h) => Ok(Action::Resize(w, h)),
                 TerminalEvent::Tick => Ok(Action::Tick),
             };
+        }
+        if let Ok(action) = self.pty_rx.try_recv() {
+            return Ok(action);
+        }
+        if let Ok(action) = self.action_rx.try_recv() {
+            return Ok(action);
         }
 
         // Then check action channel (PTY output, etc.)
@@ -114,6 +130,10 @@ impl EventHandler {
                     TerminalEvent::Resize(w, h) => Ok(Action::Resize(w, h)),
                     TerminalEvent::Tick => Ok(Action::Tick),
                 }
+            }
+            // PTY output and related actions
+            Some(action) = self.pty_rx.recv() => {
+                Ok(action)
             }
             // PTY output and other actions
             Some(action) = self.action_rx.recv() => {
@@ -352,7 +372,10 @@ impl EventHandler {
             KeyCode::Char('n') => Action::EnterCreateSessionMode,
             KeyCode::Enter => {
                 if let Some(session) = state.selected_session() {
-                    if session.status == crate::models::SessionStatus::Stopped {
+                    if matches!(
+                        session.status,
+                        crate::models::SessionStatus::Stopped | crate::models::SessionStatus::Errored
+                    ) {
                         Action::RestartSession(session.id)
                     } else {
                         Action::ActivateSession(session.id)
@@ -363,7 +386,10 @@ impl EventHandler {
             }
             KeyCode::Char('r') => {
                 if let Some(session) = state.selected_session() {
-                    if session.status == crate::models::SessionStatus::Stopped {
+                    if matches!(
+                        session.status,
+                        crate::models::SessionStatus::Stopped | crate::models::SessionStatus::Errored
+                    ) {
                         Action::RestartSession(session.id)
                     } else {
                         Action::Tick
@@ -410,14 +436,19 @@ impl EventHandler {
                 }
             }
 
-            // Pin session to workspace (any session type)
+            // Toggle pin session to workspace (any session type)
             KeyCode::Char('p') => {
                 if let Some(session) = state.selected_session() {
-                    Action::PinSession(session.id)
+                    if state.pinned_terminal_ids().contains(&session.id) {
+                        Action::UnpinSession(session.id)
+                    } else {
+                        Action::PinSession(session.id)
+                    }
                 } else {
                     Action::Tick
                 }
             }
+            // Unpin shortcut (kept for convenience)
             KeyCode::Char('u') => {
                 if let Some(session) = state.selected_session() {
                     if state.pinned_terminal_ids().contains(&session.id) {

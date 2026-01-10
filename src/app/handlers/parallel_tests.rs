@@ -5,11 +5,14 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::app::{AppState, FocusPanel, InputMode};
+    use crate::app::{Action, AppState, FocusPanel, InputMode, ParallelWorktreeSpec};
+    use crate::app::handlers::parallel::handle_parallel_action;
     use crate::models::{
-        AgentType, ParallelTask, ParallelTaskAttempt, ParallelTaskStatus, Workspace,
+        AgentType, AttemptStatus, ParallelTask, ParallelTaskAttempt, ParallelTaskStatus, Workspace,
     };
+    use crate::pty::PtyManager;
     use std::path::PathBuf;
+    use tokio::sync::mpsc;
     use uuid::Uuid;
 
     /// Create a minimal AppState for testing
@@ -248,7 +251,7 @@ mod tests {
         let attempt = create_test_attempt(task.id, AgentType::Claude);
         let session_id = attempt.session_id;
         task.add_attempt(attempt);
-        let prompt = task.prompt.clone();
+        let _prompt = task.prompt.clone();
         state.data.workspaces[0].add_parallel_task(task);
 
         // Initially, prompt not sent
@@ -288,7 +291,7 @@ mod tests {
         let attempt1 = create_test_attempt(task.id, AgentType::Claude);
         let attempt2 = create_test_attempt(task.id, AgentType::Gemini);
         let session1 = attempt1.session_id;
-        let session2 = attempt2.session_id;
+        let _session2 = attempt2.session_id;
         task.add_attempt(attempt1);
         task.add_attempt(attempt2);
         state.data.workspaces[0].add_parallel_task(task);
@@ -377,8 +380,8 @@ mod tests {
         // Mark both as completed
         if let Some(ws) = state.data.workspaces.get_mut(0) {
             if let Some(task) = ws.get_parallel_task_mut(task_id) {
-                task.attempts[0].mark_completed();
-                task.attempts[1].mark_completed();
+                task.attempts[0].status = AttemptStatus::Completed;
+                task.attempts[1].status = AttemptStatus::Completed;
 
                 // Check if all finished and update status
                 if task.all_attempts_finished() {
@@ -406,8 +409,8 @@ mod tests {
         // Mark first as completed, second as failed
         if let Some(ws) = state.data.workspaces.get_mut(0) {
             if let Some(task) = ws.get_parallel_task_mut(task_id) {
-                task.attempts[0].mark_completed();
-                task.attempts[1].mark_failed();
+                task.attempts[0].status = AttemptStatus::Completed;
+                task.attempts[1].status = AttemptStatus::Failed;
 
                 // Both are finished (completed or failed)
                 assert!(task.all_attempts_finished());
@@ -439,5 +442,71 @@ mod tests {
         assert_eq!(state.ui.input_mode, InputMode::Normal);
         assert!(state.ui.parallel_task_prompt.is_empty());
         assert_eq!(state.ui.focus, FocusPanel::SessionList);
+    }
+
+    #[test]
+    fn test_parallel_worktrees_ready_ignores_stale_request() {
+        let mut state = create_test_state();
+        let ws_id = state.data.workspaces[0].id;
+
+        let task = create_test_task(ws_id, "Test task");
+        state.data.workspaces[0].add_parallel_task(task);
+
+        state.ui.parallel_task_request_id = 2;
+
+        let action = Action::ParallelWorktreesReady {
+            request_id: 1,
+            task_id: Uuid::new_v4(),
+            workspace_id: ws_id,
+            prompt: "Prompt".to_string(),
+            request_report: false,
+            source_branch: "main".to_string(),
+            source_commit: "abc123".to_string(),
+            worktrees: Vec::new(),
+        };
+
+        let pty_manager = PtyManager::new();
+        let (action_tx, _) = mpsc::unbounded_channel();
+        let (pty_tx, _) = mpsc::channel(1);
+
+        handle_parallel_action(&mut state, action, &pty_manager, &action_tx, &pty_tx).unwrap();
+
+        assert_eq!(
+            state.data.workspaces[0].parallel_tasks[0].status,
+            ParallelTaskStatus::Running
+        );
+    }
+
+    #[test]
+    fn test_parallel_worktrees_ready_cancels_active_task_on_match() {
+        let mut state = create_test_state();
+        let ws_id = state.data.workspaces[0].id;
+
+        let task = create_test_task(ws_id, "Test task");
+        state.data.workspaces[0].add_parallel_task(task);
+
+        state.ui.parallel_task_request_id = 2;
+
+        let action = Action::ParallelWorktreesReady {
+            request_id: 2,
+            task_id: Uuid::new_v4(),
+            workspace_id: ws_id,
+            prompt: "Prompt".to_string(),
+            request_report: false,
+            source_branch: "main".to_string(),
+            source_commit: "abc123".to_string(),
+            worktrees: Vec::<ParallelWorktreeSpec>::new(),
+        };
+
+        let pty_manager = PtyManager::new();
+        let (action_tx, _) = mpsc::unbounded_channel();
+        let (pty_tx, _) = mpsc::channel(1);
+
+        handle_parallel_action(&mut state, action, &pty_manager, &action_tx, &pty_tx).unwrap();
+
+        assert_eq!(
+            state.data.workspaces[0].parallel_tasks[0].status,
+            ParallelTaskStatus::Cancelled
+        );
     }
 }

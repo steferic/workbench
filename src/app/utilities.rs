@@ -1,8 +1,10 @@
-use crate::app::{AppState, UtilityItem};
-use std::path::PathBuf;
+use crate::app::{Action, AppState, UtilityContentPayload, UtilityItem};
+use std::path::Path;
+use tokio::sync::mpsc;
+use tokio::task;
 
 /// Load utility content based on the selected utility
-pub fn load_utility_content(state: &mut AppState) {
+pub fn load_utility_content(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) {
     let workspace_path = match state.selected_workspace() {
         Some(ws) => ws.path.clone(),
         None => {
@@ -16,6 +18,8 @@ pub fn load_utility_content(state: &mut AppState) {
     // Clear special view flags (only specific utilities set these)
     state.ui.pie_chart_data.clear();
     state.ui.show_calendar = false;
+    state.ui.utility_request_id = state.ui.utility_request_id.wrapping_add(1);
+    let request_id = state.ui.utility_request_id;
 
     match state.ui.selected_utility {
         UtilityItem::BrownNoise => {
@@ -30,21 +34,61 @@ pub fn load_utility_content(state: &mut AppState) {
             ];
         }
         UtilityItem::TopFiles => {
-            load_top_files(&workspace_path, state);
+            state.ui.utility_content = loading_message("Top Files by Lines of Code");
+            let action_tx = action_tx.clone();
+            task::spawn_blocking(move || {
+                let (content, pie_chart_data) = build_top_files(&workspace_path);
+                let _ = action_tx.send(Action::UtilityContentLoaded(UtilityContentPayload {
+                    request_id,
+                    content,
+                    pie_chart_data,
+                    show_calendar: false,
+                }));
+            });
         }
         UtilityItem::Calendar => {
             load_calendar_content(state);
         }
         UtilityItem::GitHistory => {
-            load_git_history(&workspace_path, state);
+            state.ui.utility_content = loading_message("Git History");
+            let action_tx = action_tx.clone();
+            task::spawn_blocking(move || {
+                let content = build_git_history(&workspace_path);
+                let _ = action_tx.send(Action::UtilityContentLoaded(UtilityContentPayload {
+                    request_id,
+                    content,
+                    pie_chart_data: Vec::new(),
+                    show_calendar: false,
+                }));
+            });
         }
         UtilityItem::FileTree => {
-            load_file_tree(&workspace_path, state);
+            state.ui.utility_content = loading_message("File Tree");
+            let action_tx = action_tx.clone();
+            task::spawn_blocking(move || {
+                let content = build_file_tree(&workspace_path);
+                let _ = action_tx.send(Action::UtilityContentLoaded(UtilityContentPayload {
+                    request_id,
+                    content,
+                    pie_chart_data: Vec::new(),
+                    show_calendar: false,
+                }));
+            });
         }
         UtilityItem::SuggestTodos => {
             load_suggest_todos_info(state);
         }
     }
+}
+
+fn loading_message(title: &str) -> Vec<String> {
+    vec![
+        "".to_string(),
+        format!("  {}", title),
+        format!("  {}", "=".repeat(title.len())),
+        "".to_string(),
+        "  Loading...".to_string(),
+    ]
 }
 
 /// Show info about the Suggest Todos utility
@@ -109,7 +153,7 @@ fn load_calendar_content(state: &mut AppState) {
 }
 
 /// Load git history for the workspace
-fn load_git_history(workspace_path: &PathBuf, state: &mut AppState) {
+fn build_git_history(workspace_path: &Path) -> Vec<String> {
     let output = std::process::Command::new("git")
         .args(["log", "--oneline", "-30"])
         .current_dir(workspace_path)
@@ -140,11 +184,11 @@ fn load_git_history(workspace_path: &PathBuf, state: &mut AppState) {
         }
     }
 
-    state.ui.utility_content = content;
+    content
 }
 
 /// Load file tree for the workspace using git ls-files (respects .gitignore)
-fn load_file_tree(workspace_path: &PathBuf, state: &mut AppState) {
+fn build_file_tree(workspace_path: &Path) -> Vec<String> {
     use std::collections::BTreeMap;
 
     let mut content = vec![
@@ -177,16 +221,14 @@ fn load_file_tree(workspace_path: &PathBuf, state: &mut AppState) {
             // Fallback: manual directory walk (limited)
             content.push(format!("  {}/", ws_name));
             content.push("  (not a git repository)".to_string());
-            state.ui.utility_content = content;
-            return;
+            return content;
         }
     };
 
     if files.is_empty() {
         content.push(format!("  {}/", ws_name));
         content.push("  (no tracked files)".to_string());
-        state.ui.utility_content = content;
-        return;
+        return content;
     }
 
     // Build tree structure: path -> children (BTreeMap for sorted order)
@@ -248,17 +290,16 @@ fn load_file_tree(workspace_path: &PathBuf, state: &mut AppState) {
     content.push("".to_string());
     content.push(format!("  {} files tracked", files.len()));
 
-    state.ui.utility_content = content;
+    content
 }
 
 /// Load top 20 files by lines of code with pie chart visualization
-fn load_top_files(workspace_path: &PathBuf, state: &mut AppState) {
+fn build_top_files(
+    workspace_path: &Path,
+) -> (Vec<String>, Vec<(String, f64, ratatui::style::Color)>) {
     use ratatui::style::Color;
     use std::fs::File;
     use std::io::{BufRead, BufReader};
-
-    // Clear previous pie chart data
-    state.ui.pie_chart_data.clear();
 
     let mut content = vec![
         "".to_string(),
@@ -282,15 +323,13 @@ fn load_top_files(workspace_path: &PathBuf, state: &mut AppState) {
         }
         _ => {
             content.push("  (not a git repository)".to_string());
-            state.ui.utility_content = content;
-            return;
+            return (content, Vec::new());
         }
     };
 
     if files.is_empty() {
         content.push("  (no tracked files)".to_string());
-        state.ui.utility_content = content;
-        return;
+        return (content, Vec::new());
     }
 
     // Count lines for each file
@@ -313,8 +352,7 @@ fn load_top_files(workspace_path: &PathBuf, state: &mut AppState) {
 
     if top_files.is_empty() {
         content.push("  (no files found)".to_string());
-        state.ui.utility_content = content;
-        return;
+        return (content, Vec::new());
     }
 
     // Colors for the pie chart slices
@@ -337,6 +375,7 @@ fn load_top_files(workspace_path: &PathBuf, state: &mut AppState) {
     let other_total = all_total.saturating_sub(top_total);
 
     // Populate pie chart data
+    let mut pie_chart_data = Vec::new();
     for (i, (path, lines)) in top_files.iter().enumerate() {
         // Get file name only for label
         let label = path
@@ -344,20 +383,12 @@ fn load_top_files(workspace_path: &PathBuf, state: &mut AppState) {
             .last()
             .unwrap_or(path)
             .to_string();
-        state.ui.pie_chart_data.push((
-            label,
-            *lines as f64,
-            colors[i % colors.len()],
-        ));
+        pie_chart_data.push((label, *lines as f64, colors[i % colors.len()]));
     }
 
     // Add "Other" slice if there are more files
     if other_total > 0 {
-        state.ui.pie_chart_data.push((
-            "Other".to_string(),
-            other_total as f64,
-            Color::DarkGray,
-        ));
+        pie_chart_data.push(("Other".to_string(), other_total as f64, Color::DarkGray));
     }
 
     // Text summary below the chart
@@ -408,5 +439,5 @@ fn load_top_files(workspace_path: &PathBuf, state: &mut AppState) {
     content.push("".to_string());
     content.push(format!("  Total: {} lines across {} files", all_total, files.len()));
 
-    state.ui.utility_content = content;
+    (content, pie_chart_data)
 }

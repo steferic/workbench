@@ -9,7 +9,7 @@ use uuid::Uuid;
 pub fn start_workspace_sessions(
     state: &mut AppState,
     pty_manager: &PtyManager,
-    action_tx: &mpsc::UnboundedSender<Action>,
+    pty_tx: &mpsc::Sender<Action>,
 ) {
     // Get workspace info
     let workspace = match state.selected_workspace() {
@@ -24,7 +24,7 @@ pub fn start_workspace_sessions(
         .get(&workspace_id)
         .map(|sessions| {
             sessions.iter()
-                .filter(|s| s.status == SessionStatus::Stopped)
+                .filter(|s| matches!(s.status, SessionStatus::Stopped | SessionStatus::Errored))
                 .map(|s| (s.id, s.agent_type.clone(), s.dangerously_skip_permissions))
                 .collect()
         })
@@ -53,7 +53,7 @@ pub fn start_workspace_sessions(
             &workspace_path,
             pty_rows,
             cols,
-            action_tx.clone(),
+            pty_tx.clone(),
             resume,
             dangerously_skip_permissions,
         ) {
@@ -82,6 +82,7 @@ pub fn start_workspace_sessions(
 pub fn start_all_working_sessions(
     state: &mut AppState,
     pty_manager: &PtyManager,
+    pty_tx: &mpsc::Sender<Action>,
     action_tx: &mpsc::UnboundedSender<Action>,
 ) {
     // Get all Working workspace IDs and their paths
@@ -97,7 +98,7 @@ pub fn start_all_working_sessions(
             .get(&workspace_id)
             .map(|sessions| {
                 sessions.iter()
-                    .filter(|s| s.status == SessionStatus::Stopped)
+                    .filter(|s| matches!(s.status, SessionStatus::Stopped | SessionStatus::Errored))
                     .map(|s| (
                         s.id,
                         s.agent_type.clone(),
@@ -131,7 +132,7 @@ pub fn start_all_working_sessions(
                 &workspace_path,
                 pty_rows,
                 cols,
-                action_tx.clone(),
+                pty_tx.clone(),
                 resume,
                 dangerously_skip_permissions,
             ) {

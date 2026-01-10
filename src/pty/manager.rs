@@ -1,9 +1,12 @@
 use anyhow::{Context, Result};
-use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize, PtySystem};
+use portable_pty::{native_pty_system, Child, ChildKiller, CommandBuilder, MasterPty, PtySize, PtySystem};
 use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
+#[cfg(unix)]
+use std::time::Instant;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -15,7 +18,8 @@ use crate::models::AgentType;
 
 pub struct PtyHandle {
     pub master: Box<dyn MasterPty + Send>,
-    pub child: Box<dyn Child + Send + Sync>,
+    pub child_killer: Box<dyn ChildKiller + Send + Sync>,
+    pub process_id: Option<u32>,
     pub writer: Box<dyn Write + Send>,
 }
 
@@ -37,7 +41,83 @@ impl PtyHandle {
     }
 
     pub fn kill(&mut self) -> Result<()> {
-        self.child.kill()?;
+        self.kill_process_group()
+    }
+
+    pub fn interrupt_then_kill(&mut self, grace: Duration) -> Result<()> {
+        #[cfg(unix)]
+        {
+            if let Some(pgid) = self.process_group_id() {
+                // Send SIGINT to the process group for a graceful shutdown.
+                if self.signal_process_group(pgid, libc::SIGINT).is_err() {
+                    self.child_killer.kill()?;
+                    return Ok(());
+                }
+
+                let start = Instant::now();
+                while start.elapsed() < grace {
+                    if !self.process_group_alive(pgid) {
+                        return Ok(());
+                    }
+                    std::thread::sleep(Duration::from_millis(25));
+                }
+
+                // Escalate to SIGKILL if the group is still alive.
+                let _ = self.signal_process_group(pgid, libc::SIGKILL);
+                return Ok(());
+            }
+        }
+
+        self.child_killer.kill()?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    fn process_group_id(&self) -> Option<libc::pid_t> {
+        self.process_id
+            .filter(|pid| *pid > 0)
+            .map(|pid| pid as libc::pid_t)
+    }
+
+    #[cfg(unix)]
+    fn signal_process_group(&self, pgid: libc::pid_t, signal: i32) -> Result<()> {
+        let result = unsafe { libc::kill(-pgid, signal) };
+        if result == -1 {
+            let err = std::io::Error::last_os_error();
+            if err.raw_os_error() == Some(libc::ESRCH) {
+                return Ok(());
+            }
+            return Err(err.into());
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    fn process_group_alive(&self, pgid: libc::pid_t) -> bool {
+        let result = unsafe { libc::kill(-pgid, 0) };
+        if result == 0 {
+            return true;
+        }
+        let err = std::io::Error::last_os_error();
+        err.raw_os_error() != Some(libc::ESRCH)
+    }
+
+    #[cfg(not(unix))]
+    fn kill_process_group(&mut self) -> Result<()> {
+        self.child_killer.kill()?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    fn kill_process_group(&mut self) -> Result<()> {
+        if let Some(pgid) = self.process_group_id() {
+            // portable-pty uses setsid() on spawn, so pid == pgid for the child.
+            if self.signal_process_group(pgid, libc::SIGKILL).is_ok() {
+                return Ok(());
+            }
+        }
+
+        self.child_killer.kill()?;
         Ok(())
     }
 }
@@ -60,7 +140,7 @@ impl PtyManager {
         working_dir: &Path,
         rows: u16,
         cols: u16,
-        action_tx: mpsc::UnboundedSender<Action>,
+        pty_tx: mpsc::Sender<Action>,
         dangerously_skip_permissions: bool,
     ) -> Result<PtyHandle> {
         self.spawn_session_with_resume(
@@ -69,7 +149,7 @@ impl PtyManager {
             working_dir,
             rows,
             cols,
-            action_tx,
+            pty_tx,
             false,
             dangerously_skip_permissions,
         )
@@ -82,7 +162,7 @@ impl PtyManager {
         working_dir: &Path,
         rows: u16,
         cols: u16,
-        action_tx: mpsc::UnboundedSender<Action>,
+        pty_tx: mpsc::Sender<Action>,
         resume: bool,
         dangerously_skip_permissions: bool,
     ) -> Result<PtyHandle> {
@@ -163,6 +243,8 @@ impl PtyManager {
             .slave
             .spawn_command(cmd)
             .context("Failed to spawn agent process")?;
+        let child_killer = child.clone_killer();
+        let process_id = child.process_id();
 
         // Get reader and writer
         let mut reader = pair
@@ -183,19 +265,28 @@ impl PtyManager {
         let dsr_responded_clone = dsr_responded.clone();
 
         // Spawn async task to read PTY output
-        let tx = action_tx.clone();
+        let pty_tx = pty_tx.clone();
         let sid = session_id;
         let pty_rows = rows;
         std::thread::spawn(move || {
             #[cfg(unix)]
-            Self::read_pty_output_with_dsr(sid, &mut reader, tx, master_fd, dsr_responded_clone, pty_rows);
+            Self::read_pty_output_with_dsr(
+                sid,
+                &mut reader,
+                pty_tx,
+                master_fd,
+                dsr_responded_clone,
+                pty_rows,
+                child,
+            );
             #[cfg(not(unix))]
-            Self::read_pty_output(sid, &mut reader, tx);
+            Self::read_pty_output(sid, &mut reader, pty_tx, child);
         });
 
         Ok(PtyHandle {
             master: pair.master,
-            child,
+            child_killer,
+            process_id,
             writer,
         })
     }
@@ -205,10 +296,11 @@ impl PtyManager {
     fn read_pty_output_with_dsr(
         session_id: Uuid,
         reader: &mut Box<dyn Read + Send>,
-        action_tx: mpsc::UnboundedSender<Action>,
+        pty_tx: mpsc::Sender<Action>,
         master_fd: Option<RawFd>,
         dsr_responded: Arc<AtomicBool>,
         _rows: u16,
+        mut child: Box<dyn Child + Send + Sync>,
     ) {
         // Terminal query patterns
         const DSR_QUERY: &[u8] = b"\x1b[6n";       // Cursor position query
@@ -229,8 +321,15 @@ impl PtyManager {
         loop {
             match reader.read(&mut buf) {
                 Ok(0) => {
-                    // EOF - process exited
-                    let _ = action_tx.send(Action::SessionExited(session_id, 0));
+                    // EOF - process exited; wait for real exit status
+                    let exit_code = match child.wait() {
+                        Ok(status) => status.exit_code() as i32,
+                        Err(e) => {
+                            eprintln!("Failed to wait for session {}: {}", session_id, e);
+                            1
+                        }
+                    };
+                    let _ = pty_tx.blocking_send(Action::SessionExited(session_id, exit_code));
                     break;
                 }
                 Ok(n) => {
@@ -272,14 +371,14 @@ impl PtyManager {
                     }
 
                     if !data.is_empty() {
-                        if action_tx.send(Action::PtyOutput(session_id, data)).is_err() {
+                        if pty_tx.blocking_send(Action::PtyOutput(session_id, data)).is_err() {
                             break;
                         }
                     }
                 }
                 Err(e) => {
                     eprintln!("PTY read error for session {}: {}", session_id, e);
-                    let _ = action_tx.send(Action::SessionExited(session_id, 1));
+                    let _ = pty_tx.blocking_send(Action::SessionExited(session_id, 1));
                     break;
                 }
             }
@@ -332,24 +431,32 @@ impl PtyManager {
     fn read_pty_output(
         session_id: Uuid,
         reader: &mut Box<dyn Read + Send>,
-        action_tx: mpsc::UnboundedSender<Action>,
+        pty_tx: mpsc::Sender<Action>,
+        mut child: Box<dyn Child + Send + Sync>,
     ) {
         let mut buf = [0u8; 4096];
         loop {
             match reader.read(&mut buf) {
                 Ok(0) => {
-                    let _ = action_tx.send(Action::SessionExited(session_id, 0));
+                    let exit_code = match child.wait() {
+                        Ok(status) => status.exit_code() as i32,
+                        Err(e) => {
+                            eprintln!("Failed to wait for session {}: {}", session_id, e);
+                            1
+                        }
+                    };
+                    let _ = pty_tx.blocking_send(Action::SessionExited(session_id, exit_code));
                     break;
                 }
                 Ok(n) => {
                     let data = buf[..n].to_vec();
-                    if action_tx.send(Action::PtyOutput(session_id, data)).is_err() {
+                    if pty_tx.blocking_send(Action::PtyOutput(session_id, data)).is_err() {
                         break;
                     }
                 }
                 Err(e) => {
                     eprintln!("PTY read error for session {}: {}", session_id, e);
-                    let _ = action_tx.send(Action::SessionExited(session_id, 1));
+                    let _ = pty_tx.blocking_send(Action::SessionExited(session_id, 1));
                     break;
                 }
             }
@@ -360,5 +467,266 @@ impl PtyManager {
 impl Default for PtyManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use portable_pty::{Child, ChildKiller, ExitStatus};
+    use std::io::{self, Read};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    #[derive(Debug)]
+    struct DummyMaster;
+
+    impl MasterPty for DummyMaster {
+        fn resize(&self, _size: PtySize) -> std::result::Result<(), anyhow::Error> {
+            Err(anyhow::anyhow!("unused"))
+        }
+
+        fn get_size(&self) -> std::result::Result<PtySize, anyhow::Error> {
+            Err(anyhow::anyhow!("unused"))
+        }
+
+        fn try_clone_reader(&self) -> std::result::Result<Box<dyn Read + Send>, anyhow::Error> {
+            Err(anyhow::anyhow!("unused"))
+        }
+
+        fn take_writer(
+            &self,
+        ) -> std::result::Result<Box<dyn io::Write + Send>, anyhow::Error> {
+            Err(anyhow::anyhow!("unused"))
+        }
+
+        #[cfg(unix)]
+        fn process_group_leader(&self) -> Option<libc::pid_t> {
+            None
+        }
+
+        #[cfg(unix)]
+        fn as_raw_fd(&self) -> Option<std::os::unix::io::RawFd> {
+            None
+        }
+    }
+
+    #[derive(Debug)]
+    struct TestChild {
+        exit_status: ExitStatus,
+    }
+
+    #[derive(Debug)]
+    struct TestChildKiller {
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl ChildKiller for TestChildKiller {
+        fn kill(&mut self) -> io::Result<()> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        fn clone_killer(&self) -> Box<dyn ChildKiller + Send + Sync> {
+            Box::new(TestChildKiller {
+                calls: self.calls.clone(),
+            })
+        }
+    }
+
+    impl ChildKiller for TestChild {
+        fn kill(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+
+        fn clone_killer(&self) -> Box<dyn ChildKiller + Send + Sync> {
+            Box::new(TestChildKiller {
+                calls: Arc::new(AtomicUsize::new(0)),
+            })
+        }
+    }
+
+    impl Child for TestChild {
+        fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+            Ok(Some(self.exit_status.clone()))
+        }
+
+        fn wait(&mut self) -> io::Result<ExitStatus> {
+            Ok(self.exit_status.clone())
+        }
+
+        fn process_id(&self) -> Option<u32> {
+            None
+        }
+
+        #[cfg(windows)]
+        fn as_raw_handle(&self) -> Option<std::os::windows::io::RawHandle> {
+            None
+        }
+    }
+
+    fn test_child(exit_code: u32) -> Box<dyn Child + Send + Sync> {
+        Box::new(TestChild {
+            exit_status: ExitStatus::with_exit_code(exit_code),
+        })
+    }
+
+    fn test_handle(counter: Arc<AtomicUsize>) -> PtyHandle {
+        PtyHandle {
+            master: Box::new(DummyMaster),
+            child_killer: Box::new(TestChildKiller { calls: counter }),
+            process_id: None,
+            writer: Box::new(io::sink()),
+        }
+    }
+
+    struct ChunkedReader {
+        chunks: Vec<Vec<u8>>,
+        index: usize,
+    }
+
+    impl ChunkedReader {
+        fn new(chunks: Vec<Vec<u8>>) -> Self {
+            Self { chunks, index: 0 }
+        }
+    }
+
+    impl Read for ChunkedReader {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if self.index >= self.chunks.len() {
+                return Ok(0);
+            }
+            let chunk = &self.chunks[self.index];
+            let len = chunk.len().min(buf.len());
+            buf[..len].copy_from_slice(&chunk[..len]);
+            self.index += 1;
+            Ok(len)
+        }
+    }
+
+    #[cfg(unix)]
+    fn run_read(
+        session_id: Uuid,
+        reader: &mut Box<dyn Read + Send>,
+        tx: mpsc::Sender<Action>,
+        child: Box<dyn Child + Send + Sync>,
+    ) {
+        let responded = Arc::new(AtomicBool::new(false));
+        PtyManager::read_pty_output_with_dsr(session_id, reader, tx, None, responded, 0, child);
+    }
+
+    #[cfg(not(unix))]
+    fn run_read(
+        session_id: Uuid,
+        reader: &mut Box<dyn Read + Send>,
+        tx: mpsc::Sender<Action>,
+        child: Box<dyn Child + Send + Sync>,
+    ) {
+        PtyManager::read_pty_output(session_id, reader, tx, child);
+    }
+
+    #[test]
+    fn pty_reader_emits_output_and_exit() {
+        let (tx, mut rx) = mpsc::channel(10);
+        let session_id = Uuid::new_v4();
+        let reader = ChunkedReader::new(vec![b"hello".to_vec(), b"world".to_vec()]);
+        let mut reader: Box<dyn Read + Send> = Box::new(reader);
+
+        run_read(session_id, &mut reader, tx, test_child(0));
+
+        let mut actions = Vec::new();
+        while let Ok(action) = rx.try_recv() {
+            actions.push(action);
+        }
+
+        assert_eq!(actions.len(), 3);
+        assert!(matches!(
+            &actions[0],
+            Action::PtyOutput(id, data) if *id == session_id && data == b"hello"
+        ));
+        assert!(matches!(
+            &actions[1],
+            Action::PtyOutput(id, data) if *id == session_id && data == b"world"
+        ));
+        assert!(matches!(
+            &actions[2],
+            Action::SessionExited(id, code) if *id == session_id && *code == 0
+        ));
+    }
+
+    fn recv_with_timeout(rx: &mut mpsc::Receiver<Action>, timeout: Duration) -> Action {
+        let start = Instant::now();
+        loop {
+            match rx.try_recv() {
+                Ok(action) => return action,
+                Err(mpsc::error::TryRecvError::Empty) => {
+                    if start.elapsed() >= timeout {
+                        panic!("timed out waiting for action");
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    panic!("channel closed while waiting for action");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn pty_reader_blocks_when_queue_full() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let session_id = Uuid::new_v4();
+        let reader = ChunkedReader::new(vec![b"first".to_vec(), b"second".to_vec()]);
+        let mut reader: Box<dyn Read + Send> = Box::new(reader);
+
+        let handle = std::thread::spawn(move || {
+            run_read(session_id, &mut reader, tx, test_child(0));
+        });
+
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(!handle.is_finished(), "reader should block on full queue");
+
+        let first = recv_with_timeout(&mut rx, Duration::from_millis(100));
+        assert!(matches!(
+            first,
+            Action::PtyOutput(id, data) if id == session_id && data == b"first"
+        ));
+
+        let second = recv_with_timeout(&mut rx, Duration::from_millis(100));
+        assert!(matches!(
+            second,
+            Action::PtyOutput(id, data) if id == session_id && data == b"second"
+        ));
+
+        let third = recv_with_timeout(&mut rx, Duration::from_millis(100));
+        assert!(matches!(
+            third,
+            Action::SessionExited(id, code) if id == session_id && code == 0
+        ));
+
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn pty_handle_kill_uses_child_killer_when_no_pid() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut handle = test_handle(calls.clone());
+
+        handle.kill().unwrap();
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn pty_handle_interrupt_then_kill_uses_child_killer_when_no_pid() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut handle = test_handle(calls.clone());
+
+        handle
+            .interrupt_then_kill(Duration::from_millis(0))
+            .unwrap();
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }

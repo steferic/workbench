@@ -317,6 +317,7 @@ pub struct UIState {
     pub utility_scroll_offset: usize,
     pub pie_chart_data: Vec<(String, f64, ratatui::style::Color)>,
     pub show_calendar: bool,
+    pub utility_request_id: u64,
 
     // Banner
     pub banner_text: String,
@@ -342,6 +343,7 @@ pub struct UIState {
     pub parallel_task_agent_idx: usize,  // Currently focused agent in selection
     pub parallel_task_request_report: bool,  // Whether to request PARALLEL_REPORT.md
     pub selected_report_idx: usize,  // Selected report in Reports tab
+    pub parallel_task_request_id: u64,
 }
 
 impl UIState {
@@ -390,6 +392,7 @@ impl UIState {
             utility_scroll_offset: 0,
             pie_chart_data: Vec::new(),
             show_calendar: false,
+            utility_request_id: 0,
             banner_text: "✦ WORKBENCH ✦ Multi-Agent Development Environment ✦ Claude • Gemini • Codex • Grok ✦ ".to_string(),
             banner_offset: 0,
             banner_visible: true,
@@ -410,6 +413,7 @@ impl UIState {
             parallel_task_agent_idx: 0,
             parallel_task_request_report: true,  // Default to requesting reports
             selected_report_idx: 0,
+            parallel_task_request_id: 0,
         }
     }
 }
