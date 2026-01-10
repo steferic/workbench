@@ -85,7 +85,11 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
                     .add_modifier(Modifier::BOLD),
             )],
             vec![Span::styled(
-                "Enter path, press Enter to confirm, Esc to cancel",
+                if state.ui.workspace_create_mode {
+                    "Browse to parent, Space to name, Esc to cancel"
+                } else {
+                    "Type path or filter, Enter to open, Space to select, Esc to cancel"
+                },
                 Style::default().fg(Color::Gray),
             )],
         ),
@@ -176,6 +180,19 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
             ],
             vec![Span::styled(
                 "Enter project name, press Enter to create, Esc to cancel",
+                Style::default().fg(Color::Gray),
+            )],
+        ),
+        InputMode::CreateParallelTask => (
+            vec![Span::styled(
+                " PARALLEL TASK ",
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Magenta)
+                    .add_modifier(Modifier::BOLD),
+            )],
+            vec![Span::styled(
+                "Tab: toggle agent  Enter: start  Esc: cancel",
                 Style::default().fg(Color::Gray),
             )],
         ),

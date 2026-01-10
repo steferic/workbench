@@ -7,6 +7,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
     Frame,
 };
+use uuid::Uuid;
 
 pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     let is_focused = state.ui.focus == FocusPanel::SessionList;
@@ -36,11 +37,27 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     let sessions = state.sessions_for_selected_workspace();
     let pinned_ids = state.pinned_terminal_ids();
 
-    // Separate sessions into agents and terminals
+    // Get parallel task info for this workspace
+    let parallel_session_ids: Vec<Uuid> = state.selected_workspace()
+        .map(|ws| {
+            ws.parallel_tasks.iter()
+                .flat_map(|t| t.attempts.iter().map(|a| a.session_id))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // Separate sessions into agents (non-parallel), parallel, and terminals
     let agent_indices: Vec<usize> = sessions
         .iter()
         .enumerate()
-        .filter(|(_, s)| !s.agent_type.is_terminal())
+        .filter(|(_, s)| !s.agent_type.is_terminal() && !parallel_session_ids.contains(&s.id))
+        .map(|(i, _)| i)
+        .collect();
+
+    let parallel_indices: Vec<usize> = sessions
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| parallel_session_ids.contains(&s.id))
         .map(|(i, _)| i)
         .collect();
 
@@ -67,12 +84,45 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     // Agent sessions
     for &session_idx in &agent_indices {
         let session = &sessions[session_idx];
-        let item = create_session_item(state, session_idx, session, is_focused, &pinned_ids);
+        let item = create_session_item(state, session_idx, session, is_focused, &pinned_ids, false);
         items.push(item);
         if session_idx == state.ui.selected_session_idx {
             selected_visual_idx = Some(current_visual_idx);
         }
         current_visual_idx += 1;
+    }
+
+    // Parallel task section
+    if !parallel_indices.is_empty() {
+        // Get task prompt preview
+        let task_preview = state.selected_workspace()
+            .and_then(|ws| ws.active_parallel_task())
+            .map(|t| {
+                let preview: String = t.prompt.chars().take(30).collect();
+                if t.prompt.len() > 30 {
+                    format!("{}...", preview)
+                } else {
+                    preview
+                }
+            })
+            .unwrap_or_else(|| "Parallel Task".to_string());
+
+        let header_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+        items.push(ListItem::new(Line::from(vec![
+            Span::styled(format!("── {} ──", task_preview), header_style),
+        ])));
+        current_visual_idx += 1;
+
+        // Parallel sessions
+        for &session_idx in &parallel_indices {
+            let session = &sessions[session_idx];
+            let item = create_session_item(state, session_idx, session, is_focused, &pinned_ids, true);
+            items.push(item);
+            if session_idx == state.ui.selected_session_idx {
+                selected_visual_idx = Some(current_visual_idx);
+            }
+            current_visual_idx += 1;
+        }
     }
 
     // Terminals section header
@@ -87,7 +137,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     // Terminal sessions
     for &session_idx in &terminal_indices {
         let session = &sessions[session_idx];
-        let item = create_session_item(state, session_idx, session, is_focused, &pinned_ids);
+        let item = create_session_item(state, session_idx, session, is_focused, &pinned_ids, false);
         items.push(item);
         if session_idx == state.ui.selected_session_idx {
             selected_visual_idx = Some(current_visual_idx);
@@ -126,12 +176,16 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
 
     let action_bar = Paragraph::new(vec![
         Line::from(vec![
-            Span::styled("c", key_style),
-            Span::styled(":set terminal start cmd ", action_style),
             Span::styled("s", key_style),
             Span::styled(":stop ", action_style),
             Span::styled("d", key_style),
-            Span::styled(":del", action_style),
+            Span::styled(":del ", action_style),
+            Span::styled("p", key_style),
+            Span::styled(":pin ", action_style),
+            Span::styled("P", key_style),
+            Span::styled(":parallel ", action_style),
+            Span::styled("X", key_style),
+            Span::styled(":cancel", action_style),
         ]),
         Line::from(vec![
             Span::styled("1", key_style),
@@ -143,9 +197,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
             Span::styled("4", key_style),
             Span::styled(":Grok ", action_style),
             Span::styled("t", key_style),
-            Span::styled(":term ", action_style),
-            Span::styled("p", key_style),
-            Span::styled(":pin", action_style),
+            Span::styled(":term", action_style),
         ]),
     ]);
 
@@ -157,7 +209,8 @@ fn create_session_item<'a>(
     session_idx: usize,
     session: &Session,
     is_focused: bool,
-    pinned_ids: &[uuid::Uuid],
+    pinned_ids: &[Uuid],
+    is_parallel: bool,
 ) -> ListItem<'a> {
     let is_selected = session_idx == state.ui.selected_session_idx && is_focused;
     let is_active = state.ui.active_session_id == Some(session.id);
@@ -198,6 +251,30 @@ fn create_session_item<'a>(
         Span::raw("")
     };
 
+    // Show branch name for parallel sessions
+    let branch_indicator = if is_parallel {
+        // Get the branch name from the parallel task attempt
+        let branch_name = state.selected_workspace()
+            .and_then(|ws| {
+                ws.parallel_tasks.iter()
+                    .flat_map(|t| t.attempts.iter())
+                    .find(|a| a.session_id == session.id)
+                    .map(|a| a.branch_name.clone())
+            })
+            .unwrap_or_default();
+
+        if !branch_name.is_empty() {
+            Span::styled(
+                format!(" [{}]", branch_name),
+                Style::default().fg(Color::Cyan),
+            )
+        } else {
+            Span::raw("")
+        }
+    } else {
+        Span::raw("")
+    };
+
     let name_style = if is_selected {
         Style::default()
             .fg(Color::Cyan)
@@ -223,7 +300,7 @@ fn create_session_item<'a>(
         Span::styled(session.status_icon(), Style::default().fg(status_color)),
         Span::raw(" "),
         Span::styled(
-            format!("[{}] ", session.agent_type.icon()),
+            format!("[{}] ", session.agent_type.badge()),
             Style::default().fg(Color::Magenta),
         ),
         Span::styled(session.agent_type.display_name().to_string(), name_style),
@@ -232,6 +309,7 @@ fn create_session_item<'a>(
             Style::default().fg(Color::DarkGray),
         ),
         activity_indicator,
+        branch_indicator,
         pin_indicator,
     ]);
 

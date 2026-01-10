@@ -1,5 +1,6 @@
 use crate::app::{Action, AppState, FocusPanel, InputMode, PendingDelete};
-use crate::models::{AgentType, Session};
+use crate::git;
+use crate::models::{AgentType, AttemptStatus, Session};
 use crate::persistence;
 use crate::pty::PtyManager;
 use crate::app::pty_ops::resize_ptys_to_panes;
@@ -206,10 +207,79 @@ pub fn handle_session_action(
         }
         Action::ConfirmDeleteSession => {
             if let Some(PendingDelete::Session(session_id, _)) = state.ui.pending_delete.take() {
+                // Check if this session is part of a parallel task and get cleanup info
+                let parallel_cleanup_info: Option<(std::path::PathBuf, std::path::PathBuf, uuid::Uuid)> = {
+                    let workspace = state.selected_workspace();
+                    if let Some(ws) = workspace {
+                        // Find the session to check for parallel_attempt_id
+                        let session = state.data.sessions.get(&ws.id)
+                            .and_then(|sessions| sessions.iter().find(|s| s.id == session_id));
+
+                        if let Some(session) = session {
+                            if let Some(attempt_id) = session.parallel_attempt_id {
+                                // Find the parallel task and attempt
+                                for task in &ws.parallel_tasks {
+                                    if let Some(attempt) = task.attempts.iter().find(|a| a.id == attempt_id) {
+                                        Some((ws.path.clone(), attempt.worktree_path.clone(), task.id))
+                                    } else {
+                                        continue;
+                                    };
+                                }
+                                // Search again to return the value
+                                ws.parallel_tasks.iter()
+                                    .find_map(|task| {
+                                        task.attempts.iter()
+                                            .find(|a| a.id == attempt_id)
+                                            .map(|attempt| (ws.path.clone(), attempt.worktree_path.clone(), task.id))
+                                    })
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                };
+
+                // Kill PTY handle
                 if let Some(mut handle) = state.system.pty_handles.remove(&session_id) {
                     let _ = handle.kill();
                 }
                 state.system.output_buffers.remove(&session_id);
+
+                // Clean up worktree if this was a parallel task session
+                if let Some((workspace_path, worktree_path, task_id)) = parallel_cleanup_info {
+                    // Remove the worktree (this also deletes the branch)
+                    let _ = git::remove_worktree(&workspace_path, &worktree_path, true);
+
+                    // Mark the attempt as failed and potentially clean up the task
+                    if let Some(ws) = state.selected_workspace_mut() {
+                        if let Some(task) = ws.get_parallel_task_mut(task_id) {
+                            // Find and mark the attempt as failed
+                            if let Some(attempt) = task.attempts.iter_mut()
+                                .find(|a| a.session_id == session_id)
+                            {
+                                attempt.status = AttemptStatus::Failed;
+                            }
+
+                            // If all attempts are now finished, mark task as awaiting selection
+                            // (even if some failed, user can still pick from completed ones)
+                            if task.all_attempts_finished() {
+                                task.mark_awaiting_selection();
+                            }
+
+                            // If all attempts failed or were deleted, cancel the whole task
+                            let all_failed = task.attempts.iter()
+                                .all(|a| a.status == AttemptStatus::Failed);
+                            if all_failed && !task.attempts.is_empty() {
+                                task.mark_cancelled();
+                            }
+                        }
+                    }
+                }
+
                 state.delete_session(session_id);
                 if state.ui.active_session_id == Some(session_id) {
                     state.ui.active_session_id = None;

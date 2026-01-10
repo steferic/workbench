@@ -62,6 +62,7 @@ pub fn handle_workspace_action(state: &mut AppState, action: Action) -> Result<(
                     state.ui.workspace_create_mode = true;
                     state.ui.input_mode = InputMode::CreateWorkspace;
                     state.ui.input_buffer.clear();
+                    state.ui.file_browser_query.clear();
                     state.ui.file_browser_path = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
                     state.refresh_file_browser();
                 }
@@ -69,6 +70,7 @@ pub fn handle_workspace_action(state: &mut AppState, action: Action) -> Result<(
                     state.ui.workspace_create_mode = false;
                     state.ui.input_mode = InputMode::CreateWorkspace;
                     state.ui.input_buffer.clear();
+                    state.ui.file_browser_query.clear();
                     state.ui.file_browser_path = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
                     state.refresh_file_browser();
                 }

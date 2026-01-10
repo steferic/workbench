@@ -13,12 +13,16 @@ pub fn handle_todo_action(
     match action {
         Action::SelectNextTodo => {
             if let Some(ws) = state.selected_workspace() {
-                let count = ws.todos.iter().filter(|t| {
-                    match state.ui.selected_todos_tab {
-                        TodosTab::Active => !t.is_archived(),
-                        TodosTab::Archived => t.is_archived(),
+                let count = match state.ui.selected_todos_tab {
+                    TodosTab::Active => ws.todos.iter().filter(|t| !t.is_archived()).count(),
+                    TodosTab::Archived => ws.todos.iter().filter(|t| t.is_archived()).count(),
+                    TodosTab::Reports => {
+                        // Count reports from active parallel task
+                        ws.active_parallel_task()
+                            .map(|t| t.attempts.len())
+                            .unwrap_or(0)
                     }
-                }).count();
+                };
                 if count > 0 {
                     state.ui.selected_todo_idx = (state.ui.selected_todo_idx + 1).min(count - 1);
                 }
@@ -160,12 +164,11 @@ pub fn handle_todo_action(
             if let Some(PendingDelete::Todo(id, _)) = state.ui.pending_delete.take() {
                 if let Some(ws) = state.data.workspaces.get_mut(state.ui.selected_workspace_idx) {
                     ws.remove_todo(id);
-                    let filtered_count = ws.todos.iter().filter(|t| {
-                        match state.ui.selected_todos_tab {
-                            TodosTab::Active => !t.is_archived(),
-                            TodosTab::Archived => t.is_archived(),
-                        }
-                    }).count();
+                    let filtered_count = match state.ui.selected_todos_tab {
+                        TodosTab::Active => ws.todos.iter().filter(|t| !t.is_archived()).count(),
+                        TodosTab::Archived => ws.todos.iter().filter(|t| t.is_archived()).count(),
+                        TodosTab::Reports => ws.active_parallel_task().map(|t| t.attempts.len()).unwrap_or(0),
+                    };
                     if filtered_count > 0 && state.ui.selected_todo_idx >= filtered_count {
                         state.ui.selected_todo_idx = filtered_count - 1;
                     } else if filtered_count == 0 {

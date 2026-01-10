@@ -111,6 +111,22 @@ pub enum Action {
     ArchiveTodo(Uuid),                          // Archive a todo (hide from main list)
     ToggleTodosTab,                             // Switch between Active and Archived tabs
 
+    // Parallel task operations
+    EnterParallelTaskMode,                      // Open parallel task modal (P key)
+    ToggleParallelAgent(usize),                 // Toggle agent selection in modal
+    NextParallelAgent,                          // Move to next agent in selection
+    PrevParallelAgent,                          // Move to previous agent in selection
+    StartParallelTask,                          // Confirm and start the parallel task
+    CancelParallelTask(Uuid),                   // Cancel a running parallel task
+    SelectParallelWinner(Uuid),                 // Select winning attempt and merge
+    ParallelAttemptCompleted(Uuid),             // An agent finished its attempt
+
+    // Reports tab
+    SelectNextReport,
+    SelectPrevReport,
+    ViewReport,                                 // View full report in output pane
+    MergeSelectedReport,                        // Merge winner from reports tab
+
     // Mouse
     MouseClick(u16, u16), // (x, y) coordinates
 

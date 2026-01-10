@@ -1,8 +1,8 @@
 use crate::app::{AppState, InputMode};
 use crate::tui::components::{
     banner, create_session_dialog, create_workspace_dialog, help_popup, output_pane,
-    pinned_terminal_pane, session_list, status_bar, todos_pane, utilities_pane,
-    workspace_action_dialog, workspace_list, workspace_name_dialog,
+    parallel_task_modal, pinned_terminal_pane, session_list, status_bar, todos_pane,
+    utilities_pane, workspace_action_dialog, workspace_list, workspace_name_dialog,
 };
 use crate::tui::effects::{EffectsManager, StartupAreas};
 use ratatui::{
@@ -155,6 +155,10 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, effects: &mut EffectsManage
         }
         InputMode::CreateTodo => {
             // Todo input is shown in the status bar
+        }
+        InputMode::CreateParallelTask => {
+            // Will render parallel task modal
+            parallel_task_modal::render(frame, state);
         }
         InputMode::Normal => {}
     }

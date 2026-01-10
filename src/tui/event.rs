@@ -75,8 +75,32 @@ impl EventHandler {
         self.action_tx.clone()
     }
 
+    /// Try to receive an action without blocking (for batch processing)
+    pub fn try_recv_action(&mut self) -> Result<Action, mpsc::error::TryRecvError> {
+        self.action_rx.try_recv()
+    }
+
     pub async fn next(&mut self, state: &AppState) -> Result<Action> {
+        // PRIORITY: Always check terminal events first (keyboard input should never be delayed)
+        // Use try_recv to check without blocking
+        if let Ok(event) = self.terminal_rx.try_recv() {
+            return match event {
+                TerminalEvent::Key(key) => Ok(self.handle_key_event(key, state)),
+                TerminalEvent::Paste(data) => Ok(Action::Paste(data)),
+                TerminalEvent::MouseDown(x, y) => Ok(Action::MouseClick(x, y)),
+                TerminalEvent::MouseDrag(x, y) => Ok(Action::MouseDrag(x, y)),
+                TerminalEvent::MouseUp(x, y) => Ok(Action::MouseUp(x, y)),
+                TerminalEvent::MouseScrollUp => Ok(Action::ScrollOutputUp),
+                TerminalEvent::MouseScrollDown => Ok(Action::ScrollOutputDown),
+                TerminalEvent::Resize(w, h) => Ok(Action::Resize(w, h)),
+                TerminalEvent::Tick => Ok(Action::Tick),
+            };
+        }
+
+        // Then check action channel (PTY output, etc.)
         tokio::select! {
+            biased; // Prefer terminal events when both are ready
+
             // Terminal events (keyboard, mouse, resize)
             Some(event) = self.terminal_rx.recv() => {
                 match event {
@@ -136,20 +160,37 @@ impl EventHandler {
             };
         }
         InputMode::CreateWorkspace => {
+            if state.ui.workspace_create_mode {
+                return match key.code {
+                    KeyCode::Esc => Action::ExitMode,
+                    KeyCode::Char('j') | KeyCode::Down => Action::FileBrowserDown,
+                    KeyCode::Char('k') | KeyCode::Up => Action::FileBrowserUp,
+                    KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter => Action::FileBrowserEnter,
+                    KeyCode::Char('h') | KeyCode::Left | KeyCode::Backspace => Action::FileBrowserBack,
+                    KeyCode::Char(' ') | KeyCode::Tab => Action::EnterWorkspaceNameMode,
+                    _ => Action::Tick,
+                };
+            }
+
             return match key.code {
                 KeyCode::Esc => Action::ExitMode,
-                KeyCode::Char('j') | KeyCode::Down => Action::FileBrowserDown,
-                KeyCode::Char('k') | KeyCode::Up => Action::FileBrowserUp,
-                KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter => Action::FileBrowserEnter,
-                KeyCode::Char('h') | KeyCode::Left | KeyCode::Backspace => Action::FileBrowserBack,
-                KeyCode::Char(' ') | KeyCode::Tab => {
-                    if state.ui.workspace_create_mode {
-                        // In "Create New" mode, go to name input
-                        Action::EnterWorkspaceNameMode
+                KeyCode::Down => Action::FileBrowserDown,
+                KeyCode::Up => Action::FileBrowserUp,
+                KeyCode::Right | KeyCode::Enter => Action::FileBrowserEnter,
+                KeyCode::Left => Action::FileBrowserBack,
+                KeyCode::Char(' ') | KeyCode::Tab => Action::FileBrowserSelect,
+                KeyCode::Backspace => {
+                    if state.ui.file_browser_query.is_empty() {
+                        Action::FileBrowserBack
                     } else {
-                        // In "Open Existing" mode, select directory
-                        Action::FileBrowserSelect
+                        Action::InputBackspace
                     }
+                }
+                KeyCode::Char(c)
+                    if !key.modifiers.contains(KeyModifiers::CONTROL)
+                        && !key.modifiers.contains(KeyModifiers::ALT) =>
+                {
+                    Action::InputChar(c)
                 }
                 _ => Action::Tick,
             };
@@ -194,6 +235,21 @@ impl EventHandler {
                 }
                 KeyCode::Backspace => Action::InputBackspace,
                 KeyCode::Char(c) => Action::InputChar(c),
+                _ => Action::Tick,
+            };
+        }
+        InputMode::CreateParallelTask => {
+            return match key.code {
+                KeyCode::Esc => Action::ExitMode,
+                KeyCode::Tab => Action::NextParallelAgent,
+                KeyCode::BackTab => Action::PrevParallelAgent,
+                KeyCode::Char('x') => {
+                    // Toggle the currently selected agent with 'x'
+                    Action::ToggleParallelAgent(state.ui.parallel_task_agent_idx)
+                }
+                KeyCode::Enter => Action::StartParallelTask,
+                KeyCode::Backspace => Action::InputBackspace,
+                KeyCode::Char(c) => Action::InputChar(c),  // Includes space now
                 _ => Action::Tick,
             };
         }
@@ -377,6 +433,29 @@ impl EventHandler {
             // Toggle split view
             KeyCode::Char('\\') | KeyCode::Char('/') => Action::ToggleSplitView,
 
+            // Parallel task modal (Shift+P)
+            KeyCode::Char('P') => Action::EnterParallelTaskMode,
+
+            // Cancel parallel task (Shift+X) - if selected session is part of a parallel task
+            KeyCode::Char('X') => {
+                if let Some(session) = state.selected_session() {
+                    // Check if this session is part of a parallel task
+                    if let Some(task_id) = state.selected_workspace()
+                        .and_then(|ws| {
+                            ws.parallel_tasks.iter()
+                                .find(|t| t.attempts.iter().any(|a| a.session_id == session.id))
+                                .map(|t| t.id)
+                        })
+                    {
+                        Action::CancelParallelTask(task_id)
+                    } else {
+                        Action::Tick
+                    }
+                } else {
+                    Action::Tick
+                }
+            }
+
             // Global
             KeyCode::Char('?') => Action::EnterHelpMode,
             KeyCode::Char('q') => Action::Quit,
@@ -398,20 +477,52 @@ impl EventHandler {
                     .filter(|t| match state.ui.selected_todos_tab {
                         TodosTab::Active => !t.is_archived(),
                         TodosTab::Archived => t.is_archived(),
+                        TodosTab::Reports => false, // Reports tab doesn't use todos
                     })
                     .nth(state.ui.selected_todo_idx)
             })
         };
 
         match key.code {
-            // Navigation
-            KeyCode::Char('j') | KeyCode::Down => Action::SelectNextTodo,
-            KeyCode::Char('k') | KeyCode::Up => Action::SelectPrevTodo,
+            // Navigation - different actions for Reports tab
+            KeyCode::Char('j') | KeyCode::Down => {
+                if state.ui.selected_todos_tab == TodosTab::Reports {
+                    Action::SelectNextReport
+                } else {
+                    Action::SelectNextTodo
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                if state.ui.selected_todos_tab == TodosTab::Reports {
+                    Action::SelectPrevReport
+                } else {
+                    Action::SelectPrevTodo
+                }
+            }
             KeyCode::Char('h') => Action::FocusLeft,
             KeyCode::Char('l') => Action::FocusRight,
 
             // Tab switching
             KeyCode::Tab => Action::ToggleTodosTab,
+
+            // Reports tab actions
+            KeyCode::Char('v') | KeyCode::Enter if state.ui.selected_todos_tab == TodosTab::Reports => {
+                Action::ViewReport
+            }
+            KeyCode::Char('m') if state.ui.selected_todos_tab == TodosTab::Reports => {
+                Action::MergeSelectedReport
+            }
+            KeyCode::Char('d') if state.ui.selected_todos_tab == TodosTab::Reports => {
+                // Cancel/discard the active parallel task
+                if let Some(task_id) = state.selected_workspace()
+                    .and_then(|ws| ws.active_parallel_task())
+                    .map(|t| t.id)
+                {
+                    Action::CancelParallelTask(task_id)
+                } else {
+                    Action::Tick
+                }
+            }
 
             // Actions (only in Active tab)
             KeyCode::Char('n') if state.ui.selected_todos_tab == TodosTab::Active => {
