@@ -45,6 +45,16 @@ impl AgentType {
         }
     }
 
+    pub fn badge(&self) -> &'static str {
+        match self {
+            AgentType::Claude => "C",
+            AgentType::Gemini => "G",
+            AgentType::Codex => "X",
+            AgentType::Grok => "K",
+            AgentType::Terminal(_) => "T",
+        }
+    }
+
     pub fn is_terminal(&self) -> bool {
         matches!(self, AgentType::Terminal(_))
     }

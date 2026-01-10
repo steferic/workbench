@@ -1,5 +1,6 @@
 mod app;
 mod audio;
+mod git;
 mod models;
 mod persistence;
 mod pty;

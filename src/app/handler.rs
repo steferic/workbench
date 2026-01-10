@@ -3,7 +3,7 @@ use crate::pty::PtyManager;
 use anyhow::Result;
 use tokio::sync::mpsc;
 
-use super::handlers::{input, navigation, session, todo, workspace};
+use super::handlers::{input, navigation, parallel, session, todo, workspace};
 use super::pty_ops::resize_ptys_to_panes;
 
 pub fn process_action(
@@ -53,6 +53,41 @@ pub fn process_action(
                             if let Some(todo) = ws.todo_for_session_mut(*session_id) {
                                 let _ = action_tx.send(Action::MarkTodoReadyForReview(todo.id));
                             }
+                        }
+                    }
+
+                    // Check if this is a parallel task session
+                    let parallel_info = state.get_workspace(workspace_id)
+                        .and_then(|ws| {
+                            ws.parallel_tasks.iter()
+                                .find(|t| t.attempts.iter().any(|a| a.session_id == *session_id))
+                                .and_then(|t| {
+                                    t.attempts.iter()
+                                        .find(|a| a.session_id == *session_id)
+                                        .map(|a| (t.full_prompt(), a.prompt_sent, a.status.clone()))
+                                })
+                        });
+
+                    if let Some((full_prompt, prompt_sent, attempt_status)) = parallel_info {
+                        use crate::models::AttemptStatus;
+
+                        if !prompt_sent {
+                            // Send the prompt to the agent
+                            let text_bytes: Vec<u8> = full_prompt.bytes().collect();
+                            let _ = action_tx.send(Action::SendInput(*session_id, text_bytes));
+                            let _ = action_tx.send(Action::SendInput(*session_id, vec![b'\r']));
+
+                            // Mark the prompt as sent
+                            if let Some(ws) = state.get_workspace_mut(workspace_id) {
+                                for task in ws.parallel_tasks.iter_mut() {
+                                    if let Some(attempt) = task.attempts.iter_mut().find(|a| a.session_id == *session_id) {
+                                        attempt.prompt_sent = true;
+                                    }
+                                }
+                            }
+                        } else if attempt_status == AttemptStatus::Running {
+                            // Agent already received prompt and is now idle again - it's done!
+                            let _ = action_tx.send(Action::ParallelAttemptCompleted(*session_id));
                         }
                     }
                 }
@@ -143,8 +178,19 @@ pub fn process_action(
                 Action::EnterHelpMode | Action::ExitMode | Action::InputChar(_) |
                 Action::InputBackspace | Action::NotepadInput(_) |
                 Action::FileBrowserUp | Action::FileBrowserDown | Action::FileBrowserEnter |
-                Action::FileBrowserBack | Action::FileBrowserSelect => {
+                Action::FileBrowserBack | Action::FileBrowserSelect |
+                // Parallel task modal input actions
+                Action::EnterParallelTaskMode | Action::ToggleParallelAgent(_) |
+                Action::NextParallelAgent | Action::PrevParallelAgent => {
                     input::handle_input_action(state, action)?;
+                }
+
+                // Parallel task execution actions
+                Action::StartParallelTask | Action::CancelParallelTask(_) |
+                Action::SelectParallelWinner(_) | Action::ParallelAttemptCompleted(_) |
+                Action::SelectNextReport | Action::SelectPrevReport |
+                Action::ViewReport | Action::MergeSelectedReport => {
+                    parallel::handle_parallel_action(state, action, pty_manager, action_tx)?;
                 }
 
                 // Global already handled

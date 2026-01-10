@@ -25,6 +25,7 @@ pub fn handle_input_action(state: &mut AppState, action: Action) -> Result<()> {
         Action::ExitMode => {
             state.ui.input_mode = InputMode::Normal;
             state.ui.input_buffer.clear();
+            state.ui.file_browser_query.clear();
             state.ui.editing_session_id = None;
         }
         Action::EnterSetStartCommandMode => {
@@ -52,10 +53,26 @@ pub fn handle_input_action(state: &mut AppState, action: Action) -> Result<()> {
             let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
         }
         Action::InputChar(c) => {
-            state.ui.input_buffer.push(c);
+            // Handle input based on current mode
+            if state.ui.input_mode == InputMode::CreateWorkspace && !state.ui.workspace_create_mode {
+                state.ui.file_browser_query.push(c);
+                state.apply_file_browser_filter();
+            } else if state.ui.input_mode == InputMode::CreateParallelTask {
+                state.ui.parallel_task_prompt.push(c);
+            } else {
+                state.ui.input_buffer.push(c);
+            }
         }
         Action::InputBackspace => {
-            state.ui.input_buffer.pop();
+            // Handle backspace based on current mode
+            if state.ui.input_mode == InputMode::CreateWorkspace && !state.ui.workspace_create_mode {
+                state.ui.file_browser_query.pop();
+                state.apply_file_browser_filter();
+            } else if state.ui.input_mode == InputMode::CreateParallelTask {
+                state.ui.parallel_task_prompt.pop();
+            } else {
+                state.ui.input_buffer.pop();
+            }
         }
         Action::NotepadInput(key) => {
             let tui_key = match key.code {
@@ -122,6 +139,7 @@ pub fn handle_input_action(state: &mut AppState, action: Action) -> Result<()> {
             if path.exists() && path.is_dir() {
                 let workspace = crate::models::Workspace::from_path(path);
                 state.add_workspace(workspace);
+                state.ui.file_browser_query.clear();
                 state.ui.input_mode = InputMode::Normal;
                 let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
             }
@@ -129,6 +147,60 @@ pub fn handle_input_action(state: &mut AppState, action: Action) -> Result<()> {
         Action::EnterCreateTodoMode => {
             state.ui.input_mode = InputMode::CreateTodo;
             state.ui.input_buffer.clear();
+        }
+        Action::EnterParallelTaskMode => {
+            // Only enter if we have a workspace selected
+            if state.selected_workspace().is_some() {
+                state.ui.input_mode = InputMode::CreateParallelTask;
+                state.ui.parallel_task_prompt.clear();
+                state.ui.parallel_task_agent_idx = 0;
+                // Pre-select agents that have running sessions in the workspace
+                let ws_id = state.selected_workspace().map(|w| w.id);
+                if let Some(workspace_id) = ws_id {
+                    let running_agents: Vec<_> = state.data.sessions.get(&workspace_id)
+                        .map(|sessions| {
+                            sessions.iter()
+                                .filter(|s| s.agent_type.is_agent() && s.status == crate::models::SessionStatus::Running)
+                                .map(|s| s.agent_type.clone())
+                                .collect()
+                        })
+                        .unwrap_or_default();
+
+                    // Update selection based on running agents
+                    for (agent_type, selected) in state.ui.parallel_task_agents.iter_mut() {
+                        *selected = running_agents.contains(agent_type);
+                    }
+                }
+            }
+        }
+        Action::NextParallelAgent => {
+            let agent_count = state.ui.parallel_task_agents.len();
+            // Total items = agents + 1 (report checkbox)
+            let total_items = agent_count + 1;
+            if total_items > 0 {
+                state.ui.parallel_task_agent_idx = (state.ui.parallel_task_agent_idx + 1) % total_items;
+            }
+        }
+        Action::PrevParallelAgent => {
+            let agent_count = state.ui.parallel_task_agents.len();
+            // Total items = agents + 1 (report checkbox)
+            let total_items = agent_count + 1;
+            if total_items > 0 {
+                if state.ui.parallel_task_agent_idx == 0 {
+                    state.ui.parallel_task_agent_idx = total_items - 1;
+                } else {
+                    state.ui.parallel_task_agent_idx -= 1;
+                }
+            }
+        }
+        Action::ToggleParallelAgent(idx) => {
+            let agent_count = state.ui.parallel_task_agents.len();
+            if idx == agent_count {
+                // Toggle the report checkbox
+                state.ui.parallel_task_request_report = !state.ui.parallel_task_request_report;
+            } else if let Some((_, selected)) = state.ui.parallel_task_agents.get_mut(idx) {
+                *selected = !*selected;
+            }
         }
         _ => {}
     }

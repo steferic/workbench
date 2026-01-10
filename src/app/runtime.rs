@@ -130,11 +130,34 @@ async fn run_main_loop(
         // Draw UI with effects
         terminal.draw(|frame| tui::ui::draw(frame, state, effects))?;
 
-        // Handle events
+        // Handle events - batch process multiple PTY outputs to avoid UI starvation
         let action = events.next(state).await?;
 
         // Process action
-        process_action(state, action, pty_manager, &action_tx)?;
+        process_action(state, action.clone(), pty_manager, &action_tx)?;
+
+        // If we just processed a PTY output, drain more from the queue without redrawing
+        // This prevents UI starvation during heavy output
+        if matches!(action, Action::PtyOutput(_, _)) {
+            let mut batch_count = 0;
+            const MAX_BATCH: usize = 50; // Process up to 50 PTY outputs per frame
+
+            while batch_count < MAX_BATCH {
+                // Check for more PTY outputs without blocking
+                if let Ok(next_action) = events.try_recv_action() {
+                    if matches!(next_action, Action::PtyOutput(_, _)) {
+                        process_action(state, next_action, pty_manager, &action_tx)?;
+                        batch_count += 1;
+                    } else {
+                        // Non-PTY action, process it and stop batching
+                        process_action(state, next_action, pty_manager, &action_tx)?;
+                        break;
+                    }
+                } else {
+                    break; // No more actions in queue
+                }
+            }
+        }
 
         // Sync audio player with state
         if state.system.brown_noise_playing != audio_was_playing {

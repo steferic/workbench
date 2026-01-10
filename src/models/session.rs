@@ -23,6 +23,9 @@ pub struct Session {
     /// Optional startup command for terminal sessions
     #[serde(default)]
     pub start_command: Option<String>,
+    /// If part of a parallel task, links to the attempt
+    #[serde(default)]
+    pub parallel_attempt_id: Option<Uuid>,
 }
 
 impl Session {
@@ -40,7 +43,33 @@ impl Session {
             started_at: Utc::now(),
             stopped_at: None,
             start_command: None,
+            parallel_attempt_id: None,
         }
+    }
+
+    /// Create a new session for a parallel task attempt
+    pub fn new_parallel(
+        workspace_id: Uuid,
+        agent_type: AgentType,
+        dangerously_skip_permissions: bool,
+        parallel_attempt_id: Uuid,
+    ) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            workspace_id,
+            agent_type,
+            dangerously_skip_permissions,
+            status: SessionStatus::Running,
+            started_at: Utc::now(),
+            stopped_at: None,
+            start_command: None,
+            parallel_attempt_id: Some(parallel_attempt_id),
+        }
+    }
+
+    /// Check if this session is part of a parallel task
+    pub fn is_parallel(&self) -> bool {
+        self.parallel_attempt_id.is_some()
     }
 
     pub fn display_name(&self) -> String {
