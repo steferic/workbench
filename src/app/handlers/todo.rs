@@ -274,11 +274,11 @@ Focus on practical, actionable items. Be specific about what needs to be done."#
                     state.ui.active_session_id = Some(session_id);
                     state.ui.focus = FocusPanel::OutputPane;
                 } else {
-                    load_utility_content(state);
+                    load_utility_content(state, action_tx);
                     state.ui.active_session_id = None;
                 }
             } else {
-                load_utility_content(state);
+                load_utility_content(state, action_tx);
                 state.ui.active_session_id = None;
             }
         }

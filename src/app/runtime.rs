@@ -80,12 +80,13 @@ pub async fn run_tui(initial_workspace: Option<PathBuf>) -> Result<()> {
     // Create event handler
     let mut events = EventHandler::new();
     let action_tx = events.action_sender();
+    let pty_tx = events.pty_sender();
 
     // Create PTY manager
     let pty_manager = PtyManager::new();
 
     // Auto-start all sessions in "Working" workspaces
-    start_all_working_sessions(&mut state, &pty_manager, &action_tx);
+    start_all_working_sessions(&mut state, &pty_manager, &pty_tx, &action_tx);
 
     // Auto-activate first agent session in currently selected workspace (if it's Working)
     if let Some(ws) = state.selected_workspace() {
@@ -106,7 +107,16 @@ pub async fn run_tui(initial_workspace: Option<PathBuf>) -> Result<()> {
     let mut effects = EffectsManager::new();
 
     // Main loop
-    let result = run_main_loop(&mut terminal, &mut state, &mut events, &pty_manager, action_tx, &mut effects).await;
+    let result = run_main_loop(
+        &mut terminal,
+        &mut state,
+        &mut events,
+        &pty_manager,
+        action_tx,
+        pty_tx,
+        &mut effects,
+    )
+    .await;
 
     // Restore terminal
     tui::restore()?;
@@ -120,6 +130,7 @@ async fn run_main_loop(
     events: &mut EventHandler,
     pty_manager: &PtyManager,
     action_tx: mpsc::UnboundedSender<Action>,
+    pty_tx: mpsc::Sender<Action>,
     effects: &mut EffectsManager,
 ) -> Result<()> {
     // Audio player for brown noise (created lazily)
@@ -134,7 +145,7 @@ async fn run_main_loop(
         let action = events.next(state).await?;
 
         // Process action
-        process_action(state, action.clone(), pty_manager, &action_tx)?;
+        process_action(state, action.clone(), pty_manager, &action_tx, &pty_tx)?;
 
         // If we just processed a PTY output, drain more from the queue without redrawing
         // This prevents UI starvation during heavy output
@@ -144,13 +155,13 @@ async fn run_main_loop(
 
             while batch_count < MAX_BATCH {
                 // Check for more PTY outputs without blocking
-                if let Ok(next_action) = events.try_recv_action() {
+                if let Ok(next_action) = events.try_recv_pty_action() {
                     if matches!(next_action, Action::PtyOutput(_, _)) {
-                        process_action(state, next_action, pty_manager, &action_tx)?;
+                        process_action(state, next_action, pty_manager, &action_tx, &pty_tx)?;
                         batch_count += 1;
                     } else {
                         // Non-PTY action, process it and stop batching
-                        process_action(state, next_action, pty_manager, &action_tx)?;
+                        process_action(state, next_action, pty_manager, &action_tx, &pty_tx)?;
                         break;
                     }
                 } else {

@@ -48,22 +48,6 @@ pub fn get_head_commit(repo_path: &Path) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-/// Get the full HEAD commit hash
-pub fn get_head_commit_full(repo_path: &Path) -> Result<String> {
-    let output = Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .current_dir(repo_path)
-        .output()
-        .context("Failed to execute git rev-parse")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("Failed to get HEAD commit: {}", stderr);
-    }
-
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
 /// Check if the working directory is clean (no uncommitted changes)
 pub fn is_clean(repo_path: &Path) -> Result<bool> {
     let output = Command::new("git")
@@ -252,57 +236,6 @@ pub fn checkout_branch(repo_path: &Path, branch_name: &str) -> Result<()> {
     Ok(())
 }
 
-/// List all worktrees in a repository
-pub fn list_worktrees(repo_path: &Path) -> Result<Vec<WorktreeInfo>> {
-    let output = Command::new("git")
-        .args(["worktree", "list", "--porcelain"])
-        .current_dir(repo_path)
-        .output()
-        .context("Failed to execute git worktree list")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("Failed to list worktrees: {}", stderr);
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut worktrees = Vec::new();
-    let mut current_path: Option<PathBuf> = None;
-    let mut current_branch: Option<String> = None;
-
-    for line in stdout.lines() {
-        if let Some(path) = line.strip_prefix("worktree ") {
-            // Save previous worktree if we have one
-            if let Some(path) = current_path.take() {
-                worktrees.push(WorktreeInfo {
-                    path,
-                    branch: current_branch.take(),
-                });
-            }
-            current_path = Some(PathBuf::from(path));
-        } else if let Some(branch) = line.strip_prefix("branch refs/heads/") {
-            current_branch = Some(branch.to_string());
-        }
-    }
-
-    // Don't forget the last worktree
-    if let Some(path) = current_path {
-        worktrees.push(WorktreeInfo {
-            path,
-            branch: current_branch,
-        });
-    }
-
-    Ok(worktrees)
-}
-
-/// Information about a git worktree
-#[derive(Debug, Clone)]
-pub struct WorktreeInfo {
-    pub path: PathBuf,
-    pub branch: Option<String>,
-}
-
 /// Get the worktrees directory path for a workspace
 pub fn get_worktrees_dir(workspace_path: &Path) -> PathBuf {
     workspace_path.join(WORKTREES_DIR)
@@ -317,39 +250,6 @@ pub fn get_attempt_worktree_path(
     get_worktrees_dir(workspace_path)
         .join(format!("parallel-{}", task_id_short))
         .join(agent_name.to_lowercase())
-}
-
-/// Clean up all worktrees for a parallel task
-pub fn cleanup_parallel_task_worktrees(
-    repo_path: &Path,
-    task_id_short: &str,
-) -> Result<()> {
-    let task_dir = get_worktrees_dir(repo_path).join(format!("parallel-{}", task_id_short));
-
-    if !task_dir.exists() {
-        return Ok(());
-    }
-
-    // List and remove each worktree in the task directory
-    if let Ok(entries) = std::fs::read_dir(&task_dir) {
-        for entry in entries.flatten() {
-            let worktree_path = entry.path();
-            if worktree_path.is_dir() {
-                let _ = remove_worktree(repo_path, &worktree_path, true);
-            }
-        }
-    }
-
-    // Remove the task directory itself
-    let _ = std::fs::remove_dir_all(&task_dir);
-
-    // Prune any stale worktree references
-    let _ = Command::new("git")
-        .args(["worktree", "prune"])
-        .current_dir(repo_path)
-        .output();
-
-    Ok(())
 }
 
 #[cfg(test)]

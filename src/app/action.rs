@@ -1,6 +1,35 @@
 use crate::models::AgentType;
 use crossterm::event::KeyEvent;
+use ratatui::style::Color;
+use std::path::PathBuf;
 use uuid::Uuid;
+
+#[derive(Debug, Clone)]
+pub struct UtilityContentPayload {
+    pub request_id: u64,
+    pub content: Vec<String>,
+    pub pie_chart_data: Vec<(String, f64, Color)>,
+    pub show_calendar: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ParallelWorktreeSpec {
+    pub agent_type: AgentType,
+    pub branch_name: String,
+    pub worktree_path: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+pub struct ParallelMergePlan {
+    pub workspace_path: PathBuf,
+    pub workspace_id: Uuid,
+    pub task_id: Uuid,
+    pub winner_attempt_id: Uuid,
+    pub source_branch: String,
+    pub winner_branch: String,
+    pub session_ids: Vec<Uuid>,
+    pub worktree_paths: Vec<PathBuf>,
+}
 
 #[derive(Debug, Clone)]
 pub enum Action {
@@ -85,6 +114,7 @@ pub enum Action {
     ToggleUtilitySection, // Switch between Utilities and GlobalConfig sections
     ToggleConfigItem,   // Toggle the selected config item (e.g., banner visibility)
     ToggleBrownNoise,   // Toggle brown noise player on/off
+    UtilityContentLoaded(UtilityContentPayload),
 
     // Notepad operations (tui-textarea handles all editing)
     NotepadInput(KeyEvent),  // Pass key event to TextArea widget
@@ -118,8 +148,25 @@ pub enum Action {
     PrevParallelAgent,                          // Move to previous agent in selection
     StartParallelTask,                          // Confirm and start the parallel task
     CancelParallelTask(Uuid),                   // Cancel a running parallel task
-    SelectParallelWinner(Uuid),                 // Select winning attempt and merge
     ParallelAttemptCompleted(Uuid),             // An agent finished its attempt
+    ParallelWorktreesReady {
+        request_id: u64,
+        task_id: Uuid,
+        workspace_id: Uuid,
+        prompt: String,
+        request_report: bool,
+        source_branch: String,
+        source_commit: String,
+        worktrees: Vec<ParallelWorktreeSpec>,
+    },
+    ParallelWorktreesFailed {
+        request_id: u64,
+        error: String,
+    },
+    ParallelMergeFinished {
+        plan: ParallelMergePlan,
+        error: Option<String>,
+    },
 
     // Reports tab
     SelectNextReport,

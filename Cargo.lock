@@ -3480,6 +3480,7 @@ dependencies = [
  "crossterm 0.29.0",
  "dirs",
  "futures",
+ "libc",
  "portable-pty",
  "rand",
  "ratatui",

@@ -2,16 +2,30 @@ use crate::app::{Action, AppState, FocusPanel, InputMode, PendingDelete};
 use crate::git;
 use crate::models::{AgentType, AttemptStatus, Session};
 use crate::persistence;
-use crate::pty::PtyManager;
+use crate::pty::{PtyHandle, PtyManager};
 use crate::app::pty_ops::resize_ptys_to_panes;
 use anyhow::Result;
+use std::time::Duration;
 use tokio::sync::mpsc;
+
+const SHELL_KILL_TIMEOUT: Duration = Duration::from_millis(500);
+
+pub(crate) fn terminate_session_handle(mut handle: PtyHandle, is_terminal: bool) {
+    if is_terminal {
+        std::thread::spawn(move || {
+            let _ = handle.interrupt_then_kill(SHELL_KILL_TIMEOUT);
+        });
+    } else {
+        let _ = handle.kill();
+    }
+}
 
 pub fn handle_session_action(
     state: &mut AppState,
     action: Action,
     pty_manager: &PtyManager,
     action_tx: &mpsc::UnboundedSender<Action>,
+    pty_tx: &mpsc::Sender<Action>,
 ) -> Result<()> {
     match action {
         Action::CreateSession(agent_type, dangerously_skip_permissions) => {
@@ -41,7 +55,7 @@ pub fn handle_session_action(
                     &workspace_path,
                     pty_rows,
                     cols,
-                    action_tx.clone(),
+                    pty_tx.clone(),
                     dangerously_skip_permissions,
                 ) {
                     Ok(handle) => {
@@ -93,7 +107,7 @@ pub fn handle_session_action(
                     &workspace_path,
                     pty_rows,
                     cols,
-                    action_tx.clone(),
+                    pty_tx.clone(),
                     false,
                 ) {
                     Ok(handle) => {
@@ -149,7 +163,7 @@ pub fn handle_session_action(
                         &workspace_path,
                         pty_rows,
                         cols,
-                        action_tx.clone(),
+                        pty_tx.clone(),
                         resume,
                         dangerously_skip_permissions,
                     ) {
@@ -191,9 +205,17 @@ pub fn handle_session_action(
             }
         }
         Action::KillSession(session_id) => {
-            if let Some(mut handle) = state.system.pty_handles.remove(&session_id) {
-                let _ = handle.kill();
+            let is_terminal = state.data.sessions
+                .values()
+                .flatten()
+                .find(|s| s.id == session_id)
+                .map(|s| s.agent_type.is_terminal())
+                .unwrap_or(false);
+
+            if let Some(handle) = state.system.pty_handles.remove(&session_id) {
+                terminate_session_handle(handle, is_terminal);
             }
+
             if let Some(session) = state.get_session_mut(session_id) {
                 session.mark_stopped();
             }
@@ -207,6 +229,13 @@ pub fn handle_session_action(
         }
         Action::ConfirmDeleteSession => {
             if let Some(PendingDelete::Session(session_id, _)) = state.ui.pending_delete.take() {
+                let is_terminal = state.data.sessions
+                    .values()
+                    .flatten()
+                    .find(|s| s.id == session_id)
+                    .map(|s| s.agent_type.is_terminal())
+                    .unwrap_or(false);
+
                 // Check if this session is part of a parallel task and get cleanup info
                 let parallel_cleanup_info: Option<(std::path::PathBuf, std::path::PathBuf, uuid::Uuid)> = {
                     let workspace = state.selected_workspace();
@@ -244,8 +273,8 @@ pub fn handle_session_action(
                 };
 
                 // Kill PTY handle
-                if let Some(mut handle) = state.system.pty_handles.remove(&session_id) {
-                    let _ = handle.kill();
+                if let Some(handle) = state.system.pty_handles.remove(&session_id) {
+                    terminate_session_handle(handle, is_terminal);
                 }
                 state.system.output_buffers.remove(&session_id);
 
@@ -369,10 +398,14 @@ pub fn handle_session_action(
             state.ui.split_view_enabled = !state.ui.split_view_enabled;
             resize_ptys_to_panes(state);
         }
-        Action::SessionExited(session_id, _exit_code) => {
+        Action::SessionExited(session_id, exit_code) => {
             state.system.pty_handles.remove(&session_id);
             if let Some(session) = state.get_session_mut(session_id) {
-                session.mark_stopped();
+                if exit_code == 0 {
+                    session.mark_stopped();
+                } else {
+                    session.mark_errored();
+                }
             }
             let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
         }

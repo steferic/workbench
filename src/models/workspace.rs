@@ -208,14 +208,6 @@ impl Workspace {
             .find(|t| matches!(t.status, ParallelTaskStatus::Running | ParallelTaskStatus::AwaitingSelection))
     }
 
-    /// Get a mutable reference to the active parallel task
-    pub fn active_parallel_task_mut(&mut self) -> Option<&mut ParallelTask> {
-        use super::parallel_task::ParallelTaskStatus;
-        self.parallel_tasks
-            .iter_mut()
-            .find(|t| matches!(t.status, ParallelTaskStatus::Running | ParallelTaskStatus::AwaitingSelection))
-    }
-
     /// Remove a parallel task by ID
     pub fn remove_parallel_task(&mut self, task_id: Uuid) -> bool {
         let len_before = self.parallel_tasks.len();
@@ -223,19 +215,6 @@ impl Workspace {
         self.parallel_tasks.len() < len_before
     }
 
-    /// Get the parallel task that contains a specific session
-    pub fn parallel_task_for_session(&self, session_id: Uuid) -> Option<&ParallelTask> {
-        self.parallel_tasks.iter().find(|t| {
-            t.attempts.iter().any(|a| a.session_id == session_id)
-        })
-    }
-
-    /// Get mutable parallel task that contains a specific session
-    pub fn parallel_task_for_session_mut(&mut self, session_id: Uuid) -> Option<&mut ParallelTask> {
-        self.parallel_tasks.iter_mut().find(|t| {
-            t.attempts.iter().any(|a| a.session_id == session_id)
-        })
-    }
 }
 
 #[cfg(test)]
@@ -375,49 +354,6 @@ mod tests {
     }
 
     #[test]
-    fn test_parallel_task_for_session() {
-        let mut ws = create_test_workspace();
-        let mut task = create_test_task(ws.id);
-
-        let attempt = create_test_attempt(task.id, AgentType::Claude);
-        let session_id = attempt.session_id;
-        task.add_attempt(attempt);
-
-        ws.add_parallel_task(task);
-
-        // Find task by session ID
-        let found = ws.parallel_task_for_session(session_id);
-        assert!(found.is_some());
-        assert!(found.unwrap().attempts.iter().any(|a| a.session_id == session_id));
-
-        // Non-existent session
-        assert!(ws.parallel_task_for_session(Uuid::new_v4()).is_none());
-    }
-
-    #[test]
-    fn test_parallel_task_for_session_mut() {
-        let mut ws = create_test_workspace();
-        let mut task = create_test_task(ws.id);
-
-        let attempt = create_test_attempt(task.id, AgentType::Gemini);
-        let session_id = attempt.session_id;
-        task.add_attempt(attempt);
-        ws.add_parallel_task(task);
-
-        // Modify through mutable reference
-        if let Some(task) = ws.parallel_task_for_session_mut(session_id) {
-            if let Some(attempt) = task.attempts.iter_mut().find(|a| a.session_id == session_id) {
-                attempt.prompt_sent = true;
-            }
-        }
-
-        // Verify modification
-        let task = ws.parallel_task_for_session(session_id).unwrap();
-        let attempt = task.attempts.iter().find(|a| a.session_id == session_id).unwrap();
-        assert!(attempt.prompt_sent);
-    }
-
-    #[test]
     fn test_get_parallel_task_mut() {
         let mut ws = create_test_workspace();
         let task = create_test_task(ws.id);
@@ -449,7 +385,7 @@ mod tests {
         let codex_attempt = create_test_attempt(task.id, AgentType::Codex);
 
         let claude_session = claude_attempt.session_id;
-        let gemini_session = gemini_attempt.session_id;
+        let _gemini_session = gemini_attempt.session_id;
 
         task.add_attempt(claude_attempt);
         task.add_attempt(gemini_attempt);
@@ -521,20 +457,31 @@ mod tests {
         ws.add_parallel_task(task);
 
         // Initially prompt not sent
-        let task = ws.parallel_task_for_session(session_id).unwrap();
-        let attempt = task.get_attempt_by_session(session_id).unwrap();
+        let attempt = ws
+            .parallel_tasks
+            .iter()
+            .flat_map(|task| task.attempts.iter())
+            .find(|attempt| attempt.session_id == session_id)
+            .unwrap();
         assert!(!attempt.prompt_sent);
 
         // Mark as sent (simulates what handler.rs does when session becomes idle)
-        if let Some(task) = ws.parallel_task_for_session_mut(session_id) {
-            if let Some(attempt) = task.attempts.iter_mut().find(|a| a.session_id == session_id) {
-                attempt.prompt_sent = true;
-            }
+        if let Some(attempt) = ws
+            .parallel_tasks
+            .iter_mut()
+            .flat_map(|task| task.attempts.iter_mut())
+            .find(|attempt| attempt.session_id == session_id)
+        {
+            attempt.prompt_sent = true;
         }
 
         // Verify
-        let task = ws.parallel_task_for_session(session_id).unwrap();
-        let attempt = task.get_attempt_by_session(session_id).unwrap();
+        let attempt = ws
+            .parallel_tasks
+            .iter()
+            .flat_map(|task| task.attempts.iter())
+            .find(|attempt| attempt.session_id == session_id)
+            .unwrap();
         assert!(attempt.prompt_sent);
     }
 }

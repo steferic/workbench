@@ -35,16 +35,6 @@ impl AgentType {
         }
     }
 
-    pub fn icon(&self) -> &'static str {
-        match self {
-            AgentType::Claude => "⚡",
-            AgentType::Gemini => "⚡",
-            AgentType::Codex => "⚡",
-            AgentType::Grok => "⚡",
-            AgentType::Terminal(_) => "🖥",
-        }
-    }
-
     pub fn badge(&self) -> &'static str {
         match self {
             AgentType::Claude => "C",

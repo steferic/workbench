@@ -101,7 +101,7 @@ pub fn handle_navigation_action(
     state: &mut AppState,
     action: Action,
     pty_manager: &PtyManager,
-    action_tx: &mpsc::UnboundedSender<Action>,
+    pty_tx: &mpsc::Sender<Action>,
 ) -> Result<()> {
     match action {
         Action::MoveUp => match state.ui.focus {
@@ -109,7 +109,7 @@ pub fn handle_navigation_action(
                 let prev_idx = state.ui.selected_workspace_idx;
                 state.select_prev_workspace();
                 if state.ui.selected_workspace_idx != prev_idx {
-                    start_workspace_sessions(state, pty_manager, action_tx);
+                    start_workspace_sessions(state, pty_manager, pty_tx);
                 }
             }
             FocusPanel::SessionList => {
@@ -122,7 +122,7 @@ pub fn handle_navigation_action(
                 let prev_idx = state.ui.selected_workspace_idx;
                 state.select_next_workspace();
                 if state.ui.selected_workspace_idx != prev_idx {
-                    start_workspace_sessions(state, pty_manager, action_tx);
+                    start_workspace_sessions(state, pty_manager, pty_tx);
                 }
             }
             FocusPanel::SessionList => {
@@ -177,7 +177,7 @@ pub fn handle_navigation_action(
                 }
             };
             if prev_focus == FocusPanel::WorkspaceList && state.ui.focus == FocusPanel::SessionList {
-                start_workspace_sessions(state, pty_manager, action_tx);
+                start_workspace_sessions(state, pty_manager, pty_tx);
             }
         }
         Action::NextPinnedPane => {
@@ -563,7 +563,17 @@ pub fn handle_navigation_action(
             if state.ui.input_mode != InputMode::Normal {
                 return Ok(());
             }
-            if let Some(session_id) = paste_target_session_id(state) {
+            // Check if focused on Notepad section - paste to TextArea instead of PTY
+            if state.ui.focus == FocusPanel::UtilitiesPane
+                && state.ui.utility_section == UtilitySection::Notepad
+            {
+                if let Some(textarea) = state.current_notepad() {
+                    textarea.insert_str(&text);
+                }
+                // Save notepad contents after paste
+                let notepad_contents = state.notepad_content_for_persistence();
+                let _ = persistence::save_with_notepad(&state.data.workspaces, &state.data.sessions, &notepad_contents);
+            } else if let Some(session_id) = paste_target_session_id(state) {
                 let data = bracketed_paste_payload(&text);
                 if let Some(handle) = state.system.pty_handles.get_mut(&session_id) {
                     let _ = handle.send_input(&data);
