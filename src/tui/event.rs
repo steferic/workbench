@@ -293,8 +293,8 @@ impl EventHandler {
         };
     }
 
-    // Note: ` (backtick) for JumpToNextIdle is handled in each focus handler
-    // to ensure it's caught before the catch-all PTY input handlers
+    // Note: ` (backtick) and ~ (tilde) shortcuts are handled in each focus handler
+    // to ensure they're caught before the catch-all PTY input handlers
 
     // Global window navigation with Shift+Left/Right arrows
     if key.modifiers.contains(KeyModifiers::SHIFT) {
@@ -317,9 +317,13 @@ impl EventHandler {
 }
 
     fn handle_workspace_list_keys(&self, key: KeyEvent, state: &AppState) -> Action {
-        // ` = Jump to next idle session (global shortcut)
+        // ` = Cycle through workspaces (global shortcut)
         if key.code == KeyCode::Char('`') {
-            return Action::JumpToNextIdle;
+            return Action::CycleNextWorkspace;
+        }
+        // ~ (Shift+`) = Cycle through sessions in current workspace (global shortcut)
+        if key.code == KeyCode::Char('~') {
+            return Action::CycleNextSession;
         }
 
         match key.code {
@@ -352,9 +356,13 @@ impl EventHandler {
     }
 
     fn handle_session_list_keys(&self, key: KeyEvent, state: &AppState) -> Action {
-        // ` = Jump to next idle session (global shortcut)
+        // ` = Cycle through workspaces (global shortcut)
         if key.code == KeyCode::Char('`') {
-            return Action::JumpToNextIdle;
+            return Action::CycleNextWorkspace;
+        }
+        // ~ (Shift+`) = Cycle through sessions in current workspace (global shortcut)
+        if key.code == KeyCode::Char('~') {
+            return Action::CycleNextSession;
         }
 
         if let Some((agent_type, dangerously_skip_permissions)) = Self::agent_shortcut(&key) {
@@ -487,6 +495,44 @@ impl EventHandler {
                 }
             }
 
+            // Merge session's worktree into main branch
+            KeyCode::Char('m') => {
+                if let Some(session) = state.selected_session() {
+                    if session.has_worktree() {
+                        Action::MergeSessionWorktree(session.id)
+                    } else {
+                        Action::Tick
+                    }
+                } else {
+                    Action::Tick
+                }
+            }
+
+            // Switch to/from session's worktree view
+            KeyCode::Char('w') => {
+                if let Some(session) = state.selected_session() {
+                    if session.has_worktree() {
+                        // Check if this session's worktree is already active
+                        let is_active = state.selected_workspace()
+                            .and_then(|ws| ws.active_worktree_session_id)
+                            .map(|id| id == session.id)
+                            .unwrap_or(false);
+
+                        if is_active {
+                            // Already viewing this worktree - switch back to main
+                            Action::SwitchToWorktree(None)
+                        } else {
+                            // Switch to this session's worktree
+                            Action::SwitchToWorktree(Some(session.id))
+                        }
+                    } else {
+                        Action::Tick
+                    }
+                } else {
+                    Action::Tick
+                }
+            }
+
             // Global
             KeyCode::Char('?') => Action::EnterHelpMode,
             KeyCode::Char('q') => Action::Quit,
@@ -496,9 +542,13 @@ impl EventHandler {
     }
 
     fn handle_todos_pane_keys(&self, key: KeyEvent, state: &AppState) -> Action {
-        // ` = Jump to next idle session (global shortcut)
+        // ` = Cycle through workspaces (global shortcut)
         if key.code == KeyCode::Char('`') {
-            return Action::JumpToNextIdle;
+            return Action::CycleNextWorkspace;
+        }
+        // ~ (Shift+`) = Cycle through sessions in current workspace (global shortcut)
+        if key.code == KeyCode::Char('~') {
+            return Action::CycleNextSession;
         }
 
         // Helper to get the selected todo based on current tab
@@ -621,9 +671,13 @@ impl EventHandler {
     fn handle_utilities_pane_keys(&self, key: KeyEvent, state: &AppState) -> Action {
         use crate::app::{UtilityItem, UtilitySection};
 
-        // ` = Jump to next idle session (global shortcut)
+        // ` = Cycle through workspaces (global shortcut)
         if key.code == KeyCode::Char('`') {
-            return Action::JumpToNextIdle;
+            return Action::CycleNextWorkspace;
+        }
+        // ~ (Shift+`) = Cycle through sessions in current workspace (global shortcut)
+        if key.code == KeyCode::Char('~') {
+            return Action::CycleNextSession;
         }
 
         // Special handling for Notepad section - pass keys to TextArea
@@ -678,9 +732,13 @@ impl EventHandler {
     }
 
     fn handle_output_pane_keys(&self, key: KeyEvent, state: &AppState) -> Action {
-        // ` = Jump to next idle session (global shortcut, checked first)
+        // ` = Cycle through workspaces (global shortcut, checked first)
         if key.code == KeyCode::Char('`') {
-            return Action::JumpToNextIdle;
+            return Action::CycleNextWorkspace;
+        }
+        // ~ (Shift+`) = Cycle through sessions in current workspace (global shortcut)
+        if key.code == KeyCode::Char('~') {
+            return Action::CycleNextSession;
         }
 
         // Check if there's a text selection - 'y' copies, Esc clears
@@ -841,9 +899,13 @@ impl EventHandler {
     }
 
     fn handle_pinned_terminal_keys(&self, key: KeyEvent, state: &AppState, pane_idx: usize) -> Action {
-        // ` = Jump to next idle session (global shortcut, checked first)
+        // ` = Cycle through workspaces (global shortcut, checked first)
         if key.code == KeyCode::Char('`') {
-            return Action::JumpToNextIdle;
+            return Action::CycleNextWorkspace;
+        }
+        // ~ (Shift+`) = Cycle through sessions in current workspace (global shortcut)
+        if key.code == KeyCode::Char('~') {
+            return Action::CycleNextSession;
         }
 
         // Check if there's a text selection - 'y' copies, Esc clears
@@ -996,8 +1058,11 @@ impl EventHandler {
     }
 
     fn agent_shortcut(key: &KeyEvent) -> Option<(AgentType, bool)> {
+        // Don't match if any modifier key is held (except SHIFT which changes dangerously_skip_permissions)
         if key.modifiers.contains(KeyModifiers::CONTROL)
             || key.modifiers.contains(KeyModifiers::ALT)
+            || key.modifiers.contains(KeyModifiers::SUPER)
+            || key.modifiers.contains(KeyModifiers::META)
         {
             return None;
         }

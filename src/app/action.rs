@@ -40,7 +40,8 @@ pub enum Action {
     FocusRight,
     ScrollOutputUp,
     ScrollOutputDown,
-    JumpToNextIdle,
+    CycleNextWorkspace,  // ` (backtick) - cycle through workspaces
+    CycleNextSession,    // ~ (Shift+backtick) - cycle through sessions in current workspace
 
     // Workspace operations
     ToggleWorkspaceStatus,
@@ -55,6 +56,8 @@ pub enum Action {
     KillSession(Uuid),
     InitiateDeleteSession(Uuid, String),    // (id, name) - first 'd' press
     ConfirmDeleteSession,                    // second 'd' press
+    MergeSessionWorktree(Uuid),             // Merge session's worktree branch into main
+    SwitchToWorktree(Option<Uuid>),         // Switch to session's worktree (None = back to main)
 
     // PTY interaction
     SendInput(Uuid, Vec<u8>),

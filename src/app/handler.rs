@@ -156,7 +156,8 @@ pub fn process_action(
                 Action::ConfirmDeleteSession | Action::CancelPendingDelete | Action::EnterCreateSessionMode |
                 Action::EnterSetStartCommandMode | Action::SetStartCommand(_, _) | Action::PinSession(_) |
                 Action::UnpinSession(_) | Action::UnpinFocusedSession | Action::ToggleSplitView |
-                Action::SessionExited(_, _) | Action::PtyOutput(_, _) | Action::SendInput(_, _) => {
+                Action::SessionExited(_, _) | Action::PtyOutput(_, _) | Action::SendInput(_, _) |
+                Action::MergeSessionWorktree(_) | Action::SwitchToWorktree(_) => {
                     session::handle_session_action(state, action, pty_manager, action_tx, pty_tx)?;
                 }
 
@@ -174,7 +175,8 @@ pub fn process_action(
                 // Navigation actions
                 Action::MoveUp | Action::MoveDown | Action::FocusLeft | Action::FocusRight |
                 Action::NextPinnedPane | Action::PrevPinnedPane | Action::ScrollOutputUp |
-                Action::ScrollOutputDown | Action::JumpToNextIdle | Action::MouseClick(_, _) |
+                Action::ScrollOutputDown | Action::CycleNextWorkspace | Action::CycleNextSession |
+                Action::MouseClick(_, _) |
                 Action::MouseDrag(_, _) | Action::MouseUp(_, _) | Action::CopySelection |
                 Action::Paste(_) | Action::ClearSelection | Action::SelectNextUtility |
                 Action::SelectPrevUtility | Action::ToggleUtilitySection | Action::ToggleConfigItem |

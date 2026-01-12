@@ -1,4 +1,5 @@
 use crate::app::{AppState, FocusPanel};
+use crate::git;
 use crate::models::{Session, SessionStatus};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -71,6 +72,54 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     let mut items: Vec<ListItem> = Vec::new();
     let mut selected_visual_idx: Option<usize> = None;
     let mut current_visual_idx: usize = 0;
+
+    // Branch indicator at the top - show active worktree branch if one is selected
+    if let Some(workspace) = state.selected_workspace() {
+        // Check if there's an active worktree session
+        let (branch_name, is_worktree) = if let Some(worktree_session_id) = workspace.active_worktree_session_id {
+            // Get the branch from the session's worktree
+            state.data.sessions.values()
+                .flatten()
+                .find(|s| s.id == worktree_session_id)
+                .and_then(|s| s.worktree_branch.clone())
+                .map(|b| (b, true))
+                .unwrap_or_else(|| {
+                    // Fallback to main branch if session not found
+                    let main = git::get_current_branch(&workspace.path)
+                        .unwrap_or_else(|_| "unknown".to_string());
+                    (main, false)
+                })
+        } else {
+            // No worktree active - show main branch
+            let main = git::get_current_branch(&workspace.path)
+                .unwrap_or_else(|_| "unknown".to_string());
+            (main, false)
+        };
+
+        let branch_style = if is_worktree {
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        };
+        let icon_style = if is_worktree {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default().fg(Color::Green)
+        };
+
+        let hint = if is_worktree {
+            Span::styled(" (w:back)", Style::default().fg(Color::DarkGray))
+        } else {
+            Span::raw("")
+        };
+
+        items.push(ListItem::new(Line::from(vec![
+            Span::styled("⎇ ", icon_style),
+            Span::styled(branch_name, branch_style),
+            hint,
+        ])));
+        current_visual_idx += 1;
+    }
 
     // Agents section header
     if !agent_indices.is_empty() {
@@ -182,10 +231,10 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
             Span::styled(":del ", action_style),
             Span::styled("p", key_style),
             Span::styled(":pin ", action_style),
+            Span::styled("m", key_style),
+            Span::styled(":merge ", action_style),
             Span::styled("P", key_style),
-            Span::styled(":parallel ", action_style),
-            Span::styled("X", key_style),
-            Span::styled(":cancel", action_style),
+            Span::styled(":parallel", action_style),
         ]),
         Line::from(vec![
             Span::styled("1", key_style),
@@ -216,33 +265,24 @@ fn create_session_item<'a>(
     let is_active = state.ui.active_session_id == Some(session.id);
     let is_working = state.is_session_working(session.id);
     let is_pinned = pinned_ids.contains(&session.id);
+    let is_worktree_active = state.selected_workspace()
+        .and_then(|ws| ws.active_worktree_session_id)
+        .map(|id| id == session.id)
+        .unwrap_or(false);
 
-    let status_color = match session.status {
-        SessionStatus::Running => {
-            if is_working {
-                Color::Yellow
-            } else {
-                Color::Green
-            }
-        }
-        SessionStatus::Stopped => Color::Gray,
-        SessionStatus::Errored => Color::Red,
-    };
-
-    let activity_indicator = match session.status {
+    // Status icon: spinner when working, diamond when idle, circle for stopped/errored
+    let (status_icon, status_color) = match session.status {
         SessionStatus::Running => {
             if session.agent_type.is_terminal() {
-                Span::styled(" ◆ running", Style::default().fg(Color::Green))
+                ("◆", Color::Green)
             } else if is_working {
-                Span::styled(
-                    format!(" {} working", state.spinner_char()),
-                    Style::default().fg(Color::Yellow),
-                )
+                (state.spinner_char(), Color::Yellow)
             } else {
-                Span::styled(" ◆ idle", Style::default().fg(Color::DarkGray))
+                ("◆", Color::DarkGray)
             }
         }
-        _ => Span::raw(""),
+        SessionStatus::Stopped => ("○", Color::Gray),
+        SessionStatus::Errored => ("✗", Color::Red),
     };
 
     let pin_indicator = if is_pinned {
@@ -251,9 +291,9 @@ fn create_session_item<'a>(
         Span::raw("")
     };
 
-    // Show branch name for parallel sessions
+    // Show worktree indicator with short ID for parallel or regular worktree sessions
     let branch_indicator = if is_parallel {
-        // Get the branch name from the parallel task attempt
+        // Get the branch name from the parallel task attempt and extract just the ID
         let branch_name = state.selected_workspace()
             .and_then(|ws| {
                 ws.parallel_tasks.iter()
@@ -264,13 +304,34 @@ fn create_session_item<'a>(
             .unwrap_or_default();
 
         if !branch_name.is_empty() {
+            // Extract just the ID part (last segment after final '-')
+            let short_id = branch_name.rsplit('-').next().unwrap_or(&branch_name);
+            let style = if is_worktree_active {
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Cyan)
+            };
+            let suffix = if is_worktree_active { " ◀" } else { "" };
             Span::styled(
-                format!(" [{}]", branch_name),
-                Style::default().fg(Color::Cyan),
+                format!(" ⎇ {}{}", short_id, suffix),
+                style,
             )
         } else {
             Span::raw("")
         }
+    } else if let Some(branch) = &session.worktree_branch {
+        // Regular session with worktree - extract just the ID part
+        let short_id = branch.rsplit('-').next().unwrap_or(branch);
+        let style = if is_worktree_active {
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Cyan)
+        };
+        let suffix = if is_worktree_active { " ◀" } else { "" };
+        Span::styled(
+            format!(" ⎇ {}{}", short_id, suffix),
+            style,
+        )
     } else {
         Span::raw("")
     };
@@ -297,18 +358,9 @@ fn create_session_item<'a>(
 
     let main_line = Line::from(vec![
         Span::styled(prefix.to_string(), name_style),
-        Span::styled(session.status_icon(), Style::default().fg(status_color)),
+        Span::styled(status_icon, Style::default().fg(status_color)),
         Span::raw(" "),
-        Span::styled(
-            format!("[{}] ", session.agent_type.badge()),
-            Style::default().fg(Color::Magenta),
-        ),
         Span::styled(session.agent_type.display_name().to_string(), name_style),
-        Span::styled(
-            format!(" ({})", session.short_id()),
-            Style::default().fg(Color::DarkGray),
-        ),
-        activity_indicator,
         branch_indicator,
         pin_indicator,
     ]);
