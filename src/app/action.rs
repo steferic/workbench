@@ -49,7 +49,7 @@ pub enum Action {
     ConfirmDeleteWorkspace,                  // second 'd' press
 
     // Session operations
-    CreateSession(AgentType, bool), // bool = dangerously_skip_permissions
+    CreateSession(AgentType, bool, bool), // (agent_type, dangerously_skip_permissions, with_worktree)
     ActivateSession(Uuid),
     RestartSession(Uuid),
     StopSession(Uuid),
@@ -58,6 +58,8 @@ pub enum Action {
     ConfirmDeleteSession,                    // second 'd' press
     MergeSessionWorktree(Uuid),             // Merge session's worktree branch into main
     SwitchToWorktree(Option<Uuid>),         // Switch to session's worktree (None = back to main)
+    ConfirmMergeWithCommit,                 // Commit changes and merge to main
+    CancelMerge,                            // Cancel the merge modal
 
     // PTY interaction
     SendInput(Uuid, Vec<u8>),

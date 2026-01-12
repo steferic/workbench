@@ -28,14 +28,14 @@ pub fn handle_session_action(
     pty_tx: &mpsc::Sender<Action>,
 ) -> Result<()> {
     match action {
-        Action::CreateSession(agent_type, dangerously_skip_permissions) => {
+        Action::CreateSession(agent_type, dangerously_skip_permissions, with_worktree) => {
             if let Some(workspace) = state.selected_workspace() {
                 let workspace_id = workspace.id;
                 let workspace_path = workspace.path.clone();
                 let ws_idx = state.ui.selected_workspace_idx;
 
-                // Check if workspace is a git repo and create worktree for agents
-                let (session, working_dir) = if agent_type.is_agent() && git::is_git_repo(&workspace_path) {
+                // Create worktree only if requested (Alt key), is an agent, and workspace is a git repo
+                let (session, working_dir) = if with_worktree && agent_type.is_agent() && git::is_git_repo(&workspace_path) {
                     // Create a temporary session to get the ID for branch naming
                     let temp_id = uuid::Uuid::new_v4();
                     let short_id = &temp_id.to_string()[..8];
@@ -64,7 +64,7 @@ pub fn handle_session_action(
                         }
                     }
                 } else {
-                    // Non-agent or non-git repo - use workspace directly
+                    // Default: run in workspace directly (no worktree isolation)
                     (Session::new(workspace_id, agent_type.clone(), dangerously_skip_permissions), workspace_path.clone())
                 };
 
@@ -377,11 +377,19 @@ pub fn handle_session_action(
             if let Some((workspace_path, worktree_path, branch_name)) = merge_info {
                 // Check if worktree has uncommitted changes
                 if git::worktree_has_changes(&worktree_path) {
-                    eprintln!("Cannot merge: worktree has uncommitted changes");
+                    // Show confirmation modal instead of erroring
+                    state.ui.merging_session_id = Some(session_id);
+                    state.ui.input_mode = InputMode::ConfirmMergeWorktree;
                     return Ok(());
                 }
 
-                // Get the main/master branch name
+                // Check if main workspace is clean before merging
+                if !git::is_clean(&workspace_path).unwrap_or(false) {
+                    eprintln!("Cannot merge: main workspace has uncommitted changes. Commit or stash them first.");
+                    return Ok(());
+                }
+
+                // No uncommitted changes - proceed with merge directly
                 let main_branch = git::get_current_branch(&workspace_path)
                     .unwrap_or_else(|_| "main".to_string());
 
@@ -405,6 +413,78 @@ pub fn handle_session_action(
                     }
                 }
             }
+        }
+        Action::ConfirmMergeWithCommit => {
+            if let Some(session_id) = state.ui.merging_session_id.take() {
+                // Find session info
+                let merge_info: Option<(std::path::PathBuf, std::path::PathBuf, String, String)> = {
+                    let session = state.data.sessions.values().flatten()
+                        .find(|s| s.id == session_id);
+
+                    if let Some(s) = session {
+                        if let (Some(worktree_path), Some(branch)) = (&s.worktree_path, &s.worktree_branch) {
+                            let workspace_path = state.data.workspaces.iter()
+                                .find(|w| w.id == s.workspace_id)
+                                .map(|w| w.path.clone());
+
+                            workspace_path.map(|wp| {
+                                let agent_name = s.agent_type.display_name().to_string();
+                                (wp, worktree_path.clone(), branch.clone(), agent_name)
+                            })
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                };
+
+                if let Some((workspace_path, worktree_path, branch_name, agent_name)) = merge_info {
+                    // Check if main workspace is clean before merging
+                    if !git::is_clean(&workspace_path).unwrap_or(false) {
+                        eprintln!("Cannot merge: main workspace has uncommitted changes. Commit or stash them first.");
+                        state.ui.input_mode = InputMode::Normal;
+                        return Ok(());
+                    }
+
+                    // Commit all changes first
+                    let commit_msg = format!("Agent {} work - auto-committed for merge", agent_name);
+                    if let Err(e) = git::commit_all_changes(&worktree_path, &commit_msg) {
+                        eprintln!("Failed to commit changes: {}", e);
+                        state.ui.input_mode = InputMode::Normal;
+                        return Ok(());
+                    }
+
+                    // Get the main branch name
+                    let main_branch = git::get_current_branch(&workspace_path)
+                        .unwrap_or_else(|_| "main".to_string());
+
+                    // Perform the merge
+                    match git::merge_branch(&workspace_path, &branch_name) {
+                        Ok(()) => {
+                            // Merge successful - clean up the worktree
+                            let _ = git::remove_worktree(&workspace_path, &worktree_path, true);
+
+                            // Clear worktree info from session
+                            if let Some(session) = state.get_session_mut(session_id) {
+                                session.worktree_path = None;
+                                session.worktree_branch = None;
+                            }
+
+                            let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
+                            eprintln!("Successfully committed and merged {} into {}", branch_name, main_branch);
+                        }
+                        Err(e) => {
+                            eprintln!("Merge failed: {}. Changes were committed but merge needs manual resolution.", e);
+                        }
+                    }
+                }
+            }
+            state.ui.input_mode = InputMode::Normal;
+        }
+        Action::CancelMerge => {
+            state.ui.merging_session_id = None;
+            state.ui.input_mode = InputMode::Normal;
         }
         Action::SwitchToWorktree(session_id_opt) => {
             // Switch the workspace's active worktree view
