@@ -150,14 +150,15 @@ pub fn process_action(
                 }
 
                 // Session actions
-                Action::CreateSession(_, _) | Action::CreateTerminal |
+                Action::CreateSession(_, _, _) | Action::CreateTerminal |
                 Action::ActivateSession(_) | Action::RestartSession(_) | Action::StopSession(_) |
                 Action::KillSession(_) | Action::InitiateDeleteSession(_, _) |
                 Action::ConfirmDeleteSession | Action::CancelPendingDelete | Action::EnterCreateSessionMode |
                 Action::EnterSetStartCommandMode | Action::SetStartCommand(_, _) | Action::PinSession(_) |
                 Action::UnpinSession(_) | Action::UnpinFocusedSession | Action::ToggleSplitView |
                 Action::SessionExited(_, _) | Action::PtyOutput(_, _) | Action::SendInput(_, _) |
-                Action::MergeSessionWorktree(_) | Action::SwitchToWorktree(_) => {
+                Action::MergeSessionWorktree(_) | Action::SwitchToWorktree(_) |
+                Action::ConfirmMergeWithCommit | Action::CancelMerge => {
                     session::handle_session_action(state, action, pty_manager, action_tx, pty_tx)?;
                 }
 

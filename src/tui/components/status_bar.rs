@@ -196,6 +196,19 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
                 Style::default().fg(Color::Gray),
             )],
         ),
+        InputMode::ConfirmMergeWorktree => (
+            vec![Span::styled(
+                " MERGE WORKTREE ",
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )],
+            vec![Span::styled(
+                "Y/Enter: commit & merge  N/Esc: cancel",
+                Style::default().fg(Color::Gray),
+            )],
+        ),
         InputMode::Normal => {
             let context_hints = match state.ui.focus {
                 FocusPanel::WorkspaceList => vec![

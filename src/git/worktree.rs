@@ -270,6 +270,45 @@ pub fn worktree_has_changes(worktree_path: &Path) -> bool {
     !is_clean(worktree_path).unwrap_or(true)
 }
 
+/// Commit all changes in a worktree with a given message
+pub fn commit_all_changes(worktree_path: &Path, message: &str) -> Result<()> {
+    if !worktree_path.exists() {
+        return Err(anyhow::anyhow!("Worktree path does not exist"));
+    }
+
+    // Stage all changes
+    let add_output = Command::new("git")
+        .args(["add", "-A"])
+        .current_dir(worktree_path)
+        .output()
+        .context("Failed to run git add")?;
+
+    if !add_output.status.success() {
+        return Err(anyhow::anyhow!(
+            "git add failed: {}",
+            String::from_utf8_lossy(&add_output.stderr)
+        ));
+    }
+
+    // Commit with message
+    let commit_output = Command::new("git")
+        .args(["commit", "-m", message])
+        .current_dir(worktree_path)
+        .output()
+        .context("Failed to run git commit")?;
+
+    if !commit_output.status.success() {
+        let stderr = String::from_utf8_lossy(&commit_output.stderr);
+        // "nothing to commit" is not an error for our purposes
+        if stderr.contains("nothing to commit") {
+            return Ok(());
+        }
+        return Err(anyhow::anyhow!("git commit failed: {}", stderr));
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

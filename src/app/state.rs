@@ -26,6 +26,7 @@ pub enum InputMode {
     CreateTodo,
     SetStartCommand,
     CreateParallelTask,     // Modal for starting a parallel task
+    ConfirmMergeWorktree,   // Confirm commit and merge worktree
     Help,
 }
 
@@ -327,6 +328,7 @@ pub struct UIState {
     // Contextual IDs
     pub editing_session_id: Option<Uuid>,
     pub analyzer_session_id: Option<Uuid>,
+    pub merging_session_id: Option<Uuid>,  // Session being merged (for ConfirmMergeWorktree modal)
 
     // Todos pane
     pub selected_todo_idx: usize,
@@ -398,6 +400,7 @@ impl UIState {
             banner_visible: true,
             editing_session_id: None,
             analyzer_session_id: None,
+            merging_session_id: None,
             selected_todo_idx: 0,
             todo_pane_mode: TodoPaneMode::default(),
             selected_todos_tab: TodosTab::default(),

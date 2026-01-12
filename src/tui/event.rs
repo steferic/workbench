@@ -216,9 +216,9 @@ impl EventHandler {
             };
         }
         InputMode::CreateSession => {
-            if let Some((agent_type, dangerously_skip_permissions)) = Self::agent_shortcut(&key)
+            if let Some((agent_type, dangerously_skip_permissions, with_worktree)) = Self::agent_shortcut(&key)
             {
-                return Action::CreateSession(agent_type, dangerously_skip_permissions);
+                return Action::CreateSession(agent_type, dangerously_skip_permissions, with_worktree);
             }
             return match key.code {
                 KeyCode::Esc => Action::ExitMode,
@@ -270,6 +270,13 @@ impl EventHandler {
                 KeyCode::Enter => Action::StartParallelTask,
                 KeyCode::Backspace => Action::InputBackspace,
                 KeyCode::Char(c) => Action::InputChar(c),  // Includes space now
+                _ => Action::Tick,
+            };
+        }
+        InputMode::ConfirmMergeWorktree => {
+            return match key.code {
+                KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => Action::CancelMerge,
+                KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => Action::ConfirmMergeWithCommit,
                 _ => Action::Tick,
             };
         }
@@ -365,8 +372,8 @@ impl EventHandler {
             return Action::CycleNextSession;
         }
 
-        if let Some((agent_type, dangerously_skip_permissions)) = Self::agent_shortcut(&key) {
-            return Action::CreateSession(agent_type, dangerously_skip_permissions);
+        if let Some((agent_type, dangerously_skip_permissions, with_worktree)) = Self::agent_shortcut(&key) {
+            return Action::CreateSession(agent_type, dangerously_skip_permissions, with_worktree);
         }
 
         match key.code {
@@ -1057,10 +1064,12 @@ impl EventHandler {
         }
     }
 
-    fn agent_shortcut(key: &KeyEvent) -> Option<(AgentType, bool)> {
-        // Don't match if any modifier key is held (except SHIFT which changes dangerously_skip_permissions)
+    /// Returns (AgentType, dangerously_skip_permissions, with_worktree)
+    /// - SHIFT = skip permissions
+    /// - ALT/Option = create in worktree
+    fn agent_shortcut(key: &KeyEvent) -> Option<(AgentType, bool, bool)> {
+        // Don't match if CONTROL, SUPER, or META is held
         if key.modifiers.contains(KeyModifiers::CONTROL)
-            || key.modifiers.contains(KeyModifiers::ALT)
             || key.modifiers.contains(KeyModifiers::SUPER)
             || key.modifiers.contains(KeyModifiers::META)
         {
@@ -1068,16 +1077,17 @@ impl EventHandler {
         }
 
         let shifted = key.modifiers.contains(KeyModifiers::SHIFT);
+        let with_worktree = key.modifiers.contains(KeyModifiers::ALT);
 
         match key.code {
-            KeyCode::Char('1') => Some((AgentType::Claude, shifted)),
-            KeyCode::Char('2') => Some((AgentType::Gemini, shifted)),
-            KeyCode::Char('3') => Some((AgentType::Codex, shifted)),
-            KeyCode::Char('4') => Some((AgentType::Grok, shifted)),
-            KeyCode::Char('!') => Some((AgentType::Claude, true)),
-            KeyCode::Char('@') => Some((AgentType::Gemini, true)),
-            KeyCode::Char('#') => Some((AgentType::Codex, true)),
-            KeyCode::Char('$') => Some((AgentType::Grok, true)),
+            KeyCode::Char('1') => Some((AgentType::Claude, shifted, with_worktree)),
+            KeyCode::Char('2') => Some((AgentType::Gemini, shifted, with_worktree)),
+            KeyCode::Char('3') => Some((AgentType::Codex, shifted, with_worktree)),
+            KeyCode::Char('4') => Some((AgentType::Grok, shifted, with_worktree)),
+            KeyCode::Char('!') => Some((AgentType::Claude, true, with_worktree)),
+            KeyCode::Char('@') => Some((AgentType::Gemini, true, with_worktree)),
+            KeyCode::Char('#') => Some((AgentType::Codex, true, with_worktree)),
+            KeyCode::Char('$') => Some((AgentType::Grok, true, with_worktree)),
             _ => None,
         }
     }
