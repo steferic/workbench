@@ -30,14 +30,45 @@ pub fn handle_session_action(
     match action {
         Action::CreateSession(agent_type, dangerously_skip_permissions) => {
             if let Some(workspace) = state.selected_workspace() {
-                let session = Session::new(
-                    workspace.id,
-                    agent_type.clone(),
-                    dangerously_skip_permissions,
-                );
-                let session_id = session.id;
+                let workspace_id = workspace.id;
                 let workspace_path = workspace.path.clone();
                 let ws_idx = state.ui.selected_workspace_idx;
+
+                // Check if workspace is a git repo and create worktree for agents
+                let (session, working_dir) = if agent_type.is_agent() && git::is_git_repo(&workspace_path) {
+                    // Create a temporary session to get the ID for branch naming
+                    let temp_id = uuid::Uuid::new_v4();
+                    let short_id = &temp_id.to_string()[..8];
+                    let branch_name = git::session_branch_name(&agent_type.display_name(), short_id);
+                    let worktree_path = git::get_session_worktree_path(&workspace_path, short_id);
+
+                    // Create the worktree
+                    match git::create_worktree(&workspace_path, &branch_name, &worktree_path) {
+                        Ok(()) => {
+                            // Create session with worktree info
+                            let mut session = Session::new_with_worktree(
+                                workspace_id,
+                                agent_type.clone(),
+                                dangerously_skip_permissions,
+                                worktree_path.clone(),
+                                branch_name,
+                            );
+                            // Override the ID to match what we used for naming
+                            session.id = temp_id;
+                            (session, worktree_path)
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to create worktree, falling back to workspace: {}", e);
+                            // Fallback to regular session in workspace
+                            (Session::new(workspace_id, agent_type.clone(), dangerously_skip_permissions), workspace_path.clone())
+                        }
+                    }
+                } else {
+                    // Non-agent or non-git repo - use workspace directly
+                    (Session::new(workspace_id, agent_type.clone(), dangerously_skip_permissions), workspace_path.clone())
+                };
+
+                let session_id = session.id;
 
                 if let Some(ws) = state.data.workspaces.get_mut(ws_idx) {
                     ws.touch();
@@ -52,7 +83,7 @@ pub fn handle_session_action(
                 match pty_manager.spawn_session(
                     session_id,
                     agent_type,
-                    &workspace_path,
+                    &working_dir,
                     pty_rows,
                     cols,
                     pty_tx.clone(),
@@ -60,7 +91,7 @@ pub fn handle_session_action(
                 ) {
                     Ok(handle) => {
                         state.system.pty_handles.insert(session_id, handle);
-                                                state.add_session(session);
+                        state.add_session(session);
                         state.ui.active_session_id = Some(session_id);
                         state.ui.focus = FocusPanel::SessionList;
                         let session_count = state.sessions_for_selected_workspace().len();
@@ -141,14 +172,21 @@ pub fn handle_session_action(
                     s.workspace_id,
                     s.start_command.clone(),
                     s.dangerously_skip_permissions,
+                    s.worktree_path.clone(),
                 ));
 
-            if let Some((agent_type, workspace_id, start_command, dangerously_skip_permissions)) = session_info {
+            if let Some((agent_type, workspace_id, start_command, dangerously_skip_permissions, worktree_path)) = session_info {
                 let workspace_path = state.data.workspaces.iter()
                     .find(|w| w.id == workspace_id)
                     .map(|w| w.path.clone());
 
                 if let Some(workspace_path) = workspace_path {
+                    // Use worktree path if session has one, otherwise use workspace path
+                    let working_dir = worktree_path.as_ref()
+                        .filter(|p| p.exists())
+                        .cloned()
+                        .unwrap_or_else(|| workspace_path.clone());
+
                     let pty_rows = state.pane_rows();
                     let cols = state.output_pane_cols();
                     let parser_rows = 500;
@@ -160,7 +198,7 @@ pub fn handle_session_action(
                     match pty_manager.spawn_session_with_resume(
                         session_id,
                         agent_type.clone(),
-                        &workspace_path,
+                        &working_dir,
                         pty_rows,
                         cols,
                         pty_tx.clone(),
@@ -229,41 +267,27 @@ pub fn handle_session_action(
         }
         Action::ConfirmDeleteSession => {
             if let Some(PendingDelete::Session(session_id, _)) = state.ui.pending_delete.take() {
-                let is_terminal = state.data.sessions
+                // Get session info before deleting
+                let session_info: Option<(bool, Option<std::path::PathBuf>, Option<uuid::Uuid>)> = state.data.sessions
                     .values()
                     .flatten()
                     .find(|s| s.id == session_id)
-                    .map(|s| s.agent_type.is_terminal())
-                    .unwrap_or(false);
+                    .map(|s| (s.agent_type.is_terminal(), s.worktree_path.clone(), s.parallel_attempt_id));
+
+                let (is_terminal, session_worktree_path, parallel_attempt_id) = session_info.unwrap_or((false, None, None));
 
                 // Check if this session is part of a parallel task and get cleanup info
                 let parallel_cleanup_info: Option<(std::path::PathBuf, std::path::PathBuf, uuid::Uuid)> = {
                     let workspace = state.selected_workspace();
                     if let Some(ws) = workspace {
-                        // Find the session to check for parallel_attempt_id
-                        let session = state.data.sessions.get(&ws.id)
-                            .and_then(|sessions| sessions.iter().find(|s| s.id == session_id));
-
-                        if let Some(session) = session {
-                            if let Some(attempt_id) = session.parallel_attempt_id {
-                                // Find the parallel task and attempt
-                                for task in &ws.parallel_tasks {
-                                    if let Some(attempt) = task.attempts.iter().find(|a| a.id == attempt_id) {
-                                        Some((ws.path.clone(), attempt.worktree_path.clone(), task.id))
-                                    } else {
-                                        continue;
-                                    };
-                                }
-                                // Search again to return the value
-                                ws.parallel_tasks.iter()
-                                    .find_map(|task| {
-                                        task.attempts.iter()
-                                            .find(|a| a.id == attempt_id)
-                                            .map(|attempt| (ws.path.clone(), attempt.worktree_path.clone(), task.id))
-                                    })
-                            } else {
-                                None
-                            }
+                        if let Some(attempt_id) = parallel_attempt_id {
+                            // Find the parallel task and attempt
+                            ws.parallel_tasks.iter()
+                                .find_map(|task| {
+                                    task.attempts.iter()
+                                        .find(|a| a.id == attempt_id)
+                                        .map(|attempt| (ws.path.clone(), attempt.worktree_path.clone(), task.id))
+                                })
                         } else {
                             None
                         }
@@ -272,15 +296,18 @@ pub fn handle_session_action(
                     }
                 };
 
+                // Get workspace path for regular session worktree cleanup
+                let workspace_path = state.selected_workspace().map(|ws| ws.path.clone());
+
                 // Kill PTY handle
                 if let Some(handle) = state.system.pty_handles.remove(&session_id) {
                     terminate_session_handle(handle, is_terminal);
                 }
                 state.system.output_buffers.remove(&session_id);
 
-                // Clean up worktree if this was a parallel task session
+                // Clean up worktree - either from parallel task or regular session
                 if let Some((workspace_path, worktree_path, task_id)) = parallel_cleanup_info {
-                    // Remove the worktree (this also deletes the branch)
+                    // Remove the parallel task worktree
                     let _ = git::remove_worktree(&workspace_path, &worktree_path, true);
 
                     // Mark the attempt as failed and potentially clean up the task
@@ -294,7 +321,6 @@ pub fn handle_session_action(
                             }
 
                             // If all attempts are now finished, mark task as awaiting selection
-                            // (even if some failed, user can still pick from completed ones)
                             if task.all_attempts_finished() {
                                 task.mark_awaiting_selection();
                             }
@@ -307,6 +333,9 @@ pub fn handle_session_action(
                             }
                         }
                     }
+                } else if let (Some(worktree_path), Some(workspace_path)) = (session_worktree_path, workspace_path) {
+                    // Clean up regular session worktree
+                    let _ = git::remove_worktree(&workspace_path, &worktree_path, true);
                 }
 
                 state.delete_session(session_id);
@@ -322,6 +351,150 @@ pub fn handle_session_action(
         }
         Action::CancelPendingDelete => {
             state.ui.pending_delete = None;
+        }
+        Action::MergeSessionWorktree(session_id) => {
+            // Find session info
+            let merge_info: Option<(std::path::PathBuf, std::path::PathBuf, String)> = {
+                let session = state.data.sessions.values().flatten()
+                    .find(|s| s.id == session_id);
+
+                if let Some(s) = session {
+                    if let (Some(worktree_path), Some(branch)) = (&s.worktree_path, &s.worktree_branch) {
+                        // Get workspace path
+                        let workspace_path = state.data.workspaces.iter()
+                            .find(|w| w.id == s.workspace_id)
+                            .map(|w| w.path.clone());
+
+                        workspace_path.map(|wp| (wp, worktree_path.clone(), branch.clone()))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            };
+
+            if let Some((workspace_path, worktree_path, branch_name)) = merge_info {
+                // Check if worktree has uncommitted changes
+                if git::worktree_has_changes(&worktree_path) {
+                    eprintln!("Cannot merge: worktree has uncommitted changes");
+                    return Ok(());
+                }
+
+                // Get the main/master branch name
+                let main_branch = git::get_current_branch(&workspace_path)
+                    .unwrap_or_else(|_| "main".to_string());
+
+                // Perform the merge
+                match git::merge_branch(&workspace_path, &branch_name) {
+                    Ok(()) => {
+                        // Merge successful - clean up the worktree
+                        let _ = git::remove_worktree(&workspace_path, &worktree_path, true);
+
+                        // Clear worktree info from session
+                        if let Some(session) = state.get_session_mut(session_id) {
+                            session.worktree_path = None;
+                            session.worktree_branch = None;
+                        }
+
+                        let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
+                        eprintln!("Successfully merged {} into {}", branch_name, main_branch);
+                    }
+                    Err(e) => {
+                        eprintln!("Merge failed: {}. Resolve conflicts manually in the worktree.", e);
+                    }
+                }
+            }
+        }
+        Action::SwitchToWorktree(session_id_opt) => {
+            // Switch the workspace's active worktree view
+            if let Some(session_id) = session_id_opt {
+                // Switching TO a worktree - need to create or reuse a viewer terminal
+
+                // First, get info about the agent session's worktree
+                let worktree_info: Option<(uuid::Uuid, std::path::PathBuf, String)> = state.data.sessions
+                    .values()
+                    .flatten()
+                    .find(|s| s.id == session_id)
+                    .and_then(|s| {
+                        s.worktree_path.as_ref().map(|path| {
+                            (s.workspace_id, path.clone(), s.agent_type.display_name().to_string())
+                        })
+                    });
+
+                if let Some((workspace_id, worktree_path, agent_name)) = worktree_info {
+                    // Check if a viewer terminal already exists for this session
+                    let existing_viewer_id: Option<uuid::Uuid> = state.data.sessions
+                        .values()
+                        .flatten()
+                        .find(|s| s.worktree_viewer_for == Some(session_id) && s.status == crate::models::SessionStatus::Running)
+                        .map(|s| s.id);
+
+                    if let Some(viewer_id) = existing_viewer_id {
+                        // Reuse existing viewer terminal
+                        state.ui.active_session_id = Some(viewer_id);
+                        state.ui.output_scroll_offset = 0;
+                        state.ui.focus = FocusPanel::OutputPane;
+
+                        // Update workspace active worktree
+                        if let Some(workspace) = state.selected_workspace_mut() {
+                            workspace.active_worktree_session_id = Some(session_id);
+                        }
+                        let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
+                    } else {
+                        // Create a new viewer terminal
+                        let short_id = &session_id.to_string()[..8];
+                        let terminal_name = format!("⎇ {}-{}", agent_name, short_id);
+                        let session = Session::new_worktree_viewer(workspace_id, terminal_name, session_id);
+                        let new_session_id = session.id;
+
+                        let ws_idx = state.ui.selected_workspace_idx;
+                        if let Some(ws) = state.data.workspaces.get_mut(ws_idx) {
+                            ws.touch();
+                        }
+
+                        let pty_rows = state.pane_rows();
+                        let cols = state.output_pane_cols();
+                        let parser_rows = 500;
+                        let parser = vt100::Parser::new(parser_rows, cols, 10000);
+                        state.system.output_buffers.insert(new_session_id, parser);
+
+                        match pty_manager.spawn_session(
+                            new_session_id,
+                            AgentType::Terminal(format!("worktree-{}", short_id)),
+                            &worktree_path,
+                            pty_rows,
+                            cols,
+                            pty_tx.clone(),
+                            false,
+                        ) {
+                            Ok(handle) => {
+                                state.system.pty_handles.insert(new_session_id, handle);
+                                state.add_session(session);
+                                state.ui.active_session_id = Some(new_session_id);
+                                state.ui.focus = FocusPanel::OutputPane;
+
+                                // Update workspace active worktree
+                                if let Some(workspace) = state.selected_workspace_mut() {
+                                    workspace.active_worktree_session_id = Some(session_id);
+                                }
+
+                                let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to spawn worktree viewer terminal: {}", e);
+                                state.system.output_buffers.remove(&new_session_id);
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Switching back to main - just clear the active worktree
+                if let Some(workspace) = state.selected_workspace_mut() {
+                    workspace.active_worktree_session_id = None;
+                    let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
+                }
+            }
         }
         Action::EnterCreateSessionMode => {
             if state.selected_workspace().is_some() {

@@ -252,6 +252,24 @@ pub fn get_attempt_worktree_path(
         .join(agent_name.to_lowercase())
 }
 
+/// Get the worktree path for a session
+pub fn get_session_worktree_path(workspace_path: &Path, session_id_short: &str) -> PathBuf {
+    get_worktrees_dir(workspace_path).join(format!("session-{}", session_id_short))
+}
+
+/// Generate a branch name for a session worktree
+pub fn session_branch_name(agent_name: &str, session_id_short: &str) -> String {
+    format!("agent-{}-{}", agent_name.to_lowercase(), session_id_short)
+}
+
+/// Check if a worktree has any uncommitted changes
+pub fn worktree_has_changes(worktree_path: &Path) -> bool {
+    if !worktree_path.exists() {
+        return false;
+    }
+    !is_clean(worktree_path).unwrap_or(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

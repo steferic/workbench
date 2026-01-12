@@ -216,8 +216,10 @@ pub fn handle_navigation_action(
                 state.ui.output_scroll_offset = state.ui.output_scroll_offset.saturating_sub(3);
             }
         }
-        Action::JumpToNextIdle => {
+        Action::CycleNextWorkspace => {
             use crate::models::WorkspaceStatus;
+
+            // Only cycle through "Working" workspaces, in visual order
             let working_indices: Vec<usize> = state.data.workspaces.iter()
                 .enumerate()
                 .filter(|(_, ws)| ws.status == WorkspaceStatus::Working)
@@ -225,9 +227,11 @@ pub fn handle_navigation_action(
                 .collect();
 
             if !working_indices.is_empty() {
+                // Find current position in the working list
                 let current_pos = working_indices.iter()
                     .position(|&idx| idx == state.ui.selected_workspace_idx);
 
+                // Move to next working workspace (or first if not currently on a working one)
                 let next_idx = match current_pos {
                     Some(pos) => working_indices[(pos + 1) % working_indices.len()],
                     None => working_indices[0],
@@ -236,15 +240,82 @@ pub fn handle_navigation_action(
                 state.ui.selected_workspace_idx = next_idx;
                 state.ui.selected_session_idx = 0;
 
+                // Also activate the first session in the new workspace
                 if let Some(ws) = state.data.workspaces.get(next_idx) {
                     if let Some(sessions) = state.data.sessions.get(&ws.id) {
                         if let Some(session) = sessions.first() {
                             state.ui.active_session_id = Some(session.id);
-                            state.ui.focus = FocusPanel::OutputPane;
                             state.ui.output_scroll_offset = 0;
                         }
                     }
                 }
+            }
+        }
+        Action::CycleNextSession => {
+            // Cycle through sessions in visual order: Agents -> Parallel -> Terminals
+            // Get parallel task session IDs first
+            let parallel_session_ids: Vec<Uuid> = state.selected_workspace()
+                .map(|ws| {
+                    ws.parallel_tasks.iter()
+                        .flat_map(|t| t.attempts.iter().map(|a| a.session_id))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            // Build visual order indices
+            let session_info: Option<(usize, Uuid)> = {
+                let sessions = state.sessions_for_selected_workspace();
+
+                // Agents: non-terminal, non-parallel
+                let agent_indices: Vec<usize> = sessions.iter()
+                    .enumerate()
+                    .filter(|(_, s)| !s.agent_type.is_terminal() && !parallel_session_ids.contains(&s.id))
+                    .map(|(i, _)| i)
+                    .collect();
+
+                // Parallel sessions
+                let parallel_indices: Vec<usize> = sessions.iter()
+                    .enumerate()
+                    .filter(|(_, s)| parallel_session_ids.contains(&s.id))
+                    .map(|(i, _)| i)
+                    .collect();
+
+                // Terminals
+                let terminal_indices: Vec<usize> = sessions.iter()
+                    .enumerate()
+                    .filter(|(_, s)| s.agent_type.is_terminal())
+                    .map(|(i, _)| i)
+                    .collect();
+
+                // Combined visual order
+                let visual_order: Vec<usize> = agent_indices.into_iter()
+                    .chain(parallel_indices)
+                    .chain(terminal_indices)
+                    .collect();
+
+                if !visual_order.is_empty() {
+                    // Find current position in visual order
+                    let current_pos = visual_order.iter()
+                        .position(|&idx| idx == state.ui.selected_session_idx);
+
+                    // Move to next in visual order (or first if not found)
+                    let next_visual_pos = match current_pos {
+                        Some(pos) => (pos + 1) % visual_order.len(),
+                        None => 0,
+                    };
+
+                    let next_idx = visual_order[next_visual_pos];
+                    sessions.get(next_idx).map(|s| (next_idx, s.id))
+                } else {
+                    None
+                }
+            };
+
+            if let Some((next_idx, session_id)) = session_info {
+                state.ui.selected_session_idx = next_idx;
+                state.ui.active_session_id = Some(session_id);
+                state.ui.output_scroll_offset = 0;
+                state.ui.focus = FocusPanel::OutputPane;
             }
         }
         Action::MouseClick(x, y) => {

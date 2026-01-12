@@ -36,6 +36,9 @@ pub struct Workspace {
     /// Parallel tasks for multi-agent task execution
     #[serde(default)]
     pub parallel_tasks: Vec<ParallelTask>,
+    /// Currently active worktree session ID (None = viewing main branch)
+    #[serde(default)]
+    pub active_worktree_session_id: Option<Uuid>,
 }
 
 impl Workspace {
@@ -51,6 +54,7 @@ impl Workspace {
             last_active_at: Some(now),
             todos: Vec::new(),
             parallel_tasks: Vec::new(),
+            active_worktree_session_id: None,
         }
     }
 
