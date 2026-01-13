@@ -45,8 +45,8 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         .map(|s| {
             if let Some(home) = dirs::home_dir() {
                 if let Some(home_str) = home.to_str() {
-                    if s.starts_with(home_str) {
-                        return format!("~{}", &s[home_str.len()..]);
+                    if let Some(stripped) = s.strip_prefix(home_str) {
+                        return format!("~{}", stripped);
                     }
                 }
             }
@@ -93,8 +93,8 @@ pub fn render(frame: &mut Frame, state: &AppState) {
             .map(|s| {
                 if let Some(home) = dirs::home_dir() {
                     if let Some(home_str) = home.to_str() {
-                        if s.starts_with(home_str) {
-                            return format!("~{}", &s[home_str.len()..]);
+                        if let Some(stripped) = s.strip_prefix(home_str) {
+                            return format!("~{}", stripped);
                         }
                     }
                 }

@@ -133,6 +133,7 @@ impl PtyManager {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn spawn_session(
         &self,
         session_id: Uuid,
@@ -155,6 +156,7 @@ impl PtyManager {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn spawn_session_with_resume(
         &self,
         session_id: Uuid,
@@ -215,10 +217,8 @@ impl PtyManager {
                         cmd.arg("--dangerously-bypass-approvals-and-sandbox");
                     }
                     cmd.cwd(working_dir);
-                } else {
-                    if dangerously_skip_permissions {
-                        cmd.arg("--dangerously-bypass-approvals-and-sandbox");
-                    }
+                } else if dangerously_skip_permissions {
+                    cmd.arg("--dangerously-bypass-approvals-and-sandbox");
                 }
             }
             AgentType::Grok => {
@@ -370,11 +370,10 @@ impl PtyManager {
                         }
                     }
 
-                    if !data.is_empty() {
-                        if pty_tx.blocking_send(Action::PtyOutput(session_id, data)).is_err() {
+                    if !data.is_empty()
+                        && pty_tx.blocking_send(Action::PtyOutput(session_id, data)).is_err() {
                             break;
                         }
-                    }
                 }
                 Err(e) => {
                     eprintln!("PTY read error for session {}: {}", session_id, e);

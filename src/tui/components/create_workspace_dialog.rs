@@ -329,8 +329,8 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
 fn shorten_home_path(path: &std::path::Path) -> String {
     if let Some(home) = dirs::home_dir() {
         if let (Some(home_str), Some(path_str)) = (home.to_str(), path.to_str()) {
-            if path_str.starts_with(home_str) {
-                return format!("~{}", &path_str[home_str.len()..]);
+            if let Some(stripped) = path_str.strip_prefix(home_str) {
+                return format!("~{}", stripped);
             }
         }
     }

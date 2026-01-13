@@ -169,11 +169,7 @@ fn create_workspace_item<'a>(
         Style::default().fg(Color::Gray)
     };
 
-    let info_style = if is_paused {
-        Style::default().fg(Color::DarkGray)
-    } else {
-        Style::default().fg(Color::DarkGray)
-    };
+    let info_style = Style::default().fg(Color::DarkGray);
 
     // Time style - slightly dimmer, different color for recency
     let time_style = if is_paused {

@@ -173,6 +173,7 @@ fn start_parallel_task(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_parallel_worktrees_ready(
     state: &mut AppState,
     pty_manager: &PtyManager,

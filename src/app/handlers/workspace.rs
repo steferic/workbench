@@ -43,21 +43,21 @@ pub fn handle_workspace_action(state: &mut AppState, action: Action) -> Result<(
             state.ui.input_mode = InputMode::SelectWorkspaceAction;
             state.ui.selected_workspace_action = WorkspaceAction::default();
         }
-        Action::SelectNextWorkspaceAction => {
+        Action::NextWorkspaceChoice => {
             let actions = WorkspaceAction::all();
             let current_idx = actions.iter().position(|a| *a == state.ui.selected_workspace_action).unwrap_or(0);
             if current_idx < actions.len() - 1 {
                 state.ui.selected_workspace_action = actions[current_idx + 1];
             }
         }
-        Action::SelectPrevWorkspaceAction => {
+        Action::PrevWorkspaceChoice => {
             let actions = WorkspaceAction::all();
             let current_idx = actions.iter().position(|a| *a == state.ui.selected_workspace_action).unwrap_or(0);
             if current_idx > 0 {
                 state.ui.selected_workspace_action = actions[current_idx - 1];
             }
         }
-        Action::ConfirmWorkspaceAction => {
+        Action::ConfirmWorkspaceChoice => {
             match state.ui.selected_workspace_action {
                 WorkspaceAction::CreateNew => {
                     state.ui.workspace_create_mode = true;
@@ -83,13 +83,11 @@ pub fn handle_workspace_action(state: &mut AppState, action: Action) -> Result<(
         }
         Action::CreateNewWorkspace(name) => {
             let new_path = state.ui.file_browser_path.join(&name);
-            if !new_path.exists() {
-                if let Ok(_) = std::fs::create_dir_all(&new_path) {
-                    let workspace = Workspace::from_path(new_path);
-                    state.add_workspace(workspace);
-                    state.ui.input_mode = InputMode::Normal;
-                    let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
-                }
+            if !new_path.exists() && std::fs::create_dir_all(&new_path).is_ok() {
+                let workspace = Workspace::from_path(new_path);
+                state.add_workspace(workspace);
+                state.ui.input_mode = InputMode::Normal;
+                let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
             }
         }
         _ => {}

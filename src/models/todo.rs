@@ -45,10 +45,12 @@ impl Importance {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum TodoStatus {
     /// Suggested by analyzer, needs approval
     Suggested,
     /// Waiting to be picked up by an agent
+    #[default]
     Pending,
     /// Queued to run after current todo finishes
     Queued,
@@ -62,11 +64,6 @@ pub enum TodoStatus {
     Archived,
 }
 
-impl Default for TodoStatus {
-    fn default() -> Self {
-        Self::Pending
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Todo {
