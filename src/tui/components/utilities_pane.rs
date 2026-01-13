@@ -35,6 +35,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
 
     // Render horizontal tabs
     let utils_active = state.ui.utility_section == UtilitySection::Utilities;
+    let sounds_active = state.ui.utility_section == UtilitySection::Sounds;
     let config_active = state.ui.utility_section == UtilitySection::GlobalConfig;
     let notepad_active = state.ui.utility_section == UtilitySection::Notepad;
 
@@ -56,6 +57,8 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
     let tabs = Paragraph::new(Line::from(vec![
         Span::styled(" Util ", tab_style(utils_active)),
         Span::styled("|", Style::default().fg(Color::DarkGray)),
+        Span::styled(" Sounds ", tab_style(sounds_active)),
+        Span::styled("|", Style::default().fg(Color::DarkGray)),
         Span::styled(" Cfg ", tab_style(config_active)),
         Span::styled("|", Style::default().fg(Color::DarkGray)),
         Span::styled(" Notes ", tab_style(notepad_active)),
@@ -66,6 +69,9 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
     match state.ui.utility_section {
         UtilitySection::Utilities => {
             render_utilities_list(frame, content_area, state, is_focused);
+        }
+        UtilitySection::Sounds => {
+            render_sounds_list(frame, content_area, state, is_focused);
         }
         UtilitySection::GlobalConfig => {
             render_config_list(frame, content_area, state, is_focused);
@@ -110,7 +116,9 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
 }
 
 fn render_utilities_list(frame: &mut Frame, area: Rect, state: &AppState, is_focused: bool) {
-    let items: Vec<ListItem> = UtilityItem::all()
+    let tools = UtilityItem::tools();
+
+    let items: Vec<ListItem> = tools
         .iter()
         .map(|item| {
             let is_selected = *item == state.ui.selected_utility;
@@ -127,10 +135,86 @@ fn render_utilities_list(frame: &mut Frame, area: Rect, state: &AppState, is_foc
 
             let prefix = if is_selected { "> " } else { "  " };
 
-            // Show toggle indicator for toggle-able utilities
+            ListItem::new(Line::from(vec![
+                Span::styled(prefix, style),
+                Span::raw(format!("{} ", item.icon())),
+                Span::styled(item.name(), style),
+            ]))
+        })
+        .collect();
+
+    // Highlight style with full row background when focused
+    let highlight_style = if is_focused {
+        Style::default()
+            .bg(Color::Rgb(40, 50, 60))
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+    };
+
+    let list = List::new(items).highlight_style(highlight_style);
+
+    let mut list_state = ListState::default();
+    let selected_idx = tools
+        .iter()
+        .position(|i| *i == state.ui.selected_utility);
+    list_state.select(selected_idx);
+
+    frame.render_stateful_widget(list, area, &mut list_state);
+}
+
+fn render_sounds_list(frame: &mut Frame, area: Rect, state: &AppState, is_focused: bool) {
+    let sounds = UtilityItem::sounds();
+
+    let items: Vec<ListItem> = sounds
+        .iter()
+        .map(|item| {
+            let is_selected = *item == state.ui.selected_sound;
+
+            let style = if is_selected && is_focused {
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else if is_selected {
+                Style::default().fg(Color::White)
+            } else {
+                Style::default().fg(Color::Gray)
+            };
+
+            let prefix = if is_selected { "> " } else { "  " };
+
+            // Show ON/OFF indicator for sounds
             let toggle_indicator = match item {
                 UtilityItem::BrownNoise => {
                     if state.system.brown_noise_playing {
+                        Span::styled(" [ON]", Style::default().fg(Color::Green))
+                    } else {
+                        Span::styled(" [OFF]", Style::default().fg(Color::Red))
+                    }
+                }
+                UtilityItem::ClassicalRadio => {
+                    if state.system.classical_radio_playing {
+                        Span::styled(" [ON]", Style::default().fg(Color::Green))
+                    } else {
+                        Span::styled(" [OFF]", Style::default().fg(Color::Red))
+                    }
+                }
+                UtilityItem::OceanWaves => {
+                    if state.system.ocean_waves_playing {
+                        Span::styled(" [ON]", Style::default().fg(Color::Green))
+                    } else {
+                        Span::styled(" [OFF]", Style::default().fg(Color::Red))
+                    }
+                }
+                UtilityItem::WindChimes => {
+                    if state.system.wind_chimes_playing {
+                        Span::styled(" [ON]", Style::default().fg(Color::Green))
+                    } else {
+                        Span::styled(" [OFF]", Style::default().fg(Color::Red))
+                    }
+                }
+                UtilityItem::RainforestRain => {
+                    if state.system.rainforest_rain_playing {
                         Span::styled(" [ON]", Style::default().fg(Color::Green))
                     } else {
                         Span::styled(" [OFF]", Style::default().fg(Color::Red))
@@ -157,13 +241,12 @@ fn render_utilities_list(frame: &mut Frame, area: Rect, state: &AppState, is_foc
         Style::default()
     };
 
-    let list = List::new(items)
-        .highlight_style(highlight_style);
+    let list = List::new(items).highlight_style(highlight_style);
 
     let mut list_state = ListState::default();
-    let selected_idx = UtilityItem::all()
+    let selected_idx = sounds
         .iter()
-        .position(|i| *i == state.ui.selected_utility);
+        .position(|i| *i == state.ui.selected_sound);
     list_state.select(selected_idx);
 
     frame.render_stateful_widget(list, area, &mut list_state);

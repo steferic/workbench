@@ -655,10 +655,17 @@ pub fn handle_navigation_action(
         Action::SelectNextUtility => {
             match state.ui.utility_section {
                 UtilitySection::Utilities => {
-                    let utilities = UtilityItem::all();
-                    let current_idx = utilities.iter().position(|u| *u == state.ui.selected_utility).unwrap_or(0);
-                    if current_idx < utilities.len() - 1 {
-                        state.ui.selected_utility = utilities[current_idx + 1];
+                    let tools = UtilityItem::tools();
+                    let current_idx = tools.iter().position(|u| *u == state.ui.selected_utility).unwrap_or(0);
+                    if current_idx < tools.len() - 1 {
+                        state.ui.selected_utility = tools[current_idx + 1];
+                    }
+                }
+                UtilitySection::Sounds => {
+                    let sounds = UtilityItem::sounds();
+                    let current_idx = sounds.iter().position(|u| *u == state.ui.selected_sound).unwrap_or(0);
+                    if current_idx < sounds.len() - 1 {
+                        state.ui.selected_sound = sounds[current_idx + 1];
                     }
                 }
                 UtilitySection::GlobalConfig => {
@@ -674,10 +681,17 @@ pub fn handle_navigation_action(
         Action::SelectPrevUtility => {
             match state.ui.utility_section {
                 UtilitySection::Utilities => {
-                    let utilities = UtilityItem::all();
-                    let current_idx = utilities.iter().position(|u| *u == state.ui.selected_utility).unwrap_or(0);
+                    let tools = UtilityItem::tools();
+                    let current_idx = tools.iter().position(|u| *u == state.ui.selected_utility).unwrap_or(0);
                     if current_idx > 0 {
-                        state.ui.selected_utility = utilities[current_idx - 1];
+                        state.ui.selected_utility = tools[current_idx - 1];
+                    }
+                }
+                UtilitySection::Sounds => {
+                    let sounds = UtilityItem::sounds();
+                    let current_idx = sounds.iter().position(|u| *u == state.ui.selected_sound).unwrap_or(0);
+                    if current_idx > 0 {
+                        state.ui.selected_sound = sounds[current_idx - 1];
                     }
                 }
                 UtilitySection::GlobalConfig => {
@@ -711,6 +725,18 @@ pub fn handle_navigation_action(
         }
         Action::ToggleBrownNoise => {
             state.system.brown_noise_playing = !state.system.brown_noise_playing;
+        }
+        Action::ToggleClassicalRadio => {
+            state.system.classical_radio_playing = !state.system.classical_radio_playing;
+        }
+        Action::ToggleOceanWaves => {
+            state.system.ocean_waves_playing = !state.system.ocean_waves_playing;
+        }
+        Action::ToggleWindChimes => {
+            state.system.wind_chimes_playing = !state.system.wind_chimes_playing;
+        }
+        Action::ToggleRainforestRain => {
+            state.system.rainforest_rain_playing = !state.system.rainforest_rain_playing;
         }
         _ => {}
     }

@@ -180,8 +180,9 @@ pub fn process_action(
                 Action::MouseClick(_, _) |
                 Action::MouseDrag(_, _) | Action::MouseUp(_, _) | Action::CopySelection |
                 Action::Paste(_) | Action::ClearSelection | Action::SelectNextUtility |
-                Action::SelectPrevUtility | Action::ToggleUtilitySection | Action::ToggleConfigItem |
-                Action::ToggleBrownNoise => {
+                Action::SelectPrevUtility | Action::ToggleUtilitySection |
+                Action::ToggleConfigItem | Action::ToggleBrownNoise | Action::ToggleClassicalRadio |
+                Action::ToggleOceanWaves | Action::ToggleWindChimes | Action::ToggleRainforestRain => {
                     navigation::handle_navigation_action(state, action, pty_manager, pty_tx)?;
                 }
 

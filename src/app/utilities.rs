@@ -33,6 +33,53 @@ pub fn load_utility_content(state: &mut AppState, action_tx: &mpsc::UnboundedSen
                 "  Press Enter to toggle brown noise on/off.".to_string(),
             ];
         }
+        UtilityItem::ClassicalRadio => {
+            // Classical radio is a toggle, not a content utility
+            state.ui.utility_content = vec![
+                "".to_string(),
+                "  WRTI 90.1 Classical".to_string(),
+                "  ===================".to_string(),
+                "".to_string(),
+                "  Philadelphia's classical music station.".to_string(),
+                "".to_string(),
+                "  Press Enter to toggle stream on/off.".to_string(),
+                "".to_string(),
+                "  Requires: mpv or ffplay installed.".to_string(),
+            ];
+        }
+        UtilityItem::OceanWaves => {
+            state.ui.utility_content = vec![
+                "".to_string(),
+                "  Ocean Waves".to_string(),
+                "  ===========".to_string(),
+                "".to_string(),
+                "  Relaxing ocean and waterside sounds.".to_string(),
+                "".to_string(),
+                "  Press Enter to toggle on/off.".to_string(),
+            ];
+        }
+        UtilityItem::WindChimes => {
+            state.ui.utility_content = vec![
+                "".to_string(),
+                "  Wind Chimes".to_string(),
+                "  ===========".to_string(),
+                "".to_string(),
+                "  Peaceful wind chime sounds.".to_string(),
+                "".to_string(),
+                "  Press Enter to toggle on/off.".to_string(),
+            ];
+        }
+        UtilityItem::RainforestRain => {
+            state.ui.utility_content = vec![
+                "".to_string(),
+                "  Rainforest Rain".to_string(),
+                "  ===============".to_string(),
+                "".to_string(),
+                "  Soothing rainforest rain sounds.".to_string(),
+                "".to_string(),
+                "  Press Enter to toggle on/off.".to_string(),
+            ];
+        }
         UtilityItem::TopFiles => {
             state.ui.utility_content = loading_message("Top Files by Lines of Code");
             let action_tx = action_tx.clone();

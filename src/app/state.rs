@@ -78,6 +78,7 @@ pub enum PendingDelete {
 pub enum UtilitySection {
     #[default]
     Utilities,
+    Sounds,
     GlobalConfig,
     Notepad,
 }
@@ -85,7 +86,8 @@ pub enum UtilitySection {
 impl UtilitySection {
     pub fn toggle(&self) -> Self {
         match self {
-            UtilitySection::Utilities => UtilitySection::GlobalConfig,
+            UtilitySection::Utilities => UtilitySection::Sounds,
+            UtilitySection::Sounds => UtilitySection::GlobalConfig,
             UtilitySection::GlobalConfig => UtilitySection::Notepad,
             UtilitySection::Notepad => UtilitySection::Utilities,
         }
@@ -131,19 +133,25 @@ impl TodosTab {
 /// Utility items available in the utilities pane
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum UtilityItem {
+    // Tools
     #[default]
-    BrownNoise,
     TopFiles,
     Calendar,
     GitHistory,
     FileTree,
     SuggestTodos,
+    // Sounds
+    BrownNoise,
+    ClassicalRadio,
+    OceanWaves,
+    WindChimes,
+    RainforestRain,
 }
 
 impl UtilityItem {
-    pub fn all() -> &'static [UtilityItem] {
+    /// Tools shown in the Util tab
+    pub fn tools() -> &'static [UtilityItem] {
         &[
-            UtilityItem::BrownNoise,
             UtilityItem::TopFiles,
             UtilityItem::Calendar,
             UtilityItem::GitHistory,
@@ -152,9 +160,24 @@ impl UtilityItem {
         ]
     }
 
+    /// Sounds shown in the Sounds tab
+    pub fn sounds() -> &'static [UtilityItem] {
+        &[
+            UtilityItem::BrownNoise,
+            UtilityItem::ClassicalRadio,
+            UtilityItem::OceanWaves,
+            UtilityItem::WindChimes,
+            UtilityItem::RainforestRain,
+        ]
+    }
+
     pub fn name(&self) -> &'static str {
         match self {
             UtilityItem::BrownNoise => "Brown Noise",
+            UtilityItem::ClassicalRadio => "WRTI Classical",
+            UtilityItem::OceanWaves => "Ocean Waves",
+            UtilityItem::WindChimes => "Wind Chimes",
+            UtilityItem::RainforestRain => "Rainforest Rain",
             UtilityItem::TopFiles => "Top Files (LOC)",
             UtilityItem::Calendar => "Calendar",
             UtilityItem::GitHistory => "Git History",
@@ -166,6 +189,10 @@ impl UtilityItem {
     pub fn icon(&self) -> &'static str {
         match self {
             UtilityItem::BrownNoise => "🔊",
+            UtilityItem::ClassicalRadio => "🎻",
+            UtilityItem::OceanWaves => "🌊",
+            UtilityItem::WindChimes => "🎐",
+            UtilityItem::RainforestRain => "🌧️",
             UtilityItem::TopFiles => "📊",
             UtilityItem::Calendar => "📅",
             UtilityItem::GitHistory => "📜",
@@ -247,6 +274,14 @@ pub struct SystemState {
     pub should_quit: bool,
     /// Brown noise player state
     pub brown_noise_playing: bool,
+    /// Classical radio (WRTI) player state
+    pub classical_radio_playing: bool,
+    /// Ocean waves sound state
+    pub ocean_waves_playing: bool,
+    /// Wind chimes sound state
+    pub wind_chimes_playing: bool,
+    /// Rainforest rain sound state
+    pub rainforest_rain_playing: bool,
 }
 
 impl SystemState {
@@ -258,6 +293,10 @@ impl SystemState {
             animation_frame: 0,
             should_quit: false,
             brown_noise_playing: false,
+            classical_radio_playing: false,
+            ocean_waves_playing: false,
+            wind_chimes_playing: false,
+            rainforest_rain_playing: false,
         }
     }
 }
@@ -312,7 +351,8 @@ pub struct UIState {
 
     // Utilities pane
     pub utility_section: UtilitySection,
-    pub selected_utility: UtilityItem,
+    pub selected_utility: UtilityItem,  // For Utilities section (tools)
+    pub selected_sound: UtilityItem,    // For Sounds section
     pub selected_config: ConfigItem,
     pub utility_content: Vec<String>,
     pub utility_scroll_offset: usize,
@@ -389,6 +429,7 @@ impl UIState {
             drag_start_ratio: 0.0,
             utility_section: UtilitySection::default(),
             selected_utility: UtilityItem::default(),
+            selected_sound: UtilityItem::BrownNoise,  // Default to first sound
             selected_config: ConfigItem::default(),
             utility_content: Vec::new(),
             utility_scroll_offset: 0,

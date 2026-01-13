@@ -116,9 +116,13 @@ pub enum Action {
     SelectNextUtility,
     SelectPrevUtility,
     ActivateUtility,    // Load and display utility content in output pane
-    ToggleUtilitySection, // Switch between Utilities and GlobalConfig sections
+    ToggleUtilitySection, // Switch between Util, Sounds, Config, and Notepad sections
     ToggleConfigItem,   // Toggle the selected config item (e.g., banner visibility)
     ToggleBrownNoise,   // Toggle brown noise player on/off
+    ToggleClassicalRadio, // Toggle WRTI classical radio stream on/off
+    ToggleOceanWaves,   // Toggle ocean waves sound on/off
+    ToggleWindChimes,   // Toggle wind chimes sound on/off
+    ToggleRainforestRain, // Toggle rainforest rain sound on/off
     UtilityContentLoaded(UtilityContentPayload),
 
     // Notepad operations (tui-textarea handles all editing)

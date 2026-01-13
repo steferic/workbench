@@ -714,12 +714,16 @@ impl EventHandler {
             // Activate/toggle based on section
             KeyCode::Char('l') | KeyCode::Enter => {
                 match state.ui.utility_section {
-                    UtilitySection::Utilities => {
-                        // Check if selected utility is a toggle
-                        if state.ui.selected_utility == UtilityItem::BrownNoise {
-                            Action::ToggleBrownNoise
-                        } else {
-                            Action::ActivateUtility
+                    UtilitySection::Utilities => Action::ActivateUtility,
+                    UtilitySection::Sounds => {
+                        // Toggle the selected sound
+                        match state.ui.selected_sound {
+                            UtilityItem::BrownNoise => Action::ToggleBrownNoise,
+                            UtilityItem::ClassicalRadio => Action::ToggleClassicalRadio,
+                            UtilityItem::OceanWaves => Action::ToggleOceanWaves,
+                            UtilityItem::WindChimes => Action::ToggleWindChimes,
+                            UtilityItem::RainforestRain => Action::ToggleRainforestRain,
+                            _ => Action::Tick,
                         }
                     }
                     UtilitySection::GlobalConfig => Action::ToggleConfigItem,
