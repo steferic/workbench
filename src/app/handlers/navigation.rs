@@ -252,7 +252,7 @@ pub fn handle_navigation_action(
             }
         }
         Action::CycleNextSession => {
-            // Cycle through sessions in visual order: Agents -> Parallel -> Terminals
+            // Cycle through agents only (Agents -> Parallel), skip terminals
             // Get parallel task session IDs first
             let parallel_session_ids: Vec<Uuid> = state.selected_workspace()
                 .map(|ws| {
@@ -262,7 +262,7 @@ pub fn handle_navigation_action(
                 })
                 .unwrap_or_default();
 
-            // Build visual order indices
+            // Build visual order indices (agents only)
             let session_info: Option<(usize, Uuid)> = {
                 let sessions = state.sessions_for_selected_workspace();
 
@@ -273,24 +273,16 @@ pub fn handle_navigation_action(
                     .map(|(i, _)| i)
                     .collect();
 
-                // Parallel sessions
+                // Parallel sessions (these are also agents)
                 let parallel_indices: Vec<usize> = sessions.iter()
                     .enumerate()
                     .filter(|(_, s)| parallel_session_ids.contains(&s.id))
                     .map(|(i, _)| i)
                     .collect();
 
-                // Terminals
-                let terminal_indices: Vec<usize> = sessions.iter()
-                    .enumerate()
-                    .filter(|(_, s)| s.agent_type.is_terminal())
-                    .map(|(i, _)| i)
-                    .collect();
-
-                // Combined visual order
+                // Combined visual order (agents only, no terminals)
                 let visual_order: Vec<usize> = agent_indices.into_iter()
                     .chain(parallel_indices)
-                    .chain(terminal_indices)
                     .collect();
 
                 if !visual_order.is_empty() {

@@ -780,10 +780,12 @@ impl EventHandler {
                 KeyCode::PageUp => Action::ScrollOutputUp,
                 KeyCode::PageDown => Action::ScrollOutputDown,
 
-                // Panel navigation with Ctrl+H (Ctrl+Esc to leave)
+                // Panel navigation with Ctrl+H
                 KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     Action::FocusLeft
                 }
+                // Shift+Tab - send to PTY for Claude Code mode cycling
+                KeyCode::BackTab => Action::SendInput(session_id, b"\x1b[Z".to_vec()),
 
                 // Send to PTY with proper escape sequences for modifiers
                 KeyCode::Char(c) => {
@@ -940,6 +942,8 @@ impl EventHandler {
                 KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     Action::FocusLeft
                 }
+                // Shift+Tab - send to PTY for Claude Code mode cycling
+                KeyCode::BackTab => Action::SendInput(session_id, b"\x1b[Z".to_vec()),
 
                 // Navigate between pinned panes with Ctrl+J/K
                 KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
