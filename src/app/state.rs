@@ -174,10 +174,10 @@ impl UtilityItem {
     pub fn name(&self) -> &'static str {
         match self {
             UtilityItem::BrownNoise => "Brown Noise",
-            UtilityItem::ClassicalRadio => "WRTI Classical",
-            UtilityItem::OceanWaves => "Ocean Waves",
-            UtilityItem::WindChimes => "Wind Chimes",
-            UtilityItem::RainforestRain => "Rainforest Rain",
+            UtilityItem::ClassicalRadio => "Classical Radio",
+            UtilityItem::OceanWaves => "Ocean",
+            UtilityItem::WindChimes => "Chimes",
+            UtilityItem::RainforestRain => "Rain",
             UtilityItem::TopFiles => "Top Files (LOC)",
             UtilityItem::Calendar => "Calendar",
             UtilityItem::GitHistory => "Git History",

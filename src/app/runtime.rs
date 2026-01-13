@@ -139,7 +139,6 @@ async fn run_main_loop(
 
     // Classical radio stream process
     let mut radio_process: Option<std::process::Child> = None;
-    let mut radio_was_playing = false;
     const WRTI_STREAM_URL: &str = "https://wrti-live.streamguys1.com/classical-mp3";
 
     // Local sound file processes (paths embedded at compile time)
@@ -208,26 +207,38 @@ async fn run_main_loop(
         }
 
         // Sync classical radio stream with state
-        if state.system.classical_radio_playing != radio_was_playing {
-            if state.system.classical_radio_playing {
-                // Start streaming with ffplay (more reliable than mpv)
-                if radio_process.is_none() {
-                    radio_process = std::process::Command::new("ffplay")
-                        .args(["-nodisp", "-loglevel", "quiet", WRTI_STREAM_URL])
-                        .stdin(std::process::Stdio::null())
-                        .stdout(std::process::Stdio::null())
-                        .stderr(std::process::Stdio::null())
-                        .spawn()
-                        .ok();
-                }
-            } else {
-                // Stop streaming
-                if let Some(mut child) = radio_process.take() {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                }
+        // Also check if process died and needs restart
+        if let Some(ref mut child) = radio_process {
+            // Check if process exited (non-blocking)
+            if let Ok(Some(_)) = child.try_wait() {
+                // Process died, clear it so it can restart
+                radio_process = None;
             }
-            radio_was_playing = state.system.classical_radio_playing;
+        }
+
+        let should_play_radio = state.system.classical_radio_playing;
+        let is_playing_radio = radio_process.is_some();
+
+        if should_play_radio && !is_playing_radio {
+            // Start streaming with VLC - more robust than ffplay for streams
+            radio_process = std::process::Command::new("/opt/homebrew/bin/vlc")
+                .args([
+                    "--intf", "dummy",      // No GUI
+                    "--no-video",           // Audio only
+                    "--quiet",              // Suppress output
+                    WRTI_STREAM_URL,
+                ])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .ok();
+        } else if !should_play_radio && is_playing_radio {
+            // Stop streaming
+            if let Some(mut child) = radio_process.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
         }
 
         // Sync ocean waves sound with state

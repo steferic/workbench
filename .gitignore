@@ -1,1 +1,17 @@
+# Build
 /target
+
+# macOS
+.DS_Store
+
+# Editor
+*.swp
+*.swo
+*~
+
+# Erlang/Elixir
+erl_crash.dump
+
+# Environment
+.env
+.env.local
