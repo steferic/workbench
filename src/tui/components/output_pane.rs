@@ -281,15 +281,13 @@ fn render_pie_chart_view(frame: &mut Frame, area: Rect, state: &AppState, block:
 
                 if color_idx < state.ui.pie_chart_data.len() {
                     let (_, _, color) = &state.ui.pie_chart_data[color_idx];
-                    // Replace bullet with colored version
-                    let colored_line = line.replacen('●', "●", 1).replacen('○', "○", 1);
                     return Line::from(vec![
                         Span::styled(
-                            colored_line.chars().take(3).collect::<String>(),
+                            line.chars().take(3).collect::<String>(),
                             Style::default().fg(*color),
                         ),
                         Span::styled(
-                            colored_line.chars().skip(3).collect::<String>(),
+                            line.chars().skip(3).collect::<String>(),
                             Style::default().fg(Color::Gray),
                         ),
                     ]);

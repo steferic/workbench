@@ -123,7 +123,7 @@ pub fn convert_vt100_to_lines(
         for col in 0..cols {
             if let Some(cell) = screen.cell(row, col) {
                 let char_str = cell.contents();
-                let mut cell_style = convert_vt100_cell_style(&cell);
+                let mut cell_style = convert_vt100_cell_style(cell);
                 if let Some(bounds) = selection {
                     if cell_is_selected(row as usize, col as usize, bounds) {
                         cell_style = cell_style.add_modifier(Modifier::REVERSED);

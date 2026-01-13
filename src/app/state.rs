@@ -793,7 +793,7 @@ impl AppState {
         let workspace_id = session.workspace_id;
         self.data.sessions
             .entry(workspace_id)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(session);
     }
 
@@ -866,7 +866,7 @@ impl AppState {
         self.system.animation_frame = self.system.animation_frame.wrapping_add(1);
 
         // Scroll banner every 3 frames for smooth but not too fast scrolling
-        if self.system.animation_frame % 3 == 0 {
+        if self.system.animation_frame.is_multiple_of(3) {
             let text_len = self.ui.banner_text.chars().count();
             if text_len > 0 {
                 self.ui.banner_offset = (self.ui.banner_offset + 1) % text_len;
@@ -970,7 +970,7 @@ impl AppState {
     /// Get or create the TextArea for the current workspace
     pub fn current_notepad(&mut self) -> Option<&mut TextArea<'static>> {
         let ws_id = self.selected_workspace().map(|ws| ws.id)?;
-        Some(self.data.notepads.entry(ws_id).or_insert_with(TextArea::default))
+        Some(self.data.notepads.entry(ws_id).or_default())
     }
 
     /// Get notepad content as string for persistence
@@ -1000,8 +1000,8 @@ impl AppState {
 fn shorten_home_path(path: &Path) -> String {
     if let Some(home) = dirs::home_dir() {
         if let (Some(home_str), Some(path_str)) = (home.to_str(), path.to_str()) {
-            if path_str.starts_with(home_str) {
-                return format!("~{}", &path_str[home_str.len()..]);
+            if let Some(stripped) = path_str.strip_prefix(home_str) {
+                return format!("~{}", stripped);
             }
         }
     }
@@ -1015,8 +1015,6 @@ fn resolve_query_path(base: &Path, query: &str) -> Option<PathBuf> {
 
     let expanded = if let Some(rest) = query.strip_prefix("~/") {
         dirs::home_dir().map(|home| home.join(rest))?
-    } else if query.starts_with('~') {
-        PathBuf::from(query)
     } else {
         PathBuf::from(query)
     };
@@ -1031,13 +1029,7 @@ fn resolve_query_path(base: &Path, query: &str) -> Option<PathBuf> {
         list
     };
 
-    for candidate in candidates {
-        if candidate.exists() && candidate.is_dir() {
-            return Some(candidate);
-        }
-    }
-
-    None
+    candidates.into_iter().find(|c| c.exists() && c.is_dir())
 }
 
 fn is_path_like(query: &str) -> bool {

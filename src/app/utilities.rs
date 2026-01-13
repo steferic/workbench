@@ -380,7 +380,7 @@ fn build_top_files(
         // Get file name only for label
         let label = path
             .split('/')
-            .last()
+            .next_back()
             .unwrap_or(path)
             .to_string();
         pie_chart_data.push((label, *lines as f64, colors[i % colors.len()]));

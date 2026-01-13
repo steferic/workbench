@@ -65,7 +65,7 @@ pub fn process_action(
                                 .and_then(|t| {
                                     t.attempts.iter()
                                         .find(|a| a.session_id == *session_id)
-                                        .map(|a| (t.full_prompt(), a.prompt_sent, a.status.clone()))
+                                        .map(|a| (t.full_prompt(), a.prompt_sent, a.status))
                                 })
                         });
 
@@ -143,8 +143,8 @@ pub fn process_action(
                 // Workspace actions
                 Action::ToggleWorkspaceStatus | Action::InitiateDeleteWorkspace(_, _) |
                 Action::ConfirmDeleteWorkspace | Action::EnterWorkspaceActionMode |
-                Action::SelectNextWorkspaceAction | Action::SelectPrevWorkspaceAction |
-                Action::ConfirmWorkspaceAction | Action::EnterWorkspaceNameMode |
+                Action::NextWorkspaceChoice | Action::PrevWorkspaceChoice |
+                Action::ConfirmWorkspaceChoice | Action::EnterWorkspaceNameMode |
                 Action::CreateNewWorkspace(_) => {
                     workspace::handle_workspace_action(state, action)?;
                 }

@@ -76,9 +76,9 @@ pub enum Action {
     ExitMode,
 
     // Workspace action selection
-    SelectNextWorkspaceAction,
-    SelectPrevWorkspaceAction,
-    ConfirmWorkspaceAction,      // Confirm selected action (Create New or Open Existing)
+    NextWorkspaceChoice,
+    PrevWorkspaceChoice,
+    ConfirmWorkspaceChoice,      // Confirm selected action (Create New or Open Existing)
     CreateNewWorkspace(String),  // Create new workspace with given name in current dir
 
     // Start command

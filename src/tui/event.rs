@@ -157,9 +157,9 @@ impl EventHandler {
         InputMode::SelectWorkspaceAction => {
             return match key.code {
                 KeyCode::Esc => Action::ExitMode,
-                KeyCode::Char('j') | KeyCode::Down => Action::SelectNextWorkspaceAction,
-                KeyCode::Char('k') | KeyCode::Up => Action::SelectPrevWorkspaceAction,
-                KeyCode::Enter => Action::ConfirmWorkspaceAction,
+                KeyCode::Char('j') | KeyCode::Down => Action::NextWorkspaceChoice,
+                KeyCode::Char('k') | KeyCode::Up => Action::PrevWorkspaceChoice,
+                KeyCode::Enter => Action::ConfirmWorkspaceChoice,
                 _ => Action::Tick,
             };
         }
