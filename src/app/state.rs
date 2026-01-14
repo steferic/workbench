@@ -94,6 +94,15 @@ impl UtilitySection {
     }
 }
 
+/// Which pane-specific help popup is showing
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaneHelp {
+    Workspaces,
+    Sessions,
+    Todos,
+    Utilities,
+}
+
 /// Mode for the todos pane
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TodoPaneMode {
@@ -386,6 +395,9 @@ pub struct UIState {
     pub parallel_task_request_report: bool,  // Whether to request PARALLEL_REPORT.md
     pub selected_report_idx: usize,  // Selected report in Reports tab
     pub parallel_task_request_id: u64,
+
+    // Pane-specific help popup
+    pub pane_help: Option<PaneHelp>,
 }
 
 impl UIState {
@@ -458,6 +470,7 @@ impl UIState {
             parallel_task_request_report: true,  // Default to requesting reports
             selected_report_idx: 0,
             parallel_task_request_id: 0,
+            pane_help: None,
         }
     }
 }

@@ -146,38 +146,10 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         Style::default().fg(Color::DarkGray)
     };
 
-    let action_bar = match state.ui.selected_todos_tab {
-        TodosTab::Active => Paragraph::new(Line::from(vec![
-            Span::styled("Tab", key_style),
-            Span::styled(":arc ", action_style),
-            Span::styled("n", key_style),
-            Span::styled(":new ", action_style),
-            Span::styled("⏎", key_style),
-            Span::styled(":run ", action_style),
-            Span::styled("y/Y", key_style),
-            Span::styled(":ok ", action_style),
-            Span::styled("x/X", key_style),
-            Span::styled(":done/arc ", action_style),
-            Span::styled("d", key_style),
-            Span::styled(":del", action_style),
-        ])),
-        TodosTab::Archived => Paragraph::new(Line::from(vec![
-            Span::styled("Tab", key_style),
-            Span::styled(":active ", action_style),
-            Span::styled("d", key_style),
-            Span::styled(":delete", action_style),
-        ])),
-        TodosTab::Reports => Paragraph::new(Line::from(vec![
-            Span::styled("v", key_style),
-            Span::styled(":view ", action_style),
-            Span::styled("m", key_style),
-            Span::styled(":merge ", action_style),
-            Span::styled("d", key_style),
-            Span::styled(":discard ", action_style),
-            Span::styled("Tab", key_style),
-            Span::styled(":switch", action_style),
-        ])),
-    };
+    let action_bar = Paragraph::new(Line::from(vec![
+        Span::styled("h", key_style),
+        Span::styled(":help", action_style),
+    ]));
     frame.render_widget(action_bar, action_area);
 
     // Handle Reports tab separately

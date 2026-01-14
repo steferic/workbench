@@ -93,24 +93,10 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
         Style::default().fg(Color::DarkGray)
     };
 
-    let action_bar = match state.ui.utility_section {
-        UtilitySection::Notepad => {
-            Paragraph::new(Line::from(vec![
-                Span::styled("tab", key_style),
-                Span::styled(":switch ", action_style),
-                Span::styled("type", key_style),
-                Span::styled(":edit", action_style),
-            ]))
-        }
-        _ => {
-            Paragraph::new(Line::from(vec![
-                Span::styled("tab", key_style),
-                Span::styled(":switch ", action_style),
-                Span::styled("⏎", key_style),
-                Span::styled(":toggle", action_style),
-            ]))
-        }
-    };
+    let action_bar = Paragraph::new(Line::from(vec![
+        Span::styled("h", key_style),
+        Span::styled(":help", action_style),
+    ]));
 
     frame.render_widget(action_bar, action_area);
 }
