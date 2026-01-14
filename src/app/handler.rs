@@ -193,7 +193,9 @@ pub fn process_action(
                 Action::FileBrowserBack | Action::FileBrowserSelect |
                 // Parallel task modal input actions
                 Action::EnterParallelTaskMode | Action::ToggleParallelAgent(_) |
-                Action::NextParallelAgent | Action::PrevParallelAgent => {
+                Action::NextParallelAgent | Action::PrevParallelAgent |
+                // Pane help popup actions
+                Action::ShowPaneHelp(_) | Action::DismissPaneHelp => {
                     input::handle_input_action(state, action)?;
                 }
 

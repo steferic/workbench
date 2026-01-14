@@ -1,4 +1,4 @@
-use crate::app::{Action, AppState, FocusPanel, InputMode, PendingDelete, TodosTab};
+use crate::app::{Action, AppState, FocusPanel, InputMode, PaneHelp, PendingDelete, TodosTab};
 use crate::models::AgentType;
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventKind};
@@ -300,6 +300,14 @@ impl EventHandler {
         };
     }
 
+    // Handle pane help popup - dismiss with h or Esc
+    if state.ui.pane_help.is_some() {
+        return match key.code {
+            KeyCode::Char('h') | KeyCode::Esc => Action::DismissPaneHelp,
+            _ => Action::DismissPaneHelp, // Any other key dismisses
+        };
+    }
+
     // Note: ` (backtick) and ~ (tilde) shortcuts are handled in each focus handler
     // to ensure they're caught before the catch-all PTY input handlers
 
@@ -353,6 +361,9 @@ impl EventHandler {
                 }
             }
 
+            // Help
+            KeyCode::Char('h') => Action::ShowPaneHelp(PaneHelp::Workspaces),
+
             // Global
             KeyCode::Char('?') => Action::EnterHelpMode,
             KeyCode::Char('q') => Action::Quit,
@@ -380,7 +391,6 @@ impl EventHandler {
             // Navigation
             KeyCode::Char('j') | KeyCode::Down => Action::MoveDown,
             KeyCode::Char('k') | KeyCode::Up => Action::MoveUp,
-            KeyCode::Char('h') => Action::FocusLeft,
             KeyCode::Char('l') => Action::FocusRight,
 
             // Actions
@@ -540,6 +550,9 @@ impl EventHandler {
                 }
             }
 
+            // Help
+            KeyCode::Char('h') => Action::ShowPaneHelp(PaneHelp::Sessions),
+
             // Global
             KeyCode::Char('?') => Action::EnterHelpMode,
             KeyCode::Char('q') => Action::Quit,
@@ -587,7 +600,6 @@ impl EventHandler {
                     Action::SelectPrevTodo
                 }
             }
-            KeyCode::Char('h') => Action::FocusLeft,
             KeyCode::Char('l') => Action::FocusRight,
 
             // Tab switching
@@ -667,6 +679,9 @@ impl EventHandler {
                 }
             }
 
+            // Help
+            KeyCode::Char('h') => Action::ShowPaneHelp(PaneHelp::Todos),
+
             // Global
             KeyCode::Char('?') => Action::EnterHelpMode,
             KeyCode::Char('q') => Action::Quit,
@@ -709,7 +724,6 @@ impl EventHandler {
             // Navigation within current section
             KeyCode::Char('j') | KeyCode::Down => Action::SelectNextUtility,
             KeyCode::Char('k') | KeyCode::Up => Action::SelectPrevUtility,
-            KeyCode::Char('h') => Action::FocusLeft,
 
             // Activate/toggle based on section
             KeyCode::Char('l') | KeyCode::Enter => {
@@ -733,6 +747,9 @@ impl EventHandler {
 
             // Tab to switch between sections
             KeyCode::Tab => Action::ToggleUtilitySection,
+
+            // Help
+            KeyCode::Char('h') => Action::ShowPaneHelp(PaneHelp::Utilities),
 
             // Global
             KeyCode::Char('?') => Action::EnterHelpMode,

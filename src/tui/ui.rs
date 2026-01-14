@@ -166,6 +166,11 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, effects: &mut EffectsManage
         InputMode::Normal => {}
     }
 
+    // Render pane-specific help popup if active
+    if let Some(pane_help) = state.ui.pane_help {
+        help_popup::render_pane_help(frame, state, pane_help);
+    }
+
     // Trigger startup animation on first draw
     if !effects.startup_complete() && !effects.has_active_effects() {
         // Collect all pane areas for startup animation

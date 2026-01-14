@@ -1,3 +1,4 @@
+use crate::app::state::PaneHelp;
 use crate::models::AgentType;
 use crossterm::event::KeyEvent;
 use ratatui::style::Color;
@@ -74,6 +75,10 @@ pub enum Action {
     EnterSetStartCommandMode,
     EnterHelpMode,
     ExitMode,
+
+    // Pane-specific help popups
+    ShowPaneHelp(PaneHelp),      // Show help popup for specific pane
+    DismissPaneHelp,             // Close pane help popup
 
     // Workspace action selection
     NextWorkspaceChoice,

@@ -121,12 +121,8 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     };
 
     let action_bar = Paragraph::new(Line::from(vec![
-        Span::styled("n", key_style),
-        Span::styled(":new ", action_style),
-        Span::styled("w", key_style),
-        Span::styled(":work ", action_style),
-        Span::styled("d", key_style),
-        Span::styled(":del", action_style),
+        Span::styled("h", key_style),
+        Span::styled(":help", action_style),
     ]));
 
     frame.render_widget(action_bar, action_area);

@@ -202,6 +202,12 @@ pub fn handle_input_action(state: &mut AppState, action: Action) -> Result<()> {
                 *selected = !*selected;
             }
         }
+        Action::ShowPaneHelp(pane) => {
+            state.ui.pane_help = Some(pane);
+        }
+        Action::DismissPaneHelp => {
+            state.ui.pane_help = None;
+        }
         _ => {}
     }
     Ok(())
