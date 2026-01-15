@@ -208,6 +208,13 @@ pub fn handle_input_action(state: &mut AppState, action: Action) -> Result<()> {
         Action::DismissPaneHelp => {
             state.ui.pane_help = None;
         }
+        Action::InitiateQuit => {
+            state.ui.pending_quit = true;
+        }
+        Action::CancelQuit => {
+            state.ui.pending_quit = false;
+        }
+        // ConfirmQuit is handled in the main handler as it triggers actual quit
         _ => {}
     }
     Ok(())

@@ -325,6 +325,7 @@ pub struct UIState {
     // Dialog & Input
     pub input_buffer: String,
     pub pending_delete: Option<PendingDelete>,
+    pub pending_quit: bool,  // First Esc/q press - waiting for confirmation
 
     // File browser state
     pub file_browser_path: PathBuf,
@@ -413,6 +414,7 @@ impl UIState {
             focused_pinned_pane: 0,
             input_buffer: String::new(),
             pending_delete: None,
+            pending_quit: false,
             file_browser_path: dirs::home_dir().unwrap_or_else(|| PathBuf::from("/")),
             file_browser_all_entries: Vec::new(),
             file_browser_entries: Vec::new(),
