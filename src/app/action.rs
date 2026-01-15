@@ -194,6 +194,11 @@ pub enum Action {
     // Delete confirmation
     CancelPendingDelete,
 
+    // Quit confirmation
+    InitiateQuit,      // First Esc/q press - show confirmation
+    ConfirmQuit,       // Second Esc/q press - actually quit
+    CancelQuit,        // Any other key - cancel quit
+
     // App control
     Quit,
     Tick,

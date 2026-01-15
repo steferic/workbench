@@ -308,6 +308,14 @@ impl EventHandler {
         };
     }
 
+    // Handle pending quit confirmation
+    if state.ui.pending_quit {
+        return match key.code {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('y') | KeyCode::Char('Y') => Action::ConfirmQuit,
+            _ => Action::CancelQuit, // Any other key cancels
+        };
+    }
+
     // Note: ` (backtick) and ~ (tilde) shortcuts are handled in each focus handler
     // to ensure they're caught before the catch-all PTY input handlers
 
@@ -366,8 +374,7 @@ impl EventHandler {
 
             // Global
             KeyCode::Char('?') => Action::EnterHelpMode,
-            KeyCode::Char('q') => Action::Quit,
-            KeyCode::Esc => Action::Quit,
+            KeyCode::Char('q') | KeyCode::Esc => Action::InitiateQuit,
 
             _ => Action::Tick,
         }

@@ -14,7 +14,7 @@ pub fn process_action(
     pty_tx: &mpsc::Sender<Action>,
 ) -> Result<()> {
     match action {
-        Action::Quit => {
+        Action::Quit | Action::ConfirmQuit => {
             state.system.should_quit = true;
         }
         Action::Tick => {
@@ -195,7 +195,9 @@ pub fn process_action(
                 Action::EnterParallelTaskMode | Action::ToggleParallelAgent(_) |
                 Action::NextParallelAgent | Action::PrevParallelAgent |
                 // Pane help popup actions
-                Action::ShowPaneHelp(_) | Action::DismissPaneHelp => {
+                Action::ShowPaneHelp(_) | Action::DismissPaneHelp |
+                // Quit confirmation actions
+                Action::InitiateQuit | Action::CancelQuit => {
                     input::handle_input_action(state, action)?;
                 }
 
@@ -210,7 +212,7 @@ pub fn process_action(
                 }
 
                 // Global already handled
-                Action::Quit | Action::Tick | Action::Resize(_, _) | Action::UtilityContentLoaded(_) => {}
+                Action::Quit | Action::ConfirmQuit | Action::Tick | Action::Resize(_, _) | Action::UtilityContentLoaded(_) => {}
             }
         }
     }
