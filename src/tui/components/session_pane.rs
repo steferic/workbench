@@ -178,7 +178,13 @@ fn convert_vt100_to_lines(
                     current_text.clear();
                 }
                 current_style = cell_style;
-                current_text.push_str(&char_str);
+
+                // Empty cells must be rendered as spaces to maintain column alignment
+                if char_str.is_empty() {
+                    current_text.push(' ');
+                } else {
+                    current_text.push_str(&char_str);
+                }
             }
         }
 

@@ -115,10 +115,32 @@ pub fn convert_vt100_to_lines(
     selection: Option<SelectionBounds>,
     cursor_row: u16,
 ) -> Vec<Line<'static>> {
+    convert_vt100_to_lines_with_pane_height(screen, selection, cursor_row, None)
+}
+
+/// Convert vt100 screen to ratatui Lines
+/// pane_height: If provided, limits rendering to this many rows for alternate screen apps
+pub fn convert_vt100_to_lines_with_pane_height(
+    screen: &vt100::Screen,
+    selection: Option<SelectionBounds>,
+    cursor_row: u16,
+    pane_height: Option<u16>,
+) -> Vec<Line<'static>> {
     let mut all_lines = Vec::new();
     let (rows, cols) = screen.size();
 
-    for row in 0..rows {
+    // Check if we're in alternate screen mode (fullscreen apps like nvim)
+    let is_alternate = screen.alternate_screen();
+
+    // For alternate screen, only render the pane height (PTY size)
+    // For normal screen, render all rows (which gives us scrollback)
+    let rows_to_render = if is_alternate {
+        pane_height.unwrap_or(rows)
+    } else {
+        rows
+    };
+
+    for row in 0..rows_to_render {
         let mut spans = Vec::new();
         let mut current_text = String::new();
         let mut current_style = Style::default();
@@ -166,11 +188,14 @@ pub fn convert_vt100_to_lines(
         all_lines.push(Line::from(spans));
     }
 
-    // Remove trailing empty lines, but preserve lines up to the cursor
-    while all_lines.len() > (cursor_row as usize + 1)
-        && all_lines.last().map(|l| l.spans.is_empty()).unwrap_or(false)
-    {
-        all_lines.pop();
+    // Only trim trailing empty lines for non-alternate screen mode
+    // For alternate screen (nvim, etc.), preserve all rows for proper layout
+    if !is_alternate {
+        while all_lines.len() > (cursor_row as usize + 1)
+            && all_lines.last().map(|l| l.spans.is_empty()).unwrap_or(false)
+        {
+            all_lines.pop();
+        }
     }
 
     all_lines
