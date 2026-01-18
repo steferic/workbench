@@ -238,15 +238,28 @@ pub fn handle_navigation_action(
                 };
 
                 state.ui.selected_workspace_idx = next_idx;
-                state.ui.selected_session_idx = 0;
 
-                // Also activate the first session in the new workspace
+                // Activate the first agent session in the new workspace (skip terminals)
                 if let Some(ws) = state.data.workspaces.get(next_idx) {
                     if let Some(sessions) = state.data.sessions.get(&ws.id) {
-                        if let Some(session) = sessions.first() {
+                        // Find the first agent (non-terminal) session
+                        let first_agent = sessions.iter()
+                            .enumerate()
+                            .find(|(_, s)| !s.agent_type.is_terminal());
+
+                        if let Some((idx, session)) = first_agent {
+                            state.ui.selected_session_idx = idx;
                             state.ui.active_session_id = Some(session.id);
                             state.ui.output_scroll_offset = 0;
+                        } else {
+                            // No agents, reset to default
+                            state.ui.selected_session_idx = 0;
+                            state.ui.active_session_id = None;
                         }
+                    } else {
+                        // No sessions at all
+                        state.ui.selected_session_idx = 0;
+                        state.ui.active_session_id = None;
                     }
                 }
             }
@@ -711,6 +724,8 @@ pub fn handle_navigation_action(
             match state.ui.selected_config {
                 ConfigItem::ToggleBanner => {
                     state.ui.banner_visible = !state.ui.banner_visible;
+                    // Resize PTYs since pane height changed
+                    resize_ptys_to_panes(state);
                 }
             }
             let config = persistence::GlobalConfig {

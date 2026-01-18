@@ -1,6 +1,6 @@
 use crate::app::{AppState, InputMode};
 use crate::tui::components::{
-    banner, create_session_dialog, create_workspace_dialog, help_popup, merge_confirm_modal,
+    banner, create_session_dialog, create_workspace_dialog, debug_overlay, help_popup, merge_confirm_modal,
     output_pane, parallel_task_modal, pinned_terminal_pane, session_list, status_bar, todos_pane,
     utilities_pane, workspace_action_dialog, workspace_list, workspace_name_dialog,
 };
@@ -212,6 +212,11 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, effects: &mut EffectsManage
 
     // Process active effects
     effects.process(frame);
+
+    // Debug overlay (F12)
+    if state.ui.show_debug_overlay {
+        debug_overlay::render(frame, state);
+    }
 }
 
 /// Split the pinned terminal area into multiple vertically stacked panes

@@ -319,6 +319,11 @@ impl EventHandler {
     // Note: ` (backtick) and ~ (tilde) shortcuts are handled in each focus handler
     // to ensure they're caught before the catch-all PTY input handlers
 
+    // Global F12 - toggle debug overlay (works in any mode)
+    if key.code == KeyCode::F(12) {
+        return Action::ToggleDebugOverlay;
+    }
+
     // Global window navigation with Shift+Left/Right arrows
     if key.modifiers.contains(KeyModifiers::SHIFT) {
         match key.code {

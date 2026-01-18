@@ -37,7 +37,7 @@ pub fn start_workspace_sessions(
     // Calculate PTY size
     let pty_rows = state.pane_rows();
     let cols = state.output_pane_cols();
-    let parser_rows = 500u16;
+    let parser_rows = pty_rows;
 
     // Start each stopped session
     for (session_id, agent_type, dangerously_skip_permissions) in stopped_sessions {
@@ -116,7 +116,7 @@ pub fn start_all_working_sessions(
         // Calculate PTY size
         let pty_rows = state.pane_rows();
         let cols = state.output_pane_cols();
-        let parser_rows = 500u16;
+        let parser_rows = pty_rows;
 
         // Start each stopped session
         for (session_id, agent_type, start_command, dangerously_skip_permissions) in stopped_sessions {

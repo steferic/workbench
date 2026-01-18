@@ -76,7 +76,7 @@ pub fn handle_session_action(
 
                 let pty_rows = state.pane_rows();
                 let cols = state.output_pane_cols();
-                let parser_rows = 500;
+                let parser_rows = pty_rows;
                 let parser = vt100::Parser::new(parser_rows, cols, 10000);
                 state.system.output_buffers.insert(session_id, parser);
 
@@ -128,7 +128,7 @@ pub fn handle_session_action(
 
                 let pty_rows = state.pane_rows();
                 let cols = state.output_pane_cols();
-                let parser_rows = 500;
+                let parser_rows = pty_rows;
                 let parser = vt100::Parser::new(parser_rows, cols, 10000);
                 state.system.output_buffers.insert(session_id, parser);
 
@@ -189,7 +189,7 @@ pub fn handle_session_action(
 
                     let pty_rows = state.pane_rows();
                     let cols = state.output_pane_cols();
-                    let parser_rows = 500;
+                    let parser_rows = pty_rows;
                     let parser = vt100::Parser::new(parser_rows, cols, 10000);
                     state.system.output_buffers.insert(session_id, parser);
 
@@ -535,7 +535,7 @@ pub fn handle_session_action(
 
                         let pty_rows = state.pane_rows();
                         let cols = state.output_pane_cols();
-                        let parser_rows = 500;
+                        let parser_rows = pty_rows;
                         let parser = vt100::Parser::new(parser_rows, cols, 10000);
                         state.system.output_buffers.insert(new_session_id, parser);
 

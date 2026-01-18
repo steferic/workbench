@@ -257,6 +257,29 @@ pub fn render_pane_help(frame: &mut Frame, _state: &AppState, pane: PaneHelp) {
                 ]),
                 Line::from(""),
                 Line::from(Span::styled(
+                    "Session Modifiers",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                )),
+                Line::from(vec![
+                    Span::styled("  !/Shift+1 ", Style::default().fg(Color::Cyan)),
+                    Span::raw("Claude (skip permissions)"),
+                ]),
+                Line::from(vec![
+                    Span::styled("  @/#/$     ", Style::default().fg(Color::Cyan)),
+                    Span::raw("Gemini/Codex/Grok (skip perms)"),
+                ]),
+                Line::from(vec![
+                    Span::styled("  Alt+1-4   ", Style::default().fg(Color::Cyan)),
+                    Span::raw("Create in isolated worktree"),
+                ]),
+                Line::from(vec![
+                    Span::styled("  Alt+!/@/# ", Style::default().fg(Color::Cyan)),
+                    Span::raw("Worktree + skip permissions"),
+                ]),
+                Line::from(""),
+                Line::from(Span::styled(
                     "Session Actions",
                     Style::default()
                         .fg(Color::Yellow)
@@ -278,13 +301,20 @@ pub fn render_pane_help(frame: &mut Frame, _state: &AppState, pane: PaneHelp) {
                     Span::styled("  p         ", Style::default().fg(Color::Cyan)),
                     Span::raw("Pin/unpin to side panel"),
                 ]),
-                Line::from(vec![
-                    Span::styled("  m         ", Style::default().fg(Color::Cyan)),
-                    Span::raw("Merge worktree changes"),
-                ]),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "Worktree Actions",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                )),
                 Line::from(vec![
                     Span::styled("  w         ", Style::default().fg(Color::Cyan)),
-                    Span::raw("Switch to worktree branch"),
+                    Span::raw("Open terminal in worktree"),
+                ]),
+                Line::from(vec![
+                    Span::styled("  m         ", Style::default().fg(Color::Cyan)),
+                    Span::raw("Merge worktree into main"),
                 ]),
                 Line::from(""),
                 Line::from(Span::styled(

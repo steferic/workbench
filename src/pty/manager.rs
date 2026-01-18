@@ -2,8 +2,6 @@ use anyhow::{Context, Result};
 use portable_pty::{native_pty_system, Child, ChildKiller, CommandBuilder, MasterPty, PtySize, PtySystem};
 use std::io::{Read, Write};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::time::Duration;
 #[cfg(unix)]
 use std::time::Instant;
@@ -220,6 +218,8 @@ impl PtyManager {
                 } else if dangerously_skip_permissions {
                     cmd.arg("--dangerously-bypass-approvals-and-sandbox");
                 }
+                // Try inline mode to avoid alternate screen buffer cursor issues
+                cmd.arg("--no-alt-screen");
             }
             AgentType::Grok => {
                 if dangerously_skip_permissions {
@@ -236,7 +236,18 @@ impl PtyManager {
         }
 
         // Set TERM for proper terminal emulation
-        cmd.env("TERM", "xterm-256color");
+        // Use simpler vt100 for Codex to reduce cursor positioning complexity
+        if matches!(agent_type, AgentType::Codex) {
+            cmd.env("TERM", "vt100");
+        } else {
+            cmd.env("TERM", "xterm-256color");
+        }
+
+        // Set LINES and COLUMNS environment variables
+        // This provides explicit size info that nvim and other apps can use
+        // as a fallback, helping with apps that have startup resize issues
+        cmd.env("LINES", rows.to_string());
+        cmd.env("COLUMNS", cols.to_string());
 
         // Spawn the process
         let child = pair
@@ -260,14 +271,12 @@ impl PtyManager {
         #[cfg(unix)]
         let master_fd = pair.master.as_raw_fd();
 
-        // Flag to ensure we only respond to DSR once per session
-        let dsr_responded = Arc::new(AtomicBool::new(false));
-        let dsr_responded_clone = dsr_responded.clone();
-
         // Spawn async task to read PTY output
         let pty_tx = pty_tx.clone();
         let sid = session_id;
         let pty_rows = rows;
+        // Don't skip DSR for any agent - Codex requires it to function
+        let is_codex = false;
         std::thread::spawn(move || {
             #[cfg(unix)]
             Self::read_pty_output_with_dsr(
@@ -275,9 +284,9 @@ impl PtyManager {
                 &mut reader,
                 pty_tx,
                 master_fd,
-                dsr_responded_clone,
                 pty_rows,
                 child,
+                is_codex,
             );
             #[cfg(not(unix))]
             Self::read_pty_output(sid, &mut reader, pty_tx, child);
@@ -298,9 +307,9 @@ impl PtyManager {
         reader: &mut Box<dyn Read + Send>,
         pty_tx: mpsc::Sender<Action>,
         master_fd: Option<RawFd>,
-        dsr_responded: Arc<AtomicBool>,
-        _rows: u16,
+        pty_rows: u16,
         mut child: Box<dyn Child + Send + Sync>,
+        skip_dsr: bool,
     ) {
         // Terminal query patterns
         const DSR_QUERY: &[u8] = b"\x1b[6n";       // Cursor position query
@@ -310,12 +319,15 @@ impl PtyManager {
         const DA2_QUERY2: &[u8] = b"\x1b[>0c";      // Secondary DA (alternate)
 
         // Responses - use simple VT102 identification
-        // DSR: report cursor at 1,1 (simple, expected position)
-        const DSR_RESPONSE: &[u8] = b"\x1b[1;1R";
         // Primary DA: VT102 (simpler than VT100 with AVO)
         const DA_RESPONSE: &[u8] = b"\x1b[?6c";
         // Secondary DA: VT102 version 1.0 (>0;0;0c format: terminal;firmware;keyboard)
         const DA2_RESPONSE: &[u8] = b"\x1b[>0;0;0c";
+
+        // Track cursor position by parsing escape sequences
+        // Default to bottom of screen where input typically is
+        let mut cursor_row: u16 = pty_rows.max(1);
+        let mut cursor_col: u16 = 1;
 
         let mut buf = [0u8; 4096];
         loop {
@@ -335,6 +347,9 @@ impl PtyManager {
                 Ok(n) => {
                     let mut data = buf[..n].to_vec();
 
+                    // Update cursor position by parsing escape sequences in the data
+                    Self::track_cursor_position(&data, &mut cursor_row, &mut cursor_col, pty_rows);
+
                     // Handle terminal queries
                     if let Some(fd) = master_fd {
                         let has_dsr = data.windows(DSR_QUERY.len()).any(|w| w == DSR_QUERY);
@@ -343,14 +358,19 @@ impl PtyManager {
                         let has_da2 = data.windows(DA2_QUERY.len()).any(|w| w == DA2_QUERY)
                             || data.windows(DA2_QUERY2.len()).any(|w| w == DA2_QUERY2);
 
-                        if has_dsr || has_da || has_da2 {
+                        // For Codex (skip_dsr=true), don't respond to DSR - let it timeout
+                        // and hopefully use a fallback input mode
+                        let should_respond_dsr = has_dsr && !skip_dsr;
+
+                        if should_respond_dsr || has_da || has_da2 {
                             let mut file = std::mem::ManuallyDrop::new(unsafe {
                                 std::fs::File::from_raw_fd(fd)
                             });
 
-                            // Respond to DSR only once (for startup check)
-                            if has_dsr && !dsr_responded.swap(true, Ordering::SeqCst) {
-                                let _ = file.write_all(DSR_RESPONSE);
+                            // Respond to DSR with tracked cursor position (if not skipping)
+                            if should_respond_dsr {
+                                let dsr_response = format!("\x1b[{};{}R", cursor_row, cursor_col);
+                                let _ = file.write_all(dsr_response.as_bytes());
                             }
 
                             // Respond to primary DA
@@ -364,8 +384,10 @@ impl PtyManager {
                             }
 
                             let _ = file.flush();
+                        }
 
-                            // Strip queries from output
+                        // Always strip queries from output (whether we responded or not)
+                        if has_dsr || has_da || has_da2 {
                             data = Self::strip_terminal_queries(&data);
                         }
                     }
@@ -382,6 +404,120 @@ impl PtyManager {
                 }
             }
         }
+    }
+
+    /// Track cursor position by parsing escape sequences
+    #[cfg(unix)]
+    fn track_cursor_position(data: &[u8], row: &mut u16, col: &mut u16, max_rows: u16) {
+        let mut i = 0;
+        while i < data.len() {
+            if data[i] == 0x1b && i + 1 < data.len() && data[i + 1] == b'[' {
+                // Found CSI sequence, parse it
+                let start = i + 2;
+                let mut end = start;
+
+                // Find the end of the sequence (letter character)
+                while end < data.len() && (data[end].is_ascii_digit() || data[end] == b';') {
+                    end += 1;
+                }
+
+                if end < data.len() {
+                    let params = &data[start..end];
+                    let cmd = data[end];
+
+                    match cmd {
+                        // CUP - Cursor Position (ESC[row;colH or ESC[row;colf)
+                        b'H' | b'f' => {
+                            let (r, c) = Self::parse_two_params(params);
+                            *row = r.max(1);
+                            *col = c.max(1);
+                        }
+                        // CUU - Cursor Up (ESC[nA)
+                        b'A' => {
+                            let n = Self::parse_one_param(params).max(1);
+                            *row = row.saturating_sub(n).max(1);
+                        }
+                        // CUD - Cursor Down (ESC[nB)
+                        b'B' => {
+                            let n = Self::parse_one_param(params).max(1);
+                            *row = (*row + n).min(max_rows);
+                        }
+                        // CUF - Cursor Forward (ESC[nC)
+                        b'C' => {
+                            let n = Self::parse_one_param(params).max(1);
+                            *col = *col + n;
+                        }
+                        // CUB - Cursor Backward (ESC[nD)
+                        b'D' => {
+                            let n = Self::parse_one_param(params).max(1);
+                            *col = col.saturating_sub(n).max(1);
+                        }
+                        // CNL - Cursor Next Line (ESC[nE)
+                        b'E' => {
+                            let n = Self::parse_one_param(params).max(1);
+                            *row = (*row + n).min(max_rows);
+                            *col = 1;
+                        }
+                        // CPL - Cursor Previous Line (ESC[nF)
+                        b'F' => {
+                            let n = Self::parse_one_param(params).max(1);
+                            *row = row.saturating_sub(n).max(1);
+                            *col = 1;
+                        }
+                        // CHA - Cursor Horizontal Absolute (ESC[nG)
+                        b'G' => {
+                            *col = Self::parse_one_param(params).max(1);
+                        }
+                        // VPA - Vertical Position Absolute (ESC[nd)
+                        b'd' => {
+                            *row = Self::parse_one_param(params).max(1);
+                        }
+                        _ => {}
+                    }
+                    i = end + 1;
+                    continue;
+                }
+            } else if data[i] == b'\r' {
+                // Carriage return
+                *col = 1;
+            } else if data[i] == b'\n' {
+                // Newline
+                *row = (*row + 1).min(max_rows);
+            } else if data[i] >= 0x20 && data[i] < 0x7f {
+                // Printable character advances cursor
+                *col += 1;
+            }
+            i += 1;
+        }
+    }
+
+    /// Parse a single numeric parameter from CSI sequence
+    #[cfg(unix)]
+    fn parse_one_param(params: &[u8]) -> u16 {
+        if params.is_empty() {
+            return 1;
+        }
+        std::str::from_utf8(params)
+            .ok()
+            .and_then(|s| s.split(';').next())
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1)
+    }
+
+    /// Parse two numeric parameters from CSI sequence (row;col format)
+    #[cfg(unix)]
+    fn parse_two_params(params: &[u8]) -> (u16, u16) {
+        if params.is_empty() {
+            return (1, 1);
+        }
+        let s = match std::str::from_utf8(params) {
+            Ok(s) => s,
+            Err(_) => return (1, 1),
+        };
+        let mut parts = s.split(';');
+        let first = parts.next().and_then(|p| p.parse().ok()).unwrap_or(1);
+        let second = parts.next().and_then(|p| p.parse().ok()).unwrap_or(1);
+        (first, second)
     }
 
     /// Strip terminal query sequences from data
@@ -611,8 +747,7 @@ mod tests {
         tx: mpsc::Sender<Action>,
         child: Box<dyn Child + Send + Sync>,
     ) {
-        let responded = Arc::new(AtomicBool::new(false));
-        PtyManager::read_pty_output_with_dsr(session_id, reader, tx, None, responded, 0, child);
+        PtyManager::read_pty_output_with_dsr(session_id, reader, tx, None, 0, child, false);
     }
 
     #[cfg(not(unix))]

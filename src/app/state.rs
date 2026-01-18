@@ -399,6 +399,9 @@ pub struct UIState {
 
     // Pane-specific help popup
     pub pane_help: Option<PaneHelp>,
+
+    // Debug overlay (F12)
+    pub show_debug_overlay: bool,
 }
 
 impl UIState {
@@ -473,6 +476,7 @@ impl UIState {
             selected_report_idx: 0,
             parallel_task_request_id: 0,
             pane_help: None,
+            show_debug_overlay: false,
         }
     }
 }
@@ -503,7 +507,14 @@ impl AppState {
     }
 
     /// Calculate the inner width for the output pane (for PTY sizing)
+    /// Uses actual rendered area if available, otherwise calculates from ratios
     pub fn output_pane_cols(&self) -> u16 {
+        // Use actual rendered area if available (more accurate due to Layout rounding)
+        if let Some((_, _, width, _)) = self.ui.output_pane_area {
+            return width.saturating_sub(2); // Subtract borders
+        }
+
+        // Fallback to calculated value
         let (w, _) = self.system.terminal_size;
         let right_panel_width = (w as f32 * (1.0 - self.ui.left_panel_ratio)) as u16;
 
@@ -529,10 +540,19 @@ impl AppState {
         }
     }
 
-    /// Calculate rows for PTY (accounts for borders and status bar)
+    /// Calculate rows for PTY (accounts for borders, status bar, and banner)
+    /// Uses actual rendered area if available, otherwise calculates from ratios
     pub fn pane_rows(&self) -> u16 {
+        // Use actual rendered area if available (more accurate due to Layout rounding)
+        if let Some((_, _, _, height)) = self.ui.output_pane_area {
+            return height.saturating_sub(2); // Subtract borders
+        }
+
+        // Fallback to calculated value
         let (_, h) = self.system.terminal_size;
-        h.saturating_sub(4) // Status bar + top/bottom borders
+        // Status bar (1) + pane borders (2) + banner if visible (1)
+        let chrome = if self.ui.banner_visible { 4 } else { 3 };
+        h.saturating_sub(chrome)
     }
 
     pub fn refresh_file_browser(&mut self) {

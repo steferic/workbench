@@ -269,6 +269,13 @@ fn create_session_item<'a>(
         Span::raw("")
     };
 
+    // Dangerous mode indicator (skip permissions)
+    let dangerous_indicator = if session.dangerously_skip_permissions && session.agent_type.is_agent() {
+        Span::styled(" ⚡", Style::default().fg(Color::Rgb(255, 100, 50)))
+    } else {
+        Span::raw("")
+    };
+
     // Show worktree indicator with short ID for parallel or regular worktree sessions
     let branch_indicator = if is_parallel {
         // Get the branch name from the parallel task attempt and extract just the ID
@@ -339,6 +346,7 @@ fn create_session_item<'a>(
         Span::styled(status_icon, Style::default().fg(status_color)),
         Span::raw(" "),
         Span::styled(session.agent_type.display_name().to_string(), name_style),
+        dangerous_indicator,
         branch_indicator,
         pin_indicator,
     ]);

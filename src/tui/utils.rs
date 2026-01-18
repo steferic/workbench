@@ -35,8 +35,14 @@ pub fn render_cursor(
     inner_area: Rect,
     cursor: CursorInfo,
     scroll_offset: usize,
+    force_visible: bool,
 ) {
-    if cursor.hidden || inner_area.width == 0 || inner_area.height == 0 {
+    // Skip if area is empty, but ignore cursor.hidden when force_visible is true
+    // (agents often send hide cursor sequences, but we still want to show it for user input)
+    if inner_area.width == 0 || inner_area.height == 0 {
+        return;
+    }
+    if cursor.hidden && !force_visible {
         return;
     }
 
@@ -135,7 +141,14 @@ pub fn convert_vt100_to_lines(
                     current_text.clear();
                 }
                 current_style = cell_style;
-                current_text.push_str(&char_str);
+
+                // Empty cells must be rendered as spaces to maintain column alignment
+                // This is critical for fullscreen apps like nvim that use cursor positioning
+                if char_str.is_empty() {
+                    current_text.push(' ');
+                } else {
+                    current_text.push_str(&char_str);
+                }
             }
         }
 
@@ -184,6 +197,10 @@ pub fn convert_vt100_cell_style(cell: &vt100::Cell) -> Style {
     }
     if cell.underline() {
         style = style.add_modifier(Modifier::UNDERLINED);
+    }
+    // Inverse video - used by many CLI apps to draw their visual cursor
+    if cell.inverse() {
+        style = style.add_modifier(Modifier::REVERSED);
     }
 
     style
