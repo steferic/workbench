@@ -15,6 +15,18 @@ pub fn process_action(
 ) -> Result<()> {
     match action {
         Action::Quit | Action::ConfirmQuit => {
+            // Kill all active sessions before quitting
+            let handles: Vec<_> = state.system.pty_handles.drain().collect();
+            for (session_id, handle) in handles {
+                // Check if this is a terminal session
+                let is_terminal = state.data.sessions.values()
+                    .flat_map(|sessions| sessions.iter())
+                    .find(|s| s.id == session_id)
+                    .map(|s| s.agent_type.is_terminal())
+                    .unwrap_or(false);
+
+                session::terminate_session_handle(handle, is_terminal);
+            }
             state.system.should_quit = true;
         }
         Action::Tick => {
@@ -209,6 +221,11 @@ pub fn process_action(
                 Action::SelectNextReport | Action::SelectPrevReport |
                 Action::ViewReport | Action::MergeSelectedReport => {
                     parallel::handle_parallel_action(state, action, pty_manager, action_tx, pty_tx)?;
+                }
+
+                // Debug overlay toggle
+                Action::ToggleDebugOverlay => {
+                    state.ui.show_debug_overlay = !state.ui.show_debug_overlay;
                 }
 
                 // Global already handled

@@ -85,23 +85,9 @@ pub async fn run_tui(initial_workspace: Option<PathBuf>) -> Result<()> {
     // Create PTY manager
     let pty_manager = PtyManager::new();
 
-    // Auto-start all sessions in "Working" workspaces
-    start_all_working_sessions(&mut state, &pty_manager, &pty_tx, &action_tx);
-
-    // Auto-activate first agent session in currently selected workspace (if it's Working)
-    if let Some(ws) = state.selected_workspace() {
-        if ws.status == crate::models::WorkspaceStatus::Working {
-            let workspace_id = ws.id;
-            // Find first agent session (not terminal) in this workspace
-            if let Some(sessions) = state.data.sessions.get(&workspace_id) {
-                if let Some(first_agent) = sessions.iter()
-                    .find(|s| !s.agent_type.is_terminal())
-                {
-                    state.ui.active_session_id = Some(first_agent.id);
-                }
-            }
-        }
-    }
+    // NOTE: Session auto-start is deferred to AFTER first render in run_main_loop
+    // This ensures we have accurate pane dimensions from the actual Layout
+    // (nvim and other full-screen apps can't handle resize events during startup)
 
     // Create effects manager for animations
     let mut effects = EffectsManager::new();
@@ -154,9 +140,35 @@ async fn run_main_loop(
     let mut rain_was_playing = false;
     const RAIN_WAV: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/sounds/rainforest_rain.wav");
 
+    // Track if we've done initial session start after first render
+    let mut initial_sessions_started = false;
+
     loop {
         // Draw UI with effects
         terminal.draw(|frame| tui::ui::draw(frame, state, effects))?;
+
+        // After first render, start sessions with accurate pane dimensions
+        // This is critical because nvim and other full-screen apps can't handle
+        // resize events during startup - they lock to the first size they see
+        if !initial_sessions_started && state.ui.output_pane_area.is_some() {
+            start_all_working_sessions(state, pty_manager, &pty_tx, &action_tx);
+
+            // Auto-activate first agent session in currently selected workspace
+            if let Some(ws) = state.selected_workspace() {
+                if ws.status == crate::models::WorkspaceStatus::Working {
+                    let workspace_id = ws.id;
+                    if let Some(sessions) = state.data.sessions.get(&workspace_id) {
+                        if let Some(first_agent) = sessions.iter()
+                            .find(|s| !s.agent_type.is_terminal())
+                        {
+                            state.ui.active_session_id = Some(first_agent.id);
+                        }
+                    }
+                }
+            }
+
+            initial_sessions_started = true;
+        }
 
         // Handle events - batch process multiple PTY outputs to avoid UI starvation
         let action = events.next(state).await?;

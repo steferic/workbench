@@ -6,7 +6,6 @@ pub fn resize_ptys_to_panes(state: &mut AppState) {
     let output_cols = state.output_pane_cols();
     let pinned_cols = state.pinned_pane_cols();
     let rows = state.pane_rows();
-    let parser_rows = 500u16; // Keep large scrollback
 
     // Get all pinned terminal IDs for the current workspace
     let pinned_ids = state.pinned_terminal_ids();
@@ -22,9 +21,10 @@ pub fn resize_ptys_to_panes(state: &mut AppState) {
         // Resize the PTY
         let _ = handle.resize(rows, cols);
 
-        // Resize the vt100 parser
+        // Resize the vt100 parser to match PTY dimensions
+        // This is critical for full-screen apps like nvim that rely on accurate terminal size
         if let Some(parser) = state.system.output_buffers.get_mut(session_id) {
-            parser.set_size(parser_rows, cols);
+            parser.set_size(rows, cols);
         }
     }
 }

@@ -1,6 +1,7 @@
 pub mod banner;
 pub mod create_session_dialog;
 pub mod create_workspace_dialog;
+pub mod debug_overlay;
 pub mod help_popup;
 pub mod merge_confirm_modal;
 pub mod output_pane;

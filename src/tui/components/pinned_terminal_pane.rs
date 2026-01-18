@@ -102,7 +102,16 @@ pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index
 
     if is_focused && state.ui.input_mode == InputMode::Normal && scroll_from_bottom == 0 {
         if let Some(info) = cursor_state {
-            render_cursor(frame, inner_area, info, scroll_offset);
+            // Terminal sessions and Codex need the terminal cursor shown
+            // Claude/Gemini draw their own visual cursor using inverse video
+            let needs_terminal_cursor = state
+                .pinned_terminal_session_at(pane_index)
+                .map(|s| s.agent_type.is_terminal() || matches!(s.agent_type, crate::models::AgentType::Codex))
+                .unwrap_or(false);
+
+            if needs_terminal_cursor {
+                render_cursor(frame, inner_area, info, scroll_offset, true);
+            }
         }
     }
 }

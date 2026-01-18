@@ -203,4 +203,7 @@ pub enum Action {
     Quit,
     Tick,
     Resize(u16, u16),
+
+    // Debug
+    ToggleDebugOverlay,  // F12 - show terminal dimension debug info
 }
