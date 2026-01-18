@@ -254,7 +254,7 @@ fn handle_parallel_worktrees_ready(
 
         let pty_rows = state.pane_rows();
         let cols = state.output_pane_cols();
-        let parser_rows = pty_rows;
+        let parser_rows = 500; // Large buffer for scrollback
         let parser = vt100::Parser::new(parser_rows, cols, 10000);
         state.system.output_buffers.insert(session_id, parser);
 

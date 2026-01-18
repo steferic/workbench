@@ -1,5 +1,5 @@
 use crate::app::{AppState, FocusPanel, InputMode};
-use crate::tui::utils::{convert_vt100_to_lines, get_cursor_info, get_selection_bounds, render_cursor};
+use crate::tui::utils::{convert_vt100_to_lines_with_pane_height, get_cursor_info, get_selection_bounds, render_cursor};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -66,8 +66,10 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
         let viewport_height = inner_area.height as usize;
 
         // Convert vt100 screen to lines
+        // Pass pane height for alternate screen apps (nvim, etc.) to render correctly
         let selection = get_selection_bounds(&state.ui.text_selection, screen.size());
-        let mut lines = convert_vt100_to_lines(screen, selection, cursor_state.row);
+        let pane_height = Some(viewport_height as u16);
+        let mut lines = convert_vt100_to_lines_with_pane_height(screen, selection, cursor_state.row, pane_height);
 
         // Anti-jitter: use high water mark for content length
         let actual_len = lines.len();
