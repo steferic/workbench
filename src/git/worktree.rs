@@ -102,13 +102,11 @@ pub fn create_worktree(
     let _ = create_branch(repo_path, branch_name);
 
     // Create worktree
+    let worktree_str = worktree_path
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("Worktree path contains invalid UTF-8"))?;
     let output = Command::new("git")
-        .args([
-            "worktree",
-            "add",
-            worktree_path.to_str().unwrap(),
-            branch_name,
-        ])
+        .args(["worktree", "add", worktree_str, branch_name])
         .current_dir(repo_path)
         .output()
         .context("Failed to execute git worktree add")?;
@@ -142,13 +140,11 @@ pub fn remove_worktree(
     };
 
     // Remove worktree (force to handle uncommitted changes)
+    let worktree_str = worktree_path
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("Worktree path contains invalid UTF-8"))?;
     let output = Command::new("git")
-        .args([
-            "worktree",
-            "remove",
-            "--force",
-            worktree_path.to_str().unwrap(),
-        ])
+        .args(["worktree", "remove", "--force", worktree_str])
         .current_dir(repo_path)
         .output()
         .context("Failed to execute git worktree remove")?;

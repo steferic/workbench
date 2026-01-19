@@ -265,11 +265,9 @@ async fn run_main_loop(
                         .spawn()
                         .ok();
                 }
-            } else {
-                if let Some(mut child) = ocean_process.take() {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                }
+            } else if let Some(mut child) = ocean_process.take() {
+                let _ = child.kill();
+                let _ = child.wait();
             }
             ocean_was_playing = state.system.ocean_waves_playing;
         }
@@ -286,11 +284,9 @@ async fn run_main_loop(
                         .spawn()
                         .ok();
                 }
-            } else {
-                if let Some(mut child) = chimes_process.take() {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                }
+            } else if let Some(mut child) = chimes_process.take() {
+                let _ = child.kill();
+                let _ = child.wait();
             }
             chimes_was_playing = state.system.wind_chimes_playing;
         }
@@ -307,11 +303,9 @@ async fn run_main_loop(
                         .spawn()
                         .ok();
                 }
-            } else {
-                if let Some(mut child) = rain_process.take() {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                }
+            } else if let Some(mut child) = rain_process.take() {
+                let _ = child.kill();
+                let _ = child.wait();
             }
             rain_was_playing = state.system.rainforest_rain_playing;
         }

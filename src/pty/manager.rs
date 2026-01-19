@@ -445,7 +445,7 @@ impl PtyManager {
                         // CUF - Cursor Forward (ESC[nC)
                         b'C' => {
                             let n = Self::parse_one_param(params).max(1);
-                            *col = *col + n;
+                            *col += n;
                         }
                         // CUB - Cursor Backward (ESC[nD)
                         b'D' => {

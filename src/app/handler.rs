@@ -108,8 +108,7 @@ pub fn process_action(
 
             // Autorun dispatch
             if state.ui.todo_pane_mode == crate::app::TodoPaneMode::Autorun {
-                let idle_sessions = state.data.idle_queue.clone();
-                for session_id in idle_sessions {
+                for &session_id in &state.data.idle_queue {
                     if let Some(workspace_id) = state.workspace_id_for_session(session_id) {
                         let has_in_progress = state.get_workspace(workspace_id)
                             .and_then(|ws| ws.todo_for_session(session_id))

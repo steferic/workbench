@@ -14,7 +14,7 @@ path = "src/main.rs"
 clap = { version = "4.4", features = ["derive", "env"] }
 
 # Async runtime
-tokio = { version = "1.35", features = ["full", "sync", "time", "io-util"] }
+tokio = { version = "1.35", features = ["full"] }
 
 # TUI framework
 ratatui = { version = "0.30", features = ["unstable-widget-ref"] }
@@ -64,8 +64,9 @@ regex = "1.10"
 # Clipboard support
 arboard = "3.4"
 
-# Text area widget for notepad (using PR branch with ratatui 0.30 support)
-tui-textarea = { git = "https://github.com/0xferrous/tui-textarea", branch = "update-ratatui" }
+# Text area widget for notepad (pinned to specific commit for stability)
+# This is from 0xferrous/tui-textarea update-ratatui branch with ratatui 0.30 support
+tui-textarea = { git = "https://github.com/0xferrous/tui-textarea", rev = "a5086767ee0831e319aec9432aaef495d8f280c4" }
 
 [dev-dependencies]
 tempfile = "3.9"
