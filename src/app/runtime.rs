@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use tokio::sync::mpsc;
 
 use super::handler::process_action;
-use super::session_start::start_all_working_sessions;
+use super::session_start::{process_startup_queue, start_all_working_sessions};
 
 pub async fn run_tui(initial_workspace: Option<PathBuf>) -> Result<()> {
     // Initialize terminal
@@ -199,6 +199,11 @@ async fn run_main_loop(
                     break; // No more actions in queue
                 }
             }
+        }
+
+        // Process startup queue (staggered session startup - one per frame)
+        if !state.system.startup_queue.is_empty() {
+            process_startup_queue(state, pty_manager, &pty_tx, &action_tx);
         }
 
         // Sync audio player with state

@@ -1,6 +1,19 @@
+use crate::models::AgentType;
 use crate::pty::PtyHandle;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
+use std::path::PathBuf;
 use uuid::Uuid;
+
+/// Info needed to start a session (for queued startup)
+#[derive(Clone)]
+pub struct PendingSessionStart {
+    pub session_id: Uuid,
+    pub workspace_id: Uuid,
+    pub workspace_path: PathBuf,
+    pub agent_type: AgentType,
+    pub start_command: Option<String>,
+    pub dangerously_skip_permissions: bool,
+}
 
 pub struct SystemState {
     /// PTY handles (not serializable)
@@ -23,6 +36,8 @@ pub struct SystemState {
     pub wind_chimes_playing: bool,
     /// Rainforest rain sound state
     pub rainforest_rain_playing: bool,
+    /// Queue of sessions waiting to be started (for staggered startup)
+    pub startup_queue: VecDeque<PendingSessionStart>,
 }
 
 impl SystemState {
@@ -38,6 +53,7 @@ impl SystemState {
             ocean_waves_playing: false,
             wind_chimes_playing: false,
             rainforest_rain_playing: false,
+            startup_queue: VecDeque::new(),
         }
     }
 }

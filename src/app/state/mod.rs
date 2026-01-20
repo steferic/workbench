@@ -5,7 +5,7 @@ mod types;
 mod ui;
 
 pub use data::DataState;
-pub use system::SystemState;
+pub use system::{PendingSessionStart, SystemState};
 pub use types::*;
 pub use ui::UIState;
 
@@ -360,6 +360,11 @@ impl AppState {
         } else {
             false
         }
+    }
+
+    /// Check if a workspace has sessions waiting to start in the startup queue
+    pub fn is_workspace_loading(&self, workspace_id: Uuid) -> bool {
+        self.system.startup_queue.iter().any(|p| p.workspace_id == workspace_id)
     }
 
     /// Get spinner character for animation

@@ -1,5 +1,5 @@
 use crate::app::{AppState, FocusPanel, InputMode};
-use crate::tui::utils::{convert_vt100_to_lines_visible, get_cursor_info, get_selection_bounds, render_cursor};
+use crate::tui::utils::{convert_vt100_to_lines_visible, get_content_length, get_cursor_info, get_selection_bounds, render_cursor};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -64,12 +64,16 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
         let cursor_state = get_cursor_info(screen);
         let inner_area = block.inner(area);
         let viewport_height = inner_area.height as usize;
-        let (rows, _cols) = screen.size();
         let is_alternate = screen.alternate_screen();
         let screen_size = screen.size();
 
-        // Get total content length first (before conversion)
-        let total_rows = if is_alternate { viewport_height } else { rows as usize };
+        // Get actual content length (not the fixed buffer size)
+        // For alternate screen mode (nvim, etc.), use viewport height
+        let total_rows = if is_alternate {
+            viewport_height
+        } else {
+            get_content_length(screen, cursor_state.row)
+        };
 
         // Anti-jitter: use high water mark for content length
         let prev_len = state.ui.output_content_length;

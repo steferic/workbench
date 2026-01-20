@@ -30,6 +30,30 @@ pub fn get_cursor_info(screen: &vt100::Screen) -> CursorInfo {
     }
 }
 
+/// Calculate the actual content length (last non-empty row + 1)
+/// This scans from the bottom to find content, which is efficient for sparse buffers
+pub fn get_content_length(screen: &vt100::Screen, cursor_row: u16) -> usize {
+    let (rows, cols) = screen.size();
+
+    // Start from the bottom and find the first non-empty row
+    for row in (0..rows).rev() {
+        // Check if this row has any non-empty cells
+        for col in 0..cols {
+            if let Some(cell) = screen.cell(row, col) {
+                let contents = cell.contents();
+                if !contents.is_empty() && contents != " " {
+                    // Found content, return row + 1 as the length
+                    // But ensure we include at least up to the cursor position
+                    return (row as usize + 1).max(cursor_row as usize + 1);
+                }
+            }
+        }
+    }
+
+    // No content found, return at least cursor position + 1
+    (cursor_row as usize + 1).max(1)
+}
+
 pub fn render_cursor(
     frame: &mut Frame,
     inner_area: Rect,

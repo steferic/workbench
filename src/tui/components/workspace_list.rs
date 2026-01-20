@@ -180,8 +180,17 @@ fn create_workspace_item<'a>(
 
     let prefix = if is_selected { "> " } else { "  " };
 
-    // Working indicator (spinner) when any agent in workspace is working
-    let working_indicator = if is_working && !is_paused {
+    // Check if workspace is loading (has pending sessions in startup queue)
+    let is_loading = state.is_workspace_loading(ws.id);
+
+    // Working/Loading indicator (spinner)
+    // Blue = loading (sessions starting up), Yellow = working (actively processing)
+    let working_indicator = if is_loading && !is_paused {
+        Span::styled(
+            format!("{} ", state.spinner_char()),
+            Style::default().fg(Color::Blue),
+        )
+    } else if is_working && !is_paused {
         Span::styled(
             format!("{} ", state.spinner_char()),
             Style::default().fg(Color::Yellow),
