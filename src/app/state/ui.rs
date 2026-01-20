@@ -35,6 +35,7 @@ pub struct UIState {
     // Selection & Areas
     pub text_selection: TextSelection,
     pub pinned_text_selections: [TextSelection; MAX_PINNED_TERMINALS],
+    pub drag_mouse_pos: Option<(u16, u16)>,  // Track mouse position during text selection drag for smooth scrolling
     pub output_pane_area: Option<(u16, u16, u16, u16)>,
     pub pinned_pane_areas: [Option<(u16, u16, u16, u16)>; MAX_PINNED_TERMINALS],
     pub workspace_area: Option<(u16, u16, u16, u16)>,
@@ -123,6 +124,7 @@ impl UIState {
             file_browser_query: String::new(),
             text_selection: TextSelection::default(),
             pinned_text_selections: [TextSelection::default(); MAX_PINNED_TERMINALS],
+            drag_mouse_pos: None,
             output_pane_area: None,
             pinned_pane_areas: [None; MAX_PINNED_TERMINALS],
             workspace_area: None,

@@ -31,6 +31,7 @@ pub fn process_action(
         }
         Action::Tick => {
             state.tick_animation();
+            navigation::handle_drag_auto_scroll(state);
             let newly_idle = state.update_idle_queue();
 
             // Check if analyzer session went idle

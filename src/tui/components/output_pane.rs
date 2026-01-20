@@ -1,5 +1,5 @@
 use crate::app::{AppState, FocusPanel, InputMode};
-use crate::tui::utils::{convert_vt100_to_lines_with_pane_height, get_cursor_info, get_selection_bounds, render_cursor};
+use crate::tui::utils::{convert_vt100_to_lines_visible, get_cursor_info, get_selection_bounds, render_cursor};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -64,37 +64,54 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
         let cursor_state = get_cursor_info(screen);
         let inner_area = block.inner(area);
         let viewport_height = inner_area.height as usize;
+        let (rows, _cols) = screen.size();
+        let is_alternate = screen.alternate_screen();
+        let screen_size = screen.size();
 
-        // Convert vt100 screen to lines
-        // Pass pane height for alternate screen apps (nvim, etc.) to render correctly
-        let selection = get_selection_bounds(&state.ui.text_selection, screen.size());
-        let pane_height = Some(viewport_height as u16);
-        let mut lines = convert_vt100_to_lines_with_pane_height(screen, selection, cursor_state.row, pane_height);
+        // Get total content length first (before conversion)
+        let total_rows = if is_alternate { viewport_height } else { rows as usize };
 
         // Anti-jitter: use high water mark for content length
-        let actual_len = lines.len();
         let prev_len = state.ui.output_content_length;
-        let stable_len = if actual_len >= prev_len {
-            actual_len
-        } else if prev_len - actual_len >= 20 {
+        let stable_len = if total_rows >= prev_len {
+            total_rows
+        } else if prev_len - total_rows >= 20 {
             // Major shrinkage (screen clear) - reset
-            actual_len
+            total_rows
         } else {
             // Keep high water mark for scroll stability
             prev_len
         };
-        state.ui.output_content_length = stable_len;
 
-        // Always pad to stable_len so the lines vector has consistent size
-        // This prevents flickering from lines appearing/disappearing
+        // Calculate scroll BEFORE conversion
+        let max_scroll = stable_len.saturating_sub(viewport_height);
+        let scroll_from_bottom = (state.ui.output_scroll_offset as usize).min(max_scroll);
+        let scroll_offset = max_scroll.saturating_sub(scroll_from_bottom);
+
+        // OPTIMIZATION: Only convert visible lines (with small buffer for smoothness)
+        let buffer_lines = 5; // Extra lines above/below for smooth scrolling
+        let visible_start = scroll_offset.saturating_sub(buffer_lines);
+        let visible_count = viewport_height + buffer_lines * 2;
+
+        let selection = get_selection_bounds(&state.ui.text_selection, screen_size);
+        let pane_height = Some(viewport_height as u16);
+        let mut lines = convert_vt100_to_lines_visible(
+            screen,
+            selection,
+            cursor_state.row,
+            pane_height,
+            Some(visible_start),
+            Some(visible_count),
+        );
+
+        // Pad to stable_len for consistent scroll behavior
         while lines.len() < stable_len {
             lines.push(Line::raw(""));
         }
 
-        // Use stable_len for scroll calculations
-        let max_scroll = stable_len.saturating_sub(viewport_height);
-        let scroll_from_bottom = (state.ui.output_scroll_offset as usize).min(max_scroll);
-        let scroll_offset = max_scroll.saturating_sub(scroll_from_bottom);
+        // Update state after parser borrow is done
+        let _ = parser;
+        state.ui.output_content_length = stable_len;
 
         // Show scroll indicator in title if scrolled
         let title = if scroll_from_bottom > 0 {

@@ -1,4 +1,4 @@
-use crate::app::{Action, AppState, FocusPanel, InputMode, PendingDelete};
+use crate::app::{Action, AppState, FocusPanel, InputMode, PendingDelete, TERMINAL_BUFFER_ROWS, TERMINAL_SCROLLBACK_LIMIT};
 use crate::git;
 use crate::models::{AgentType, AttemptStatus, Session};
 use crate::persistence;
@@ -76,8 +76,7 @@ pub fn handle_session_action(
 
                 let pty_rows = state.pane_rows();
                 let cols = state.output_pane_cols();
-                let parser_rows = 500; // Large buffer for scrollback
-                let parser = vt100::Parser::new(parser_rows, cols, 10000);
+                let parser = vt100::Parser::new(TERMINAL_BUFFER_ROWS, cols, TERMINAL_SCROLLBACK_LIMIT);
                 state.system.output_buffers.insert(session_id, parser);
 
                 match pty_manager.spawn_session(
@@ -129,8 +128,7 @@ pub fn handle_session_action(
 
                 let pty_rows = state.pane_rows();
                 let cols = state.output_pane_cols();
-                let parser_rows = 500; // Large buffer for scrollback
-                let parser = vt100::Parser::new(parser_rows, cols, 10000);
+                let parser = vt100::Parser::new(TERMINAL_BUFFER_ROWS, cols, TERMINAL_SCROLLBACK_LIMIT);
                 state.system.output_buffers.insert(session_id, parser);
 
                 match pty_manager.spawn_session(

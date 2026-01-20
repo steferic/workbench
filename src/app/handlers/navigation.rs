@@ -545,10 +545,14 @@ pub fn handle_navigation_action(
                 return Ok(());
             }
 
+            // Store mouse position for tick-based smooth scrolling
+            state.ui.drag_mouse_pos = Some((x, y));
+
+            // Update selection end position for main output pane
             if state.ui.text_selection.is_dragging {
-                if let Some(area) = state.ui.output_pane_area {
+                if let Some((ax, ay, aw, ah)) = state.ui.output_pane_area {
                     if let Some((row, col)) = pane_text_position(
-                        area,
+                        (ax, ay, aw, ah),
                         x,
                         y,
                         state.ui.output_content_length,
@@ -559,11 +563,12 @@ pub fn handle_navigation_action(
                 }
             }
 
+            // Update selection end position for pinned panes
             for (idx, sel) in state.ui.pinned_text_selections.iter_mut().enumerate() {
                 if sel.is_dragging {
-                    if let Some(area) = state.ui.pinned_pane_areas[idx] {
+                    if let Some((ax, ay, aw, ah)) = state.ui.pinned_pane_areas[idx] {
                         if let Some((row, col)) = pane_text_position(
-                            area,
+                            (ax, ay, aw, ah),
                             x,
                             y,
                             state.ui.pinned_content_lengths[idx],
@@ -629,6 +634,9 @@ pub fn handle_navigation_action(
                     }
                 }
             }
+
+            // Clear drag position tracking
+            state.ui.drag_mouse_pos = None;
         }
         Action::CopySelection => {
             let _ = copy_active_selection(state);
@@ -756,4 +764,120 @@ pub fn handle_navigation_action(
         _ => {}
     }
     Ok(())
+}
+
+/// Handle smooth auto-scrolling during text selection drag.
+/// Called on each tick to provide continuous scrolling when cursor is near pane edges.
+/// Uses acceleration: the closer to the edge, the faster the scroll.
+pub fn handle_drag_auto_scroll(state: &mut AppState) {
+    // Edge zone where scrolling activates (in rows from edge)
+    const SCROLL_EDGE_ZONE: u16 = 5;
+    // Base scroll speed (lines per tick)
+    const BASE_SCROLL_SPEED: u16 = 2;
+    // Max scroll speed when at the very edge
+    const MAX_SCROLL_SPEED: u16 = 8;
+
+    let Some((mouse_x, mouse_y)) = state.ui.drag_mouse_pos else {
+        return;
+    };
+
+    // Calculate scroll speed based on distance from edge (acceleration)
+    // Returns (should_scroll_up, should_scroll_down, speed)
+    let calc_scroll = |y: u16, pane_top: u16, pane_bottom: u16| -> (bool, bool, u16) {
+        let top_threshold = pane_top.saturating_add(SCROLL_EDGE_ZONE);
+        let bottom_threshold = pane_bottom.saturating_sub(SCROLL_EDGE_ZONE);
+
+        if y < top_threshold {
+            // In top edge zone - scroll up
+            // Speed increases as we get closer to the edge
+            let distance_from_edge = y.saturating_sub(pane_top);
+            let speed = if distance_from_edge == 0 {
+                MAX_SCROLL_SPEED
+            } else {
+                let ratio = (SCROLL_EDGE_ZONE.saturating_sub(distance_from_edge)) as f32 / SCROLL_EDGE_ZONE as f32;
+                (BASE_SCROLL_SPEED as f32 + (MAX_SCROLL_SPEED - BASE_SCROLL_SPEED) as f32 * ratio) as u16
+            };
+            (true, false, speed.max(BASE_SCROLL_SPEED))
+        } else if y >= bottom_threshold {
+            // In bottom edge zone - scroll down
+            let distance_from_edge = pane_bottom.saturating_sub(y);
+            let speed = if distance_from_edge == 0 {
+                MAX_SCROLL_SPEED
+            } else {
+                let ratio = (SCROLL_EDGE_ZONE.saturating_sub(distance_from_edge)) as f32 / SCROLL_EDGE_ZONE as f32;
+                (BASE_SCROLL_SPEED as f32 + (MAX_SCROLL_SPEED - BASE_SCROLL_SPEED) as f32 * ratio) as u16
+            };
+            (false, true, speed.max(BASE_SCROLL_SPEED))
+        } else {
+            (false, false, 0)
+        }
+    };
+
+    // Handle main output pane auto-scroll
+    if state.ui.text_selection.is_dragging {
+        if let Some((ax, ay, aw, ah)) = state.ui.output_pane_area {
+            let pane_top = ay;
+            let pane_bottom = ay.saturating_add(ah);
+            let (scroll_up, scroll_down, speed) = calc_scroll(mouse_y, pane_top, pane_bottom);
+
+            if scroll_up {
+                state.ui.output_scroll_offset = state.ui.output_scroll_offset.saturating_add(speed);
+                if let Some((row, col)) = pane_text_position(
+                    (ax, ay, aw, ah),
+                    mouse_x,
+                    mouse_y,
+                    state.ui.output_content_length,
+                    state.ui.output_scroll_offset,
+                ) {
+                    state.ui.text_selection.end = Some((row, col));
+                }
+            } else if scroll_down {
+                state.ui.output_scroll_offset = state.ui.output_scroll_offset.saturating_sub(speed);
+                if let Some((row, col)) = pane_text_position(
+                    (ax, ay, aw, ah),
+                    mouse_x,
+                    mouse_y,
+                    state.ui.output_content_length,
+                    state.ui.output_scroll_offset,
+                ) {
+                    state.ui.text_selection.end = Some((row, col));
+                }
+            }
+        }
+    }
+
+    // Handle pinned panes auto-scroll
+    for idx in 0..state.ui.pinned_text_selections.len() {
+        if state.ui.pinned_text_selections[idx].is_dragging {
+            if let Some((ax, ay, aw, ah)) = state.ui.pinned_pane_areas[idx] {
+                let pane_top = ay;
+                let pane_bottom = ay.saturating_add(ah);
+                let (scroll_up, scroll_down, speed) = calc_scroll(mouse_y, pane_top, pane_bottom);
+
+                if scroll_up {
+                    state.ui.pinned_scroll_offsets[idx] = state.ui.pinned_scroll_offsets[idx].saturating_add(speed);
+                    if let Some((row, col)) = pane_text_position(
+                        (ax, ay, aw, ah),
+                        mouse_x,
+                        mouse_y,
+                        state.ui.pinned_content_lengths[idx],
+                        state.ui.pinned_scroll_offsets[idx],
+                    ) {
+                        state.ui.pinned_text_selections[idx].end = Some((row, col));
+                    }
+                } else if scroll_down {
+                    state.ui.pinned_scroll_offsets[idx] = state.ui.pinned_scroll_offsets[idx].saturating_sub(speed);
+                    if let Some((row, col)) = pane_text_position(
+                        (ax, ay, aw, ah),
+                        mouse_x,
+                        mouse_y,
+                        state.ui.pinned_content_lengths[idx],
+                        state.ui.pinned_scroll_offsets[idx],
+                    ) {
+                        state.ui.pinned_text_selections[idx].end = Some((row, col));
+                    }
+                }
+            }
+        }
+    }
 }

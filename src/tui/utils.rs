@@ -126,6 +126,18 @@ pub fn convert_vt100_to_lines_with_pane_height(
     cursor_row: u16,
     pane_height: Option<u16>,
 ) -> Vec<Line<'static>> {
+    convert_vt100_to_lines_visible(screen, selection, cursor_row, pane_height, None, None)
+}
+
+/// Optimized version that only converts visible lines based on scroll offset
+pub fn convert_vt100_to_lines_visible(
+    screen: &vt100::Screen,
+    selection: Option<SelectionBounds>,
+    cursor_row: u16,
+    pane_height: Option<u16>,
+    visible_start: Option<usize>,
+    visible_count: Option<usize>,
+) -> Vec<Line<'static>> {
     let mut all_lines = Vec::new();
     let (rows, cols) = screen.size();
 
@@ -140,7 +152,21 @@ pub fn convert_vt100_to_lines_with_pane_height(
         rows
     };
 
-    for row in 0..rows_to_render {
+    // Optimization: if visible range is specified, only convert those rows
+    let (start_row, end_row) = if let (Some(start), Some(count)) = (visible_start, visible_count) {
+        let start = start.min(rows_to_render as usize);
+        let end = (start + count).min(rows_to_render as usize);
+        (start as u16, end as u16)
+    } else {
+        (0, rows_to_render)
+    };
+
+    // If we're skipping rows, add empty lines as placeholders for scroll offset calculation
+    for _ in 0..start_row {
+        all_lines.push(Line::raw(""));
+    }
+
+    for row in start_row..end_row {
         let mut spans = Vec::new();
         let mut current_text = String::new();
         let mut current_style = Style::default();

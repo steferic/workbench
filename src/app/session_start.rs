@@ -1,4 +1,4 @@
-use crate::app::{Action, AppState};
+use crate::app::{Action, AppState, TERMINAL_BUFFER_ROWS, TERMINAL_SCROLLBACK_LIMIT};
 use crate::models::{AgentType, SessionStatus, WorkspaceStatus};
 use crate::persistence;
 use crate::pty::PtyManager;
@@ -37,12 +37,12 @@ pub fn start_workspace_sessions(
     // Calculate PTY size
     let pty_rows = state.pane_rows();
     let cols = state.output_pane_cols();
-    let parser_rows = 500; // Large buffer for scrollback
+    let parser_rows = TERMINAL_BUFFER_ROWS;
 
     // Start each stopped session
     for (session_id, agent_type, dangerously_skip_permissions) in stopped_sessions {
         // Create vt100 parser
-        let parser = vt100::Parser::new(parser_rows, cols, 10000);
+        let parser = vt100::Parser::new(parser_rows, cols, TERMINAL_SCROLLBACK_LIMIT);
         state.system.output_buffers.insert(session_id, parser);
 
         // Spawn PTY with resume flag for agents (not terminals)
@@ -120,12 +120,12 @@ pub fn start_all_working_sessions(
         // Calculate PTY size
         let pty_rows = state.pane_rows();
         let cols = state.output_pane_cols();
-        let parser_rows = 500; // Large buffer for scrollback
+        let parser_rows = TERMINAL_BUFFER_ROWS;
 
         // Start each stopped session
         for (session_id, agent_type, start_command, dangerously_skip_permissions) in stopped_sessions {
             // Create vt100 parser
-            let parser = vt100::Parser::new(parser_rows, cols, 10000);
+            let parser = vt100::Parser::new(parser_rows, cols, TERMINAL_SCROLLBACK_LIMIT);
             state.system.output_buffers.insert(session_id, parser);
 
             // Spawn PTY with resume flag for agents (not terminals)
