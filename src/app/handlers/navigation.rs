@@ -227,6 +227,11 @@ pub fn handle_navigation_action(
                 .collect();
 
             if !working_indices.is_empty() {
+                // Save current active session to current workspace before switching
+                if let Some(current_ws) = state.data.workspaces.get_mut(state.ui.selected_workspace_idx) {
+                    current_ws.last_active_session_id = state.ui.active_session_id;
+                }
+
                 // Find current position in the working list
                 let current_pos = working_indices.iter()
                     .position(|&idx| idx == state.ui.selected_workspace_idx);
@@ -239,22 +244,38 @@ pub fn handle_navigation_action(
 
                 state.ui.selected_workspace_idx = next_idx;
 
-                // Activate the first agent session in the new workspace (skip terminals)
+                // Restore the last active session for this workspace, or fall back to first agent
                 if let Some(ws) = state.data.workspaces.get(next_idx) {
-                    if let Some(sessions) = state.data.sessions.get(&ws.id) {
-                        // Find the first agent (non-terminal) session
-                        let first_agent = sessions.iter()
-                            .enumerate()
-                            .find(|(_, s)| !s.agent_type.is_terminal());
+                    let ws_id = ws.id;
+                    let last_session_id = ws.last_active_session_id;
 
-                        if let Some((idx, session)) = first_agent {
+                    if let Some(sessions) = state.data.sessions.get(&ws_id) {
+                        // Try to restore the last active session
+                        let restored = last_session_id.and_then(|last_id| {
+                            sessions.iter()
+                                .enumerate()
+                                .find(|(_, s)| s.id == last_id)
+                        });
+
+                        if let Some((idx, session)) = restored {
                             state.ui.selected_session_idx = idx;
                             state.ui.active_session_id = Some(session.id);
                             state.ui.output_scroll_offset = 0;
                         } else {
-                            // No agents, reset to default
-                            state.ui.selected_session_idx = 0;
-                            state.ui.active_session_id = None;
+                            // Fall back to first agent (non-terminal) session
+                            let first_agent = sessions.iter()
+                                .enumerate()
+                                .find(|(_, s)| !s.agent_type.is_terminal());
+
+                            if let Some((idx, session)) = first_agent {
+                                state.ui.selected_session_idx = idx;
+                                state.ui.active_session_id = Some(session.id);
+                                state.ui.output_scroll_offset = 0;
+                            } else {
+                                // No agents, reset to default
+                                state.ui.selected_session_idx = 0;
+                                state.ui.active_session_id = None;
+                            }
                         }
                     } else {
                         // No sessions at all

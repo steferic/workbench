@@ -163,6 +163,11 @@ pub fn handle_session_action(
             state.ui.active_session_id = Some(session_id);
             state.ui.output_scroll_offset = 0;
             state.ui.output_content_length = 0;
+
+            // Save as last active session for the workspace
+            if let Some(ws) = state.selected_workspace_mut() {
+                ws.last_active_session_id = Some(session_id);
+            }
         }
         Action::RestartSession(session_id) => {
             let session_info = state.data.sessions.values().flatten()

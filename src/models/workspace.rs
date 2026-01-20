@@ -39,6 +39,9 @@ pub struct Workspace {
     /// Currently active worktree session ID (None = viewing main branch)
     #[serde(default)]
     pub active_worktree_session_id: Option<Uuid>,
+    /// Last active session ID for this workspace (restored when switching back)
+    #[serde(default)]
+    pub last_active_session_id: Option<Uuid>,
 }
 
 impl Workspace {
@@ -55,6 +58,7 @@ impl Workspace {
             todos: Vec::new(),
             parallel_tasks: Vec::new(),
             active_worktree_session_id: None,
+            last_active_session_id: None,
         }
     }
 
