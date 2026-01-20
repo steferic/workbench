@@ -111,6 +111,20 @@ pub fn load() -> Result<PersistedState> {
         }
     }
 
+    // Clean up orphaned active_worktree_session_id references
+    // (can happen if session was deleted without clearing the workspace reference)
+    for workspace in state.workspaces.iter_mut() {
+        if let Some(worktree_session_id) = workspace.active_worktree_session_id {
+            let session_exists = state.sessions
+                .get(&workspace.id)
+                .map(|sessions| sessions.iter().any(|s| s.id == worktree_session_id))
+                .unwrap_or(false);
+            if !session_exists {
+                workspace.active_worktree_session_id = None;
+            }
+        }
+    }
+
     Ok(state)
 }
 

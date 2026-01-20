@@ -336,8 +336,8 @@ impl PtyManager {
                     // EOF - process exited; wait for real exit status
                     let exit_code = match child.wait() {
                         Ok(status) => status.exit_code() as i32,
-                        Err(e) => {
-                            eprintln!("Failed to wait for session {}: {}", session_id, e);
+                        Err(_e) => {
+                            // Don't use eprintln! in TUI - it corrupts the display
                             1
                         }
                     };
@@ -397,8 +397,8 @@ impl PtyManager {
                             break;
                         }
                 }
-                Err(e) => {
-                    eprintln!("PTY read error for session {}: {}", session_id, e);
+                Err(_e) => {
+                    // Don't use eprintln! in TUI - it corrupts the display
                     let _ = pty_tx.blocking_send(Action::SessionExited(session_id, 1));
                     break;
                 }
@@ -575,8 +575,8 @@ impl PtyManager {
                 Ok(0) => {
                     let exit_code = match child.wait() {
                         Ok(status) => status.exit_code() as i32,
-                        Err(e) => {
-                            eprintln!("Failed to wait for session {}: {}", session_id, e);
+                        Err(_e) => {
+                            // Don't use eprintln! in TUI - it corrupts the display
                             1
                         }
                     };
@@ -589,8 +589,8 @@ impl PtyManager {
                         break;
                     }
                 }
-                Err(e) => {
-                    eprintln!("PTY read error for session {}: {}", session_id, e);
+                Err(_e) => {
+                    // Don't use eprintln! in TUI - it corrupts the display
                     let _ = pty_tx.blocking_send(Action::SessionExited(session_id, 1));
                     break;
                 }

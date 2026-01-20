@@ -64,9 +64,13 @@ pub fn start_workspace_sessions(
                     session.status = SessionStatus::Running;
                 }
             }
-            Err(e) => {
-                eprintln!("Failed to start session: {}", e);
+            Err(_e) => {
+                // Don't use eprintln! in TUI - it corrupts the display
+                // Mark session as errored so user sees it failed
                 state.system.output_buffers.remove(&session_id);
+                if let Some(session) = state.get_session_mut(session_id) {
+                    session.mark_errored();
+                }
             }
         }
     }
@@ -159,9 +163,13 @@ pub fn start_all_working_sessions(
                         }
                     }
                 }
-                Err(e) => {
-                    eprintln!("Failed to auto-start session: {}", e);
+                Err(_e) => {
+                    // Don't use eprintln! in TUI - it corrupts the display
+                    // Mark session as errored so user sees it failed
                     state.system.output_buffers.remove(&session_id);
+                    if let Some(session) = state.get_session_mut(session_id) {
+                        session.mark_errored();
+                    }
                 }
             }
         }

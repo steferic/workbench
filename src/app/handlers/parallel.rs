@@ -58,9 +58,10 @@ pub fn handle_parallel_action(
                 worktrees,
             )?;
         }
-        Action::ParallelWorktreesFailed { request_id, error } => {
+        Action::ParallelWorktreesFailed { request_id, error: _error } => {
             if request_id == state.ui.parallel_task_request_id {
-                eprintln!("Failed to prepare parallel task: {}", error);
+                // Don't use eprintln! in TUI - it corrupts the display
+                // TODO: Add proper notification system for user feedback
             }
         }
         Action::ParallelMergeFinished { plan, error } => {
@@ -403,8 +404,9 @@ fn handle_parallel_merge_finished(
     plan: ParallelMergePlan,
     error: Option<String>,
 ) -> Result<()> {
-    if let Some(error) = error {
-        eprintln!("Failed to merge parallel task: {}", error);
+    if error.is_some() {
+        // Don't use eprintln! in TUI - it corrupts the display
+        // TODO: Add proper notification system for user feedback
         return Ok(());
     }
 

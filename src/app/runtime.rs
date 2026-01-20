@@ -35,8 +35,9 @@ pub async fn run_tui(initial_workspace: Option<PathBuf>) -> Result<()> {
                 state.ui.selected_workspace_idx = first_idx;
             }
         }
-        Err(e) => {
-            eprintln!("Warning: Could not load saved state: {}", e);
+        Err(_e) => {
+            // Don't use eprintln! in TUI - it corrupts the display
+            // Failed to load saved state, will start fresh
         }
     }
 
@@ -51,8 +52,9 @@ pub async fn run_tui(initial_workspace: Option<PathBuf>) -> Result<()> {
             state.ui.todos_ratio = config.todos_ratio;
             state.ui.output_split_ratio = config.output_split_ratio;
         }
-        Err(e) => {
-            eprintln!("Warning: Could not load config: {}", e);
+        Err(_e) => {
+            // Don't use eprintln! in TUI - it corrupts the display
+            // Failed to load config, will use defaults
         }
     }
 

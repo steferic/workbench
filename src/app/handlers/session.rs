@@ -57,8 +57,8 @@ pub fn handle_session_action(
                             session.id = temp_id;
                             (session, worktree_path)
                         }
-                        Err(e) => {
-                            eprintln!("Failed to create worktree, falling back to workspace: {}", e);
+                        Err(_e) => {
+                            // Don't use eprintln! in TUI - it corrupts the display
                             // Fallback to regular session in workspace
                             (Session::new(workspace_id, agent_type.clone(), dangerously_skip_permissions), workspace_path.clone())
                         }
@@ -100,8 +100,9 @@ pub fn handle_session_action(
                         }
                         let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
                     }
-                    Err(e) => {
-                        eprintln!("Failed to spawn session: {}", e);
+                    Err(_e) => {
+                        // Don't use eprintln! in TUI - it corrupts the display
+                        // Session was not added to state, just clean up the buffer
                         state.system.output_buffers.remove(&session_id);
                     }
                 }
@@ -152,8 +153,9 @@ pub fn handle_session_action(
                         }
                         let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
                     }
-                    Err(e) => {
-                        eprintln!("Failed to spawn terminal: {}", e);
+                    Err(_e) => {
+                        // Don't use eprintln! in TUI - it corrupts the display
+                        // Session was not added to state, just clean up the buffer
                         state.system.output_buffers.remove(&session_id);
                     }
                 }
@@ -229,9 +231,13 @@ pub fn handle_session_action(
                             }
                             let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
                         }
-                        Err(e) => {
-                            eprintln!("Failed to restart session: {}", e);
+                        Err(_e) => {
+                            // Don't use eprintln! in TUI - it corrupts the display
+                            // Mark session as errored so user sees it failed
                             state.system.output_buffers.remove(&session_id);
+                            if let Some(session) = state.get_session_mut(session_id) {
+                                session.mark_errored();
+                            }
                         }
                     }
                 }
@@ -385,12 +391,13 @@ pub fn handle_session_action(
 
                 // Check if main workspace is clean before merging
                 if !git::is_clean(&workspace_path).unwrap_or(false) {
-                    eprintln!("Cannot merge: main workspace has uncommitted changes. Commit or stash them first.");
+                    // Don't use eprintln! in TUI - it corrupts the display
+                    // TODO: Add proper notification system for user feedback
                     return Ok(());
                 }
 
                 // No uncommitted changes - proceed with merge directly
-                let main_branch = git::get_current_branch(&workspace_path)
+                let _main_branch = git::get_current_branch(&workspace_path)
                     .unwrap_or_else(|_| "main".to_string());
 
                 // Perform the merge
@@ -406,10 +413,12 @@ pub fn handle_session_action(
                         }
 
                         let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
-                        eprintln!("Successfully merged {} into {}", branch_name, main_branch);
+                        // Don't use eprintln! in TUI - it corrupts the display
+                        // Merge successful
                     }
-                    Err(e) => {
-                        eprintln!("Merge failed: {}. Resolve conflicts manually in the worktree.", e);
+                    Err(_e) => {
+                        // Don't use eprintln! in TUI - it corrupts the display
+                        // TODO: Add proper notification system for user feedback
                     }
                 }
             }
@@ -442,21 +451,23 @@ pub fn handle_session_action(
                 if let Some((workspace_path, worktree_path, branch_name, agent_name)) = merge_info {
                     // Check if main workspace is clean before merging
                     if !git::is_clean(&workspace_path).unwrap_or(false) {
-                        eprintln!("Cannot merge: main workspace has uncommitted changes. Commit or stash them first.");
+                        // Don't use eprintln! in TUI - it corrupts the display
+                        // TODO: Add proper notification system for user feedback
                         state.ui.input_mode = InputMode::Normal;
                         return Ok(());
                     }
 
                     // Commit all changes first
                     let commit_msg = format!("Agent {} work - auto-committed for merge", agent_name);
-                    if let Err(e) = git::commit_all_changes(&worktree_path, &commit_msg) {
-                        eprintln!("Failed to commit changes: {}", e);
+                    if let Err(_e) = git::commit_all_changes(&worktree_path, &commit_msg) {
+                        // Don't use eprintln! in TUI - it corrupts the display
+                        // TODO: Add proper notification system for user feedback
                         state.ui.input_mode = InputMode::Normal;
                         return Ok(());
                     }
 
                     // Get the main branch name
-                    let main_branch = git::get_current_branch(&workspace_path)
+                    let _main_branch = git::get_current_branch(&workspace_path)
                         .unwrap_or_else(|_| "main".to_string());
 
                     // Perform the merge
@@ -472,10 +483,12 @@ pub fn handle_session_action(
                             }
 
                             let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
-                            eprintln!("Successfully committed and merged {} into {}", branch_name, main_branch);
+                            // Don't use eprintln! in TUI - it corrupts the display
+                            // Merge successful
                         }
-                        Err(e) => {
-                            eprintln!("Merge failed: {}. Changes were committed but merge needs manual resolution.", e);
+                        Err(_e) => {
+                            // Don't use eprintln! in TUI - it corrupts the display
+                            // TODO: Add proper notification system for user feedback
                         }
                     }
                 }
@@ -561,8 +574,9 @@ pub fn handle_session_action(
 
                                 let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
                             }
-                            Err(e) => {
-                                eprintln!("Failed to spawn worktree viewer terminal: {}", e);
+                            Err(_e) => {
+                                // Don't use eprintln! in TUI - it corrupts the display
+                                // Session was not added to state, just clean up the buffer
                                 state.system.output_buffers.remove(&new_session_id);
                             }
                         }
