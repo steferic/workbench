@@ -1,4 +1,4 @@
-use crate::app::{Action, AppState, ConfigItem, Divider, FocusPanel, InputMode, TextSelection, UtilityItem, UtilitySection};
+use crate::app::{Action, AppState, Divider, FocusPanel, InputMode, TextSelection, UtilityItem, UtilitySection};
 use crate::app::pty_ops::resize_ptys_to_panes;
 use crate::app::selection::{clear_all_pinned_selections, copy_to_clipboard, extract_selected_text};
 use crate::app::session_start::start_workspace_sessions;
@@ -711,10 +711,9 @@ pub fn handle_navigation_action(
                     }
                 }
                 UtilitySection::GlobalConfig => {
-                    let configs = ConfigItem::all();
-                    let current_idx = configs.iter().position(|c| *c == state.ui.selected_config).unwrap_or(0);
-                    if current_idx < configs.len() - 1 {
-                        state.ui.selected_config = configs[current_idx + 1];
+                    // Navigate config tree
+                    if state.ui.config_tree_selected < state.ui.config_tree_nodes.len().saturating_sub(1) {
+                        state.ui.config_tree_selected += 1;
                     }
                 }
                 UtilitySection::Notepad => {}
@@ -737,10 +736,9 @@ pub fn handle_navigation_action(
                     }
                 }
                 UtilitySection::GlobalConfig => {
-                    let configs = ConfigItem::all();
-                    let current_idx = configs.iter().position(|c| *c == state.ui.selected_config).unwrap_or(0);
-                    if current_idx > 0 {
-                        state.ui.selected_config = configs[current_idx - 1];
+                    // Navigate config tree
+                    if state.ui.config_tree_selected > 0 {
+                        state.ui.config_tree_selected -= 1;
                     }
                 }
                 UtilitySection::Notepad => {}
@@ -748,24 +746,25 @@ pub fn handle_navigation_action(
         }
         Action::ToggleUtilitySection => {
             state.ui.utility_section = state.ui.utility_section.toggle();
+            // Initialize config tree when switching to GlobalConfig section
+            if state.ui.utility_section == UtilitySection::GlobalConfig && state.ui.config_tree_nodes.is_empty() {
+                crate::app::utilities::init_config_tree(state);
+            }
         }
         Action::ToggleConfigItem => {
-            match state.ui.selected_config {
-                ConfigItem::ToggleBanner => {
-                    state.ui.banner_visible = !state.ui.banner_visible;
-                    // Resize PTYs since pane height changed
-                    resize_ptys_to_panes(state);
-                }
+            // Open a terminal in the selected config directory
+            if state.ui.config_tree_nodes.is_empty() {
+                return Ok(());
             }
-            let config = persistence::GlobalConfig {
-                banner_visible: state.ui.banner_visible,
-                left_panel_ratio: state.ui.left_panel_ratio,
-                workspace_ratio: state.ui.workspace_ratio,
-                sessions_ratio: state.ui.sessions_ratio,
-                todos_ratio: state.ui.todos_ratio,
-                output_split_ratio: state.ui.output_split_ratio,
-            };
-            let _ = persistence::save_config(&config);
+
+            let selected = state.ui.config_tree_selected;
+            if selected >= state.ui.config_tree_nodes.len() {
+                return Ok(());
+            }
+
+            let node = &state.ui.config_tree_nodes[selected];
+            // Store the config directory path for creating terminal (handled in handler.rs)
+            state.system.pending_config_terminal = Some(node.path().to_path_buf());
         }
         Action::ToggleBrownNoise => {
             state.system.brown_noise_playing = !state.system.brown_noise_playing;

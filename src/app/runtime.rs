@@ -146,8 +146,14 @@ async fn run_main_loop(
     let mut initial_sessions_started = false;
 
     loop {
+        // Start frame timing
+        state.system.perf.frame_start();
+
         // Draw UI with effects
         terminal.draw(|frame| tui::ui::draw(frame, state, effects))?;
+
+        // End frame timing (measures render + event processing)
+        state.system.perf.frame_end();
 
         // After first render, start sessions with accurate pane dimensions
         // This is critical because nvim and other full-screen apps can't handle
@@ -181,6 +187,7 @@ async fn run_main_loop(
         // If we just processed a PTY output, drain more from the queue without redrawing
         // This prevents UI starvation during heavy output
         if matches!(action, Action::PtyOutput(_, _)) {
+            state.system.perf.record_pty_output(); // Track first PTY output
             let mut batch_count = 0;
             const MAX_BATCH: usize = 50; // Process up to 50 PTY outputs per frame
 
@@ -189,6 +196,7 @@ async fn run_main_loop(
                 if let Ok(next_action) = events.try_recv_pty_action() {
                     if matches!(next_action, Action::PtyOutput(_, _)) {
                         process_action(state, next_action, pty_manager, &action_tx, &pty_tx)?;
+                        state.system.perf.record_pty_output(); // Track batched PTY output
                         batch_count += 1;
                     } else {
                         // Non-PTY action, process it and stop batching

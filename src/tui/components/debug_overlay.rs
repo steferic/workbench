@@ -86,21 +86,20 @@ pub fn render(frame: &mut Frame, state: &AppState) {
             Span::raw(format!("{}x{}", cols, rows)),
         ]));
 
-        // Check for mismatch
-        let expected_rows = pane_rows;
+        // Check for column mismatch (rows being larger is intentional for scrollback)
         let expected_cols = output_cols;
-        if rows != expected_rows || cols != expected_cols {
+        if cols != expected_cols {
             lines.push(Line::from(vec![
-                Span::styled("  ⚠ MISMATCH! ", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+                Span::styled("  ⚠ COLS MISMATCH! ", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
                 Span::styled(
-                    format!("Expected {}x{}", expected_cols, expected_rows),
+                    format!("Expected {} cols", expected_cols),
                     Style::default().fg(Color::Red),
                 ),
             ]));
         } else {
             lines.push(Line::from(vec![
                 Span::styled("  ✓ ", Style::default().fg(Color::Green)),
-                Span::raw("Matches pane dimensions"),
+                Span::raw(format!("Cols match, rows={} (buffer)", rows)),
             ]));
         }
 

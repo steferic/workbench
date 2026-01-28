@@ -1,0 +1,195 @@
+# Workbench Keybindings Configuration
+# Edit this file to customize your keybindings
+# Location: ~/.config/workbench/keybindings.toml
+#
+# Key format:
+#   - Single keys: "j", "k", "`", "?"
+#   - With modifiers: "Ctrl-c", "Shift-Tab", "Alt-Enter"
+#   - Special keys: Enter, Esc, Tab, Space, Up, Down, Left, Right
+#                   Home, End, PageUp, PageDown, Backspace, Delete
+#                   F1-F12, backtick, tilde
+
+# ============================================================
+# Global keybindings (work anywhere, even in terminal input)
+# ============================================================
+[global]
+"Ctrl-z" = "CycleNextWorkspace"
+"Ctrl-x" = "CycleNextSession"
+"Ctrl-q" = "InitiateQuit"
+"F1" = "EnterHelpMode"
+"F12" = "ToggleDebugOverlay"
+
+# ============================================================
+# Mode-specific keybindings
+# ============================================================
+
+[mode.help]
+"Esc" = "ExitMode"
+"q" = "ExitMode"
+"?" = "ExitMode"
+"Enter" = "ExitMode"
+
+[mode.workspace_action]
+"Esc" = "ExitMode"
+"j" = "NextWorkspaceChoice"
+"Down" = "NextWorkspaceChoice"
+"k" = "PrevWorkspaceChoice"
+"Up" = "PrevWorkspaceChoice"
+"Enter" = "ConfirmWorkspaceChoice"
+
+[mode.workspace_name]
+"Esc" = "ExitMode"
+"Enter" = "SubmitWorkspaceName"
+"Backspace" = "InputBackspace"
+
+[mode.create_workspace]
+"Esc" = "ExitMode"
+"j" = "FileBrowserDown"
+"Down" = "FileBrowserDown"
+"k" = "FileBrowserUp"
+"Up" = "FileBrowserUp"
+"l" = "FileBrowserEnter"
+"Right" = "FileBrowserEnter"
+"Enter" = "FileBrowserEnter"
+"h" = "FileBrowserBack"
+"Left" = "FileBrowserBack"
+"Backspace" = "FileBrowserBackOrDelete"
+"Space" = "FileBrowserSelect"
+"Tab" = "FileBrowserSelect"
+
+[mode.create_session]
+"Esc" = "ExitMode"
+"t" = "CreateTerminal"
+"1" = "CreateClaude"
+"2" = "CreateGemini"
+"3" = "CreateCodex"
+"4" = "CreateGrok"
+
+[mode.start_command]
+"Esc" = "ExitMode"
+"Enter" = "SubmitStartCommand"
+"Backspace" = "InputBackspace"
+
+[mode.create_todo]
+"Esc" = "ExitMode"
+"Enter" = "SubmitTodo"
+"Backspace" = "InputBackspace"
+
+[mode.parallel_task]
+"Esc" = "ExitMode"
+"Tab" = "NextParallelAgent"
+"BackTab" = "PrevParallelAgent"
+"x" = "ToggleParallelAgent"
+"Enter" = "StartParallelTask"
+"Backspace" = "InputBackspace"
+
+[mode.confirm_merge]
+"Esc" = "CancelMerge"
+"n" = "CancelMerge"
+"Enter" = "ConfirmMergeWithCommit"
+"y" = "ConfirmMergeWithCommit"
+
+# ============================================================
+# Panel-specific keybindings (Normal mode)
+# ============================================================
+
+[panel.workspace_list]
+"j" = "MoveDown"
+"Down" = "MoveDown"
+"k" = "MoveUp"
+"Up" = "MoveUp"
+"l" = "FocusRight"
+"Enter" = "FocusRight"
+"n" = "EnterWorkspaceActionMode"
+"w" = "ToggleWorkspaceStatus"
+"d" = "InitiateDeleteWorkspace"
+"h" = "ShowPaneHelp"
+"?" = "EnterHelpMode"
+"q" = "InitiateQuit"
+"Esc" = "InitiateQuit"
+
+[panel.session_list]
+"j" = "MoveDown"
+"Down" = "MoveDown"
+"k" = "MoveUp"
+"Up" = "MoveUp"
+"l" = "FocusRight"
+"Enter" = "ActivateOrRestartSession"
+"n" = "EnterCreateSessionMode"
+"r" = "RestartSession"
+"s" = "StopSession"
+"x" = "KillSession"
+"d" = "InitiateDeleteSession"
+"t" = "CreateTerminal"
+"c" = "EnterSetStartCommandMode"
+"p" = "TogglePinSession"
+"u" = "UnpinSession"
+"\\" = "ToggleSplitView"
+"/" = "ToggleSplitView"
+"P" = "EnterParallelTaskMode"
+"X" = "CancelParallelTask"
+"m" = "MergeSessionWorktree"
+"w" = "SwitchToWorktree"
+"h" = "ShowPaneHelp"
+"?" = "EnterHelpMode"
+"q" = "Quit"
+"1" = "CreateClaude"
+"2" = "CreateGemini"
+"3" = "CreateCodex"
+"4" = "CreateGrok"
+
+[panel.todos_pane]
+"j" = "SelectNextTodo"
+"Down" = "SelectNextTodo"
+"k" = "SelectPrevTodo"
+"Up" = "SelectPrevTodo"
+"l" = "FocusRight"
+"Tab" = "ToggleTodosTab"
+"n" = "EnterCreateTodoMode"
+"Enter" = "RunSelectedTodo"
+"y" = "ApproveSuggestedTodo"
+"Y" = "ApproveAllSuggestedTodos"
+"x" = "MarkTodoDone"
+"X" = "ArchiveTodo"
+"a" = "ToggleTodoPaneMode"
+"d" = "InitiateDeleteTodo"
+"v" = "ViewReport"
+"m" = "MergeSelectedReport"
+"h" = "ShowPaneHelp"
+"?" = "EnterHelpMode"
+"q" = "Quit"
+
+[panel.utilities_pane]
+"j" = "SelectNextUtility"
+"Down" = "SelectNextUtility"
+"k" = "SelectPrevUtility"
+"Up" = "SelectPrevUtility"
+"l" = "ActivateUtility"
+"Enter" = "ActivateUtility"
+"Tab" = "ToggleUtilitySection"
+"h" = "ShowPaneHelp"
+"?" = "EnterHelpMode"
+"q" = "Quit"
+
+[panel.output_pane]
+"h" = "FocusLeft"
+"Esc" = "FocusLeftOrSendEsc"
+"?" = "EnterHelpMode"
+"q" = "Quit"
+"y" = "CopySelection"
+"Ctrl-h" = "FocusLeft"
+"Shift-Up" = "ScrollOutputUp"
+"Shift-Down" = "ScrollOutputDown"
+"PageUp" = "ScrollOutputUp"
+"PageDown" = "ScrollOutputDown"
+
+[panel.pinned_terminal]
+"Ctrl-h" = "FocusLeft"
+"Ctrl-j" = "NextPinnedPane"
+"Ctrl-k" = "PrevPinnedPane"
+"Ctrl-u" = "UnpinFocusedSession"
+"Shift-Up" = "ScrollOutputUp"
+"Shift-Down" = "ScrollOutputDown"
+"PageUp" = "ScrollOutputUp"
+"PageDown" = "ScrollOutputDown"
+"y" = "CopySelection"

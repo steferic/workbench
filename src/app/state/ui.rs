@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use uuid::Uuid;
 
 use super::types::{
-    ConfigItem, Divider, FocusPanel, InputMode, PaneHelp, PendingDelete,
+    ConfigItem, ConfigTreeNode, Divider, FocusPanel, InputMode, PaneHelp, PendingDelete,
     TextSelection, TodoPaneMode, TodosTab, UtilityItem, UtilitySection, WorkspaceAction,
 };
 
@@ -61,7 +61,10 @@ pub struct UIState {
     pub utility_section: UtilitySection,
     pub selected_utility: UtilityItem,  // For Utilities section (tools)
     pub selected_sound: UtilityItem,    // For Sounds section
+    #[allow(dead_code)]
     pub selected_config: ConfigItem,
+    pub config_tree_nodes: Vec<ConfigTreeNode>,  // Flattened visible tree nodes
+    pub config_tree_selected: usize,             // Selected node in tree
     pub utility_content: Vec<String>,
     pub utility_scroll_offset: usize,
     pub pie_chart_data: Vec<(String, f64, ratatui::style::Color)>,
@@ -147,6 +150,8 @@ impl UIState {
             selected_utility: UtilityItem::default(),
             selected_sound: UtilityItem::BrownNoise,  // Default to first sound
             selected_config: ConfigItem::default(),
+            config_tree_nodes: Vec::new(),
+            config_tree_selected: 0,
             utility_content: Vec::new(),
             utility_scroll_offset: 0,
             pie_chart_data: Vec::new(),

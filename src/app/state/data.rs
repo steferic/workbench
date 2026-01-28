@@ -1,5 +1,5 @@
 use crate::models::{Session, Workspace};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::time::Instant;
 use tui_textarea::TextArea;
 use uuid::Uuid;
@@ -13,8 +13,6 @@ pub struct DataState {
     pub idle_queue: Vec<Uuid>,
     /// Notepad state (per workspace) - TextArea handles cursor, scrolling, undo/redo
     pub notepads: HashMap<Uuid, TextArea<'static>>,
-    /// Sessions that have reached idle state at least once (finished initial startup)
-    pub sessions_ever_idle: HashSet<Uuid>,
 }
 
 impl DataState {
@@ -25,7 +23,6 @@ impl DataState {
             last_activity: HashMap::new(),
             idle_queue: Vec::new(),
             notepads: HashMap::new(),
-            sessions_ever_idle: HashSet::new(),
         }
     }
 }

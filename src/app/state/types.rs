@@ -141,6 +141,8 @@ pub enum UtilityItem {
     GitHistory,
     FileTree,
     SuggestTodos,
+    Keybindings,
+    ToggleBanner,
     // Sounds
     BrownNoise,
     ClassicalRadio,
@@ -158,6 +160,8 @@ impl UtilityItem {
             UtilityItem::GitHistory,
             UtilityItem::FileTree,
             UtilityItem::SuggestTodos,
+            UtilityItem::Keybindings,
+            UtilityItem::ToggleBanner,
         ]
     }
 
@@ -184,6 +188,8 @@ impl UtilityItem {
             UtilityItem::GitHistory => "Git History",
             UtilityItem::FileTree => "File Tree",
             UtilityItem::SuggestTodos => "Suggest Todos",
+            UtilityItem::Keybindings => "Keybindings",
+            UtilityItem::ToggleBanner => "Banner Bar",
         }
     }
 
@@ -199,31 +205,120 @@ impl UtilityItem {
             UtilityItem::GitHistory => "\u{1F4DC}",
             UtilityItem::FileTree => "\u{1F333}",
             UtilityItem::SuggestTodos => "\u{1F4A1}",
+            UtilityItem::Keybindings => "\u{2328}",
+            UtilityItem::ToggleBanner => "\u{1F4E2}",
         }
     }
 }
 
-/// Global config items
+/// Global config items (now just used for internal tracking, tree handles display)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ConfigItem {
     #[default]
-    ToggleBanner,
+    ClaudeConfig,
+    GeminiConfig,
 }
 
 impl ConfigItem {
+    #[allow(dead_code)]
     pub fn all() -> &'static [ConfigItem] {
-        &[ConfigItem::ToggleBanner]
+        &[
+            ConfigItem::ClaudeConfig,
+            ConfigItem::GeminiConfig,
+        ]
     }
 
+    #[allow(dead_code)]
     pub fn name(&self) -> &'static str {
         match self {
-            ConfigItem::ToggleBanner => "Banner Bar",
+            ConfigItem::ClaudeConfig => "Claude Config",
+            ConfigItem::GeminiConfig => "Gemini Config",
         }
+    }
+
+    #[allow(dead_code)]
+    pub fn icon(&self) -> &'static str {
+        match self {
+            ConfigItem::ClaudeConfig => "\u{1F4DD}",
+            ConfigItem::GeminiConfig => "\u{2728}",
+        }
+    }
+}
+
+/// A node in the config file tree
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
+pub enum ConfigTreeNode {
+    /// Root item (Claude, Gemini, etc.)
+    Root { name: String, path: std::path::PathBuf, expanded: bool },
+    /// A directory that can be expanded (unused - keeping for potential tree view)
+    Directory { name: String, path: std::path::PathBuf, expanded: bool, depth: usize },
+    /// A file that can be opened (unused - keeping for potential tree view)
+    File { name: String, path: std::path::PathBuf, depth: usize },
+}
+
+impl ConfigTreeNode {
+    pub fn name(&self) -> &str {
+        match self {
+            ConfigTreeNode::Root { name, .. } => name,
+            ConfigTreeNode::Directory { name, .. } => name,
+            ConfigTreeNode::File { name, .. } => name,
+        }
+    }
+
+    pub fn path(&self) -> &std::path::Path {
+        match self {
+            ConfigTreeNode::Root { path, .. } => path,
+            ConfigTreeNode::Directory { path, .. } => path,
+            ConfigTreeNode::File { path, .. } => path,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn depth(&self) -> usize {
+        match self {
+            ConfigTreeNode::Root { .. } => 0,
+            ConfigTreeNode::Directory { depth, .. } => *depth,
+            ConfigTreeNode::File { depth, .. } => *depth,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn is_expanded(&self) -> bool {
+        match self {
+            ConfigTreeNode::Root { expanded, .. } => *expanded,
+            ConfigTreeNode::Directory { expanded, .. } => *expanded,
+            ConfigTreeNode::File { .. } => false,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn is_expandable(&self) -> bool {
+        matches!(self, ConfigTreeNode::Root { .. } | ConfigTreeNode::Directory { .. })
+    }
+
+    #[allow(dead_code)]
+    pub fn is_file(&self) -> bool {
+        matches!(self, ConfigTreeNode::File { .. })
     }
 
     pub fn icon(&self) -> &'static str {
         match self {
-            ConfigItem::ToggleBanner => "\u{1F4E2}",
+            ConfigTreeNode::Root { expanded: true, .. } => "\u{1F4C2}", // Open folder
+            ConfigTreeNode::Root { expanded: false, .. } => "\u{1F4C1}", // Closed folder
+            ConfigTreeNode::Directory { expanded: true, .. } => "\u{1F4C2}",
+            ConfigTreeNode::Directory { expanded: false, .. } => "\u{1F4C1}",
+            ConfigTreeNode::File { name, .. } => {
+                if name.ends_with(".json") {
+                    "\u{1F4C4}" // Document
+                } else if name.ends_with(".md") {
+                    "\u{1F4DD}" // Memo
+                } else if name.ends_with(".toml") {
+                    "\u{2699}" // Gear
+                } else {
+                    "\u{1F4C4}" // Document
+                }
+            }
         }
     }
 }

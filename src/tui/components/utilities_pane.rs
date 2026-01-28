@@ -1,4 +1,4 @@
-use crate::app::{AppState, ConfigItem, FocusPanel, UtilityItem, UtilitySection};
+use crate::app::{AppState, FocusPanel, UtilityItem, UtilitySection};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -121,10 +121,23 @@ fn render_utilities_list(frame: &mut Frame, area: Rect, state: &AppState, is_foc
 
             let prefix = if is_selected { "> " } else { "  " };
 
+            // Show ON/OFF indicator for ToggleBanner
+            let toggle_indicator = match item {
+                UtilityItem::ToggleBanner => {
+                    if state.ui.banner_visible {
+                        Span::styled(" [ON]", Style::default().fg(Color::Green))
+                    } else {
+                        Span::styled(" [OFF]", Style::default().fg(Color::Red))
+                    }
+                }
+                _ => Span::raw(""),
+            };
+
             ListItem::new(Line::from(vec![
                 Span::styled(prefix, style),
                 Span::raw(format!("{} ", item.icon())),
                 Span::styled(item.name(), style),
+                toggle_indicator,
             ]))
         })
         .collect();
@@ -239,10 +252,21 @@ fn render_sounds_list(frame: &mut Frame, area: Rect, state: &AppState, is_focuse
 }
 
 fn render_config_list(frame: &mut Frame, area: Rect, state: &AppState, is_focused: bool) {
-    let items: Vec<ListItem> = ConfigItem::all()
+    // Render simple config directory list
+    if state.ui.config_tree_nodes.is_empty() {
+        let placeholder = Paragraph::new("No config directories found")
+            .style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(placeholder, area);
+        return;
+    }
+
+    let items: Vec<ListItem> = state
+        .ui
+        .config_tree_nodes
         .iter()
-        .map(|item| {
-            let is_selected = *item == state.ui.selected_config;
+        .enumerate()
+        .map(|(idx, node)| {
+            let is_selected = idx == state.ui.config_tree_selected;
 
             let style = if is_selected && is_focused {
                 Style::default()
@@ -255,23 +279,17 @@ fn render_config_list(frame: &mut Frame, area: Rect, state: &AppState, is_focuse
             };
 
             let prefix = if is_selected { "> " } else { "  " };
+            let icon = node.icon();
+            let name = node.name();
 
-            // Show toggle state
-            let toggle_indicator = match item {
-                ConfigItem::ToggleBanner => {
-                    if state.ui.banner_visible {
-                        Span::styled(" [ON]", Style::default().fg(Color::Green))
-                    } else {
-                        Span::styled(" [OFF]", Style::default().fg(Color::Red))
-                    }
-                }
-            };
+            // Show hint to open terminal
+            let hint = Span::styled(" [Enter: open terminal]", Style::default().fg(Color::DarkGray));
 
             ListItem::new(Line::from(vec![
                 Span::styled(prefix, style),
-                Span::raw(format!("{} ", item.icon())),
-                Span::styled(item.name(), style),
-                toggle_indicator,
+                Span::raw(format!("{} ", icon)),
+                Span::styled(name, style),
+                hint,
             ]))
         })
         .collect();
@@ -285,14 +303,10 @@ fn render_config_list(frame: &mut Frame, area: Rect, state: &AppState, is_focuse
         Style::default()
     };
 
-    let list = List::new(items)
-        .highlight_style(highlight_style);
+    let list = List::new(items).highlight_style(highlight_style);
 
     let mut list_state = ListState::default();
-    let selected_idx = ConfigItem::all()
-        .iter()
-        .position(|i| *i == state.ui.selected_config);
-    list_state.select(selected_idx);
+    list_state.select(Some(state.ui.config_tree_selected));
 
     frame.render_stateful_widget(list, area, &mut list_state);
 }

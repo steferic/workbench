@@ -120,11 +120,81 @@ pub fn process_action(
                             let pending = state.get_workspace(workspace_id)
                                 .and_then(|ws| ws.next_pending_todo())
                                 .map(|t| (t.id, t.description.clone()));
-                            
+
                             if let Some((id, desc)) = pending {
                                 let _ = action_tx.send(Action::DispatchTodoToSession(session_id, id, desc));
                                 break;
                             }
+                        }
+                    }
+                }
+            }
+
+            // Handle pending config terminal (from config tree)
+            if let Some(config_dir) = state.system.pending_config_terminal.take() {
+                // Create a terminal session in the config directory
+                if let Some(ws) = state.selected_workspace() {
+                    let workspace_id = ws.id;
+
+                    // Get directory name for terminal name
+                    let dir_name = config_dir.file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("config")
+                        .to_string();
+
+                    // Create terminal session
+                    let agent_type = crate::models::AgentType::Terminal(dir_name.clone());
+                    let mut session = crate::models::Session::new(workspace_id, agent_type.clone(), false);
+
+                    // Set ls as the start command
+                    session.start_command = Some("ls".to_string());
+
+                    let session_id = session.id;
+                    state.add_session(session);
+
+                    // Spawn the terminal session in the config directory
+                    let pty_rows = state.pane_rows();
+                    let pty_cols = state.output_pane_cols();
+
+                    match pty_manager.spawn_session(
+                        session_id,
+                        agent_type,
+                        &config_dir,  // Use config directory as working directory
+                        pty_rows,
+                        pty_cols,
+                        pty_tx.clone(),
+                        false,
+                    ) {
+                        Ok(handle) => {
+                            state.system.pty_handles.insert(session_id, handle);
+                            state.system.output_buffers.insert(session_id, vt100::Parser::new(
+                                pty_rows,
+                                pty_cols,
+                                crate::app::TERMINAL_SCROLLBACK_LIMIT,
+                            ));
+
+                            // Mark session as running
+                            if let Some(s) = state.get_session_mut(session_id) {
+                                s.status = crate::models::SessionStatus::Running;
+                            }
+
+                            // Activate the session so it shows in the center pane
+                            state.ui.active_session_id = Some(session_id);
+                            state.ui.output_scroll_offset = 0;
+                            state.ui.focus = crate::app::FocusPanel::OutputPane;
+
+                            // Run ls after a short delay to show directory contents
+                            let tx = action_tx.clone();
+                            let sid = session_id;
+                            tokio::spawn(async move {
+                                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                                let _ = tx.send(Action::SendInput(sid, b"ls".to_vec()));
+                                let _ = tx.send(Action::SendInput(sid, vec![b'\r']));
+                            });
+                        }
+                        Err(_) => {
+                            // Failed to spawn, remove the session
+                            state.delete_session(session_id);
                         }
                     }
                 }

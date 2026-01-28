@@ -1,4 +1,4 @@
-use crate::app::{Action, AppState, FocusPanel, InputMode, ParallelMergePlan, ParallelWorktreeSpec, TERMINAL_BUFFER_ROWS, TERMINAL_SCROLLBACK_LIMIT};
+use crate::app::{Action, AppState, FocusPanel, InputMode, ParallelMergePlan, ParallelWorktreeSpec, PARSER_BUFFER_ROWS, TERMINAL_SCROLLBACK_LIMIT};
 use crate::git;
 use crate::models::{AttemptStatus, ParallelTask, ParallelTaskAttempt, ParallelTaskStatus, Session};
 use crate::persistence;
@@ -255,7 +255,7 @@ fn handle_parallel_worktrees_ready(
 
         let pty_rows = state.pane_rows();
         let cols = state.output_pane_cols();
-        let parser = vt100::Parser::new(TERMINAL_BUFFER_ROWS, cols, TERMINAL_SCROLLBACK_LIMIT);
+        let parser = vt100::Parser::new(PARSER_BUFFER_ROWS, cols, TERMINAL_SCROLLBACK_LIMIT);
         state.system.output_buffers.insert(session_id, parser);
 
         match pty_manager.spawn_session(

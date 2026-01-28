@@ -5,6 +5,31 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use super::EventHandler;
 
 impl EventHandler {
+    /// Check for global keybindings that work in any panel
+    fn check_global_keys(key: &KeyEvent) -> Option<Action> {
+        // Ctrl+z - Cycle workspace
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('z') {
+            return Some(Action::CycleNextWorkspace);
+        }
+        // Ctrl+x - Cycle session
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('x') {
+            return Some(Action::CycleNextSession);
+        }
+        // Ctrl+q - Quit
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('q') {
+            return Some(Action::InitiateQuit);
+        }
+        // F1 - Help
+        if key.code == KeyCode::F(1) {
+            return Some(Action::EnterHelpMode);
+        }
+        // F12 - Debug overlay
+        if key.code == KeyCode::F(12) {
+            return Some(Action::ToggleDebugOverlay);
+        }
+        None
+    }
+
     pub(super) fn handle_key_event(&self, key: KeyEvent, state: &AppState) -> Action {
         // Handle input mode first
         match state.ui.input_mode {
@@ -202,11 +227,8 @@ impl EventHandler {
     }
 
     fn handle_workspace_list_keys(&self, key: KeyEvent, state: &AppState) -> Action {
-        if key.code == KeyCode::Char('`') {
-            return Action::CycleNextWorkspace;
-        }
-        if key.code == KeyCode::Char('~') {
-            return Action::CycleNextSession;
+        if let Some(action) = Self::check_global_keys(&key) {
+            return action;
         }
 
         match key.code {
@@ -231,11 +253,8 @@ impl EventHandler {
     }
 
     fn handle_session_list_keys(&self, key: KeyEvent, state: &AppState) -> Action {
-        if key.code == KeyCode::Char('`') {
-            return Action::CycleNextWorkspace;
-        }
-        if key.code == KeyCode::Char('~') {
-            return Action::CycleNextSession;
+        if let Some(action) = Self::check_global_keys(&key) {
+            return action;
         }
 
         if let Some((agent_type, dangerously_skip_permissions, with_worktree)) = Self::agent_shortcut(&key) {
@@ -388,11 +407,8 @@ impl EventHandler {
     }
 
     fn handle_todos_pane_keys(&self, key: KeyEvent, state: &AppState) -> Action {
-        if key.code == KeyCode::Char('`') {
-            return Action::CycleNextWorkspace;
-        }
-        if key.code == KeyCode::Char('~') {
-            return Action::CycleNextSession;
+        if let Some(action) = Self::check_global_keys(&key) {
+            return action;
         }
 
         let get_selected_todo = || -> Option<&crate::models::Todo> {
@@ -499,11 +515,8 @@ impl EventHandler {
     fn handle_utilities_pane_keys(&self, key: KeyEvent, state: &AppState) -> Action {
         use crate::app::{UtilityItem, UtilitySection};
 
-        if key.code == KeyCode::Char('`') {
-            return Action::CycleNextWorkspace;
-        }
-        if key.code == KeyCode::Char('~') {
-            return Action::CycleNextSession;
+        if let Some(action) = Self::check_global_keys(&key) {
+            return action;
         }
 
         if state.ui.utility_section == UtilitySection::Notepad {
@@ -512,9 +525,6 @@ impl EventHandler {
             }
             if key.code == KeyCode::Esc {
                 return Action::ToggleUtilitySection;
-            }
-            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('q') {
-                return Action::Quit;
             }
             return Action::NotepadInput(key);
         }
@@ -548,11 +558,8 @@ impl EventHandler {
     }
 
     fn handle_output_pane_keys(&self, key: KeyEvent, state: &AppState) -> Action {
-        if key.code == KeyCode::Char('`') {
-            return Action::CycleNextWorkspace;
-        }
-        if key.code == KeyCode::Char('~') {
-            return Action::CycleNextSession;
+        if let Some(action) = Self::check_global_keys(&key) {
+            return action;
         }
 
         if state.ui.text_selection.start.is_some() {
@@ -677,11 +684,8 @@ impl EventHandler {
     }
 
     fn handle_pinned_terminal_keys(&self, key: KeyEvent, state: &AppState, pane_idx: usize) -> Action {
-        if key.code == KeyCode::Char('`') {
-            return Action::CycleNextWorkspace;
-        }
-        if key.code == KeyCode::Char('~') {
-            return Action::CycleNextSession;
+        if let Some(action) = Self::check_global_keys(&key) {
+            return action;
         }
 
         if state.ui.pinned_text_selections.get(pane_idx).map(|s| s.start.is_some()).unwrap_or(false) {

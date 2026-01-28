@@ -381,6 +381,46 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
                 ));
             }
 
+            // Performance metrics - always visible
+            let fps = state.system.perf.fps();
+            let frame_ms = state.system.perf.frame_time_ms();
+            let mem_mb = state.system.perf.memory_mb();
+            let pty_batch = state.system.perf.avg_pty_batch();
+
+            status.push(Span::raw(" | "));
+            status.push(Span::styled(
+                format!("{:.0}fps", fps),
+                Style::default().fg(if fps >= 30.0 {
+                    Color::Green
+                } else if fps >= 15.0 {
+                    Color::Yellow
+                } else {
+                    Color::Red
+                }),
+            ));
+            status.push(Span::styled(
+                format!(" {:.0}ms", frame_ms),
+                Style::default().fg(Color::DarkGray),
+            ));
+            status.push(Span::raw(" "));
+            status.push(Span::styled(
+                format!("{:.0}MB", mem_mb),
+                Style::default().fg(if mem_mb < 100.0 {
+                    Color::Green
+                } else if mem_mb < 300.0 {
+                    Color::Yellow
+                } else {
+                    Color::Red
+                }),
+            ));
+            if pty_batch > 0.1 {
+                status.push(Span::raw(" "));
+                status.push(Span::styled(
+                    format!("pty:{:.0}", pty_batch),
+                    Style::default().fg(Color::Cyan),
+                ));
+            }
+
             (status, context_hints)
         }
     };
