@@ -79,6 +79,8 @@ impl PtyHandle {
 
     #[cfg(unix)]
     fn signal_process_group(&self, pgid: libc::pid_t, signal: i32) -> Result<()> {
+        // SAFETY: pgid is validated > 0 by process_group_id(). Negating it
+        // targets the entire process group. kill() with a valid signal is safe.
         let result = unsafe { libc::kill(-pgid, signal) };
         if result == -1 {
             let err = std::io::Error::last_os_error();
@@ -92,6 +94,8 @@ impl PtyHandle {
 
     #[cfg(unix)]
     fn process_group_alive(&self, pgid: libc::pid_t) -> bool {
+        // SAFETY: signal 0 is a null signal used only to check process existence.
+        // pgid is validated > 0 by process_group_id().
         let result = unsafe { libc::kill(-pgid, 0) };
         if result == 0 {
             return true;
@@ -120,6 +124,18 @@ impl PtyHandle {
     }
 }
 
+/// Configuration for spawning a PTY session.
+pub struct SessionSpawnConfig<'a> {
+    pub session_id: Uuid,
+    pub agent_type: AgentType,
+    pub working_dir: &'a Path,
+    pub rows: u16,
+    pub cols: u16,
+    pub pty_tx: mpsc::Sender<Action>,
+    pub resume: bool,
+    pub dangerously_skip_permissions: bool,
+}
+
 pub struct PtyManager {
     pty_system: Box<dyn PtySystem>,
 }
@@ -131,41 +147,18 @@ impl PtyManager {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn spawn_session(
-        &self,
-        session_id: Uuid,
-        agent_type: AgentType,
-        working_dir: &Path,
-        rows: u16,
-        cols: u16,
-        pty_tx: mpsc::Sender<Action>,
-        dangerously_skip_permissions: bool,
-    ) -> Result<PtyHandle> {
-        self.spawn_session_with_resume(
+    pub fn spawn_session(&self, config: SessionSpawnConfig) -> Result<PtyHandle> {
+        let SessionSpawnConfig {
             session_id,
             agent_type,
             working_dir,
             rows,
             cols,
             pty_tx,
-            false,
+            resume,
             dangerously_skip_permissions,
-        )
-    }
+        } = config;
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn spawn_session_with_resume(
-        &self,
-        session_id: Uuid,
-        agent_type: AgentType,
-        working_dir: &Path,
-        rows: u16,
-        cols: u16,
-        pty_tx: mpsc::Sender<Action>,
-        resume: bool,
-        dangerously_skip_permissions: bool,
-    ) -> Result<PtyHandle> {
         // Create PTY pair
         let pair = self
             .pty_system
@@ -363,6 +356,8 @@ impl PtyManager {
                         let should_respond_dsr = has_dsr && !skip_dsr;
 
                         if should_respond_dsr || has_da || has_da2 {
+                            // SAFETY: fd is a valid file descriptor from the PTY master.
+                            // Wrapped in ManuallyDrop to avoid closing the fd on drop.
                             let mut file = std::mem::ManuallyDrop::new(unsafe {
                                 std::fs::File::from_raw_fd(fd)
                             });
@@ -610,7 +605,7 @@ mod tests {
     use super::*;
     use portable_pty::{Child, ChildKiller, ExitStatus};
     use std::io::{self, Read};
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 

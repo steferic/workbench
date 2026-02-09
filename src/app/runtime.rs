@@ -13,6 +13,13 @@ use tokio::sync::mpsc;
 use super::handler::process_action;
 use super::session_start::{process_startup_queue, start_all_working_sessions};
 
+// Audio constants
+const WRTI_STREAM_URL: &str = "https://wrti-live.streamguys1.com/classical-mp3";
+const VLC_BINARY: &str = "/opt/homebrew/bin/vlc";
+const OCEAN_WAV: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/sounds/ocean_waterside.wav");
+const CHIMES_WAV: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/sounds/wind_chimes.wav");
+const RAIN_WAV: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/sounds/rainforest_rain.wav");
+
 pub async fn run_tui(initial_workspace: Option<PathBuf>) -> Result<()> {
     // Initialize terminal
     let mut terminal = tui::init()?;
@@ -125,22 +132,14 @@ async fn run_main_loop(
     let mut audio_player: Option<AudioPlayer> = None;
     let mut audio_was_playing = false;
 
-    // Classical radio stream process
+    // Audio child process handles
     let mut radio_process: Option<std::process::Child> = None;
-    const WRTI_STREAM_URL: &str = "https://wrti-live.streamguys1.com/classical-mp3";
-
-    // Local sound file processes (paths embedded at compile time)
     let mut ocean_process: Option<std::process::Child> = None;
     let mut ocean_was_playing = false;
-    const OCEAN_WAV: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/sounds/ocean_waterside.wav");
-
     let mut chimes_process: Option<std::process::Child> = None;
     let mut chimes_was_playing = false;
-    const CHIMES_WAV: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/sounds/wind_chimes.wav");
-
     let mut rain_process: Option<std::process::Child> = None;
     let mut rain_was_playing = false;
-    const RAIN_WAV: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/sounds/rainforest_rain.wav");
 
     // Track if we've done initial session start after first render
     let mut initial_sessions_started = false;
@@ -248,7 +247,7 @@ async fn run_main_loop(
 
         if should_play_radio && !is_playing_radio {
             // Start streaming with VLC - more robust than ffplay for streams
-            radio_process = std::process::Command::new("/opt/homebrew/bin/vlc")
+            radio_process = std::process::Command::new(VLC_BINARY)
                 .args([
                     "--intf", "dummy",      // No GUI
                     "--no-video",           // Audio only
@@ -261,7 +260,7 @@ async fn run_main_loop(
                 .spawn()
                 .ok();
         } else if !should_play_radio && is_playing_radio {
-            // Stop streaming
+            // Stop streaming — errors ignored because the process may already be dead
             if let Some(mut child) = radio_process.take() {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -281,6 +280,7 @@ async fn run_main_loop(
                         .ok();
                 }
             } else if let Some(mut child) = ocean_process.take() {
+                // Errors ignored — best-effort cleanup of a background audio process
                 let _ = child.kill();
                 let _ = child.wait();
             }
@@ -300,6 +300,7 @@ async fn run_main_loop(
                         .ok();
                 }
             } else if let Some(mut child) = chimes_process.take() {
+                // Errors ignored — best-effort cleanup of a background audio process
                 let _ = child.kill();
                 let _ = child.wait();
             }
@@ -319,6 +320,7 @@ async fn run_main_loop(
                         .ok();
                 }
             } else if let Some(mut child) = rain_process.take() {
+                // Errors ignored — best-effort cleanup of a background audio process
                 let _ = child.kill();
                 let _ = child.wait();
             }
@@ -326,20 +328,9 @@ async fn run_main_loop(
         }
 
         if state.system.should_quit {
-            // Clean up all sound processes on quit
-            if let Some(mut child) = radio_process.take() {
-                let _ = child.kill();
-                let _ = child.wait();
-            }
-            if let Some(mut child) = ocean_process.take() {
-                let _ = child.kill();
-                let _ = child.wait();
-            }
-            if let Some(mut child) = chimes_process.take() {
-                let _ = child.kill();
-                let _ = child.wait();
-            }
-            if let Some(mut child) = rain_process.take() {
+            // Best-effort cleanup of all audio child processes on quit.
+            // Errors are ignored because we're exiting anyway.
+            for mut child in [radio_process.take(), ocean_process.take(), chimes_process.take(), rain_process.take()].into_iter().flatten() {
                 let _ = child.kill();
                 let _ = child.wait();
             }

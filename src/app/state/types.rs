@@ -216,33 +216,6 @@ impl UtilityItem {
 pub enum ConfigItem {
     #[default]
     ClaudeConfig,
-    GeminiConfig,
-}
-
-impl ConfigItem {
-    #[allow(dead_code)]
-    pub fn all() -> &'static [ConfigItem] {
-        &[
-            ConfigItem::ClaudeConfig,
-            ConfigItem::GeminiConfig,
-        ]
-    }
-
-    #[allow(dead_code)]
-    pub fn name(&self) -> &'static str {
-        match self {
-            ConfigItem::ClaudeConfig => "Claude Config",
-            ConfigItem::GeminiConfig => "Gemini Config",
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn icon(&self) -> &'static str {
-        match self {
-            ConfigItem::ClaudeConfig => "\u{1F4DD}",
-            ConfigItem::GeminiConfig => "\u{2728}",
-        }
-    }
 }
 
 /// A node in the config file tree
@@ -272,34 +245,6 @@ impl ConfigTreeNode {
             ConfigTreeNode::Directory { path, .. } => path,
             ConfigTreeNode::File { path, .. } => path,
         }
-    }
-
-    #[allow(dead_code)]
-    pub fn depth(&self) -> usize {
-        match self {
-            ConfigTreeNode::Root { .. } => 0,
-            ConfigTreeNode::Directory { depth, .. } => *depth,
-            ConfigTreeNode::File { depth, .. } => *depth,
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn is_expanded(&self) -> bool {
-        match self {
-            ConfigTreeNode::Root { expanded, .. } => *expanded,
-            ConfigTreeNode::Directory { expanded, .. } => *expanded,
-            ConfigTreeNode::File { .. } => false,
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn is_expandable(&self) -> bool {
-        matches!(self, ConfigTreeNode::Root { .. } | ConfigTreeNode::Directory { .. })
-    }
-
-    #[allow(dead_code)]
-    pub fn is_file(&self) -> bool {
-        matches!(self, ConfigTreeNode::File { .. })
     }
 
     pub fn icon(&self) -> &'static str {

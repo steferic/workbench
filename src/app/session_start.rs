@@ -1,7 +1,7 @@
 use crate::app::{Action, AppState, PendingSessionStart, PARSER_BUFFER_ROWS, TERMINAL_SCROLLBACK_LIMIT};
 use crate::models::{AgentType, SessionStatus, WorkspaceStatus};
 use crate::persistence;
-use crate::pty::PtyManager;
+use crate::pty::{PtyManager, SessionSpawnConfig};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -46,17 +46,16 @@ pub fn start_workspace_sessions(
         state.system.output_buffers.insert(session_id, parser);
 
         // Spawn PTY with resume flag for agents (not terminals)
-        let resume: bool = agent_type.is_agent();
-        match pty_manager.spawn_session_with_resume(
+        match pty_manager.spawn_session(SessionSpawnConfig {
             session_id,
+            resume: agent_type.is_agent(),
             agent_type,
-            &workspace_path,
-            pty_rows,
+            working_dir: &workspace_path,
+            rows: pty_rows,
             cols,
-            pty_tx.clone(),
-            resume,
+            pty_tx: pty_tx.clone(),
             dangerously_skip_permissions,
-        ) {
+        }) {
             Ok(handle) => {
                 state.system.pty_handles.insert(session_id, handle);
                 // Mark session as running
@@ -145,17 +144,16 @@ pub fn process_startup_queue(
     state.system.output_buffers.insert(pending.session_id, parser);
 
     // Spawn PTY with resume flag for agents (not terminals)
-    let resume: bool = pending.agent_type.is_agent();
-    match pty_manager.spawn_session_with_resume(
-        pending.session_id,
-        pending.agent_type.clone(),
-        &pending.workspace_path,
-        pty_rows,
+    match pty_manager.spawn_session(SessionSpawnConfig {
+        session_id: pending.session_id,
+        resume: pending.agent_type.is_agent(),
+        agent_type: pending.agent_type.clone(),
+        working_dir: &pending.workspace_path,
+        rows: pty_rows,
         cols,
-        pty_tx.clone(),
-        resume,
-        pending.dangerously_skip_permissions,
-    ) {
+        pty_tx: pty_tx.clone(),
+        dangerously_skip_permissions: pending.dangerously_skip_permissions,
+    }) {
         Ok(handle) => {
             state.system.pty_handles.insert(pending.session_id, handle);
             // Mark session as running

@@ -1,16 +1,100 @@
-use crate::app::{Action, AppState, InputMode, PendingDelete, WorkspaceAction};
+use crate::app::{Action, AppState, InputMode, PendingDelete, PendingSessionStart, WorkspaceAction};
 use crate::app::handlers::session::terminate_session_handle;
-use crate::models::Workspace;
+use crate::models::{SessionStatus, Workspace, WorkspaceStatus};
 use crate::persistence;
+use crate::pty::PtyManager;
 use anyhow::Result;
 use std::path::PathBuf;
+use tokio::sync::mpsc;
 
-pub fn handle_workspace_action(state: &mut AppState, action: Action) -> Result<()> {
+pub fn handle_workspace_action(
+    state: &mut AppState,
+    action: Action,
+    _pty_manager: &PtyManager,
+    _action_tx: &mpsc::UnboundedSender<Action>,
+    _pty_tx: &mpsc::Sender<Action>,
+) -> Result<()> {
     match action {
         Action::ToggleWorkspaceStatus => {
-            if let Some(ws) = state.data.workspaces.get_mut(state.ui.selected_workspace_idx) {
-                ws.toggle_status();
-                // Auto-save
+            if let Some(ws) = state.data.workspaces.get(state.ui.selected_workspace_idx) {
+                let workspace_id = ws.id;
+                let workspace_path = ws.path.clone();
+                let old_status = ws.status;
+
+                // Toggle the status
+                if let Some(ws) = state.data.workspaces.get_mut(state.ui.selected_workspace_idx) {
+                    ws.toggle_status();
+                }
+
+                match old_status {
+                    WorkspaceStatus::Working => {
+                        // Pausing: tear down all PTYs, buffers, and activity tracking
+                        let session_ids: Vec<_> = state.data.sessions
+                            .get(&workspace_id)
+                            .map(|sessions| {
+                                sessions.iter()
+                                    .filter(|s| s.status == SessionStatus::Running)
+                                    .map(|s| (s.id, s.agent_type.is_terminal()))
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+
+                        for (session_id, is_terminal) in &session_ids {
+                            // Terminate PTY handle
+                            if let Some(handle) = state.system.pty_handles.remove(session_id) {
+                                terminate_session_handle(handle, *is_terminal);
+                            }
+                            // Drop output buffer (the big memory win)
+                            state.system.output_buffers.remove(session_id);
+                            // Remove activity tracking
+                            state.data.last_activity.remove(session_id);
+                        }
+
+                        // Drain from idle queue
+                        let ids: Vec<_> = session_ids.iter().map(|(id, _)| *id).collect();
+                        state.data.idle_queue.retain(|id| !ids.contains(id));
+
+                        // Mark running sessions as Stopped
+                        if let Some(sessions) = state.data.sessions.get_mut(&workspace_id) {
+                            for session in sessions.iter_mut() {
+                                if session.status == SessionStatus::Running {
+                                    session.status = SessionStatus::Stopped;
+                                }
+                            }
+                        }
+
+                        // Clear active session if it belonged to this workspace
+                        if let Some(active_id) = state.ui.active_session_id {
+                            if ids.contains(&active_id) {
+                                state.ui.active_session_id = None;
+                            }
+                        }
+                    }
+                    WorkspaceStatus::Paused => {
+                        // Resuming: queue stopped sessions for staggered startup
+                        let stopped_sessions: Vec<PendingSessionStart> = state.data.sessions
+                            .get(&workspace_id)
+                            .map(|sessions| {
+                                sessions.iter()
+                                    .filter(|s| matches!(s.status, SessionStatus::Stopped | SessionStatus::Errored))
+                                    .map(|s| PendingSessionStart {
+                                        session_id: s.id,
+                                        workspace_id,
+                                        workspace_path: workspace_path.clone(),
+                                        agent_type: s.agent_type.clone(),
+                                        start_command: s.start_command.clone(),
+                                        dangerously_skip_permissions: s.dangerously_skip_permissions,
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+
+                        for pending in stopped_sessions {
+                            state.system.startup_queue.push_back(pending);
+                        }
+                    }
+                }
+
                 let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
             }
         }

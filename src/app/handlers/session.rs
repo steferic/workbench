@@ -2,7 +2,7 @@ use crate::app::{Action, AppState, FocusPanel, InputMode, PendingDelete, PARSER_
 use crate::git;
 use crate::models::{AgentType, AttemptStatus, Session};
 use crate::persistence;
-use crate::pty::{PtyHandle, PtyManager};
+use crate::pty::{PtyHandle, PtyManager, SessionSpawnConfig};
 use crate::app::pty_ops::resize_ptys_to_panes;
 use anyhow::Result;
 use std::time::Duration;
@@ -79,15 +79,16 @@ pub fn handle_session_action(
                 let parser = vt100::Parser::new(PARSER_BUFFER_ROWS, cols, TERMINAL_SCROLLBACK_LIMIT);
                 state.system.output_buffers.insert(session_id, parser);
 
-                match pty_manager.spawn_session(
+                match pty_manager.spawn_session(SessionSpawnConfig {
                     session_id,
                     agent_type,
-                    &working_dir,
-                    pty_rows,
+                    working_dir: &working_dir,
+                    rows: pty_rows,
                     cols,
-                    pty_tx.clone(),
+                    pty_tx: pty_tx.clone(),
+                    resume: false,
                     dangerously_skip_permissions,
-                ) {
+                }) {
                     Ok(handle) => {
                         state.system.pty_handles.insert(session_id, handle);
                         state.add_session(session);
@@ -131,15 +132,16 @@ pub fn handle_session_action(
                 let parser = vt100::Parser::new(PARSER_BUFFER_ROWS, cols, TERMINAL_SCROLLBACK_LIMIT);
                 state.system.output_buffers.insert(session_id, parser);
 
-                match pty_manager.spawn_session(
+                match pty_manager.spawn_session(SessionSpawnConfig {
                     session_id,
                     agent_type,
-                    &workspace_path,
-                    pty_rows,
+                    working_dir: &workspace_path,
+                    rows: pty_rows,
                     cols,
-                    pty_tx.clone(),
-                    false,
-                ) {
+                    pty_tx: pty_tx.clone(),
+                    resume: false,
+                    dangerously_skip_permissions: false,
+                }) {
                     Ok(handle) => {
                         state.system.pty_handles.insert(session_id, handle);
                                                 state.add_session(session);
@@ -199,16 +201,16 @@ pub fn handle_session_action(
 
                     let resume = agent_type.is_agent();
 
-                    match pty_manager.spawn_session_with_resume(
+                    match pty_manager.spawn_session(SessionSpawnConfig {
                         session_id,
-                        agent_type.clone(),
-                        &working_dir,
-                        pty_rows,
+                        agent_type: agent_type.clone(),
+                        working_dir: &working_dir,
+                        rows: pty_rows,
                         cols,
-                        pty_tx.clone(),
+                        pty_tx: pty_tx.clone(),
                         resume,
                         dangerously_skip_permissions,
-                    ) {
+                    }) {
                         Ok(handle) => {
                             state.system.pty_handles.insert(session_id, handle);
                                                         if let Some(session) = state.get_session_mut(session_id) {
@@ -553,15 +555,16 @@ pub fn handle_session_action(
                         let parser = vt100::Parser::new(PARSER_BUFFER_ROWS, cols, TERMINAL_SCROLLBACK_LIMIT);
                         state.system.output_buffers.insert(new_session_id, parser);
 
-                        match pty_manager.spawn_session(
-                            new_session_id,
-                            AgentType::Terminal(format!("worktree-{}", short_id)),
-                            &worktree_path,
-                            pty_rows,
+                        match pty_manager.spawn_session(SessionSpawnConfig {
+                            session_id: new_session_id,
+                            agent_type: AgentType::Terminal(format!("worktree-{}", short_id)),
+                            working_dir: &worktree_path,
+                            rows: pty_rows,
                             cols,
-                            pty_tx.clone(),
-                            false,
-                        ) {
+                            pty_tx: pty_tx.clone(),
+                            resume: false,
+                            dangerously_skip_permissions: false,
+                        }) {
                             Ok(handle) => {
                                 state.system.pty_handles.insert(new_session_id, handle);
                                 state.add_session(session);

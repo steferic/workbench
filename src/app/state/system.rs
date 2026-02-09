@@ -96,6 +96,8 @@ impl PerformanceMetrics {
         #[cfg(target_os = "macos")]
         {
             use std::mem::MaybeUninit;
+            // SAFETY: MaybeUninit provides a valid pointer for getrusage to write into.
+            // RUSAGE_SELF is always valid. We only read the struct after confirming success.
             unsafe {
                 let mut rusage = MaybeUninit::<libc::rusage>::uninit();
                 if libc::getrusage(libc::RUSAGE_SELF, rusage.as_mut_ptr()) == 0 {
@@ -109,6 +111,7 @@ impl PerformanceMetrics {
         #[cfg(target_os = "linux")]
         {
             use std::mem::MaybeUninit;
+            // SAFETY: Same as macOS block above — valid pointer, valid resource argument.
             unsafe {
                 let mut rusage = MaybeUninit::<libc::rusage>::uninit();
                 if libc::getrusage(libc::RUSAGE_SELF, rusage.as_mut_ptr()) == 0 {

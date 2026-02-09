@@ -9,8 +9,8 @@ mod state;
 mod utilities;
 
 // Terminal buffer configuration
-// Parser buffer rows - kept large to preserve scrollback history
-// (vt100 set_size() loses data when shrinking, so we don't resize parsers)
+// Parser buffer rows - kept large to preserve scrollback history.
+// On resize, only columns are updated (to match PTY); rows stay at this value.
 pub const PARSER_BUFFER_ROWS: u16 = 500;
 // Scrollback limit is the max characters stored for scrollback history
 pub const TERMINAL_SCROLLBACK_LIMIT: usize = 150_000;

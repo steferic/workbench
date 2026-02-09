@@ -1,5 +1,5 @@
 use crate::app::{Action, AppState};
-use crate::pty::PtyManager;
+use crate::pty::{PtyManager, SessionSpawnConfig};
 use anyhow::Result;
 use tokio::sync::mpsc;
 
@@ -156,15 +156,16 @@ pub fn process_action(
                     let pty_rows = state.pane_rows();
                     let pty_cols = state.output_pane_cols();
 
-                    match pty_manager.spawn_session(
+                    match pty_manager.spawn_session(SessionSpawnConfig {
                         session_id,
                         agent_type,
-                        &config_dir,  // Use config directory as working directory
-                        pty_rows,
-                        pty_cols,
-                        pty_tx.clone(),
-                        false,
-                    ) {
+                        working_dir: &config_dir,
+                        rows: pty_rows,
+                        cols: pty_cols,
+                        pty_tx: pty_tx.clone(),
+                        resume: false,
+                        dangerously_skip_permissions: false,
+                    }) {
                         Ok(handle) => {
                             state.system.pty_handles.insert(session_id, handle);
                             state.system.output_buffers.insert(session_id, vt100::Parser::new(
@@ -228,7 +229,7 @@ pub fn process_action(
                 Action::NextWorkspaceChoice | Action::PrevWorkspaceChoice |
                 Action::ConfirmWorkspaceChoice | Action::EnterWorkspaceNameMode |
                 Action::CreateNewWorkspace(_) => {
-                    workspace::handle_workspace_action(state, action)?;
+                    workspace::handle_workspace_action(state, action, pty_manager, action_tx, pty_tx)?;
                 }
 
                 // Session actions
