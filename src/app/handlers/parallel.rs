@@ -363,8 +363,8 @@ fn select_parallel_winner(
     attempt_id: Uuid,
     action_tx: &mpsc::UnboundedSender<Action>,
 ) -> Result<()> {
-    // Find the task and attempt info
-    let (workspace_path, workspace_id, task_id, source_branch, winner_branch, winner_worktree_path, session_ids, worktree_paths) = {
+    // Find the task and attempt info — only collect the winner's session/worktree
+    let (workspace_path, workspace_id, task_id, source_branch, winner_branch, winner_worktree_path, winner_session_id) = {
         let ws = state.selected_workspace()
             .ok_or_else(|| anyhow!("No workspace selected"))?;
 
@@ -375,9 +375,6 @@ fn select_parallel_winner(
         let attempt = task.get_attempt(attempt_id)
             .ok_or_else(|| anyhow!("Attempt not found"))?;
 
-        let ids: Vec<Uuid> = task.attempts.iter().map(|a| a.session_id).collect();
-        let paths: Vec<std::path::PathBuf> = task.attempts.iter().map(|a| a.worktree_path.clone()).collect();
-
         (
             ws.path.clone(),
             ws.id,
@@ -385,8 +382,7 @@ fn select_parallel_winner(
             task.source_branch.clone(),
             attempt.branch_name.clone(),
             attempt.worktree_path.clone(),
-            ids,
-            paths,
+            attempt.session_id,
         )
     };
 
@@ -398,8 +394,7 @@ fn select_parallel_winner(
         source_branch,
         winner_branch,
         winner_worktree_path,
-        session_ids,
-        worktree_paths,
+        session_ids: vec![winner_session_id],
     };
 
     let action_tx = action_tx.clone();
@@ -434,7 +429,7 @@ fn handle_parallel_merge_finished(
         return Ok(());
     }
 
-    // Kill all sessions
+    // Kill only the merged attempt's session
     for session_id in &plan.session_ids {
         if let Some(mut handle) = state.system.pty_handles.remove(session_id) {
             let _ = handle.kill();
@@ -442,26 +437,40 @@ fn handle_parallel_merge_finished(
         state.system.output_buffers.remove(session_id);
     }
 
-    // Remove worktrees
-    for worktree_path in &plan.worktree_paths {
+    // Remove the merged attempt's worktree
+    {
         let workspace_path = plan.workspace_path.clone();
-        let worktree_path = worktree_path.clone();
+        let worktree_path = plan.winner_worktree_path.clone();
         task::spawn_blocking(move || {
             let _ = git::remove_worktree(&workspace_path, &worktree_path, true);
         });
     }
 
-    // Remove sessions from state
+    // Remove the merged session from state
     if let Some(sessions) = state.data.sessions.get_mut(&plan.workspace_id) {
         sessions.retain(|s| !plan.session_ids.contains(&s.id));
     }
 
-    // Mark task as completed and remove it
+    // Remove only the merged attempt from the task
     if let Some(ws) = state.data.workspaces.iter_mut().find(|ws| ws.id == plan.workspace_id) {
         if let Some(task) = ws.get_parallel_task_mut(plan.task_id) {
-            task.mark_completed(plan.winner_attempt_id);
+            task.attempts.retain(|a| a.id != plan.winner_attempt_id);
+
+            // If no attempts remain, mark completed and remove the task
+            if task.attempts.is_empty() {
+                task.mark_completed(plan.winner_attempt_id);
+                ws.remove_parallel_task(plan.task_id);
+            }
         }
-        ws.remove_parallel_task(plan.task_id);
+    }
+
+    // Adjust selected report index if it's now out of bounds
+    let report_count = state.selected_workspace()
+        .and_then(|ws| ws.active_parallel_task())
+        .map(|t| t.attempts.len())
+        .unwrap_or(0);
+    if state.ui.selected_report_idx >= report_count && report_count > 0 {
+        state.ui.selected_report_idx = report_count - 1;
     }
 
     let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
