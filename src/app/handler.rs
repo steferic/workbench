@@ -290,7 +290,8 @@ pub fn process_action(
                 Action::ParallelWorktreesReady { .. } | Action::ParallelWorktreesFailed { .. } |
                 Action::ParallelMergeFinished { .. } |
                 Action::SelectNextReport | Action::SelectPrevReport |
-                Action::ViewReport | Action::MergeSelectedReport => {
+                Action::ViewReport | Action::MergeSelectedReport |
+                Action::ConfirmParallelMerge | Action::CancelParallelMerge => {
                     parallel::handle_parallel_action(state, action, pty_manager, action_tx, pty_tx)?;
                 }
 

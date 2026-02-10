@@ -1,8 +1,8 @@
 use crate::app::{AppState, InputMode};
 use crate::tui::components::{
     banner, create_session_dialog, create_workspace_dialog, debug_overlay, help_popup, merge_confirm_modal,
-    output_pane, parallel_task_modal, pinned_terminal_pane, session_list, status_bar, todos_pane,
-    utilities_pane, workspace_action_dialog, workspace_list, workspace_name_dialog,
+    output_pane, parallel_merge_confirm_modal, parallel_task_modal, pinned_terminal_pane, session_list,
+    status_bar, todos_pane, utilities_pane, workspace_action_dialog, workspace_list, workspace_name_dialog,
 };
 use crate::tui::effects::{EffectsManager, StartupAreas};
 use ratatui::{
@@ -162,6 +162,9 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, effects: &mut EffectsManage
         }
         InputMode::ConfirmMergeWorktree => {
             merge_confirm_modal::render(frame, state);
+        }
+        InputMode::ConfirmParallelMerge => {
+            parallel_merge_confirm_modal::render(frame, state);
         }
         InputMode::Normal => {}
     }

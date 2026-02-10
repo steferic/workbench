@@ -28,6 +28,7 @@ pub struct ParallelMergePlan {
     pub winner_attempt_id: Uuid,
     pub source_branch: String,
     pub winner_branch: String,
+    pub winner_worktree_path: PathBuf,
     pub session_ids: Vec<Uuid>,
     pub worktree_paths: Vec<PathBuf>,
 }
@@ -169,6 +170,7 @@ pub enum Action {
         workspace_id: Uuid,
         prompt: String,
         request_report: bool,
+        dangerously_skip_permissions: bool,
         source_branch: String,
         source_commit: String,
         worktrees: Vec<ParallelWorktreeSpec>,
@@ -187,6 +189,8 @@ pub enum Action {
     SelectPrevReport,
     ViewReport,                                 // View full report in output pane
     MergeSelectedReport,                        // Merge winner from reports tab
+    ConfirmParallelMerge,                       // Confirm parallel merge after seeing uncommitted changes
+    CancelParallelMerge,                        // Cancel parallel merge
 
     // Mouse
     MouseClick(u16, u16), // (x, y) coordinates

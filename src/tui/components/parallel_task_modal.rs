@@ -130,8 +130,39 @@ pub fn render(frame: &mut Frame, state: &AppState) {
 
     content.push(Line::from(""));
 
-    // Report checkbox - uses special index (agent_count) when focused
-    let report_focused = state.ui.parallel_task_agent_idx == agent_count;
+    // Dangerous mode checkbox - index = agent_count
+    let danger_focused = state.ui.parallel_task_agent_idx == agent_count;
+    let danger_checkbox = if state.ui.parallel_task_dangerous_mode { "[x]" } else { "[ ]" };
+    let danger_line = if danger_focused {
+        Line::from(vec![
+            Span::styled("  > ", Style::default().fg(Color::Yellow)),
+            Span::styled(
+                danger_checkbox,
+                Style::default()
+                    .fg(if state.ui.parallel_task_dangerous_mode { Color::Green } else { Color::Gray }),
+            ),
+            Span::styled(
+                " Dangerous mode (skip permission prompts)",
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ])
+    } else {
+        Line::from(vec![
+            Span::raw("    "),
+            Span::styled(
+                danger_checkbox,
+                Style::default()
+                    .fg(if state.ui.parallel_task_dangerous_mode { Color::Green } else { Color::DarkGray }),
+            ),
+            Span::raw(" Dangerous mode (skip permission prompts)"),
+        ])
+    };
+    content.push(danger_line);
+
+    // Report checkbox - index = agent_count + 1
+    let report_focused = state.ui.parallel_task_agent_idx == agent_count + 1;
     let report_checkbox = if state.ui.parallel_task_request_report { "[x]" } else { "[ ]" };
     let report_line = if report_focused {
         Line::from(vec![

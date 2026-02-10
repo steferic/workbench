@@ -166,6 +166,13 @@ impl EventHandler {
                     _ => Action::Tick,
                 };
             }
+            InputMode::ConfirmParallelMerge => {
+                return match key.code {
+                    KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => Action::CancelParallelMerge,
+                    KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => Action::ConfirmParallelMerge,
+                    _ => Action::Tick,
+                };
+            }
             InputMode::Normal => {}
         }
 

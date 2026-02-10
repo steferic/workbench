@@ -80,6 +80,7 @@ pub struct UIState {
     pub editing_session_id: Option<Uuid>,
     pub analyzer_session_id: Option<Uuid>,
     pub merging_session_id: Option<Uuid>,  // Session being merged (for ConfirmMergeWorktree modal)
+    pub merging_parallel_attempt_id: Option<Uuid>,  // Parallel attempt being merged
 
     // Todos pane
     pub selected_todo_idx: usize,
@@ -95,6 +96,7 @@ pub struct UIState {
     pub parallel_task_agents: Vec<(AgentType, bool)>,  // Agent type and whether selected
     pub parallel_task_agent_idx: usize,  // Currently focused agent in selection
     pub parallel_task_request_report: bool,  // Whether to request PARALLEL_REPORT.md
+    pub parallel_task_dangerous_mode: bool,  // Whether to skip permission prompts
     pub selected_report_idx: usize,  // Selected report in Reports tab
     pub parallel_task_request_id: u64,
 
@@ -163,6 +165,7 @@ impl UIState {
             editing_session_id: None,
             analyzer_session_id: None,
             merging_session_id: None,
+            merging_parallel_attempt_id: None,
             selected_todo_idx: 0,
             todo_pane_mode: TodoPaneMode::default(),
             selected_todos_tab: TodosTab::default(),
@@ -177,6 +180,7 @@ impl UIState {
             ],
             parallel_task_agent_idx: 0,
             parallel_task_request_report: true,  // Default to requesting reports
+            parallel_task_dangerous_mode: true,  // Default to dangerous mode for parallel tasks
             selected_report_idx: 0,
             parallel_task_request_id: 0,
             pane_help: None,

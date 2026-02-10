@@ -29,7 +29,14 @@ pub fn handle_parallel_action(
             view_selected_report(state);
         }
         Action::MergeSelectedReport => {
-            merge_selected_report(state, action_tx)?;
+            merge_selected_report(state)?;
+        }
+        Action::ConfirmParallelMerge => {
+            confirm_parallel_merge(state, action_tx)?;
+        }
+        Action::CancelParallelMerge => {
+            state.ui.merging_parallel_attempt_id = None;
+            state.ui.input_mode = InputMode::Normal;
         }
         Action::ParallelAttemptCompleted(session_id) => {
             mark_attempt_completed(state, session_id)?;
@@ -40,6 +47,7 @@ pub fn handle_parallel_action(
             workspace_id,
             prompt,
             request_report,
+            dangerously_skip_permissions,
             source_branch,
             source_commit,
             worktrees,
@@ -53,6 +61,7 @@ pub fn handle_parallel_action(
                 workspace_id,
                 prompt,
                 request_report,
+                dangerously_skip_permissions,
                 source_branch,
                 source_commit,
                 worktrees,
@@ -102,8 +111,9 @@ fn start_parallel_task(
     let workspace_id = workspace.id;
     let workspace_path = workspace.path.clone();
 
-    // Get the request_report setting from UI state
+    // Get settings from UI state
     let request_report = state.ui.parallel_task_request_report;
+    let dangerously_skip_permissions = state.ui.parallel_task_dangerous_mode;
 
     let task_id = Uuid::new_v4();
     let task_short_id = task_id.to_string()[..8].to_string();
@@ -165,6 +175,7 @@ fn start_parallel_task(
             workspace_id,
             prompt,
             request_report,
+            dangerously_skip_permissions,
             source_branch,
             source_commit,
             worktrees,
@@ -184,6 +195,7 @@ fn handle_parallel_worktrees_ready(
     workspace_id: Uuid,
     prompt: String,
     request_report: bool,
+    dangerously_skip_permissions: bool,
     source_branch: String,
     source_commit: String,
     worktrees: Vec<ParallelWorktreeSpec>,
@@ -240,7 +252,7 @@ fn handle_parallel_worktrees_ready(
         let session = Session::new_parallel(
             workspace_id,
             spec.agent_type.clone(),
-            false,
+            dangerously_skip_permissions,
             attempt_id,
         );
         let session_id = session.id;
@@ -266,7 +278,7 @@ fn handle_parallel_worktrees_ready(
             cols,
             pty_tx: pty_tx.clone(),
             resume: false,
-            dangerously_skip_permissions: false,
+            dangerously_skip_permissions,
         }) {
             Ok(handle) => {
                 state.system.pty_handles.insert(session_id, handle);
@@ -352,7 +364,7 @@ fn select_parallel_winner(
     action_tx: &mpsc::UnboundedSender<Action>,
 ) -> Result<()> {
     // Find the task and attempt info
-    let (workspace_path, workspace_id, task_id, source_branch, winner_branch, session_ids, worktree_paths) = {
+    let (workspace_path, workspace_id, task_id, source_branch, winner_branch, winner_worktree_path, session_ids, worktree_paths) = {
         let ws = state.selected_workspace()
             .ok_or_else(|| anyhow!("No workspace selected"))?;
 
@@ -372,6 +384,7 @@ fn select_parallel_winner(
             task.id,
             task.source_branch.clone(),
             attempt.branch_name.clone(),
+            attempt.worktree_path.clone(),
             ids,
             paths,
         )
@@ -384,12 +397,23 @@ fn select_parallel_winner(
         winner_attempt_id: attempt_id,
         source_branch,
         winner_branch,
+        winner_worktree_path,
         session_ids,
         worktree_paths,
     };
 
     let action_tx = action_tx.clone();
     task::spawn_blocking(move || {
+        // Auto-commit any uncommitted changes in the winner's worktree before merging.
+        // Agents often edit files without committing — without this, those changes
+        // would be lost when the worktree is force-removed during cleanup.
+        if git::worktree_has_changes(&plan.winner_worktree_path) {
+            let _ = git::commit_all_changes(
+                &plan.winner_worktree_path,
+                "parallel task: auto-commit uncommitted changes",
+            );
+        }
+
         let result = git::checkout_branch(&plan.workspace_path, &plan.source_branch)
             .and_then(|_| git::merge_branch(&plan.workspace_path, &plan.winner_branch));
         let error = result.err().map(|e| e.to_string());
@@ -514,15 +538,28 @@ fn view_selected_report(state: &mut AppState) {
     }
 }
 
-fn merge_selected_report(
-    state: &mut AppState,
-    action_tx: &mpsc::UnboundedSender<Action>,
-) -> Result<()> {
+fn merge_selected_report(state: &mut AppState) -> Result<()> {
     // Get the selected attempt ID
     let attempt_id = state.selected_workspace()
         .and_then(|ws| ws.active_parallel_task())
         .and_then(|t| t.attempts.get(state.ui.selected_report_idx))
         .map(|a| a.id);
+
+    if let Some(attempt_id) = attempt_id {
+        // Show confirmation modal instead of merging directly
+        state.ui.merging_parallel_attempt_id = Some(attempt_id);
+        state.ui.input_mode = InputMode::ConfirmParallelMerge;
+    }
+
+    Ok(())
+}
+
+fn confirm_parallel_merge(
+    state: &mut AppState,
+    action_tx: &mpsc::UnboundedSender<Action>,
+) -> Result<()> {
+    let attempt_id = state.ui.merging_parallel_attempt_id.take();
+    state.ui.input_mode = InputMode::Normal;
 
     if let Some(attempt_id) = attempt_id {
         select_parallel_winner(state, attempt_id, action_tx)?;
@@ -946,6 +983,7 @@ mod tests {
             workspace_id: ws_id,
             prompt: "Prompt".to_string(),
             request_report: false,
+            dangerously_skip_permissions: false,
             source_branch: "main".to_string(),
             source_commit: "abc123".to_string(),
             worktrees: Vec::new(),
@@ -979,6 +1017,7 @@ mod tests {
             workspace_id: ws_id,
             prompt: "Prompt".to_string(),
             request_report: false,
+            dangerously_skip_permissions: false,
             source_branch: "main".to_string(),
             source_commit: "abc123".to_string(),
             worktrees: Vec::<ParallelWorktreeSpec>::new(),

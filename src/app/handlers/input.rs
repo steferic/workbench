@@ -175,16 +175,16 @@ pub fn handle_input_action(state: &mut AppState, action: Action) -> Result<()> {
         }
         Action::NextParallelAgent => {
             let agent_count = state.ui.parallel_task_agents.len();
-            // Total items = agents + 1 (report checkbox)
-            let total_items = agent_count + 1;
+            // Total items = agents + 2 (dangerous mode + report checkboxes)
+            let total_items = agent_count + 2;
             if total_items > 0 {
                 state.ui.parallel_task_agent_idx = (state.ui.parallel_task_agent_idx + 1) % total_items;
             }
         }
         Action::PrevParallelAgent => {
             let agent_count = state.ui.parallel_task_agents.len();
-            // Total items = agents + 1 (report checkbox)
-            let total_items = agent_count + 1;
+            // Total items = agents + 2 (dangerous mode + report checkboxes)
+            let total_items = agent_count + 2;
             if total_items > 0 {
                 if state.ui.parallel_task_agent_idx == 0 {
                     state.ui.parallel_task_agent_idx = total_items - 1;
@@ -196,7 +196,10 @@ pub fn handle_input_action(state: &mut AppState, action: Action) -> Result<()> {
         Action::ToggleParallelAgent(idx) => {
             let agent_count = state.ui.parallel_task_agents.len();
             if idx == agent_count {
-                // Toggle the report checkbox
+                // First extra checkbox: dangerous mode
+                state.ui.parallel_task_dangerous_mode = !state.ui.parallel_task_dangerous_mode;
+            } else if idx == agent_count + 1 {
+                // Second extra checkbox: request report
                 state.ui.parallel_task_request_report = !state.ui.parallel_task_request_report;
             } else if let Some((_, selected)) = state.ui.parallel_task_agents.get_mut(idx) {
                 *selected = !*selected;

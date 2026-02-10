@@ -19,6 +19,7 @@ pub enum InputMode {
     SetStartCommand,
     CreateParallelTask,     // Modal for starting a parallel task
     ConfirmMergeWorktree,   // Confirm commit and merge worktree
+    ConfirmParallelMerge,   // Confirm commit and merge parallel task worktree
     Help,
 }
 
