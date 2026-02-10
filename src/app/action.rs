@@ -1,7 +1,9 @@
 use crate::app::state::PaneHelp;
+use crate::git::DiffStat;
 use crate::models::AgentType;
 use crossterm::event::KeyEvent;
 use ratatui::style::Color;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use uuid::Uuid;
 
@@ -30,7 +32,6 @@ pub struct ParallelMergePlan {
     pub winner_branch: String,
     pub winner_worktree_path: PathBuf,
     pub session_ids: Vec<Uuid>,
-    pub worktree_paths: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -207,6 +208,9 @@ pub enum Action {
     Quit,
     Tick,
     Resize(u16, u16),
+
+    // Diff stats
+    DiffStatsUpdated(HashMap<PathBuf, DiffStat>),
 
     // Debug
     ToggleDebugOverlay,  // F12 - show terminal dimension debug info

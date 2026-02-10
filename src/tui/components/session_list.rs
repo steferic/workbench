@@ -343,15 +343,59 @@ fn create_session_item<'a>(
         "  "
     };
 
-    let main_line = Line::from(vec![
+    // Look up diff stats for this session's working directory
+    let diff_indicator = {
+        let stat = if is_parallel {
+            // Parallel session → find attempt's worktree_path
+            state.selected_workspace()
+                .and_then(|ws| {
+                    ws.parallel_tasks.iter()
+                        .flat_map(|t| t.attempts.iter())
+                        .find(|a| a.session_id == session.id)
+                        .and_then(|a| state.system.diff_stats.get(&a.worktree_path))
+                })
+        } else if let Some(ref wt_path) = session.worktree_path {
+            // Worktree session
+            state.system.diff_stats.get(wt_path)
+        } else {
+            // Main branch session → workspace path
+            state.selected_workspace()
+                .and_then(|ws| state.system.diff_stats.get(&ws.path))
+        };
+
+        if let Some(s) = stat {
+            if s.insertions > 0 || s.deletions > 0 {
+                let mut spans = vec![Span::raw(" ")];
+                if s.insertions > 0 {
+                    spans.push(Span::styled(format!("+{}", s.insertions), Style::default().fg(Color::Green)));
+                }
+                if s.deletions > 0 {
+                    if s.insertions > 0 {
+                        spans.push(Span::raw(" "));
+                    }
+                    spans.push(Span::styled(format!("-{}", s.deletions), Style::default().fg(Color::Red)));
+                }
+                spans
+            } else {
+                vec![]
+            }
+        } else {
+            vec![]
+        }
+    };
+
+    let mut main_spans = vec![
         Span::styled(prefix.to_string(), name_style),
         Span::styled(status_icon, Style::default().fg(status_color)),
         Span::raw(" "),
         Span::styled(session.agent_type.display_name().to_string(), name_style),
         dangerous_indicator,
         branch_indicator,
-        pin_indicator,
-    ]);
+    ];
+    main_spans.extend(diff_indicator);
+    main_spans.push(pin_indicator);
+
+    let main_line = Line::from(main_spans);
 
     if let Some(ref cmd) = session.start_command {
         let max_len = 40;

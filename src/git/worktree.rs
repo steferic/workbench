@@ -8,6 +8,13 @@ use anyhow::{Context, Result, bail};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// Diff statistics from `git diff --shortstat`
+#[derive(Debug, Clone, Default)]
+pub struct DiffStat {
+    pub insertions: usize,
+    pub deletions: usize,
+}
+
 /// Directory name for storing parallel task worktrees
 pub const WORKTREES_DIR: &str = ".worktrees";
 
@@ -319,6 +326,52 @@ pub fn commit_all_changes(worktree_path: &Path, message: &str) -> Result<()> {
     Ok(())
 }
 
+/// Get diff stats (insertions/deletions) for a repository path.
+///
+/// If `base` is `None`, diffs against HEAD (showing uncommitted changes).
+/// If `base` is `Some(branch)`, diffs against that branch (showing all divergent changes).
+pub fn get_diff_shortstat(repo_path: &Path, base: Option<&str>) -> DiffStat {
+    let args: Vec<&str> = match base {
+        Some(b) => vec!["diff", "--shortstat", b],
+        None => vec!["diff", "--shortstat", "HEAD"],
+    };
+
+    let output = Command::new("git")
+        .args(&args)
+        .current_dir(repo_path)
+        .output();
+
+    let output = match output {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+        _ => return DiffStat::default(),
+    };
+
+    parse_shortstat(&output)
+}
+
+/// Parse `git diff --shortstat` output like:
+/// ` 3 files changed, 12 insertions(+), 5 deletions(-)`
+fn parse_shortstat(output: &str) -> DiffStat {
+    let mut stat = DiffStat::default();
+    let trimmed = output.trim();
+    if trimmed.is_empty() {
+        return stat;
+    }
+
+    for part in trimmed.split(',') {
+        let part = part.trim();
+        if let Some(idx) = part.find("insertion") {
+            let num_str: String = part[..idx].chars().filter(|c| c.is_ascii_digit()).collect();
+            stat.insertions = num_str.parse().unwrap_or(0);
+        } else if let Some(idx) = part.find("deletion") {
+            let num_str: String = part[..idx].chars().filter(|c| c.is_ascii_digit()).collect();
+            stat.deletions = num_str.parse().unwrap_or(0);
+        }
+    }
+
+    stat
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -389,5 +442,56 @@ mod tests {
 
         remove_worktree(dir.path(), &worktree_path, true).unwrap();
         assert!(!worktree_path.exists());
+    }
+
+    #[test]
+    fn test_parse_shortstat_full() {
+        let stat = parse_shortstat(" 3 files changed, 12 insertions(+), 5 deletions(-)");
+        assert_eq!(stat.insertions, 12);
+        assert_eq!(stat.deletions, 5);
+    }
+
+    #[test]
+    fn test_parse_shortstat_insertions_only() {
+        let stat = parse_shortstat(" 1 file changed, 7 insertions(+)");
+        assert_eq!(stat.insertions, 7);
+        assert_eq!(stat.deletions, 0);
+    }
+
+    #[test]
+    fn test_parse_shortstat_deletions_only() {
+        let stat = parse_shortstat(" 2 files changed, 3 deletions(-)");
+        assert_eq!(stat.insertions, 0);
+        assert_eq!(stat.deletions, 3);
+    }
+
+    #[test]
+    fn test_parse_shortstat_empty() {
+        let stat = parse_shortstat("");
+        assert_eq!(stat.insertions, 0);
+        assert_eq!(stat.deletions, 0);
+    }
+
+    #[test]
+    fn test_diff_shortstat_clean_repo() {
+        let dir = create_test_repo();
+        let stat = get_diff_shortstat(dir.path(), None);
+        assert_eq!(stat.insertions, 0);
+        assert_eq!(stat.deletions, 0);
+    }
+
+    #[test]
+    fn test_diff_shortstat_with_changes() {
+        let dir = create_test_repo();
+        std::fs::write(dir.path().join("new.txt"), "new content\n").unwrap();
+        let stat = get_diff_shortstat(dir.path(), None);
+        // New untracked files don't show in diff --shortstat HEAD
+        // but tracked file changes do
+        assert_eq!(stat.insertions, 0); // untracked file, not in diff
+
+        // Modify a tracked file
+        std::fs::write(dir.path().join("test.txt"), "modified\n").unwrap();
+        let stat = get_diff_shortstat(dir.path(), None);
+        assert!(stat.insertions > 0 || stat.deletions > 0);
     }
 }

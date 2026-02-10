@@ -1,4 +1,5 @@
 use crate::config::KeybindingConfig;
+use crate::git::DiffStat;
 use crate::models::AgentType;
 use crate::pty::PtyHandle;
 use std::collections::{HashMap, VecDeque};
@@ -175,6 +176,10 @@ pub struct SystemState {
     pub pending_config_terminal: Option<PathBuf>,
     /// Performance metrics for FPS monitoring
     pub perf: PerformanceMetrics,
+    /// Git diff stats keyed by working directory path
+    pub diff_stats: HashMap<PathBuf, DiffStat>,
+    /// Last time diff stats were refreshed
+    pub last_diff_refresh: Instant,
 }
 
 impl SystemState {
@@ -194,6 +199,8 @@ impl SystemState {
             keybindings: KeybindingConfig::default(),
             pending_config_terminal: None,
             perf: PerformanceMetrics::new(),
+            diff_stats: HashMap::new(),
+            last_diff_refresh: Instant::now(),
         }
     }
 }

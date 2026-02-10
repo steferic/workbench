@@ -1,6 +1,9 @@
 use crate::app::{Action, AppState};
+use crate::git;
 use crate::pty::{PtyManager, SessionSpawnConfig};
 use anyhow::Result;
+use std::collections::HashMap;
+use std::time::Duration;
 use tokio::sync::mpsc;
 
 use super::handlers::{input, navigation, parallel, session, todo, workspace};
@@ -130,6 +133,54 @@ pub fn process_action(
                 }
             }
 
+            // Refresh diff stats every 5 seconds
+            if state.system.last_diff_refresh.elapsed() >= Duration::from_secs(5) {
+                state.system.last_diff_refresh = std::time::Instant::now();
+
+                // Collect unique (path, Option<base>) pairs
+                let mut diff_requests: HashMap<std::path::PathBuf, Option<String>> = HashMap::new();
+
+                for ws in &state.data.workspaces {
+                    // Workspace path → diff vs HEAD (uncommitted changes)
+                    diff_requests.entry(ws.path.clone()).or_insert(None);
+
+                    // Parallel task attempts → diff vs source_branch
+                    for task in &ws.parallel_tasks {
+                        for attempt in &task.attempts {
+                            diff_requests.entry(attempt.worktree_path.clone())
+                                .or_insert_with(|| Some(task.source_branch.clone()));
+                        }
+                    }
+
+                    // Session worktrees → diff vs main workspace branch
+                    if let Some(sessions) = state.data.sessions.get(&ws.id) {
+                        for session in sessions {
+                            if let Some(ref wt_path) = session.worktree_path {
+                                if !diff_requests.contains_key(wt_path) {
+                                    // Use the workspace's current branch as base
+                                    let base = git::get_current_branch_fast(&ws.path);
+                                    diff_requests.insert(wt_path.clone(), base);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if !diff_requests.is_empty() {
+                    let tx = action_tx.clone();
+                    tokio::task::spawn_blocking(move || {
+                        let mut stats = HashMap::new();
+                        for (path, base) in diff_requests {
+                            if path.exists() {
+                                let stat = git::get_diff_shortstat(&path, base.as_deref());
+                                stats.insert(path, stat);
+                            }
+                        }
+                        let _ = tx.send(Action::DiffStatsUpdated(stats));
+                    });
+                }
+            }
+
             // Handle pending config terminal (from config tree)
             if let Some(config_dir) = state.system.pending_config_terminal.take() {
                 // Create a terminal session in the config directory
@@ -207,6 +258,9 @@ pub fn process_action(
                 state.ui.pie_chart_data = payload.pie_chart_data;
                 state.ui.show_calendar = payload.show_calendar;
             }
+        }
+        Action::DiffStatsUpdated(stats) => {
+            state.system.diff_stats = stats;
         }
         Action::Resize(w, h) => {
             state.system.terminal_size = (w, h);
@@ -301,7 +355,8 @@ pub fn process_action(
                 }
 
                 // Global already handled
-                Action::Quit | Action::ConfirmQuit | Action::Tick | Action::Resize(_, _) | Action::UtilityContentLoaded(_) => {}
+                Action::Quit | Action::ConfirmQuit | Action::Tick | Action::Resize(_, _) |
+                Action::UtilityContentLoaded(_) | Action::DiffStatsUpdated(_) => {}
             }
         }
     }
