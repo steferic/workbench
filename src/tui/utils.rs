@@ -209,8 +209,7 @@ pub fn convert_vt100_to_lines_visible(
                 }
 
                 if cell_style != current_style && !current_text.is_empty() {
-                    spans.push(Span::styled(current_text.clone(), current_style));
-                    current_text.clear();
+                    spans.push(Span::styled(std::mem::take(&mut current_text), current_style));
                 }
                 current_style = cell_style;
 
@@ -225,13 +224,12 @@ pub fn convert_vt100_to_lines_visible(
         }
 
         if !current_text.is_empty() {
-            let text = if row_has_selection {
-                current_text
-            } else {
-                current_text.trim_end().to_string()
-            };
-            if !text.is_empty() {
-                spans.push(Span::styled(text, current_style));
+            if !row_has_selection {
+                let trimmed_len = current_text.trim_end().len();
+                current_text.truncate(trimmed_len);
+            }
+            if !current_text.is_empty() {
+                spans.push(Span::styled(current_text, current_style));
             }
         }
 

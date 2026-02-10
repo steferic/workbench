@@ -180,12 +180,15 @@ async fn run_main_loop(
         // Handle events - batch process multiple PTY outputs to avoid UI starvation
         let action = events.next(state).await?;
 
-        // Process action
-        process_action(state, action.clone(), pty_manager, &action_tx, &pty_tx)?;
+        // Check discriminant before consuming the action to avoid cloning
+        let is_pty_output = matches!(&action, Action::PtyOutput(_, _));
+
+        // Process action (takes ownership, no clone needed)
+        process_action(state, action, pty_manager, &action_tx, &pty_tx)?;
 
         // If we just processed a PTY output, drain more from the queue without redrawing
         // This prevents UI starvation during heavy output
-        if matches!(action, Action::PtyOutput(_, _)) {
+        if is_pty_output {
             state.system.perf.record_pty_output(); // Track first PTY output
             let mut batch_count = 0;
             const MAX_BATCH: usize = 50; // Process up to 50 PTY outputs per frame

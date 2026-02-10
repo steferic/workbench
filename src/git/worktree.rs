@@ -32,6 +32,20 @@ pub fn get_current_branch(repo_path: &Path) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+/// Fast version of get_current_branch that reads .git/HEAD directly
+/// instead of spawning a git subprocess. Safe to call in render hot paths.
+pub fn get_current_branch_fast(repo_path: &Path) -> Option<String> {
+    let head_path = repo_path.join(".git").join("HEAD");
+    let content = std::fs::read_to_string(&head_path).ok()?;
+    let content = content.trim();
+    if let Some(branch) = content.strip_prefix("ref: refs/heads/") {
+        Some(branch.to_string())
+    } else {
+        // Detached HEAD - return short hash
+        Some(content[..7.min(content.len())].to_string())
+    }
+}
+
 /// Get the current HEAD commit hash (short form)
 pub fn get_head_commit(repo_path: &Path) -> Result<String> {
     let output = Command::new("git")

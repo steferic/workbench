@@ -242,7 +242,5 @@ fn split_pinned_area(area: Rect, state: &AppState) -> Vec<Rect> {
         .direction(Direction::Vertical)
         .constraints(constraints)
         .split(area)
-        .iter()
-        .cloned()
-        .collect()
+        .to_vec()
 }

@@ -294,6 +294,18 @@ fn render_pie_chart_view(frame: &mut Frame, area: Rect, state: &AppState, block:
         frame.render_widget(bar_chart, chart_area);
     }
 
+    // Pre-compute bullet color indices to avoid O(n²) scanning
+    let mut bullet_count = 0usize;
+    let bullet_indices: Vec<Option<usize>> = state.ui.utility_content.iter().map(|line| {
+        if line.contains('●') || line.contains('○') {
+            let idx = bullet_count;
+            bullet_count += 1;
+            Some(idx)
+        } else {
+            None
+        }
+    }).collect();
+
     // Render the text content (legend) below the chart
     let lines: Vec<Line> = state
         .ui.utility_content
@@ -301,25 +313,18 @@ fn render_pie_chart_view(frame: &mut Frame, area: Rect, state: &AppState, block:
         .enumerate()
         .map(|(i, line)| {
             // Color the bullet points to match chart bars
-            if line.contains('●') || line.contains('○') {
-                // Find which color this line should have
-                let color_idx = state
-                    .ui.utility_content
-                    .iter()
-                    .take(i + 1)
-                    .filter(|l| l.contains('●') || l.contains('○'))
-                    .count()
-                    .saturating_sub(1);
-
+            if let Some(color_idx) = bullet_indices[i] {
                 if color_idx < state.ui.pie_chart_data.len() {
                     let (_, _, color) = &state.ui.pie_chart_data[color_idx];
+                    // Split at 3rd character boundary using char_indices
+                    let split_at = line.char_indices().nth(3).map(|(i, _)| i).unwrap_or(line.len());
                     return Line::from(vec![
                         Span::styled(
-                            line.chars().take(3).collect::<String>(),
+                            line[..split_at].to_string(),
                             Style::default().fg(*color),
                         ),
                         Span::styled(
-                            line.chars().skip(3).collect::<String>(),
+                            line[split_at..].to_string(),
                             Style::default().fg(Color::Gray),
                         ),
                     ]);

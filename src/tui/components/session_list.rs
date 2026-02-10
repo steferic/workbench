@@ -85,14 +85,16 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
                 .map(|b| (b, true))
                 .unwrap_or_else(|| {
                     // Fallback to main branch if session not found
-                    let main = git::get_current_branch(&workspace.path)
-                        .unwrap_or_else(|_| "unknown".to_string());
+                    // Use fast file-based read instead of spawning git subprocess
+                    let main = git::get_current_branch_fast(&workspace.path)
+                        .unwrap_or_else(|| "unknown".to_string());
                     (main, false)
                 })
         } else {
             // No worktree active - show main branch
-            let main = git::get_current_branch(&workspace.path)
-                .unwrap_or_else(|_| "unknown".to_string());
+            // Use fast file-based read instead of spawning git subprocess
+            let main = git::get_current_branch_fast(&workspace.path)
+                .unwrap_or_else(|| "unknown".to_string());
             (main, false)
         };
 
