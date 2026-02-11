@@ -121,10 +121,17 @@ fn render_utilities_list(frame: &mut Frame, area: Rect, state: &AppState, is_foc
 
             let prefix = if is_selected { "> " } else { "  " };
 
-            // Show ON/OFF indicator for ToggleBanner
+            // Show ON/OFF indicator for toggles
             let toggle_indicator = match item {
                 UtilityItem::ToggleBanner => {
                     if state.ui.banner_visible {
+                        Span::styled(" [ON]", Style::default().fg(Color::Green))
+                    } else {
+                        Span::styled(" [OFF]", Style::default().fg(Color::Red))
+                    }
+                }
+                UtilityItem::AgentDoneSound => {
+                    if state.system.agent_done_sound_enabled {
                         Span::styled(" [ON]", Style::default().fg(Color::Green))
                     } else {
                         Span::styled(" [OFF]", Style::default().fg(Color::Red))
@@ -214,13 +221,6 @@ fn render_sounds_list(frame: &mut Frame, area: Rect, state: &AppState, is_focuse
                 }
                 UtilityItem::RainforestRain => {
                     if state.system.rainforest_rain_playing {
-                        Span::styled(" [ON]", Style::default().fg(Color::Green))
-                    } else {
-                        Span::styled(" [OFF]", Style::default().fg(Color::Red))
-                    }
-                }
-                UtilityItem::AgentDoneSound => {
-                    if state.system.agent_done_sound_enabled {
                         Span::styled(" [ON]", Style::default().fg(Color::Green))
                     } else {
                         Span::styled(" [OFF]", Style::default().fg(Color::Red))

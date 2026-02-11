@@ -130,7 +130,6 @@ pub enum Action {
     ToggleOceanWaves,   // Toggle ocean waves sound on/off
     ToggleWindChimes,   // Toggle wind chimes sound on/off
     ToggleRainforestRain, // Toggle rainforest rain sound on/off
-    ToggleAgentDoneSound, // Toggle notification sound when agent goes idle
     UtilityContentLoaded(UtilityContentPayload),
 
     // Notepad operations (tui-textarea handles all editing)

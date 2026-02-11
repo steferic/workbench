@@ -144,13 +144,13 @@ pub enum UtilityItem {
     SuggestTodos,
     Keybindings,
     ToggleBanner,
+    AgentDoneSound,
     // Sounds
     BrownNoise,
     ClassicalRadio,
     OceanWaves,
     WindChimes,
     RainforestRain,
-    AgentDoneSound,
 }
 
 impl UtilityItem {
@@ -164,6 +164,7 @@ impl UtilityItem {
             UtilityItem::SuggestTodos,
             UtilityItem::Keybindings,
             UtilityItem::ToggleBanner,
+            UtilityItem::AgentDoneSound,
         ]
     }
 
@@ -175,7 +176,6 @@ impl UtilityItem {
             UtilityItem::OceanWaves,
             UtilityItem::WindChimes,
             UtilityItem::RainforestRain,
-            UtilityItem::AgentDoneSound,
         ]
     }
 

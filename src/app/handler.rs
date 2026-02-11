@@ -37,8 +37,12 @@ pub fn process_action(
             navigation::handle_drag_auto_scroll(state);
             let newly_idle = state.update_idle_queue();
 
-            // Play notification sound when agents go idle
-            if state.system.agent_done_sound_enabled && !newly_idle.is_empty() {
+            // Play notification sound when agents go idle (debounced: max once per 5s)
+            if state.system.agent_done_sound_enabled
+                && !newly_idle.is_empty()
+                && state.system.last_agent_done_sound.elapsed().as_secs() >= 5
+            {
+                state.system.last_agent_done_sound = std::time::Instant::now();
                 let _ = std::process::Command::new("afplay")
                     .arg("/Users/stefanlenoach/Downloads/Tonal_Click.wav")
                     .spawn();
@@ -326,8 +330,7 @@ pub fn process_action(
                 Action::Paste(_) | Action::ClearSelection | Action::SelectNextUtility |
                 Action::SelectPrevUtility | Action::ToggleUtilitySection |
                 Action::ToggleConfigItem | Action::ToggleBrownNoise | Action::ToggleClassicalRadio |
-                Action::ToggleOceanWaves | Action::ToggleWindChimes | Action::ToggleRainforestRain |
-                Action::ToggleAgentDoneSound => {
+                Action::ToggleOceanWaves | Action::ToggleWindChimes | Action::ToggleRainforestRain => {
                     navigation::handle_navigation_action(state, action, pty_manager, pty_tx)?;
                 }
 

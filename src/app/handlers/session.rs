@@ -684,9 +684,17 @@ pub fn handle_session_action(
             if let Some(parser) = state.system.output_buffers.get_mut(&session_id) {
                 parser.process(&data);
             }
-            state.data.last_activity.insert(session_id, std::time::Instant::now());
+            // Only count as agent activity if this isn't an echo of recent user input.
+            // Keystroke echoes arrive within ~50ms of SendInput; real agent output is autonomous.
+            let is_echo = state.data.last_send_input.get(&session_id)
+                .map(|t| t.elapsed().as_millis() < 500)
+                .unwrap_or(false);
+            if !is_echo {
+                state.data.last_activity.insert(session_id, std::time::Instant::now());
+            }
         }
         Action::SendInput(session_id, data) => {
+            state.data.last_send_input.insert(session_id, std::time::Instant::now());
             if let Some(handle) = state.system.pty_handles.get_mut(&session_id) {
                 let _ = handle.send_input(&data);
             }

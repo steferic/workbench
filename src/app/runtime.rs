@@ -58,6 +58,7 @@ pub async fn run_tui(initial_workspace: Option<PathBuf>) -> Result<()> {
             state.ui.sessions_ratio = config.sessions_ratio;
             state.ui.todos_ratio = config.todos_ratio;
             state.ui.output_split_ratio = config.output_split_ratio;
+            state.system.agent_done_sound_enabled = config.agent_done_sound_enabled;
         }
         Err(_e) => {
             // Don't use eprintln! in TUI - it corrupts the display

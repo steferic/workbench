@@ -30,6 +30,9 @@ pub struct GlobalConfig {
     pub todos_ratio: f32,
     #[serde(default = "default_output_split_ratio")]
     pub output_split_ratio: f32,
+
+    #[serde(default = "default_agent_done_sound")]
+    pub agent_done_sound_enabled: bool,
 }
 
 fn default_banner_visible() -> bool {
@@ -56,6 +59,10 @@ fn default_output_split_ratio() -> f32 {
     0.50
 }
 
+fn default_agent_done_sound() -> bool {
+    true
+}
+
 impl Default for GlobalConfig {
     fn default() -> Self {
         Self {
@@ -65,6 +72,7 @@ impl Default for GlobalConfig {
             sessions_ratio: default_sessions_ratio(),
             todos_ratio: default_todos_ratio(),
             output_split_ratio: default_output_split_ratio(),
+            agent_done_sound_enabled: default_agent_done_sound(),
         }
     }
 }

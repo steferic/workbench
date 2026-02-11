@@ -462,29 +462,12 @@ fn render_reports_tab(frame: &mut Frame, area: Rect, state: &AppState, is_focuse
                 Span::styled(format!(" {}", attempt.status.display()), Style::default().fg(status_color)),
             ]);
 
-            // Second line: branch name + diff stats
-            let mut branch_spans = vec![
+            // Second line: branch name
+            let line2 = Line::from(vec![
                 Span::raw("      "),
                 Span::styled("branch: ", Style::default().fg(Color::DarkGray)),
                 Span::styled(attempt.branch_name.clone(), Style::default().fg(Color::Cyan)),
-            ];
-
-            if let Some(stat) = state.system.diff_stats.get(&attempt.worktree_path) {
-                if stat.insertions > 0 || stat.deletions > 0 {
-                    branch_spans.push(Span::raw(" "));
-                    if stat.insertions > 0 {
-                        branch_spans.push(Span::styled(format!("+{}", stat.insertions), Style::default().fg(Color::Green)));
-                    }
-                    if stat.deletions > 0 {
-                        if stat.insertions > 0 {
-                            branch_spans.push(Span::raw(" "));
-                        }
-                        branch_spans.push(Span::styled(format!("-{}", stat.deletions), Style::default().fg(Color::Red)));
-                    }
-                }
-            }
-
-            let line2 = Line::from(branch_spans);
+            ]);
 
             // Third line: report preview (if available)
             let mut lines = vec![line1, line2];

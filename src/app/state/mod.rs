@@ -351,6 +351,7 @@ impl AppState {
         self.system.pty_handles.remove(&session_id);
         // Remove activity tracking
         self.data.last_activity.remove(&session_id);
+        self.data.last_send_input.remove(&session_id);
     }
 
     /// Check if a session is actively working (received output within last 2 seconds)

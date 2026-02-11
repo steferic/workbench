@@ -48,6 +48,7 @@ pub fn handle_workspace_action(
                             state.system.output_buffers.remove(session_id);
                             // Remove activity tracking
                             state.data.last_activity.remove(session_id);
+                            state.data.last_send_input.remove(session_id);
                         }
 
                         // Drain from idle queue

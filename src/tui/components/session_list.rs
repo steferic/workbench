@@ -115,11 +115,30 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
             Span::raw("")
         };
 
-        items.push(ListItem::new(Line::from(vec![
+        // Look up diff stats for the workspace
+        let mut branch_spans = vec![
             Span::styled("⎇ ", icon_style),
             Span::styled(branch_name, branch_style),
-            hint,
-        ])));
+        ];
+
+        if let Some(stat) = state.system.diff_stats.get(&workspace.path) {
+            if stat.insertions > 0 || stat.deletions > 0 {
+                branch_spans.push(Span::raw(" "));
+                if stat.insertions > 0 {
+                    branch_spans.push(Span::styled(format!("+{}", stat.insertions), Style::default().fg(Color::Green)));
+                }
+                if stat.deletions > 0 {
+                    if stat.insertions > 0 {
+                        branch_spans.push(Span::raw(" "));
+                    }
+                    branch_spans.push(Span::styled(format!("-{}", stat.deletions), Style::default().fg(Color::Red)));
+                }
+            }
+        }
+
+        branch_spans.push(hint);
+
+        items.push(ListItem::new(Line::from(branch_spans)));
         current_visual_idx += 1;
     }
 
@@ -343,57 +362,15 @@ fn create_session_item<'a>(
         "  "
     };
 
-    // Look up diff stats for this session's working directory
-    let diff_indicator = {
-        let stat = if is_parallel {
-            // Parallel session → find attempt's worktree_path
-            state.selected_workspace()
-                .and_then(|ws| {
-                    ws.parallel_tasks.iter()
-                        .flat_map(|t| t.attempts.iter())
-                        .find(|a| a.session_id == session.id)
-                        .and_then(|a| state.system.diff_stats.get(&a.worktree_path))
-                })
-        } else if let Some(ref wt_path) = session.worktree_path {
-            // Worktree session
-            state.system.diff_stats.get(wt_path)
-        } else {
-            // Main branch session → workspace path
-            state.selected_workspace()
-                .and_then(|ws| state.system.diff_stats.get(&ws.path))
-        };
-
-        if let Some(s) = stat {
-            if s.insertions > 0 || s.deletions > 0 {
-                let mut spans = vec![Span::raw(" ")];
-                if s.insertions > 0 {
-                    spans.push(Span::styled(format!("+{}", s.insertions), Style::default().fg(Color::Green)));
-                }
-                if s.deletions > 0 {
-                    if s.insertions > 0 {
-                        spans.push(Span::raw(" "));
-                    }
-                    spans.push(Span::styled(format!("-{}", s.deletions), Style::default().fg(Color::Red)));
-                }
-                spans
-            } else {
-                vec![]
-            }
-        } else {
-            vec![]
-        }
-    };
-
-    let mut main_spans = vec![
+    let main_spans = vec![
         Span::styled(prefix.to_string(), name_style),
         Span::styled(status_icon, Style::default().fg(status_color)),
         Span::raw(" "),
         Span::styled(session.agent_type.display_name().to_string(), name_style),
         dangerous_indicator,
         branch_indicator,
+        pin_indicator,
     ];
-    main_spans.extend(diff_indicator);
-    main_spans.push(pin_indicator);
 
     let main_line = Line::from(main_spans);
 

@@ -613,6 +613,7 @@ pub fn handle_navigation_action(
                     sessions_ratio: state.ui.sessions_ratio,
                     todos_ratio: state.ui.todos_ratio,
                     output_split_ratio: state.ui.output_split_ratio,
+                    agent_done_sound_enabled: state.system.agent_done_sound_enabled,
                 };
                 let _ = persistence::save_config(&config);
                 return Ok(());
@@ -780,9 +781,6 @@ pub fn handle_navigation_action(
         }
         Action::ToggleRainforestRain => {
             state.system.rainforest_rain_playing = !state.system.rainforest_rain_playing;
-        }
-        Action::ToggleAgentDoneSound => {
-            state.system.agent_done_sound_enabled = !state.system.agent_done_sound_enabled;
         }
         _ => {}
     }

@@ -549,7 +549,6 @@ impl EventHandler {
                             UtilityItem::OceanWaves => Action::ToggleOceanWaves,
                             UtilityItem::WindChimes => Action::ToggleWindChimes,
                             UtilityItem::RainforestRain => Action::ToggleRainforestRain,
-                            UtilityItem::AgentDoneSound => Action::ToggleAgentDoneSound,
                             _ => Action::Tick,
                         }
                     }
