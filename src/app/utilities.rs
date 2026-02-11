@@ -78,6 +78,17 @@ pub fn load_utility_content(state: &mut AppState, action_tx: &mpsc::UnboundedSen
                 "  Press Enter to toggle on/off.".to_string(),
             ];
         }
+        UtilityItem::AgentDoneSound => {
+            state.ui.utility_content = vec![
+                "".to_string(),
+                "  Agent Done".to_string(),
+                "  ==========".to_string(),
+                "".to_string(),
+                "  Plays a short sound when an agent finishes.".to_string(),
+                "".to_string(),
+                "  Press Enter to toggle on/off.".to_string(),
+            ];
+        }
         UtilityItem::TopFiles => {
             state.ui.utility_content = loading_message("Top Files by Lines of Code");
             let action_tx = action_tx.clone();

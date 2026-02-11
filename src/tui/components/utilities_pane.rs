@@ -219,6 +219,13 @@ fn render_sounds_list(frame: &mut Frame, area: Rect, state: &AppState, is_focuse
                         Span::styled(" [OFF]", Style::default().fg(Color::Red))
                     }
                 }
+                UtilityItem::AgentDoneSound => {
+                    if state.system.agent_done_sound_enabled {
+                        Span::styled(" [ON]", Style::default().fg(Color::Green))
+                    } else {
+                        Span::styled(" [OFF]", Style::default().fg(Color::Red))
+                    }
+                }
                 _ => Span::raw(""),
             };
 

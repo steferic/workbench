@@ -781,6 +781,9 @@ pub fn handle_navigation_action(
         Action::ToggleRainforestRain => {
             state.system.rainforest_rain_playing = !state.system.rainforest_rain_playing;
         }
+        Action::ToggleAgentDoneSound => {
+            state.system.agent_done_sound_enabled = !state.system.agent_done_sound_enabled;
+        }
         _ => {}
     }
     Ok(())

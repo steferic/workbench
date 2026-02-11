@@ -150,6 +150,7 @@ pub enum UtilityItem {
     OceanWaves,
     WindChimes,
     RainforestRain,
+    AgentDoneSound,
 }
 
 impl UtilityItem {
@@ -174,6 +175,7 @@ impl UtilityItem {
             UtilityItem::OceanWaves,
             UtilityItem::WindChimes,
             UtilityItem::RainforestRain,
+            UtilityItem::AgentDoneSound,
         ]
     }
 
@@ -184,6 +186,7 @@ impl UtilityItem {
             UtilityItem::OceanWaves => "Ocean",
             UtilityItem::WindChimes => "Chimes",
             UtilityItem::RainforestRain => "Rain",
+            UtilityItem::AgentDoneSound => "Agent Done",
             UtilityItem::TopFiles => "Top Files (LOC)",
             UtilityItem::Calendar => "Calendar",
             UtilityItem::GitHistory => "Git History",
@@ -201,6 +204,7 @@ impl UtilityItem {
             UtilityItem::OceanWaves => "\u{1F30A}",
             UtilityItem::WindChimes => "\u{1F390}",
             UtilityItem::RainforestRain => "\u{1F327}\u{FE0F}",
+            UtilityItem::AgentDoneSound => "\u{1F514}",
             UtilityItem::TopFiles => "\u{1F4CA}",
             UtilityItem::Calendar => "\u{1F4C5}",
             UtilityItem::GitHistory => "\u{1F4DC}",

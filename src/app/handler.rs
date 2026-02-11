@@ -37,6 +37,13 @@ pub fn process_action(
             navigation::handle_drag_auto_scroll(state);
             let newly_idle = state.update_idle_queue();
 
+            // Play notification sound when agents go idle
+            if state.system.agent_done_sound_enabled && !newly_idle.is_empty() {
+                let _ = std::process::Command::new("afplay")
+                    .arg("/Users/stefanlenoach/Downloads/Tonal_Click.wav")
+                    .spawn();
+            }
+
             // Check if analyzer session went idle
             if let Some(analyzer_id) = state.ui.analyzer_session_id {
                 if newly_idle.contains(&analyzer_id) {
@@ -319,7 +326,8 @@ pub fn process_action(
                 Action::Paste(_) | Action::ClearSelection | Action::SelectNextUtility |
                 Action::SelectPrevUtility | Action::ToggleUtilitySection |
                 Action::ToggleConfigItem | Action::ToggleBrownNoise | Action::ToggleClassicalRadio |
-                Action::ToggleOceanWaves | Action::ToggleWindChimes | Action::ToggleRainforestRain => {
+                Action::ToggleOceanWaves | Action::ToggleWindChimes | Action::ToggleRainforestRain |
+                Action::ToggleAgentDoneSound => {
                     navigation::handle_navigation_action(state, action, pty_manager, pty_tx)?;
                 }
 

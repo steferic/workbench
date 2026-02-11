@@ -180,6 +180,8 @@ pub struct SystemState {
     pub diff_stats: HashMap<PathBuf, DiffStat>,
     /// Last time diff stats were refreshed
     pub last_diff_refresh: Instant,
+    /// Play a sound when an agent finishes (goes idle)
+    pub agent_done_sound_enabled: bool,
 }
 
 impl SystemState {
@@ -201,6 +203,7 @@ impl SystemState {
             perf: PerformanceMetrics::new(),
             diff_stats: HashMap::new(),
             last_diff_refresh: Instant::now(),
+            agent_done_sound_enabled: false,
         }
     }
 }
