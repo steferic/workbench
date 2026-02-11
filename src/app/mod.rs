@@ -9,7 +9,9 @@ mod state;
 mod utilities;
 
 // Terminal buffer configuration
-// Parser buffer rows - kept large to preserve scrollback history.
+// Parser buffer rows - the virtual screen height for the vt100 parser.
+// This determines how many rows of output history you can scroll through,
+// since the renderer reads from screen cells, not the separate scrollback buffer.
 // On resize, only columns are updated (to match PTY); rows stay at this value.
 pub const PARSER_BUFFER_ROWS: u16 = 500;
 // Scrollback limit is the max characters stored for scrollback history
