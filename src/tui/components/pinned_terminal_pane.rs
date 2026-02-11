@@ -1,5 +1,6 @@
-use crate::app::{AppState, FocusPanel, InputMode, TextSelection};
-use crate::tui::utils::{convert_vt100_to_lines_with_pane_height, get_cursor_info, get_selection_bounds, render_cursor};
+use crate::app::{AppState, FocusPanel, InputMode, ReplayCache, TextSelection};
+use crate::tui::replay::create_replay_parser;
+use crate::tui::utils::{convert_vt100_to_lines_visible, get_content_length, get_cursor_info, get_selection_bounds, render_cursor};
 use ratatui::{
     layout::Rect,
     style::{Color, Style},
@@ -30,26 +31,165 @@ pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index
 
     let inner_area = block.inner(area);
 
-    let mut cursor_state = None;
+    #[allow(unused_assignments)]
+    let mut cursor_state: Option<crate::tui::utils::CursorInfo> = None;
     let viewport_height = inner_area.height as usize;
 
+    // Get the pinned session ID for replay buffer lookups
+    let pinned_session_id = state.pinned_terminal_id_at(pane_index);
+
     // Convert vt100 parser output to ratatui Lines
-    let (lines, actual_len): (Vec<Line>, usize) = if let Some(parser) = state.pinned_terminal_output_at(pane_index) {
+    if let Some(parser) = state.pinned_terminal_output_at(pane_index) {
         let screen = parser.screen();
         let info = get_cursor_info(screen);
         cursor_state = Some(info);
-        let default_selection = TextSelection::default();
-        let selection = get_selection_bounds(
-            state
-                .ui.pinned_text_selections
-                .get(pane_index)
-                .unwrap_or(&default_selection),
-            screen.size(),
-        );
-        let pane_height = Some(viewport_height as u16);
-        let lines = convert_vt100_to_lines_with_pane_height(screen, selection, info.row, pane_height);
-        let len = lines.len();
-        (lines, len)
+        let is_alternate = screen.alternate_screen();
+        let screen_size = screen.size();
+
+        let live_content_len = if is_alternate {
+            viewport_height
+        } else {
+            get_content_length(screen, info.row)
+        };
+
+        let scroll_from_bottom_raw = state.ui.pinned_scroll_offsets[pane_index] as usize;
+        let session_id = pinned_session_id.unwrap();
+
+        let needs_replay = !is_alternate
+            && scroll_from_bottom_raw > 0
+            && state.system.raw_output_buffers.get(&session_id).map(|b| !b.bytes.is_empty()).unwrap_or(false);
+
+        let (lines, stable_len, scroll_from_bottom, scroll_offset) = if needs_replay {
+            let raw_buf = state.system.raw_output_buffers.get(&session_id).unwrap();
+            let generation = raw_buf.generation;
+            let sfb = scroll_from_bottom_raw as u16;
+            let vh = viewport_height as u16;
+
+            let cache_valid = state.system.replay_caches.get(&session_id).map(|c| {
+                c.generation == generation && c.scroll_from_bottom == sfb && c.viewport_height == vh
+            }).unwrap_or(false);
+
+            if !cache_valid {
+                let cols = screen_size.1;
+                let replay_parser = create_replay_parser(raw_buf, cols);
+                let replay_screen = replay_parser.screen();
+                let replay_cursor = get_cursor_info(replay_screen);
+                let replay_content_len = get_content_length(replay_screen, replay_cursor.row);
+
+                let default_selection = TextSelection::default();
+                let selection = get_selection_bounds(
+                    state.ui.pinned_text_selections.get(pane_index).unwrap_or(&default_selection),
+                    replay_screen.size(),
+                );
+                let pane_height = Some(viewport_height as u16);
+
+                let max_scroll = replay_content_len.saturating_sub(viewport_height);
+                let sfb_clamped = scroll_from_bottom_raw.min(max_scroll);
+                let so = max_scroll.saturating_sub(sfb_clamped);
+
+                let buffer_lines = 5;
+                let visible_start = so.saturating_sub(buffer_lines);
+                let visible_count = viewport_height + buffer_lines * 2;
+
+                let mut replay_lines = convert_vt100_to_lines_visible(
+                    replay_screen,
+                    selection,
+                    replay_cursor.row,
+                    pane_height,
+                    Some(visible_start),
+                    Some(visible_count),
+                );
+
+                while replay_lines.len() < replay_content_len {
+                    replay_lines.push(Line::raw(""));
+                }
+
+                state.system.replay_caches.insert(session_id, ReplayCache {
+                    generation,
+                    scroll_from_bottom: sfb,
+                    viewport_height: vh,
+                    lines: replay_lines.clone(),
+                    content_length: replay_content_len,
+                });
+
+                (replay_lines, replay_content_len, sfb_clamped, so)
+            } else {
+                let cache = state.system.replay_caches.get(&session_id).unwrap();
+                let replay_content_len = cache.content_length;
+                let max_scroll = replay_content_len.saturating_sub(viewport_height);
+                let sfb_clamped = scroll_from_bottom_raw.min(max_scroll);
+                let so = max_scroll.saturating_sub(sfb_clamped);
+                (cache.lines.clone(), replay_content_len, sfb_clamped, so)
+            }
+        } else {
+            // Live parser path
+            let default_selection = TextSelection::default();
+            let selection = get_selection_bounds(
+                state.ui.pinned_text_selections.get(pane_index).unwrap_or(&default_selection),
+                screen_size,
+            );
+            let pane_height = Some(viewport_height as u16);
+
+            let prev_len = state.ui.pinned_content_lengths[pane_index];
+            let stable_len = if live_content_len >= prev_len {
+                live_content_len
+            } else if prev_len - live_content_len >= 20 {
+                live_content_len
+            } else {
+                prev_len
+            };
+
+            let max_scroll = stable_len.saturating_sub(viewport_height);
+            let sfb = scroll_from_bottom_raw.min(max_scroll);
+            let so = max_scroll.saturating_sub(sfb);
+
+            let buffer_lines = 5;
+            let visible_start = so.saturating_sub(buffer_lines);
+            let visible_count = viewport_height + buffer_lines * 2;
+
+            let mut lines = convert_vt100_to_lines_visible(
+                screen,
+                selection,
+                info.row,
+                pane_height,
+                Some(visible_start),
+                Some(visible_count),
+            );
+
+            while lines.len() < stable_len {
+                lines.push(Line::raw(""));
+            }
+
+            (lines, stable_len, sfb, so)
+        };
+
+        state.ui.pinned_content_lengths[pane_index] = stable_len;
+
+        let paragraph = Paragraph::new(lines)
+            .block(block)
+            .scroll((scroll_offset as u16, 0));
+
+        frame.render_widget(paragraph, area);
+
+        // Render scrollbar if content exceeds viewport
+        if stable_len > viewport_height {
+            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight);
+            let mut scrollbar_state = ScrollbarState::new(stable_len.saturating_sub(viewport_height)).position(scroll_offset);
+            frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
+        }
+
+        if is_focused && state.ui.input_mode == InputMode::Normal && scroll_from_bottom == 0 {
+            if let Some(info) = cursor_state {
+                let needs_terminal_cursor = state
+                    .pinned_terminal_session_at(pane_index)
+                    .map(|s| s.agent_type.is_terminal() || matches!(s.agent_type, crate::models::AgentType::Codex))
+                    .unwrap_or(false);
+
+                if needs_terminal_cursor {
+                    render_cursor(frame, inner_area, info, scroll_offset, true);
+                }
+            }
+        }
     } else {
         state.ui.pinned_content_lengths[pane_index] = 0;
         let lines = vec![
@@ -59,60 +199,10 @@ pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index
                 Style::default().fg(Color::Gray),
             )),
         ];
-        let len = lines.len();
-        (lines, len)
-    };
 
-    // Anti-jitter: use high water mark for content length
-    let prev_len = state.ui.pinned_content_lengths[pane_index];
-    let stable_len = if actual_len >= prev_len {
-        actual_len
-    } else if prev_len - actual_len >= 20 {
-        // Major shrinkage (screen clear) - reset
-        actual_len
-    } else {
-        // Keep high water mark for scroll stability
-        prev_len
-    };
-    state.ui.pinned_content_lengths[pane_index] = stable_len;
+        let paragraph = Paragraph::new(lines)
+            .block(block);
 
-    // Always pad to stable_len so the lines vector has consistent size
-    // This prevents flickering from lines appearing/disappearing
-    let mut lines = lines;
-    while lines.len() < stable_len {
-        lines.push(Line::raw(""));
-    }
-
-    // Use stable_len for scroll calculations to prevent jitter
-    let max_scroll = stable_len.saturating_sub(viewport_height);
-    let scroll_from_bottom = (state.ui.pinned_scroll_offsets[pane_index] as usize).min(max_scroll);
-    let scroll_offset = max_scroll.saturating_sub(scroll_from_bottom);
-
-    let paragraph = Paragraph::new(lines)
-        .block(block)
-        .scroll((scroll_offset as u16, 0));
-
-    frame.render_widget(paragraph, area);
-
-    // Render scrollbar if content exceeds viewport
-    if stable_len > viewport_height {
-        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight);
-        let mut scrollbar_state = ScrollbarState::new(max_scroll).position(scroll_offset);
-        frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
-    }
-
-    if is_focused && state.ui.input_mode == InputMode::Normal && scroll_from_bottom == 0 {
-        if let Some(info) = cursor_state {
-            // Terminal sessions and Codex need the terminal cursor shown
-            // Claude/Gemini draw their own visual cursor using inverse video
-            let needs_terminal_cursor = state
-                .pinned_terminal_session_at(pane_index)
-                .map(|s| s.agent_type.is_terminal() || matches!(s.agent_type, crate::models::AgentType::Codex))
-                .unwrap_or(false);
-
-            if needs_terminal_cursor {
-                render_cursor(frame, inner_area, info, scroll_offset, true);
-            }
-        }
+        frame.render_widget(paragraph, area);
     }
 }

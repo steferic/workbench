@@ -5,7 +5,7 @@ mod types;
 mod ui;
 
 pub use data::DataState;
-pub use system::{PendingSessionStart, SystemState};
+pub use system::{PendingSessionStart, RawOutputBuffer, ReplayCache, SystemState};
 pub use types::*;
 pub use ui::UIState;
 
@@ -186,16 +186,15 @@ impl AppState {
         }
     }
 
-    pub fn sessions_for_selected_workspace(&self) -> Vec<&Session> {
+    pub fn sessions_for_selected_workspace(&self) -> &[Session] {
         self.selected_workspace()
             .and_then(|ws| self.data.sessions.get(&ws.id))
-            .map(|s| s.iter().collect())
-            .unwrap_or_default()
+            .map(|s| s.as_slice())
+            .unwrap_or(&[])
     }
 
     pub fn selected_session(&self) -> Option<&Session> {
-        let sessions = self.sessions_for_selected_workspace();
-        sessions.get(self.ui.selected_session_idx).copied()
+        self.sessions_for_selected_workspace().get(self.ui.selected_session_idx)
     }
 
     /// Check if the active session is one of the pinned terminals
@@ -233,10 +232,10 @@ impl AppState {
     }
 
     /// Get all pinned terminal IDs for the current workspace
-    pub fn pinned_terminal_ids(&self) -> Vec<Uuid> {
+    pub fn pinned_terminal_ids(&self) -> &[Uuid] {
         self.selected_workspace()
-            .map(|ws| ws.pinned_terminal_ids.clone())
-            .unwrap_or_default()
+            .map(|ws| ws.pinned_terminal_ids.as_slice())
+            .unwrap_or(&[])
     }
 
     /// Get the number of pinned terminals
@@ -345,8 +344,8 @@ impl AppState {
         if let Some(ws) = self.selected_workspace_mut() {
             ws.unpin_terminal(session_id);
         }
-        // Remove output buffer
-        self.system.output_buffers.remove(&session_id);
+        // Remove output buffer + raw bytes + replay cache
+        self.system.remove_session_buffers(&session_id);
         // Remove PTY handle if exists
         self.system.pty_handles.remove(&session_id);
         // Remove activity tracking

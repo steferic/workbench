@@ -1,7 +1,9 @@
+use crate::app::{PARSER_BUFFER_ROWS, RAW_OUTPUT_BUFFER_CAPACITY, TERMINAL_SCROLLBACK_LIMIT};
 use crate::config::KeybindingConfig;
 use crate::git::DiffStat;
 use crate::models::AgentType;
 use crate::pty::PtyHandle;
+use ratatui::text::Line;
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -147,6 +149,56 @@ pub struct PendingSessionStart {
     pub dangerously_skip_permissions: bool,
 }
 
+/// Circular buffer storing raw PTY output bytes for replay-based scrollback
+pub struct RawOutputBuffer {
+    pub bytes: VecDeque<u8>,
+    pub capacity: usize,
+    pub generation: u64,
+}
+
+impl RawOutputBuffer {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            bytes: VecDeque::with_capacity(capacity),
+            capacity,
+            generation: 0,
+        }
+    }
+
+    pub fn append(&mut self, data: &[u8]) {
+        // Trim from front if exceeding capacity
+        let total = self.bytes.len() + data.len();
+        if total > self.capacity {
+            let to_drain = total - self.capacity;
+            if to_drain >= self.bytes.len() {
+                self.bytes.clear();
+                // If data itself exceeds capacity, only keep the tail
+                if data.len() > self.capacity {
+                    let start = data.len() - self.capacity;
+                    self.bytes.extend(&data[start..]);
+                } else {
+                    self.bytes.extend(data);
+                }
+            } else {
+                self.bytes.drain(..to_drain);
+                self.bytes.extend(data);
+            }
+        } else {
+            self.bytes.extend(data);
+        }
+        self.generation = self.generation.wrapping_add(1);
+    }
+}
+
+/// Cached replay output to avoid re-replaying every frame
+pub struct ReplayCache {
+    pub generation: u64,
+    pub scroll_from_bottom: u16,
+    pub viewport_height: u16,
+    pub lines: Vec<Line<'static>>,
+    pub content_length: usize,
+}
+
 pub struct SystemState {
     /// PTY handles (not serializable)
     pub pty_handles: HashMap<Uuid, PtyHandle>,
@@ -176,6 +228,10 @@ pub struct SystemState {
     pub pending_config_terminal: Option<PathBuf>,
     /// Performance metrics for FPS monitoring
     pub perf: PerformanceMetrics,
+    /// Raw PTY output bytes for replay-based scrollback
+    pub raw_output_buffers: HashMap<Uuid, RawOutputBuffer>,
+    /// Cached replay lines (invalidated on new output or scroll change)
+    pub replay_caches: HashMap<Uuid, ReplayCache>,
     /// Git diff stats keyed by working directory path
     pub diff_stats: HashMap<PathBuf, DiffStat>,
     /// Last time diff stats were refreshed
@@ -203,11 +259,27 @@ impl SystemState {
             keybindings: KeybindingConfig::default(),
             pending_config_terminal: None,
             perf: PerformanceMetrics::new(),
+            raw_output_buffers: HashMap::new(),
+            replay_caches: HashMap::new(),
             diff_stats: HashMap::new(),
             last_diff_refresh: Instant::now(),
             agent_done_sound_enabled: true,
             last_agent_done_sound: Instant::now(),
         }
+    }
+
+    /// Create parser + raw output buffer for a new session
+    pub fn create_session_buffers(&mut self, session_id: Uuid, cols: u16) {
+        let parser = vt100::Parser::new(PARSER_BUFFER_ROWS, cols, TERMINAL_SCROLLBACK_LIMIT);
+        self.output_buffers.insert(session_id, parser);
+        self.raw_output_buffers.insert(session_id, RawOutputBuffer::new(RAW_OUTPUT_BUFFER_CAPACITY));
+    }
+
+    /// Remove parser + raw output buffer + replay cache for a session
+    pub fn remove_session_buffers(&mut self, session_id: &Uuid) {
+        self.output_buffers.remove(session_id);
+        self.raw_output_buffers.remove(session_id);
+        self.replay_caches.remove(session_id);
     }
 }
 

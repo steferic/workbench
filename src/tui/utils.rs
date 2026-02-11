@@ -190,9 +190,13 @@ pub fn convert_vt100_to_lines_visible(
         all_lines.push(Line::raw(""));
     }
 
+    // Pre-allocate reusable buffers outside the row loop
+    let mut spans: Vec<Span<'static>> = Vec::with_capacity(cols as usize);
+    let mut current_text = String::with_capacity(cols as usize);
+
     for row in start_row..end_row {
-        let mut spans = Vec::new();
-        let mut current_text = String::new();
+        spans.clear();
+        current_text.clear();
         let mut current_style = Style::default();
         let row_has_selection = selection
             .map(|bounds| (row as usize) >= bounds.start_row && (row as usize) <= bounds.end_row)
@@ -229,11 +233,11 @@ pub fn convert_vt100_to_lines_visible(
                 current_text.truncate(trimmed_len);
             }
             if !current_text.is_empty() {
-                spans.push(Span::styled(current_text, current_style));
+                spans.push(Span::styled(std::mem::take(&mut current_text), current_style));
             }
         }
 
-        all_lines.push(Line::from(spans));
+        all_lines.push(Line::from(std::mem::take(&mut spans)));
     }
 
     // Only trim trailing empty lines for non-alternate screen mode

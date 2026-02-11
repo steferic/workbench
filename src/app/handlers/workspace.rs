@@ -44,8 +44,8 @@ pub fn handle_workspace_action(
                             if let Some(handle) = state.system.pty_handles.remove(session_id) {
                                 terminate_session_handle(handle, *is_terminal);
                             }
-                            // Drop output buffer (the big memory win)
-                            state.system.output_buffers.remove(session_id);
+                            // Drop output buffer + raw bytes + replay cache
+                            state.system.remove_session_buffers(session_id);
                             // Remove activity tracking
                             state.data.last_activity.remove(session_id);
                             state.data.last_send_input.remove(session_id);
@@ -110,7 +110,7 @@ pub fn handle_workspace_action(
                         if let Some(handle) = state.system.pty_handles.remove(&session.id) {
                             terminate_session_handle(handle, session.agent_type.is_terminal());
                         }
-                        state.system.output_buffers.remove(&session.id);
+                        state.system.remove_session_buffers(&session.id);
                     }
                 }
                 // Remove the workspace

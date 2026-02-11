@@ -1,4 +1,5 @@
 use crate::app::AppState;
+use uuid::Uuid;
 
 /// Resize all PTYs and vt100 parsers to match their respective pane sizes.
 /// This accounts for which pane each session is displayed in (output vs pinned).
@@ -8,15 +9,15 @@ use crate::app::AppState;
 /// width. If the parser has a different column count, it interprets that output
 /// incorrectly — lines wrap at the wrong boundary and fullscreen apps break.
 ///
-/// We only resize parser columns, not rows. The parser's large row count
-/// (PARSER_BUFFER_ROWS = 500) provides scrollback history and must be preserved.
+/// We only resize parser columns, not rows. The parser's row count
+/// (PARSER_BUFFER_ROWS) must be preserved. Deep scrollback uses raw byte replay.
 pub fn resize_ptys_to_panes(state: &mut AppState) {
     let output_cols = state.output_pane_cols();
     let pinned_cols = state.pinned_pane_cols();
     let rows = state.pane_rows();
 
-    // Get all pinned terminal IDs for the current workspace
-    let pinned_ids = state.pinned_terminal_ids();
+    // Copy pinned IDs since we need mutable state access below
+    let pinned_ids: Vec<Uuid> = state.pinned_terminal_ids().to_vec();
 
     // Resize each PTY based on which pane it belongs to
     for (session_id, handle) in state.system.pty_handles.iter() {
@@ -45,4 +46,7 @@ pub fn resize_ptys_to_panes(state: &mut AppState) {
             parser.set_size(parser_rows, cols);
         }
     }
+
+    // Invalidate all replay caches since column changes affect line wrapping
+    state.system.replay_caches.clear();
 }

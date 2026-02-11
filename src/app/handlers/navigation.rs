@@ -69,15 +69,33 @@ fn is_in_area(x: u16, y: u16, area: (u16, u16, u16, u16)) -> bool {
 }
 
 fn copy_active_selection(state: &mut AppState) -> bool {
-    if let (Some(parser), Some(start), Some(end)) = (
-        state.active_output(),
-        state.ui.text_selection.start,
-        state.ui.text_selection.end,
-    ) {
+    use crate::tui::replay::create_replay_parser;
+
+    if let (Some(start), Some(end)) = (state.ui.text_selection.start, state.ui.text_selection.end) {
         if start != end {
-            let text = extract_selected_text(parser.screen(), start, end);
-            copy_to_clipboard(&text);
-            return true;
+            // Check if we need replay for text extraction (scrolled deep)
+            let scroll_from_bottom = state.ui.output_scroll_offset;
+            if let Some(session_id) = state.ui.active_session_id {
+                if scroll_from_bottom > 0 {
+                    if let Some(raw_buf) = state.system.raw_output_buffers.get(&session_id) {
+                        if !raw_buf.bytes.is_empty() {
+                            if let Some(parser) = state.system.output_buffers.get(&session_id) {
+                                let cols = parser.screen().size().1;
+                                let replay = create_replay_parser(raw_buf, cols);
+                                let text = extract_selected_text(replay.screen(), start, end);
+                                copy_to_clipboard(&text);
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+            // Fallback: use live parser
+            if let Some(parser) = state.active_output() {
+                let text = extract_selected_text(parser.screen(), start, end);
+                copy_to_clipboard(&text);
+                return true;
+            }
         }
     }
 
@@ -85,6 +103,22 @@ fn copy_active_selection(state: &mut AppState) -> bool {
         let sel = &state.ui.pinned_text_selections[idx];
         if let (Some(start), Some(end)) = (sel.start, sel.end) {
             if start != end {
+                let scroll_from_bottom = state.ui.pinned_scroll_offsets[idx];
+                if let Some(session_id) = state.pinned_terminal_id_at(idx) {
+                    if scroll_from_bottom > 0 {
+                        if let Some(raw_buf) = state.system.raw_output_buffers.get(&session_id) {
+                            if !raw_buf.bytes.is_empty() {
+                                if let Some(parser) = state.system.output_buffers.get(&session_id) {
+                                    let cols = parser.screen().size().1;
+                                    let replay = create_replay_parser(raw_buf, cols);
+                                    let text = extract_selected_text(replay.screen(), start, end);
+                                    copy_to_clipboard(&text);
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
                 if let Some(parser) = state.pinned_terminal_output_at(idx) {
                     let text = extract_selected_text(parser.screen(), start, end);
                     copy_to_clipboard(&text);

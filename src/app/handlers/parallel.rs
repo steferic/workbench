@@ -1,4 +1,4 @@
-use crate::app::{Action, AppState, FocusPanel, InputMode, ParallelMergePlan, ParallelWorktreeSpec, PARSER_BUFFER_ROWS, TERMINAL_SCROLLBACK_LIMIT};
+use crate::app::{Action, AppState, FocusPanel, InputMode, ParallelMergePlan, ParallelWorktreeSpec};
 use crate::git;
 use crate::models::{AttemptStatus, ParallelTask, ParallelTaskAttempt, ParallelTaskStatus, Session};
 use crate::persistence;
@@ -267,8 +267,7 @@ fn handle_parallel_worktrees_ready(
 
         let pty_rows = state.pane_rows();
         let cols = state.output_pane_cols();
-        let parser = vt100::Parser::new(PARSER_BUFFER_ROWS, cols, TERMINAL_SCROLLBACK_LIMIT);
-        state.system.output_buffers.insert(session_id, parser);
+        state.system.create_session_buffers(session_id, cols);
 
         match pty_manager.spawn_session(SessionSpawnConfig {
             session_id,
@@ -286,7 +285,7 @@ fn handle_parallel_worktrees_ready(
                 state.data.last_activity.insert(session_id, std::time::Instant::now());
             }
             Err(_) => {
-                state.system.output_buffers.remove(&session_id);
+                state.system.remove_session_buffers(&session_id);
                 let workspace_path = workspace_path.clone();
                 let worktree_path = spec.worktree_path.clone();
                 task::spawn_blocking(move || {
@@ -325,7 +324,7 @@ fn cancel_parallel_task(state: &mut AppState, task_id: Uuid, _pty_manager: &PtyM
         if let Some(mut handle) = state.system.pty_handles.remove(session_id) {
             let _ = handle.kill();
         }
-        state.system.output_buffers.remove(session_id);
+        state.system.remove_session_buffers(session_id);
     }
 
     // Remove worktrees
@@ -434,7 +433,7 @@ fn handle_parallel_merge_finished(
         if let Some(mut handle) = state.system.pty_handles.remove(session_id) {
             let _ = handle.kill();
         }
-        state.system.output_buffers.remove(session_id);
+        state.system.remove_session_buffers(session_id);
     }
 
     // Remove the merged attempt's worktree

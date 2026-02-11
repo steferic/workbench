@@ -1,4 +1,4 @@
-use crate::app::{Action, AppState, PendingSessionStart, PARSER_BUFFER_ROWS, TERMINAL_SCROLLBACK_LIMIT};
+use crate::app::{Action, AppState, PendingSessionStart};
 use crate::models::{AgentType, SessionStatus, WorkspaceStatus};
 use crate::persistence;
 use crate::pty::{PtyManager, SessionSpawnConfig};
@@ -40,10 +40,8 @@ pub fn start_workspace_sessions(
 
     // Start each stopped session
     for (session_id, agent_type, dangerously_skip_permissions) in stopped_sessions {
-        // Create vt100 parser with large buffer for scrollback history
-        // (PTY uses pane size, but parser is larger to hold history)
-        let parser = vt100::Parser::new(PARSER_BUFFER_ROWS, cols, TERMINAL_SCROLLBACK_LIMIT);
-        state.system.output_buffers.insert(session_id, parser);
+        // Create parser + raw buffer for scrollback replay
+        state.system.create_session_buffers(session_id, cols);
 
         // Spawn PTY with resume flag for agents (not terminals)
         match pty_manager.spawn_session(SessionSpawnConfig {
@@ -66,7 +64,7 @@ pub fn start_workspace_sessions(
             Err(_e) => {
                 // Don't use eprintln! in TUI - it corrupts the display
                 // Mark session as errored so user sees it failed
-                state.system.output_buffers.remove(&session_id);
+                state.system.remove_session_buffers(&session_id);
                 if let Some(session) = state.get_session_mut(session_id) {
                     session.mark_errored();
                 }
@@ -139,9 +137,8 @@ pub fn process_startup_queue(
     let pty_rows = state.pane_rows();
     let cols = state.output_pane_cols();
 
-    // Create vt100 parser with large buffer for scrollback history
-    let parser = vt100::Parser::new(PARSER_BUFFER_ROWS, cols, TERMINAL_SCROLLBACK_LIMIT);
-    state.system.output_buffers.insert(pending.session_id, parser);
+    // Create parser + raw buffer for scrollback replay
+    state.system.create_session_buffers(pending.session_id, cols);
 
     // Spawn PTY with resume flag for agents (not terminals)
     match pty_manager.spawn_session(SessionSpawnConfig {
@@ -184,7 +181,7 @@ pub fn process_startup_queue(
         }
         Err(_e) => {
             // Mark session as errored so user sees it failed
-            state.system.output_buffers.remove(&pending.session_id);
+            state.system.remove_session_buffers(&pending.session_id);
             if let Some(session) = state.get_session_mut(pending.session_id) {
                 session.mark_errored();
             }

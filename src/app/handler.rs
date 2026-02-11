@@ -230,11 +230,7 @@ pub fn process_action(
                     }) {
                         Ok(handle) => {
                             state.system.pty_handles.insert(session_id, handle);
-                            state.system.output_buffers.insert(session_id, vt100::Parser::new(
-                                pty_rows,
-                                pty_cols,
-                                crate::app::TERMINAL_SCROLLBACK_LIMIT,
-                            ));
+                            state.system.create_session_buffers(session_id, pty_cols);
 
                             // Mark session as running
                             if let Some(s) = state.get_session_mut(session_id) {

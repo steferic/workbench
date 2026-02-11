@@ -1,4 +1,4 @@
-use crate::app::{Action, AppState, FocusPanel, InputMode, PendingDelete, PARSER_BUFFER_ROWS, TERMINAL_SCROLLBACK_LIMIT};
+use crate::app::{Action, AppState, FocusPanel, InputMode, PendingDelete};
 use crate::git;
 use crate::models::{AgentType, AttemptStatus, Session};
 use crate::persistence;
@@ -76,8 +76,7 @@ pub fn handle_session_action(
 
                 let pty_rows = state.pane_rows();
                 let cols = state.output_pane_cols();
-                let parser = vt100::Parser::new(PARSER_BUFFER_ROWS, cols, TERMINAL_SCROLLBACK_LIMIT);
-                state.system.output_buffers.insert(session_id, parser);
+                state.system.create_session_buffers(session_id, cols);
 
                 match pty_manager.spawn_session(SessionSpawnConfig {
                     session_id,
@@ -103,7 +102,7 @@ pub fn handle_session_action(
                     Err(_e) => {
                         // Don't use eprintln! in TUI - it corrupts the display
                         // Session was not added to state, just clean up the buffer
-                        state.system.output_buffers.remove(&session_id);
+                        state.system.remove_session_buffers(&session_id);
                     }
                 }
                 state.ui.input_mode = InputMode::Normal;
@@ -129,8 +128,7 @@ pub fn handle_session_action(
 
                 let pty_rows = state.pane_rows();
                 let cols = state.output_pane_cols();
-                let parser = vt100::Parser::new(PARSER_BUFFER_ROWS, cols, TERMINAL_SCROLLBACK_LIMIT);
-                state.system.output_buffers.insert(session_id, parser);
+                state.system.create_session_buffers(session_id, cols);
 
                 match pty_manager.spawn_session(SessionSpawnConfig {
                     session_id,
@@ -156,7 +154,7 @@ pub fn handle_session_action(
                     Err(_e) => {
                         // Don't use eprintln! in TUI - it corrupts the display
                         // Session was not added to state, just clean up the buffer
-                        state.system.output_buffers.remove(&session_id);
+                        state.system.remove_session_buffers(&session_id);
                     }
                 }
             }
@@ -196,8 +194,7 @@ pub fn handle_session_action(
 
                     let pty_rows = state.pane_rows();
                     let cols = state.output_pane_cols();
-                    let parser = vt100::Parser::new(PARSER_BUFFER_ROWS, cols, TERMINAL_SCROLLBACK_LIMIT);
-                    state.system.output_buffers.insert(session_id, parser);
+                    state.system.create_session_buffers(session_id, cols);
 
                     let resume = agent_type.is_agent();
 
@@ -238,7 +235,7 @@ pub fn handle_session_action(
                         Err(_e) => {
                             // Don't use eprintln! in TUI - it corrupts the display
                             // Mark session as errored so user sees it failed
-                            state.system.output_buffers.remove(&session_id);
+                            state.system.remove_session_buffers(&session_id);
                             if let Some(session) = state.get_session_mut(session_id) {
                                 session.mark_errored();
                             }
@@ -313,7 +310,7 @@ pub fn handle_session_action(
                 if let Some(handle) = state.system.pty_handles.remove(&session_id) {
                     terminate_session_handle(handle, is_terminal);
                 }
-                state.system.output_buffers.remove(&session_id);
+                state.system.remove_session_buffers(&session_id);
 
                 // Clean up worktree - either from parallel task or regular session
                 if let Some((workspace_path, worktree_path, task_id)) = parallel_cleanup_info {
@@ -552,8 +549,7 @@ pub fn handle_session_action(
 
                         let pty_rows = state.pane_rows();
                         let cols = state.output_pane_cols();
-                        let parser = vt100::Parser::new(PARSER_BUFFER_ROWS, cols, TERMINAL_SCROLLBACK_LIMIT);
-                        state.system.output_buffers.insert(new_session_id, parser);
+                        state.system.create_session_buffers(new_session_id, cols);
 
                         match pty_manager.spawn_session(SessionSpawnConfig {
                             session_id: new_session_id,
@@ -581,7 +577,7 @@ pub fn handle_session_action(
                             Err(_e) => {
                                 // Don't use eprintln! in TUI - it corrupts the display
                                 // Session was not added to state, just clean up the buffer
-                                state.system.output_buffers.remove(&new_session_id);
+                                state.system.remove_session_buffers(&new_session_id);
                             }
                         }
                     }
@@ -683,6 +679,14 @@ pub fn handle_session_action(
         Action::PtyOutput(session_id, data) => {
             if let Some(parser) = state.system.output_buffers.get_mut(&session_id) {
                 parser.process(&data);
+            }
+            // Append raw bytes for replay scrollback
+            if let Some(raw_buf) = state.system.raw_output_buffers.get_mut(&session_id) {
+                raw_buf.append(&data);
+            }
+            // Invalidate replay cache only if one exists (user is scrolled back)
+            if state.system.replay_caches.contains_key(&session_id) {
+                state.system.replay_caches.remove(&session_id);
             }
             // Only count as agent activity if this isn't an echo of recent user input.
             // Keystroke echoes arrive within ~50ms of SendInput; real agent output is autonomous.

@@ -1,4 +1,5 @@
-use crate::app::{AppState, FocusPanel, InputMode};
+use crate::app::{AppState, FocusPanel, InputMode, ReplayCache};
+use crate::tui::replay::create_replay_parser;
 use crate::tui::utils::{convert_vt100_to_lines_visible, get_content_length, get_cursor_info, get_selection_bounds, render_cursor};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -59,7 +60,11 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
     }
 
     // Render terminal output with scrolling support
-    if let Some(parser) = state.active_output() {
+    if let Some(session_id) = state.ui.active_session_id {
+        // Don't show pinned terminal in output pane when split view is active
+        if state.should_show_split() && state.active_is_pinned() {
+            // Fall through to utility/hints rendering below
+        } else if let Some(parser) = state.system.output_buffers.get(&session_id) {
         let screen = parser.screen();
         let cursor_state = get_cursor_info(screen);
         let inner_area = block.inner(area);
@@ -67,72 +72,131 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
         let is_alternate = screen.alternate_screen();
         let screen_size = screen.size();
 
-        // Get actual content length (not the fixed buffer size)
-        // For alternate screen mode (nvim, etc.), use viewport height
-        let total_rows = if is_alternate {
+        // Get live parser content length
+        let live_content_len = if is_alternate {
             viewport_height
         } else {
             get_content_length(screen, cursor_state.row)
         };
 
-        // Anti-jitter: use high water mark for content length
-        let prev_len = state.ui.output_content_length;
-        let stable_len = if total_rows >= prev_len {
-            total_rows
-        } else if prev_len - total_rows >= 20 {
-            // Major shrinkage (screen clear) - reset
-            total_rows
+        // Check if we need replay (scrolled beyond live parser content)
+        let scroll_from_bottom_raw = state.ui.output_scroll_offset as usize;
+        let needs_replay = !is_alternate
+            && scroll_from_bottom_raw > 0
+            && state.system.raw_output_buffers.get(&session_id).map(|b| !b.bytes.is_empty()).unwrap_or(false);
+
+        let (lines, stable_len, scroll_from_bottom, scroll_offset) = if needs_replay {
+            // Replay path: create/use replay parser for deep scrollback
+            let raw_buf = state.system.raw_output_buffers.get(&session_id).unwrap();
+            let generation = raw_buf.generation;
+            let sfb = scroll_from_bottom_raw as u16;
+            let vh = viewport_height as u16;
+
+            // Check replay cache validity
+            let cache_valid = state.system.replay_caches.get(&session_id).map(|c| {
+                c.generation == generation && c.scroll_from_bottom == sfb && c.viewport_height == vh
+            }).unwrap_or(false);
+
+            if !cache_valid {
+                // Create replay parser and render lines
+                let cols = screen_size.1;
+                let replay_parser = create_replay_parser(raw_buf, cols);
+                let replay_screen = replay_parser.screen();
+                let replay_cursor = get_cursor_info(replay_screen);
+                let replay_content_len = get_content_length(replay_screen, replay_cursor.row);
+
+                let selection = get_selection_bounds(&state.ui.text_selection, replay_screen.size());
+                let pane_height = Some(viewport_height as u16);
+
+                let max_scroll = replay_content_len.saturating_sub(viewport_height);
+                let sfb_clamped = (scroll_from_bottom_raw).min(max_scroll);
+                let so = max_scroll.saturating_sub(sfb_clamped);
+
+                let buffer_lines = 5;
+                let visible_start = so.saturating_sub(buffer_lines);
+                let visible_count = viewport_height + buffer_lines * 2;
+
+                let mut replay_lines = convert_vt100_to_lines_visible(
+                    replay_screen,
+                    selection,
+                    replay_cursor.row,
+                    pane_height,
+                    Some(visible_start),
+                    Some(visible_count),
+                );
+
+                while replay_lines.len() < replay_content_len {
+                    replay_lines.push(Line::raw(""));
+                }
+
+                // Cache the result
+                state.system.replay_caches.insert(session_id, ReplayCache {
+                    generation,
+                    scroll_from_bottom: sfb,
+                    viewport_height: vh,
+                    lines: replay_lines.clone(),
+                    content_length: replay_content_len,
+                });
+
+                (replay_lines, replay_content_len, sfb_clamped, so)
+            } else {
+                let cache = state.system.replay_caches.get(&session_id).unwrap();
+                let replay_content_len = cache.content_length;
+                let max_scroll = replay_content_len.saturating_sub(viewport_height);
+                let sfb_clamped = (scroll_from_bottom_raw).min(max_scroll);
+                let so = max_scroll.saturating_sub(sfb_clamped);
+                (cache.lines.clone(), replay_content_len, sfb_clamped, so)
+            }
         } else {
-            // Keep high water mark for scroll stability
-            prev_len
+            // Live parser path (at bottom or within live parser range)
+            let prev_len = state.ui.output_content_length;
+            let stable_len = if live_content_len >= prev_len {
+                live_content_len
+            } else if prev_len - live_content_len >= 20 {
+                live_content_len
+            } else {
+                prev_len
+            };
+
+            let max_scroll = stable_len.saturating_sub(viewport_height);
+            let sfb = scroll_from_bottom_raw.min(max_scroll);
+            let so = max_scroll.saturating_sub(sfb);
+
+            let buffer_lines = 5;
+            let visible_start = so.saturating_sub(buffer_lines);
+            let visible_count = viewport_height + buffer_lines * 2;
+
+            let selection = get_selection_bounds(&state.ui.text_selection, screen_size);
+            let pane_height = Some(viewport_height as u16);
+            let mut lines = convert_vt100_to_lines_visible(
+                screen,
+                selection,
+                cursor_state.row,
+                pane_height,
+                Some(visible_start),
+                Some(visible_count),
+            );
+
+            while lines.len() < stable_len {
+                lines.push(Line::raw(""));
+            }
+
+            (lines, stable_len, sfb, so)
         };
 
-        // Calculate scroll BEFORE conversion
-        let max_scroll = stable_len.saturating_sub(viewport_height);
-        let scroll_from_bottom = (state.ui.output_scroll_offset as usize).min(max_scroll);
-        let scroll_offset = max_scroll.saturating_sub(scroll_from_bottom);
-
-        // OPTIMIZATION: Only convert visible lines (with small buffer for smoothness)
-        let buffer_lines = 5; // Extra lines above/below for smooth scrolling
-        let visible_start = scroll_offset.saturating_sub(buffer_lines);
-        let visible_count = viewport_height + buffer_lines * 2;
-
-        let selection = get_selection_bounds(&state.ui.text_selection, screen_size);
-        let pane_height = Some(viewport_height as u16);
-        let mut lines = convert_vt100_to_lines_visible(
-            screen,
-            selection,
-            cursor_state.row,
-            pane_height,
-            Some(visible_start),
-            Some(visible_count),
-        );
-
-        // Pad to stable_len for consistent scroll behavior
-        while lines.len() < stable_len {
-            lines.push(Line::raw(""));
-        }
-
-        // Update state after parser borrow is done
+        // Drop parser borrow
         let _ = parser;
         state.ui.output_content_length = stable_len;
 
-        // Show scroll indicator in title if scrolled
+        // Show scroll indicator in title if scrolled (cache active_session to avoid repeated lookups)
+        let session = state.active_session();
+        let display_name = session.map(|s| s.agent_type.display_name()).unwrap_or_else(|| "Session".to_string());
+        let short_id = session.map(|s| s.short_id()).unwrap_or_default();
+        let duration = session.map(|s| s.duration_string()).unwrap_or_default();
         let title = if scroll_from_bottom > 0 {
-            format!(
-                " {} - {} - {} [↑{}] ",
-                state.active_session().map(|s| s.agent_type.display_name()).unwrap_or("Session".to_string()),
-                state.active_session().map(|s| s.short_id()).unwrap_or_default(),
-                state.active_session().map(|s| s.duration_string()).unwrap_or_default(),
-                scroll_from_bottom
-            )
+            format!(" {} - {} - {} [↑{}] ", display_name, short_id, duration, scroll_from_bottom)
         } else {
-            format!(
-                " {} - {} - {} ",
-                state.active_session().map(|s| s.agent_type.display_name()).unwrap_or("Session".to_string()),
-                state.active_session().map(|s| s.short_id()).unwrap_or_default(),
-                state.active_session().map(|s| s.duration_string()).unwrap_or_default()
-            )
+            format!(" {} - {} - {} ", display_name, short_id, duration)
         };
 
         let block = Block::default()
@@ -149,15 +213,14 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
         // Render scrollbar if content exceeds viewport
         if stable_len > viewport_height {
             let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight);
-            let mut scrollbar_state = ScrollbarState::new(max_scroll).position(scroll_offset);
+            let mut scrollbar_state = ScrollbarState::new(stable_len.saturating_sub(viewport_height)).position(scroll_offset);
             frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
         }
 
         if is_focused && state.ui.input_mode == InputMode::Normal && scroll_from_bottom == 0 {
             // Terminal sessions and Codex need the terminal cursor shown
             // Claude/Gemini draw their own visual cursor using inverse video
-            let needs_terminal_cursor = state
-                .active_session()
+            let needs_terminal_cursor = session
                 .map(|s| s.agent_type.is_terminal() || matches!(s.agent_type, crate::models::AgentType::Codex))
                 .unwrap_or(false);
 
@@ -166,7 +229,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
             }
         }
         return;
-    }
+    } } // end of active session block
 
     // No active session - show utility content or hints
     let lines: Vec<Line> = if !state.ui.utility_content.is_empty() {
