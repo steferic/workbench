@@ -1,5 +1,6 @@
 use rodio::source::Source;
-use rodio::{OutputStream, OutputStreamHandle, Sink};
+use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink};
+use std::io::BufReader;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -87,4 +88,27 @@ impl AudioPlayer {
     pub fn play(&self) {
         self.sink.play();
     }
+}
+
+/// Play a one-shot sound file (cross-platform, non-blocking).
+/// Spawns a thread so it doesn't block the main loop.
+pub fn play_sound(path: &'static str) {
+    std::thread::spawn(move || {
+        let file = match std::fs::File::open(path) {
+            Ok(f) => f,
+            Err(_) => return,
+        };
+        let reader = BufReader::new(file);
+        let source = match Decoder::new(reader) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        // OutputStream must live until playback completes
+        if let Ok((_stream, handle)) = OutputStream::try_default() {
+            if let Ok(sink) = Sink::try_new(&handle) {
+                sink.append(source);
+                sink.sleep_until_end();
+            }
+        }
+    });
 }

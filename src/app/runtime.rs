@@ -15,10 +15,11 @@ use super::session_start::{process_startup_queue, start_all_working_sessions};
 
 // Audio constants
 const WRTI_STREAM_URL: &str = "https://wrti-live.streamguys1.com/classical-mp3";
-const VLC_BINARY: &str = "/opt/homebrew/bin/vlc";
+const VLC_BINARY: &str = "vlc";
 const OCEAN_WAV: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/sounds/ocean_waterside.wav");
 const CHIMES_WAV: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/sounds/wind_chimes.wav");
 const RAIN_WAV: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/sounds/rainforest_rain.wav");
+const STARTUP_WAV: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/sounds/startup_beep.wav");
 
 pub async fn run_tui(initial_workspace: Option<PathBuf>) -> Result<()> {
     // Initialize terminal
@@ -120,6 +121,49 @@ pub async fn run_tui(initial_workspace: Option<PathBuf>) -> Result<()> {
     result
 }
 
+/// Manages a looping audio process (ffplay-based).
+struct LoopingAudio {
+    process: Option<std::process::Child>,
+    was_playing: bool,
+    wav_path: &'static str,
+}
+
+impl LoopingAudio {
+    fn new(wav_path: &'static str) -> Self {
+        Self { process: None, was_playing: false, wav_path }
+    }
+
+    /// Sync the process with the desired play state.
+    fn sync(&mut self, should_play: bool) {
+        if should_play == self.was_playing {
+            return;
+        }
+        if should_play {
+            if self.process.is_none() {
+                self.process = std::process::Command::new("ffplay")
+                    .args(["-nodisp", "-loglevel", "quiet", "-loop", "0", self.wav_path])
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                    .ok();
+            }
+        } else if let Some(mut child) = self.process.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        self.was_playing = should_play;
+    }
+
+    /// Kill the process (best-effort, for shutdown).
+    fn kill(&mut self) {
+        if let Some(mut child) = self.process.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
 async fn run_main_loop(
     terminal: &mut tui::Terminal,
     state: &mut AppState,
@@ -133,17 +177,17 @@ async fn run_main_loop(
     let mut audio_player: Option<AudioPlayer> = None;
     let mut audio_was_playing = false;
 
-    // Audio child process handles
+    // Looping ambient audio processes
     let mut radio_process: Option<std::process::Child> = None;
-    let mut ocean_process: Option<std::process::Child> = None;
-    let mut ocean_was_playing = false;
-    let mut chimes_process: Option<std::process::Child> = None;
-    let mut chimes_was_playing = false;
-    let mut rain_process: Option<std::process::Child> = None;
-    let mut rain_was_playing = false;
+    let mut ocean = LoopingAudio::new(OCEAN_WAV);
+    let mut chimes = LoopingAudio::new(CHIMES_WAV);
+    let mut rain = LoopingAudio::new(RAIN_WAV);
 
     // Track if we've done initial session start after first render
     let mut initial_sessions_started = false;
+
+    // Play startup sound
+    crate::audio::play_sound(STARTUP_WAV);
 
     loop {
         // Start frame timing
@@ -152,7 +196,7 @@ async fn run_main_loop(
         // Draw UI with effects
         terminal.draw(|frame| tui::ui::draw(frame, state, effects))?;
 
-        // End frame timing (measures render + event processing)
+        // End frame timing (measures render time)
         state.system.perf.frame_end();
 
         // After first render, start sessions with accurate pane dimensions
@@ -220,124 +264,54 @@ async fn run_main_loop(
         // Sync audio player with state
         if state.system.brown_noise_playing != audio_was_playing {
             if state.system.brown_noise_playing {
-                // Start playing
                 if audio_player.is_none() {
                     audio_player = AudioPlayer::new().ok();
                 }
                 if let Some(ref player) = audio_player {
                     player.play();
                 }
-            } else {
-                // Stop playing
-                if let Some(ref player) = audio_player {
-                    player.pause();
-                }
+            } else if let Some(ref player) = audio_player {
+                player.pause();
             }
             audio_was_playing = state.system.brown_noise_playing;
         }
 
-        // Sync classical radio stream with state
-        // Also check if process died and needs restart
+        // Sync classical radio stream (VLC-based, auto-restarts on crash)
         if let Some(ref mut child) = radio_process {
-            // Check if process exited (non-blocking)
             if let Ok(Some(_)) = child.try_wait() {
-                // Process died, clear it so it can restart
                 radio_process = None;
             }
         }
-
         let should_play_radio = state.system.classical_radio_playing;
         let is_playing_radio = radio_process.is_some();
-
         if should_play_radio && !is_playing_radio {
-            // Start streaming with VLC - more robust than ffplay for streams
             radio_process = std::process::Command::new(VLC_BINARY)
-                .args([
-                    "--intf", "dummy",      // No GUI
-                    "--no-video",           // Audio only
-                    "--quiet",              // Suppress output
-                    WRTI_STREAM_URL,
-                ])
+                .args(["--intf", "dummy", "--no-video", "--quiet", WRTI_STREAM_URL])
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .spawn()
                 .ok();
         } else if !should_play_radio && is_playing_radio {
-            // Stop streaming — errors ignored because the process may already be dead
             if let Some(mut child) = radio_process.take() {
                 let _ = child.kill();
                 let _ = child.wait();
             }
         }
 
-        // Sync ocean waves sound with state
-        if state.system.ocean_waves_playing != ocean_was_playing {
-            if state.system.ocean_waves_playing {
-                if ocean_process.is_none() {
-                    ocean_process = std::process::Command::new("ffplay")
-                        .args(["-nodisp", "-loglevel", "quiet", "-loop", "0", OCEAN_WAV])
-                        .stdin(std::process::Stdio::null())
-                        .stdout(std::process::Stdio::null())
-                        .stderr(std::process::Stdio::null())
-                        .spawn()
-                        .ok();
-                }
-            } else if let Some(mut child) = ocean_process.take() {
-                // Errors ignored — best-effort cleanup of a background audio process
-                let _ = child.kill();
-                let _ = child.wait();
-            }
-            ocean_was_playing = state.system.ocean_waves_playing;
-        }
-
-        // Sync wind chimes sound with state
-        if state.system.wind_chimes_playing != chimes_was_playing {
-            if state.system.wind_chimes_playing {
-                if chimes_process.is_none() {
-                    chimes_process = std::process::Command::new("ffplay")
-                        .args(["-nodisp", "-loglevel", "quiet", "-loop", "0", CHIMES_WAV])
-                        .stdin(std::process::Stdio::null())
-                        .stdout(std::process::Stdio::null())
-                        .stderr(std::process::Stdio::null())
-                        .spawn()
-                        .ok();
-                }
-            } else if let Some(mut child) = chimes_process.take() {
-                // Errors ignored — best-effort cleanup of a background audio process
-                let _ = child.kill();
-                let _ = child.wait();
-            }
-            chimes_was_playing = state.system.wind_chimes_playing;
-        }
-
-        // Sync rainforest rain sound with state
-        if state.system.rainforest_rain_playing != rain_was_playing {
-            if state.system.rainforest_rain_playing {
-                if rain_process.is_none() {
-                    rain_process = std::process::Command::new("ffplay")
-                        .args(["-nodisp", "-loglevel", "quiet", "-loop", "0", RAIN_WAV])
-                        .stdin(std::process::Stdio::null())
-                        .stdout(std::process::Stdio::null())
-                        .stderr(std::process::Stdio::null())
-                        .spawn()
-                        .ok();
-                }
-            } else if let Some(mut child) = rain_process.take() {
-                // Errors ignored — best-effort cleanup of a background audio process
-                let _ = child.kill();
-                let _ = child.wait();
-            }
-            rain_was_playing = state.system.rainforest_rain_playing;
-        }
+        // Sync looping ambient sounds
+        ocean.sync(state.system.ocean_waves_playing);
+        chimes.sync(state.system.wind_chimes_playing);
+        rain.sync(state.system.rainforest_rain_playing);
 
         if state.system.should_quit {
-            // Best-effort cleanup of all audio child processes on quit.
-            // Errors are ignored because we're exiting anyway.
-            for mut child in [radio_process.take(), ocean_process.take(), chimes_process.take(), rain_process.take()].into_iter().flatten() {
+            if let Some(mut child) = radio_process.take() {
                 let _ = child.kill();
                 let _ = child.wait();
             }
+            ocean.kill();
+            chimes.kill();
+            rain.kill();
             break;
         }
     }

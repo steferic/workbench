@@ -136,11 +136,21 @@ pub fn load() -> Result<PersistedState> {
     Ok(state)
 }
 
+/// Borrowing view of state for serialization (avoids cloning all data on save)
+#[derive(Serialize)]
+struct PersistedStateRef<'a> {
+    workspaces: &'a [Workspace],
+    sessions: &'a HashMap<Uuid, Vec<Session>>,
+    notepad_content: &'a HashMap<Uuid, String>,
+}
+
 pub fn save(
     workspaces: &[Workspace],
     sessions: &HashMap<Uuid, Vec<Session>>,
 ) -> Result<()> {
-    save_with_notepad(workspaces, sessions, &HashMap::new())
+    static EMPTY: std::sync::LazyLock<HashMap<Uuid, String>> =
+        std::sync::LazyLock::new(HashMap::new);
+    save_with_notepad(workspaces, sessions, &EMPTY)
 }
 
 pub fn save_with_notepad(
@@ -150,14 +160,15 @@ pub fn save_with_notepad(
 ) -> Result<()> {
     let path = config_path()?;
 
-    let state = PersistedState {
-        workspaces: workspaces.to_vec(),
-        sessions: sessions.clone(),
-        notepad_content: notepad_content.clone(),
+    let state = PersistedStateRef {
+        workspaces,
+        sessions,
+        notepad_content,
     };
 
-    let contents = serde_json::to_string_pretty(&state)?;
-    fs::write(&path, contents)?;
+    let file = fs::File::create(&path)?;
+    let writer = std::io::BufWriter::new(file);
+    serde_json::to_writer_pretty(writer, &state)?;
 
     Ok(())
 }

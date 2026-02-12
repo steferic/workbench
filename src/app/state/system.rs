@@ -3,7 +3,6 @@ use crate::config::KeybindingConfig;
 use crate::git::DiffStat;
 use crate::models::AgentType;
 use crate::pty::PtyHandle;
-use ratatui::text::Line;
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -190,12 +189,13 @@ impl RawOutputBuffer {
     }
 }
 
-/// Cached replay output to avoid re-replaying every frame
+/// Cached replay parser to avoid re-replaying raw bytes every frame.
+/// The parser is expensive to create (feeds all raw bytes through vt100),
+/// but rendering visible lines from it each frame is cheap.
 pub struct ReplayCache {
     pub generation: u64,
-    pub scroll_from_bottom: u16,
-    pub viewport_height: u16,
-    pub lines: Vec<Line<'static>>,
+    pub cols: u16,
+    pub parser: vt100::Parser,
     pub content_length: usize,
 }
 

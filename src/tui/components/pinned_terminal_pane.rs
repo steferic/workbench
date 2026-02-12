@@ -62,65 +62,62 @@ pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index
         let (lines, stable_len, scroll_from_bottom, scroll_offset) = if needs_replay {
             let raw_buf = state.system.raw_output_buffers.get(&session_id).unwrap();
             let generation = raw_buf.generation;
-            let sfb = scroll_from_bottom_raw as u16;
-            let vh = viewport_height as u16;
+            let cols = screen_size.1;
 
+            // Check if cached parser is still valid (same generation + cols)
             let cache_valid = state.system.replay_caches.get(&session_id).map(|c| {
-                c.generation == generation && c.scroll_from_bottom == sfb && c.viewport_height == vh
+                c.generation == generation && c.cols == cols
             }).unwrap_or(false);
 
             if !cache_valid {
-                let cols = screen_size.1;
                 let replay_parser = create_replay_parser(raw_buf, cols);
                 let replay_screen = replay_parser.screen();
                 let replay_cursor = get_cursor_info(replay_screen);
                 let replay_content_len = get_content_length(replay_screen, replay_cursor.row);
 
-                let default_selection = TextSelection::default();
-                let selection = get_selection_bounds(
-                    state.ui.pinned_text_selections.get(pane_index).unwrap_or(&default_selection),
-                    replay_screen.size(),
-                );
-                let pane_height = Some(viewport_height as u16);
-
-                let max_scroll = replay_content_len.saturating_sub(viewport_height);
-                let sfb_clamped = scroll_from_bottom_raw.min(max_scroll);
-                let so = max_scroll.saturating_sub(sfb_clamped);
-
-                let buffer_lines = 5;
-                let visible_start = so.saturating_sub(buffer_lines);
-                let visible_count = viewport_height + buffer_lines * 2;
-
-                let mut replay_lines = convert_vt100_to_lines_visible(
-                    replay_screen,
-                    selection,
-                    replay_cursor.row,
-                    pane_height,
-                    Some(visible_start),
-                    Some(visible_count),
-                );
-
-                while replay_lines.len() < replay_content_len {
-                    replay_lines.push(Line::raw(""));
-                }
-
                 state.system.replay_caches.insert(session_id, ReplayCache {
                     generation,
-                    scroll_from_bottom: sfb,
-                    viewport_height: vh,
-                    lines: replay_lines.clone(),
+                    cols,
+                    parser: replay_parser,
                     content_length: replay_content_len,
                 });
-
-                (replay_lines, replay_content_len, sfb_clamped, so)
-            } else {
-                let cache = state.system.replay_caches.get(&session_id).unwrap();
-                let replay_content_len = cache.content_length;
-                let max_scroll = replay_content_len.saturating_sub(viewport_height);
-                let sfb_clamped = scroll_from_bottom_raw.min(max_scroll);
-                let so = max_scroll.saturating_sub(sfb_clamped);
-                (cache.lines.clone(), replay_content_len, sfb_clamped, so)
             }
+
+            // Render visible lines from the cached parser
+            let cache = state.system.replay_caches.get(&session_id).unwrap();
+            let replay_content_len = cache.content_length;
+            let replay_screen = cache.parser.screen();
+            let replay_cursor = get_cursor_info(replay_screen);
+
+            let default_selection = TextSelection::default();
+            let selection = get_selection_bounds(
+                state.ui.pinned_text_selections.get(pane_index).unwrap_or(&default_selection),
+                replay_screen.size(),
+            );
+            let pane_height = Some(viewport_height as u16);
+
+            let max_scroll = replay_content_len.saturating_sub(viewport_height);
+            let sfb_clamped = scroll_from_bottom_raw.min(max_scroll);
+            let so = max_scroll.saturating_sub(sfb_clamped);
+
+            let buffer_lines = 5;
+            let visible_start = so.saturating_sub(buffer_lines);
+            let visible_count = viewport_height + buffer_lines * 2;
+
+            let mut replay_lines = convert_vt100_to_lines_visible(
+                replay_screen,
+                selection,
+                replay_cursor.row,
+                pane_height,
+                Some(visible_start),
+                Some(visible_count),
+            );
+
+            while replay_lines.len() < replay_content_len {
+                replay_lines.push(Line::raw(""));
+            }
+
+            (replay_lines, replay_content_len, sfb_clamped, so)
         } else {
             // Live parser path
             let default_selection = TextSelection::default();

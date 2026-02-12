@@ -9,6 +9,8 @@ use tokio::sync::mpsc;
 use super::handlers::{input, navigation, parallel, session, todo, workspace};
 use super::pty_ops::resize_ptys_to_panes;
 
+const AGENT_DONE_WAV: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/sounds/agent_done.wav");
+
 pub fn process_action(
     state: &mut AppState,
     action: Action,
@@ -43,9 +45,7 @@ pub fn process_action(
                 && state.system.last_agent_done_sound.elapsed().as_secs() >= 5
             {
                 state.system.last_agent_done_sound = std::time::Instant::now();
-                let _ = std::process::Command::new("afplay")
-                    .arg("/Users/stefanlenoach/Downloads/Tonal_Click.wav")
-                    .spawn();
+                crate::audio::play_sound(AGENT_DONE_WAV);
             }
 
             // Check if analyzer session went idle
