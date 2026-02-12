@@ -54,12 +54,26 @@ pub fn clear_all_pinned_selections(state: &mut AppState) {
     }
 }
 
-/// Copy text to clipboard using pbcopy on macOS
+/// Copy text to clipboard (cross-platform)
 pub fn copy_to_clipboard(text: &str) {
     if text.is_empty() {
         return;
     }
-    if let Ok(mut child) = std::process::Command::new("pbcopy")
+
+    let (cmd, args): (&str, &[&str]) = if cfg!(target_os = "macos") {
+        ("pbcopy", &[])
+    } else if cfg!(target_os = "linux") {
+        if std::env::var("WAYLAND_DISPLAY").is_ok() {
+            ("wl-copy", &[])
+        } else {
+            ("xclip", &["-selection", "clipboard"])
+        }
+    } else {
+        return;
+    };
+
+    if let Ok(mut child) = std::process::Command::new(cmd)
+        .args(args)
         .stdin(std::process::Stdio::piped())
         .spawn()
     {

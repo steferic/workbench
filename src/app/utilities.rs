@@ -457,8 +457,6 @@ fn build_top_files(
     workspace_path: &Path,
 ) -> (Vec<String>, Vec<(String, f64, ratatui::style::Color)>) {
     use ratatui::style::Color;
-    use std::fs::File;
-    use std::io::{BufRead, BufReader};
 
     let mut content = vec![
         "".to_string(),
@@ -496,9 +494,8 @@ fn build_top_files(
 
     for file_path in &files {
         let full_path = workspace_path.join(file_path);
-        if let Ok(file) = File::open(&full_path) {
-            let reader = BufReader::new(file);
-            let line_count = reader.lines().count();
+        if let Ok(bytes) = std::fs::read(&full_path) {
+            let line_count = bytes.iter().filter(|&&b| b == b'\n').count();
             file_lines.push((file_path.clone(), line_count));
         }
     }

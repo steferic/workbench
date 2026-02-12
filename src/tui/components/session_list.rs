@@ -47,27 +47,20 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         })
         .unwrap_or_default();
 
-    // Separate sessions into agents (non-parallel), parallel, and terminals
-    let agent_indices: Vec<usize> = sessions
-        .iter()
-        .enumerate()
-        .filter(|(_, s)| !s.agent_type.is_terminal() && !parallel_session_ids.contains(&s.id))
-        .map(|(i, _)| i)
-        .collect();
+    // Categorize sessions in a single pass
+    let mut agent_indices: Vec<usize> = Vec::new();
+    let mut parallel_indices: Vec<usize> = Vec::new();
+    let mut terminal_indices: Vec<usize> = Vec::new();
 
-    let parallel_indices: Vec<usize> = sessions
-        .iter()
-        .enumerate()
-        .filter(|(_, s)| parallel_session_ids.contains(&s.id))
-        .map(|(i, _)| i)
-        .collect();
-
-    let terminal_indices: Vec<usize> = sessions
-        .iter()
-        .enumerate()
-        .filter(|(_, s)| s.agent_type.is_terminal())
-        .map(|(i, _)| i)
-        .collect();
+    for (i, s) in sessions.iter().enumerate() {
+        if s.agent_type.is_terminal() {
+            terminal_indices.push(i);
+        } else if parallel_session_ids.contains(&s.id) {
+            parallel_indices.push(i);
+        } else {
+            agent_indices.push(i);
+        }
+    }
 
     let mut items: Vec<ListItem> = Vec::new();
     let mut selected_visual_idx: Option<usize> = None;

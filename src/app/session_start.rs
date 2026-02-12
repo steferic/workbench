@@ -5,6 +5,50 @@ use crate::pty::{PtyManager, SessionSpawnConfig};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
+/// Spawn a single session's PTY and update state.
+/// Returns true if the session was started successfully.
+fn spawn_single_session(
+    state: &mut AppState,
+    pty_manager: &PtyManager,
+    pty_tx: &mpsc::Sender<Action>,
+    session_id: Uuid,
+    workspace_path: &std::path::Path,
+    agent_type: AgentType,
+    dangerously_skip_permissions: bool,
+) -> bool {
+    let pty_rows = state.pane_rows();
+    let cols = state.output_pane_cols();
+
+    state.system.create_session_buffers(session_id, cols);
+
+    match pty_manager.spawn_session(SessionSpawnConfig {
+        session_id,
+        resume: agent_type.is_agent(),
+        agent_type,
+        working_dir: workspace_path,
+        rows: pty_rows,
+        cols,
+        pty_tx: pty_tx.clone(),
+        dangerously_skip_permissions,
+    }) {
+        Ok(handle) => {
+            state.system.pty_handles.insert(session_id, handle);
+            if let Some(session) = state.get_session_mut(session_id) {
+                session.status = SessionStatus::Running;
+            }
+            true
+        }
+        Err(_e) => {
+            // Don't use eprintln! in TUI - it corrupts the display
+            state.system.remove_session_buffers(&session_id);
+            if let Some(session) = state.get_session_mut(session_id) {
+                session.mark_errored();
+            }
+            false
+        }
+    }
+}
+
 /// Start all stopped sessions in the selected workspace
 pub fn start_workspace_sessions(
     state: &mut AppState,
@@ -34,42 +78,12 @@ pub fn start_workspace_sessions(
         return;
     }
 
-    // Calculate PTY size (actual pane dimensions) and parser size (larger for history)
-    let pty_rows = state.pane_rows();
-    let cols = state.output_pane_cols();
-
     // Start each stopped session
     for (session_id, agent_type, dangerously_skip_permissions) in stopped_sessions {
-        // Create parser + raw buffer for scrollback replay
-        state.system.create_session_buffers(session_id, cols);
-
-        // Spawn PTY with resume flag for agents (not terminals)
-        match pty_manager.spawn_session(SessionSpawnConfig {
-            session_id,
-            resume: agent_type.is_agent(),
-            agent_type,
-            working_dir: &workspace_path,
-            rows: pty_rows,
-            cols,
-            pty_tx: pty_tx.clone(),
-            dangerously_skip_permissions,
-        }) {
-            Ok(handle) => {
-                state.system.pty_handles.insert(session_id, handle);
-                // Mark session as running
-                if let Some(session) = state.get_session_mut(session_id) {
-                    session.status = SessionStatus::Running;
-                }
-            }
-            Err(_e) => {
-                // Don't use eprintln! in TUI - it corrupts the display
-                // Mark session as errored so user sees it failed
-                state.system.remove_session_buffers(&session_id);
-                if let Some(session) = state.get_session_mut(session_id) {
-                    session.mark_errored();
-                }
-            }
-        }
+        spawn_single_session(
+            state, pty_manager, pty_tx,
+            session_id, &workspace_path, agent_type, dangerously_skip_permissions,
+        );
     }
 
     // Touch workspace and save
@@ -134,57 +148,30 @@ pub fn process_startup_queue(
         None => return false,
     };
 
-    let pty_rows = state.pane_rows();
-    let cols = state.output_pane_cols();
-
-    // Create parser + raw buffer for scrollback replay
-    state.system.create_session_buffers(pending.session_id, cols);
-
-    // Spawn PTY with resume flag for agents (not terminals)
-    match pty_manager.spawn_session(SessionSpawnConfig {
-        session_id: pending.session_id,
-        resume: pending.agent_type.is_agent(),
-        agent_type: pending.agent_type.clone(),
-        working_dir: &pending.workspace_path,
-        rows: pty_rows,
-        cols,
-        pty_tx: pty_tx.clone(),
-        dangerously_skip_permissions: pending.dangerously_skip_permissions,
-    }) {
-        Ok(handle) => {
-            state.system.pty_handles.insert(pending.session_id, handle);
-            // Mark session as running
-            if let Some(session) = state.get_session_mut(pending.session_id) {
-                session.status = SessionStatus::Running;
-            }
-
-            // Send start command for terminals after a short delay
-            if pending.agent_type.is_terminal() {
-                if let Some(cmd) = pending.start_command {
-                    if !cmd.is_empty() {
-                        let tx = action_tx.clone();
-                        let sid = pending.session_id;
-                        tokio::spawn(async move {
-                            tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
-                            let mut input = cmd.into_bytes();
-                            input.push(b'\n');
-                            let _ = tx.send(Action::SendInput(sid, input));
-                        });
-                    }
+    if spawn_single_session(
+        state, pty_manager, pty_tx,
+        pending.session_id, &pending.workspace_path,
+        pending.agent_type.clone(), pending.dangerously_skip_permissions,
+    ) {
+        // Send start command for terminals after a short delay
+        if pending.agent_type.is_terminal() {
+            if let Some(cmd) = pending.start_command {
+                if !cmd.is_empty() {
+                    let tx = action_tx.clone();
+                    let sid = pending.session_id;
+                    tokio::spawn(async move {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+                        let mut input = cmd.into_bytes();
+                        input.push(b'\n');
+                        let _ = tx.send(Action::SendInput(sid, input));
+                    });
                 }
             }
-
-            // Touch workspace
-            if let Some(ws) = state.data.workspaces.iter_mut().find(|ws| ws.id == pending.workspace_id) {
-                ws.touch();
-            }
         }
-        Err(_e) => {
-            // Mark session as errored so user sees it failed
-            state.system.remove_session_buffers(&pending.session_id);
-            if let Some(session) = state.get_session_mut(pending.session_id) {
-                session.mark_errored();
-            }
+
+        // Touch workspace
+        if let Some(ws) = state.data.workspaces.iter_mut().find(|ws| ws.id == pending.workspace_id) {
+            ws.touch();
         }
     }
 

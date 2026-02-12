@@ -268,8 +268,6 @@ impl PtyManager {
         let pty_tx = pty_tx.clone();
         let sid = session_id;
         let pty_rows = rows;
-        // Don't skip DSR for any agent - Codex requires it to function
-        let is_codex = false;
         std::thread::spawn(move || {
             #[cfg(unix)]
             Self::read_pty_output_with_dsr(
@@ -279,7 +277,6 @@ impl PtyManager {
                 master_fd,
                 pty_rows,
                 child,
-                is_codex,
             );
             #[cfg(not(unix))]
             Self::read_pty_output(sid, &mut reader, pty_tx, child);
@@ -302,15 +299,7 @@ impl PtyManager {
         master_fd: Option<RawFd>,
         pty_rows: u16,
         mut child: Box<dyn Child + Send + Sync>,
-        skip_dsr: bool,
     ) {
-        // Terminal query patterns
-        const DSR_QUERY: &[u8] = b"\x1b[6n";       // Cursor position query
-        const DA_QUERY: &[u8] = b"\x1b[c";          // Primary Device Attributes query
-        const DA_QUERY2: &[u8] = b"\x1b[0c";        // Primary DA (alternate)
-        const DA2_QUERY: &[u8] = b"\x1b[>c";        // Secondary Device Attributes query
-        const DA2_QUERY2: &[u8] = b"\x1b[>0c";      // Secondary DA (alternate)
-
         // Responses - use simple VT102 identification
         // Primary DA: VT102 (simpler than VT100 with AVO)
         const DA_RESPONSE: &[u8] = b"\x1b[?6c";
@@ -343,46 +332,31 @@ impl PtyManager {
                     // Update cursor position by parsing escape sequences in the data
                     Self::track_cursor_position(&data, &mut cursor_row, &mut cursor_col, pty_rows);
 
-                    // Handle terminal queries
+                    // Handle terminal queries (single-pass detection)
                     if let Some(fd) = master_fd {
-                        let has_dsr = data.windows(DSR_QUERY.len()).any(|w| w == DSR_QUERY);
-                        let has_da = data.windows(DA_QUERY.len()).any(|w| w == DA_QUERY)
-                            || data.windows(DA_QUERY2.len()).any(|w| w == DA_QUERY2);
-                        let has_da2 = data.windows(DA2_QUERY.len()).any(|w| w == DA2_QUERY)
-                            || data.windows(DA2_QUERY2.len()).any(|w| w == DA2_QUERY2);
+                        let (has_dsr, has_da, has_da2) = Self::detect_terminal_queries(&data);
 
-                        // For Codex (skip_dsr=true), don't respond to DSR - let it timeout
-                        // and hopefully use a fallback input mode
-                        let should_respond_dsr = has_dsr && !skip_dsr;
-
-                        if should_respond_dsr || has_da || has_da2 {
+                        if has_dsr || has_da || has_da2 {
                             // SAFETY: fd is a valid file descriptor from the PTY master.
                             // Wrapped in ManuallyDrop to avoid closing the fd on drop.
                             let mut file = std::mem::ManuallyDrop::new(unsafe {
                                 std::fs::File::from_raw_fd(fd)
                             });
 
-                            // Respond to DSR with tracked cursor position (if not skipping)
-                            if should_respond_dsr {
+                            if has_dsr {
                                 let dsr_response = format!("\x1b[{};{}R", cursor_row, cursor_col);
                                 let _ = file.write_all(dsr_response.as_bytes());
                             }
 
-                            // Respond to primary DA
                             if has_da {
                                 let _ = file.write_all(DA_RESPONSE);
                             }
 
-                            // Respond to secondary DA
                             if has_da2 {
                                 let _ = file.write_all(DA2_RESPONSE);
                             }
 
                             let _ = file.flush();
-                        }
-
-                        // Always strip queries from output (whether we responded or not)
-                        if has_dsr || has_da || has_da2 {
                             data = Self::strip_terminal_queries(&data);
                         }
                     }
@@ -515,40 +489,57 @@ impl PtyManager {
         (first, second)
     }
 
-    /// Strip terminal query sequences from data
+    /// Detect which terminal queries are present in the data (single pass).
+    /// Returns (has_dsr, has_da, has_da2).
+    #[cfg(unix)]
+    fn detect_terminal_queries(data: &[u8]) -> (bool, bool, bool) {
+        let mut has_dsr = false;
+        let mut has_da = false;
+        let mut has_da2 = false;
+
+        let mut i = 0;
+        while i + 2 < data.len() {
+            if data[i] == 0x1b && data[i + 1] == b'[' {
+                let rest = &data[i + 2..];
+                if rest.starts_with(b"6n") {
+                    has_dsr = true;
+                    i += 4;
+                } else if rest.starts_with(b">0c") {
+                    has_da2 = true;
+                    i += 5;
+                } else if rest.starts_with(b">c") {
+                    has_da2 = true;
+                    i += 4;
+                } else if rest.starts_with(b"0c") {
+                    has_da = true;
+                    i += 4;
+                } else if !rest.is_empty() && rest[0] == b'c' {
+                    has_da = true;
+                    i += 3;
+                } else {
+                    i += 2;
+                }
+            } else {
+                i += 1;
+            }
+        }
+
+        (has_dsr, has_da, has_da2)
+    }
+
+    /// Strip terminal query sequences from data (single pass with ESC early-exit)
     #[cfg(unix)]
     fn strip_terminal_queries(data: &[u8]) -> Vec<u8> {
-        const DSR_QUERY: &[u8] = b"\x1b[6n";
-        const DA_QUERY: &[u8] = b"\x1b[c";
-        const DA_QUERY2: &[u8] = b"\x1b[0c";
-        const DA2_QUERY: &[u8] = b"\x1b[>c";
-        const DA2_QUERY2: &[u8] = b"\x1b[>0c";
-
         let mut result = Vec::with_capacity(data.len());
         let mut i = 0;
         while i < data.len() {
-            // Check for DSR query
-            if i + DSR_QUERY.len() <= data.len() && &data[i..i + DSR_QUERY.len()] == DSR_QUERY {
-                i += DSR_QUERY.len();
-                continue;
-            }
-            // Check for secondary DA query (longer ones first)
-            if i + DA2_QUERY2.len() <= data.len() && &data[i..i + DA2_QUERY2.len()] == DA2_QUERY2 {
-                i += DA2_QUERY2.len();
-                continue;
-            }
-            if i + DA2_QUERY.len() <= data.len() && &data[i..i + DA2_QUERY.len()] == DA2_QUERY {
-                i += DA2_QUERY.len();
-                continue;
-            }
-            // Check for primary DA query (longer one first)
-            if i + DA_QUERY2.len() <= data.len() && &data[i..i + DA_QUERY2.len()] == DA_QUERY2 {
-                i += DA_QUERY2.len();
-                continue;
-            }
-            if i + DA_QUERY.len() <= data.len() && &data[i..i + DA_QUERY.len()] == DA_QUERY {
-                i += DA_QUERY.len();
-                continue;
+            if data[i] == 0x1b && i + 2 < data.len() && data[i + 1] == b'[' {
+                let rest = &data[i + 2..];
+                if rest.starts_with(b"6n") { i += 4; continue; }
+                if rest.starts_with(b">0c") { i += 5; continue; }
+                if rest.starts_with(b">c") { i += 4; continue; }
+                if rest.starts_with(b"0c") { i += 4; continue; }
+                if !rest.is_empty() && rest[0] == b'c' { i += 3; continue; }
             }
             result.push(data[i]);
             i += 1;
@@ -742,7 +733,7 @@ mod tests {
         tx: mpsc::Sender<Action>,
         child: Box<dyn Child + Send + Sync>,
     ) {
-        PtyManager::read_pty_output_with_dsr(session_id, reader, tx, None, 0, child, false);
+        PtyManager::read_pty_output_with_dsr(session_id, reader, tx, None, 0, child);
     }
 
     #[cfg(not(unix))]
