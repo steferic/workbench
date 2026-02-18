@@ -90,6 +90,63 @@ impl AudioPlayer {
     }
 }
 
+/// Looping audio player for ambient sounds (cross-platform via rodio).
+/// Replaces ffplay subprocess approach.
+pub struct LoopingAudio {
+    player: Option<LoopingPlayer>,
+    was_playing: bool,
+    wav_path: &'static str,
+}
+
+struct LoopingPlayer {
+    _stream: OutputStream,
+    sink: Sink,
+}
+
+impl LoopingAudio {
+    pub fn new(wav_path: &'static str) -> Self {
+        Self { player: None, was_playing: false, wav_path }
+    }
+
+    /// Sync the player with the desired play state.
+    pub fn sync(&mut self, should_play: bool) {
+        if should_play == self.was_playing {
+            return;
+        }
+        if should_play {
+            if self.player.is_none() {
+                self.player = Self::create_player(self.wav_path);
+            }
+            if let Some(ref player) = self.player {
+                player.sink.play();
+            }
+        } else if let Some(ref player) = self.player {
+            player.sink.pause();
+        }
+        self.was_playing = should_play;
+    }
+
+    /// Kill the player (for shutdown).
+    pub fn kill(&mut self) {
+        if let Some(player) = self.player.take() {
+            player.sink.stop();
+        }
+    }
+
+    fn create_player(path: &str) -> Option<LoopingPlayer> {
+        let (stream, stream_handle) = OutputStream::try_default().ok()?;
+        let sink = Sink::try_new(&stream_handle).ok()?;
+        let file = std::fs::File::open(path).ok()?;
+        let source = Decoder::new(BufReader::new(file)).ok()?;
+        let channels = source.channels();
+        let sample_rate = source.sample_rate();
+        let samples: Vec<i16> = source.collect();
+        let buffer = rodio::buffer::SamplesBuffer::new(channels, sample_rate, samples);
+        sink.append(buffer.repeat_infinite());
+        Some(LoopingPlayer { _stream: stream, sink })
+    }
+}
+
 /// Play a one-shot sound file (cross-platform, non-blocking).
 /// Spawns a thread so it doesn't block the main loop.
 pub fn play_sound(path: &'static str) {

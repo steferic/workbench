@@ -1,5 +1,5 @@
 use crate::app::{Action, AppState};
-use crate::audio::AudioPlayer;
+use crate::audio::{AudioPlayer, LoopingAudio};
 use crate::models::Workspace;
 use crate::persistence;
 use crate::pty::PtyManager;
@@ -119,49 +119,6 @@ pub async fn run_tui(initial_workspace: Option<PathBuf>) -> Result<()> {
     tui::restore()?;
 
     result
-}
-
-/// Manages a looping audio process (ffplay-based).
-struct LoopingAudio {
-    process: Option<std::process::Child>,
-    was_playing: bool,
-    wav_path: &'static str,
-}
-
-impl LoopingAudio {
-    fn new(wav_path: &'static str) -> Self {
-        Self { process: None, was_playing: false, wav_path }
-    }
-
-    /// Sync the process with the desired play state.
-    fn sync(&mut self, should_play: bool) {
-        if should_play == self.was_playing {
-            return;
-        }
-        if should_play {
-            if self.process.is_none() {
-                self.process = std::process::Command::new("ffplay")
-                    .args(["-nodisp", "-loglevel", "quiet", "-loop", "0", self.wav_path])
-                    .stdin(std::process::Stdio::null())
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .spawn()
-                    .ok();
-            }
-        } else if let Some(mut child) = self.process.take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-        self.was_playing = should_play;
-    }
-
-    /// Kill the process (best-effort, for shutdown).
-    fn kill(&mut self) {
-        if let Some(mut child) = self.process.take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-    }
 }
 
 async fn run_main_loop(

@@ -195,8 +195,6 @@ impl AttemptStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
-
     fn create_test_task() -> ParallelTask {
         ParallelTask::new(
             Uuid::new_v4(),
@@ -214,7 +212,7 @@ mod tests {
             Uuid::new_v4(),
             agent_type,
             branch_name,
-            PathBuf::from("/tmp/worktree"),
+            std::env::temp_dir().join("worktree"),
         )
     }
 
@@ -321,19 +319,20 @@ mod tests {
         let task_id = Uuid::new_v4();
         let session_id = Uuid::new_v4();
 
+        let worktree_path = std::env::temp_dir().join("worktree/claude");
         let attempt = ParallelTaskAttempt::new(
             task_id,
             session_id,
             AgentType::Claude,
             "parallel-abc/claude".to_string(),
-            PathBuf::from("/tmp/worktree/claude"),
+            worktree_path.clone(),
         );
 
         assert_eq!(attempt.task_id, task_id);
         assert_eq!(attempt.session_id, session_id);
         assert_eq!(attempt.agent_type, AgentType::Claude);
         assert_eq!(attempt.branch_name, "parallel-abc/claude");
-        assert_eq!(attempt.worktree_path, PathBuf::from("/tmp/worktree/claude"));
+        assert_eq!(attempt.worktree_path, worktree_path);
         assert_eq!(attempt.status, AttemptStatus::Running);
         assert!(attempt.report_content.is_none());
         assert!(!attempt.prompt_sent); // Critical: prompt_sent starts as false

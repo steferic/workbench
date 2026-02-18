@@ -398,9 +398,6 @@ pub fn handle_session_action(
                 }
 
                 // No uncommitted changes - proceed with merge directly
-                let _main_branch = git::get_current_branch(&workspace_path)
-                    .unwrap_or_else(|_| "main".to_string());
-
                 // Perform the merge
                 match git::merge_branch(&workspace_path, &branch_name) {
                     Ok(()) => {
@@ -466,10 +463,6 @@ pub fn handle_session_action(
                         state.ui.input_mode = InputMode::Normal;
                         return Ok(());
                     }
-
-                    // Get the main branch name
-                    let _main_branch = git::get_current_branch(&workspace_path)
-                        .unwrap_or_else(|_| "main".to_string());
 
                     // Perform the merge
                     match git::merge_branch(&workspace_path, &branch_name) {

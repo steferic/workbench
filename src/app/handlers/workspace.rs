@@ -64,9 +64,12 @@ pub fn handle_workspace_action(
                             }
                         }
 
-                        // Clear active session if it belonged to this workspace
+                        // Save and clear active session if it belonged to this workspace
                         if let Some(active_id) = state.ui.active_session_id {
                             if ids.contains(&active_id) {
+                                if let Some(ws) = state.data.workspaces.get_mut(state.ui.selected_workspace_idx) {
+                                    ws.last_active_session_id = Some(active_id);
+                                }
                                 state.ui.active_session_id = None;
                             }
                         }
@@ -92,6 +95,19 @@ pub fn handle_workspace_action(
 
                         for pending in stopped_sessions {
                             state.system.startup_queue.push_back(pending);
+                        }
+
+                        // Restore the last active session for this workspace
+                        if let Some(ws) = state.data.workspaces.get(state.ui.selected_workspace_idx) {
+                            if let Some(last_id) = ws.last_active_session_id {
+                                state.ui.active_session_id = Some(last_id);
+                                state.ui.output_scroll_offset = 0;
+                                if let Some(sessions) = state.data.sessions.get(&workspace_id) {
+                                    if let Some((idx, _)) = sessions.iter().enumerate().find(|(_, s)| s.id == last_id) {
+                                        state.ui.selected_session_idx = idx;
+                                    }
+                                }
+                            }
                         }
                     }
                 }

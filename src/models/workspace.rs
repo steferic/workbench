@@ -229,10 +229,9 @@ impl Workspace {
 mod tests {
     use super::*;
     use crate::models::{AgentType, ParallelTask, ParallelTaskAttempt, ParallelTaskStatus};
-    use std::path::PathBuf;
 
     fn create_test_workspace() -> Workspace {
-        Workspace::new("test-workspace".to_string(), PathBuf::from("/tmp/workspace"))
+        Workspace::new("test-workspace".to_string(), std::env::temp_dir().join("workspace"))
     }
 
     fn create_test_task(workspace_id: Uuid) -> ParallelTask {
@@ -251,7 +250,7 @@ mod tests {
             Uuid::new_v4(),
             agent_type,
             "test-branch".to_string(),
-            PathBuf::from("/tmp/worktree"),
+            std::env::temp_dir().join("worktree"),
         )
     }
 

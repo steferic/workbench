@@ -54,33 +54,12 @@ pub fn clear_all_pinned_selections(state: &mut AppState) {
     }
 }
 
-/// Copy text to clipboard (cross-platform)
+/// Copy text to clipboard (cross-platform via arboard)
 pub fn copy_to_clipboard(text: &str) {
     if text.is_empty() {
         return;
     }
-
-    let (cmd, args): (&str, &[&str]) = if cfg!(target_os = "macos") {
-        ("pbcopy", &[])
-    } else if cfg!(target_os = "linux") {
-        if std::env::var("WAYLAND_DISPLAY").is_ok() {
-            ("wl-copy", &[])
-        } else {
-            ("xclip", &["-selection", "clipboard"])
-        }
-    } else {
-        return;
-    };
-
-    if let Ok(mut child) = std::process::Command::new(cmd)
-        .args(args)
-        .stdin(std::process::Stdio::piped())
-        .spawn()
-    {
-        if let Some(stdin) = child.stdin.as_mut() {
-            use std::io::Write;
-            let _ = stdin.write_all(text.as_bytes());
-        }
-        let _ = child.wait();
+    if let Ok(mut clipboard) = arboard::Clipboard::new() {
+        let _ = clipboard.set_text(text);
     }
 }

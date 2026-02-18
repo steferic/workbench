@@ -172,8 +172,12 @@ impl PtyManager {
 
         // Build command based on agent type
         let mut cmd = if agent_type.is_terminal() {
-            // For terminals, use $SHELL or fallback to bash
-            let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
+            // For terminals, use $SHELL (Unix) or $COMSPEC (Windows) with platform fallbacks
+            let shell = if cfg!(windows) {
+                std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string())
+            } else {
+                std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string())
+            };
             CommandBuilder::new(shell)
         } else {
             CommandBuilder::new(agent_type.command())

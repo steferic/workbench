@@ -584,7 +584,6 @@ mod tests {
         AgentType, AttemptStatus, ParallelTask, ParallelTaskAttempt, ParallelTaskStatus, Workspace,
     };
     use crate::pty::PtyManager;
-    use std::path::PathBuf;
     use tokio::sync::mpsc;
     use uuid::Uuid;
 
@@ -592,7 +591,7 @@ mod tests {
         let mut state = AppState::default();
         let workspace = Workspace::new(
             "test-workspace".to_string(),
-            PathBuf::from("/tmp/test-workspace"),
+            std::env::temp_dir().join("test-workspace"),
         );
         state.data.workspaces.push(workspace);
         state.ui.selected_workspace_idx = 0;
@@ -616,7 +615,7 @@ mod tests {
             Uuid::new_v4(),
             agent_type,
             branch_name,
-            PathBuf::from("/tmp/worktree"),
+            std::env::temp_dir().join("worktree"),
         )
     }
 
