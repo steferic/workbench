@@ -15,3 +15,6 @@ erl_crash.dump
 # Environment
 .env
 .env.local
+
+# Git worktrees
+.worktrees/
