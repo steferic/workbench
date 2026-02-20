@@ -272,6 +272,7 @@ impl PtyManager {
         let pty_tx = pty_tx.clone();
         let sid = session_id;
         let pty_rows = rows;
+        let strip_alt_screen = matches!(agent_type, AgentType::Codex);
         std::thread::spawn(move || {
             #[cfg(unix)]
             Self::read_pty_output_with_dsr(
@@ -281,9 +282,10 @@ impl PtyManager {
                 master_fd,
                 pty_rows,
                 child,
+                strip_alt_screen,
             );
             #[cfg(not(unix))]
-            Self::read_pty_output(sid, &mut reader, pty_tx, child);
+            Self::read_pty_output(sid, &mut reader, pty_tx, child, strip_alt_screen);
         });
 
         Ok(PtyHandle {
@@ -303,6 +305,7 @@ impl PtyManager {
         master_fd: Option<RawFd>,
         pty_rows: u16,
         mut child: Box<dyn Child + Send + Sync>,
+        strip_alt_screen: bool,
     ) {
         // Responses - use simple VT102 identification
         // Primary DA: VT102 (simpler than VT100 with AVO)
@@ -363,6 +366,11 @@ impl PtyManager {
                             let _ = file.flush();
                             data = Self::strip_terminal_queries(&data);
                         }
+                    }
+
+                    // Strip alternate screen sequences for inline-mode agents (e.g. Codex)
+                    if strip_alt_screen && !data.is_empty() && Self::has_alt_screen_sequences(&data) {
+                        data = Self::strip_alt_screen_sequences(&data);
                     }
 
                     if !data.is_empty()
@@ -531,6 +539,45 @@ impl PtyManager {
         (has_dsr, has_da, has_da2)
     }
 
+    /// Check if data contains alternate screen escape sequences
+    fn has_alt_screen_sequences(data: &[u8]) -> bool {
+        let mut i = 0;
+        while i + 4 < data.len() {
+            if data[i] == 0x1b && data[i + 1] == b'[' && data[i + 2] == b'?' {
+                let rest = &data[i + 3..];
+                // ESC[?1049h/l, ESC[?1047h/l, ESC[?47h/l
+                if rest.starts_with(b"1049h") || rest.starts_with(b"1049l")
+                    || rest.starts_with(b"1047h") || rest.starts_with(b"1047l")
+                    || rest.starts_with(b"47h") || rest.starts_with(b"47l")
+                {
+                    return true;
+                }
+            }
+            i += 1;
+        }
+        false
+    }
+
+    /// Strip alternate screen escape sequences from data
+    fn strip_alt_screen_sequences(data: &[u8]) -> Vec<u8> {
+        let mut result = Vec::with_capacity(data.len());
+        let mut i = 0;
+        while i < data.len() {
+            if data[i] == 0x1b && i + 4 < data.len() && data[i + 1] == b'[' && data[i + 2] == b'?' {
+                let rest = &data[i + 3..];
+                if rest.starts_with(b"1049h") { i += 8; continue; }
+                if rest.starts_with(b"1049l") { i += 8; continue; }
+                if rest.starts_with(b"1047h") { i += 8; continue; }
+                if rest.starts_with(b"1047l") { i += 8; continue; }
+                if rest.starts_with(b"47h") { i += 6; continue; }
+                if rest.starts_with(b"47l") { i += 6; continue; }
+            }
+            result.push(data[i]);
+            i += 1;
+        }
+        result
+    }
+
     /// Strip terminal query sequences from data (single pass with ESC early-exit)
     #[cfg(unix)]
     fn strip_terminal_queries(data: &[u8]) -> Vec<u8> {
@@ -558,6 +605,7 @@ impl PtyManager {
         reader: &mut Box<dyn Read + Send>,
         pty_tx: mpsc::Sender<Action>,
         mut child: Box<dyn Child + Send + Sync>,
+        strip_alt_screen: bool,
     ) {
         let mut buf = [0u8; 4096];
         loop {
@@ -574,8 +622,11 @@ impl PtyManager {
                     break;
                 }
                 Ok(n) => {
-                    let data = buf[..n].to_vec();
-                    if pty_tx.blocking_send(Action::PtyOutput(session_id, data)).is_err() {
+                    let mut data = buf[..n].to_vec();
+                    if strip_alt_screen && Self::has_alt_screen_sequences(&data) {
+                        data = Self::strip_alt_screen_sequences(&data);
+                    }
+                    if !data.is_empty() && pty_tx.blocking_send(Action::PtyOutput(session_id, data)).is_err() {
                         break;
                     }
                 }
@@ -737,7 +788,7 @@ mod tests {
         tx: mpsc::Sender<Action>,
         child: Box<dyn Child + Send + Sync>,
     ) {
-        PtyManager::read_pty_output_with_dsr(session_id, reader, tx, None, 0, child);
+        PtyManager::read_pty_output_with_dsr(session_id, reader, tx, None, 0, child, false);
     }
 
     #[cfg(not(unix))]
@@ -747,7 +798,7 @@ mod tests {
         tx: mpsc::Sender<Action>,
         child: Box<dyn Child + Send + Sync>,
     ) {
-        PtyManager::read_pty_output(session_id, reader, tx, child);
+        PtyManager::read_pty_output(session_id, reader, tx, child, false);
     }
 
     #[test]
