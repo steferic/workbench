@@ -230,7 +230,7 @@ pub fn process_action(
                     }) {
                         Ok(handle) => {
                             state.system.pty_handles.insert(session_id, handle);
-                            state.system.create_session_buffers(session_id, pty_cols);
+                            state.system.create_session_buffers(session_id, pty_cols, false);
 
                             // Mark session as running
                             if let Some(s) = state.get_session_mut(session_id) {

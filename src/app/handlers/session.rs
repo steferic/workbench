@@ -3,12 +3,147 @@ use crate::git;
 use crate::models::{AgentType, AttemptStatus, Session};
 use crate::persistence;
 use crate::pty::{PtyHandle, PtyManager, SessionSpawnConfig};
+use crate::tui::utils::{convert_vt100_to_lines_visible, get_cursor_info};
 use crate::app::pty_ops::resize_ptys_to_panes;
 use anyhow::Result;
-use std::time::Duration;
+use ratatui::text::{Line, Span};
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 const SHELL_KILL_TIMEOUT: Duration = Duration::from_millis(500);
+
+/// Check if raw PTY data contains signals that a TUI is about to redraw.
+/// Ink-based apps (like Codex) redraw by: ESC[nA (cursor up) + ESC[J (erase below).
+/// Other TUI apps may use ESC[H (cursor home) + ESC[2J (clear screen).
+/// Any of these signals that the current screen content is about to be overwritten.
+fn has_tui_redraw_signal(data: &[u8]) -> bool {
+    let len = data.len();
+    let mut i = 0;
+    while i + 2 < len {
+        if data[i] == 0x1b && data[i + 1] == b'[' {
+            let rest = &data[i + 2..];
+            // ESC[H — cursor home (no params)
+            if rest[0] == b'H' {
+                return true;
+            }
+            // Parse CSI parameters + final byte
+            let mut j = 0;
+            while j < rest.len() && (rest[j].is_ascii_digit() || rest[j] == b';' || rest[j] == b'?') {
+                j += 1;
+            }
+            if j < rest.len() {
+                match rest[j] {
+                    // ESC[nA — cursor up (Ink's primary redraw pattern)
+                    b'A' => return true,
+                    // ESC[J / ESC[0J / ESC[2J — erase in display
+                    b'J' => return true,
+                    // ESC[row;colH with row=1 — cursor home with params
+                    b'H' | b'f' => {
+                        let params = &rest[..j];
+                        let row_end = params.iter().position(|&b| b == b';').unwrap_or(params.len());
+                        let row_num: u16 = std::str::from_utf8(&params[..row_end])
+                            .ok()
+                            .and_then(|s| s.parse().ok())
+                            .unwrap_or(1);
+                        if row_num <= 1 {
+                            return true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+/// Check if a character is a box-drawing or block element
+fn is_box_drawing(c: char) -> bool {
+    let cp = c as u32;
+    (0x2500..=0x257F).contains(&cp) || (0x2580..=0x259F).contains(&cp)
+}
+
+/// Clean styled lines from a TUI screen snapshot: strip box-drawing characters,
+/// trim whitespace, and join consecutive non-empty lines into paragraphs
+/// so text reflows at the output pane width. Preserves span styles (colors, bold).
+fn clean_and_join_styled_lines(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
+    // Step 1: Clean each line — strip box-drawing chars from spans, trim
+    let cleaned: Vec<Line<'static>> = lines.into_iter().map(|line| {
+        // Replace box-drawing chars with spaces in each span
+        let spans: Vec<Span<'static>> = line.spans.into_iter().map(|span| {
+            let text: String = span.content.chars().map(|c| {
+                if is_box_drawing(c) { ' ' } else { c }
+            }).collect();
+            Span::styled(text, span.style)
+        }).collect();
+        // Rebuild line, then trim leading/trailing whitespace
+        trim_styled_line(Line::from(spans))
+    }).collect();
+
+    // Step 2: Join consecutive non-empty lines into paragraphs (merge spans)
+    let mut result: Vec<Line<'static>> = Vec::new();
+    let mut current_spans: Vec<Span<'static>> = Vec::new();
+
+    for line in cleaned {
+        let is_empty = line.spans.is_empty()
+            || line.spans.iter().all(|s| s.content.trim().is_empty());
+
+        if is_empty {
+            if !current_spans.is_empty() {
+                result.push(Line::from(std::mem::take(&mut current_spans)));
+            }
+            result.push(Line::from(""));
+        } else {
+            if !current_spans.is_empty() {
+                current_spans.push(Span::raw(" "));
+            }
+            current_spans.extend(line.spans);
+        }
+    }
+    if !current_spans.is_empty() {
+        result.push(Line::from(current_spans));
+    }
+
+    // Remove leading/trailing empty lines
+    while result.last().map(|l| l.spans.is_empty() || l.width() == 0).unwrap_or(false) {
+        result.pop();
+    }
+    while result.first().map(|l| l.spans.is_empty() || l.width() == 0).unwrap_or(false) {
+        result.remove(0);
+    }
+    result
+}
+
+/// Trim leading and trailing whitespace from a styled Line, preserving span styles.
+fn trim_styled_line(line: Line<'static>) -> Line<'static> {
+    if line.spans.is_empty() {
+        return line;
+    }
+    let mut spans = line.spans;
+
+    // Trim leading whitespace from first span
+    if let Some(first) = spans.first_mut() {
+        let trimmed = first.content.trim_start().to_string();
+        *first = Span::styled(trimmed, first.style);
+    }
+    // Remove empty leading spans
+    while spans.first().map(|s| s.content.is_empty()).unwrap_or(false) {
+        spans.remove(0);
+    }
+
+    // Trim trailing whitespace from last span
+    if let Some(last) = spans.last_mut() {
+        let trimmed = last.content.trim_end().to_string();
+        *last = Span::styled(trimmed, last.style);
+    }
+    // Remove empty trailing spans
+    while spans.last().map(|s| s.content.is_empty()).unwrap_or(false) {
+        spans.pop();
+    }
+
+    Line::from(spans)
+}
 
 pub(crate) fn terminate_session_handle(mut handle: PtyHandle, is_terminal: bool) {
     if is_terminal {
@@ -76,7 +211,7 @@ pub fn handle_session_action(
 
                 let pty_rows = state.pane_rows();
                 let cols = state.output_pane_cols();
-                state.system.create_session_buffers(session_id, cols);
+                state.system.create_session_buffers(session_id, cols, matches!(agent_type, AgentType::Codex));
 
                 match pty_manager.spawn_session(SessionSpawnConfig {
                     session_id,
@@ -128,7 +263,7 @@ pub fn handle_session_action(
 
                 let pty_rows = state.pane_rows();
                 let cols = state.output_pane_cols();
-                state.system.create_session_buffers(session_id, cols);
+                state.system.create_session_buffers(session_id, cols, false);
 
                 match pty_manager.spawn_session(SessionSpawnConfig {
                     session_id,
@@ -194,7 +329,7 @@ pub fn handle_session_action(
 
                     let pty_rows = state.pane_rows();
                     let cols = state.output_pane_cols();
-                    state.system.create_session_buffers(session_id, cols);
+                    state.system.create_session_buffers(session_id, cols, matches!(agent_type, AgentType::Codex));
 
                     let resume = agent_type.is_agent();
 
@@ -542,7 +677,7 @@ pub fn handle_session_action(
 
                         let pty_rows = state.pane_rows();
                         let cols = state.output_pane_cols();
-                        state.system.create_session_buffers(new_session_id, cols);
+                        state.system.create_session_buffers(new_session_id, cols, false);
 
                         match pty_manager.spawn_session(SessionSpawnConfig {
                             session_id: new_session_id,
@@ -670,12 +805,72 @@ pub fn handle_session_action(
             let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
         }
         Action::PtyOutput(session_id, data) => {
+            let is_inline = state.system.inline_mode_sessions.contains(&session_id);
+
+            // For inline-mode sessions (Codex): snapshot the rendered screen BEFORE
+            // the live parser processes new data. Throttled to at most once per 500ms
+            // and deduplicated (skip if screen content unchanged) to avoid capturing
+            // dozens of partial mid-redraw frames. Captures styled lines (with colors)
+            // for faithful scrollback display.
+            if is_inline && has_tui_redraw_signal(&data) {
+                let now = Instant::now();
+                let enough_time = state.system.inline_last_snapshot
+                    .get(&session_id)
+                    .map(|(t, _prev)| now.duration_since(*t) >= Duration::from_millis(500))
+                    .unwrap_or(true);
+
+                if enough_time {
+                    // Capture both plain text (for dedup) and styled lines (for display)
+                    let snapshot: Option<(String, Vec<Line<'static>>)> = state.system.output_buffers
+                        .get(&session_id)
+                        .map(|p| {
+                            let screen = p.screen();
+                            let text = screen.contents();
+                            let cursor = get_cursor_info(screen);
+                            let styled = convert_vt100_to_lines_visible(
+                                screen, None, cursor.row, None, None, None,
+                            );
+                            (text, styled)
+                        });
+                    if let Some((text, styled_lines)) = snapshot {
+                        if !text.trim().is_empty() {
+                            let is_new = state.system.inline_last_snapshot
+                                .get(&session_id)
+                                .map(|(_t, prev)| prev != &text)
+                                .unwrap_or(true);
+                            if is_new {
+                                // Clean and join styled lines (strip box-drawing, merge paragraphs)
+                                let cleaned = clean_and_join_styled_lines(styled_lines);
+                                if !cleaned.is_empty() {
+                                    // Append to styled history
+                                    let history = state.system.inline_styled_history
+                                        .entry(session_id)
+                                        .or_insert_with(Vec::new);
+                                    history.extend(cleaned);
+                                    history.push(Line::from(""));  // separator between snapshots
+
+                                    // Also put a marker in raw buffer so needs_replay triggers
+                                    if let Some(raw_buf) = state.system.raw_output_buffers.get_mut(&session_id) {
+                                        raw_buf.append(b".");
+                                    }
+                                }
+                                state.system.inline_last_snapshot.insert(session_id, (now, text));
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Process through live parser (all sessions)
             if let Some(parser) = state.system.output_buffers.get_mut(&session_id) {
                 parser.process(&data);
             }
-            // Append raw bytes for replay scrollback
-            if let Some(raw_buf) = state.system.raw_output_buffers.get_mut(&session_id) {
-                raw_buf.append(&data);
+
+            // For non-inline sessions: append raw bytes for replay scrollback
+            if !is_inline {
+                if let Some(raw_buf) = state.system.raw_output_buffers.get_mut(&session_id) {
+                    raw_buf.append(&data);
+                }
             }
             // Invalidate replay cache only if one exists (user is scrolled back)
             if state.system.replay_caches.contains_key(&session_id) {

@@ -545,7 +545,6 @@ impl PtyManager {
         while i + 4 < data.len() {
             if data[i] == 0x1b && data[i + 1] == b'[' && data[i + 2] == b'?' {
                 let rest = &data[i + 3..];
-                // ESC[?1049h/l, ESC[?1047h/l, ESC[?47h/l
                 if rest.starts_with(b"1049h") || rest.starts_with(b"1049l")
                     || rest.starts_with(b"1047h") || rest.starts_with(b"1047l")
                     || rest.starts_with(b"47h") || rest.starts_with(b"47l")
@@ -558,7 +557,9 @@ impl PtyManager {
         false
     }
 
-    /// Strip alternate screen escape sequences from data
+    /// Strip alternate screen escape sequences from data.
+    /// These are stripped at the PTY reader level so the live parser never enters
+    /// alternate screen mode (which disables scrollback entirely).
     fn strip_alt_screen_sequences(data: &[u8]) -> Vec<u8> {
         let mut result = Vec::with_capacity(data.len());
         let mut i = 0;

@@ -1,6 +1,6 @@
 use crate::app::{Action, AppState, FocusPanel, InputMode, ParallelMergePlan, ParallelWorktreeSpec};
 use crate::git;
-use crate::models::{AttemptStatus, ParallelTask, ParallelTaskAttempt, ParallelTaskStatus, Session};
+use crate::models::{AgentType, AttemptStatus, ParallelTask, ParallelTaskAttempt, ParallelTaskStatus, Session};
 use crate::persistence;
 use crate::pty::{PtyManager, SessionSpawnConfig};
 use anyhow::{anyhow, Result};
@@ -267,7 +267,7 @@ fn handle_parallel_worktrees_ready(
 
         let pty_rows = state.pane_rows();
         let cols = state.output_pane_cols();
-        state.system.create_session_buffers(session_id, cols);
+        state.system.create_session_buffers(session_id, cols, matches!(spec.agent_type, AgentType::Codex));
 
         match pty_manager.spawn_session(SessionSpawnConfig {
             session_id,

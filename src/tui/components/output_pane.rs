@@ -9,7 +9,7 @@ use ratatui::{
     widgets::{
         calendar::{CalendarEventStore, Monthly},
         Bar, BarChart, BarGroup, Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation,
-        ScrollbarState,
+        ScrollbarState, Wrap,
     },
     Frame,
 };
@@ -84,6 +84,58 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
         let needs_replay = !is_alternate
             && scroll_from_bottom_raw > 0
             && state.system.raw_output_buffers.get(&session_id).map(|b| !b.bytes.is_empty()).unwrap_or(false);
+
+        // Inline sessions (Codex): render styled snapshot history with word wrapping.
+        // Uses pre-captured styled Lines (with colors/bold preserved) instead of
+        // replaying raw bytes through a vt100 parser.
+        if needs_replay && state.system.inline_mode_sessions.contains(&session_id) {
+            if let Some(history) = state.system.inline_styled_history.get(&session_id) {
+                let text_lines: Vec<Line> = history.clone();
+
+                // Calculate visual line count accounting for word wrapping
+                let pane_width = inner_area.width.max(1) as usize;
+                let visual_lines: usize = text_lines.iter().map(|line| {
+                    let w = line.width();
+                    if w == 0 { 1 } else { (w + pane_width - 1) / pane_width }
+                }).sum();
+
+                let _ = parser;
+                state.ui.output_content_length = visual_lines;
+
+                let max_scroll = visual_lines.saturating_sub(viewport_height);
+                let sfb = scroll_from_bottom_raw.min(max_scroll);
+                let so = max_scroll.saturating_sub(sfb);
+
+                let session = state.active_session();
+                let display_name = session.map(|s| s.agent_type.display_name()).unwrap_or_else(|| "Session".to_string());
+                let short_id = session.map(|s| s.short_id()).unwrap_or_default();
+                let duration = session.map(|s| s.duration_string()).unwrap_or_default();
+                let title = if sfb > 0 {
+                    format!(" {} - {} - {} [↑{}] ", display_name, short_id, duration, sfb)
+                } else {
+                    format!(" {} - {} - {} ", display_name, short_id, duration)
+                };
+
+                let block = Block::default()
+                    .title(title)
+                    .borders(Borders::ALL)
+                    .border_style(border_style);
+
+                let paragraph = Paragraph::new(text_lines)
+                    .block(block)
+                    .wrap(Wrap { trim: true })
+                    .scroll((so as u16, 0));
+
+                frame.render_widget(paragraph, area);
+
+                if visual_lines > viewport_height {
+                    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight);
+                    let mut scrollbar_state = ScrollbarState::new(max_scroll).position(so);
+                    frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
+                }
+                return;
+            }
+        }
 
         let (lines, stable_len, scroll_from_bottom, scroll_offset) = if needs_replay {
             // Replay path: use cached replay parser for deep scrollback.

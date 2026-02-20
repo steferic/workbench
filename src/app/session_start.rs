@@ -19,7 +19,7 @@ fn spawn_single_session(
     let pty_rows = state.pane_rows();
     let cols = state.output_pane_cols();
 
-    state.system.create_session_buffers(session_id, cols);
+    state.system.create_session_buffers(session_id, cols, matches!(agent_type, AgentType::Codex));
 
     match pty_manager.spawn_session(SessionSpawnConfig {
         session_id,
