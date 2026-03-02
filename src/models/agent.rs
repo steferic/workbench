@@ -6,6 +6,7 @@ pub enum AgentType {
     Gemini,
     Codex,
     Grok,
+    Custom { command: String, display_name: String, badge: String },
     Terminal(String), // Named terminal with custom name
 }
 
@@ -16,6 +17,7 @@ impl AgentType {
             AgentType::Gemini => "gemini",
             AgentType::Codex => "codex",
             AgentType::Grok => "grok",
+            AgentType::Custom { command, .. } => command.as_str(),
             AgentType::Terminal(_) => {
                 // Use $SHELL or default to bash
                 std::env::var("SHELL").ok()
@@ -31,17 +33,19 @@ impl AgentType {
             AgentType::Gemini => "Gemini".to_string(),
             AgentType::Codex => "Codex".to_string(),
             AgentType::Grok => "Grok".to_string(),
+            AgentType::Custom { display_name, .. } => display_name.clone(),
             AgentType::Terminal(name) => name.clone(),
         }
     }
 
-    pub fn badge(&self) -> &'static str {
+    pub fn badge(&self) -> String {
         match self {
-            AgentType::Claude => "C",
-            AgentType::Gemini => "G",
-            AgentType::Codex => "X",
-            AgentType::Grok => "K",
-            AgentType::Terminal(_) => "T",
+            AgentType::Claude => "C".to_string(),
+            AgentType::Gemini => "G".to_string(),
+            AgentType::Codex => "X".to_string(),
+            AgentType::Grok => "K".to_string(),
+            AgentType::Custom { badge, .. } => badge.clone(),
+            AgentType::Terminal(_) => "T".to_string(),
         }
     }
 

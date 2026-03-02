@@ -1,5 +1,5 @@
 use crate::app::AppState;
-use crate::tui::utils::{convert_vt100_to_lines, get_cursor_info, get_selection_bounds};
+use crate::tui::utils::{convert_vt100_to_lines, get_content_length, get_cursor_info, get_selection_bounds};
 use ratatui::{
     layout::{Alignment, Rect},
     style::{Color, Modifier, Style},
@@ -9,7 +9,7 @@ use ratatui::{
 };
 
 /// Debug overlay showing terminal/pane dimensions at each layer
-/// Toggle with F12
+/// Toggle with F11
 pub fn render(frame: &mut Frame, state: &AppState) {
     let area = frame.area();
 
@@ -118,7 +118,8 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         ]));
 
         // Count actual rendered lines
-        let selection = get_selection_bounds(&state.ui.text_selection, screen.size());
+        let content_len = get_content_length(screen, cursor_info.row);
+        let selection = get_selection_bounds(&state.ui.text_selection, content_len, screen.size().1);
         let rendered_lines = convert_vt100_to_lines(screen, selection, cursor_info.row);
         lines.push(Line::from(vec![
             Span::styled("Rendered Lines: ", Style::default().fg(Color::DarkGray)),
@@ -156,7 +157,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "Press F12 to close",
+        "Press F11 to close",
         Style::default().fg(Color::DarkGray),
     )));
 

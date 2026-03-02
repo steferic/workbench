@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
-use super::handlers::{input, navigation, parallel, session, todo, workspace};
+use super::handlers::{config, input, navigation, parallel, session, todo, workspace};
 use super::pty_ops::resize_ptys_to_panes;
 
 const AGENT_DONE_WAV: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/sounds/agent_done.wav");
@@ -359,6 +359,29 @@ pub fn process_action(
                 // Debug overlay toggle
                 Action::ToggleDebugOverlay => {
                     state.ui.show_debug_overlay = !state.ui.show_debug_overlay;
+                }
+
+                // Config window actions
+                Action::EnterConfigWindow => {
+                    state.ui.input_mode = crate::app::InputMode::ConfigWindow;
+                    state.ui.config_tab = crate::app::ConfigTab::Agents;
+                    state.ui.config_selected_row = 0;
+                    state.ui.config_selected_col = 0;
+                    state.ui.config_editing = false;
+                    state.ui.config_rebinding = false;
+                }
+                Action::ExitConfigWindow => {
+                    state.ui.input_mode = crate::app::InputMode::Normal;
+                    state.ui.config_editing = false;
+                    state.ui.config_rebinding = false;
+                }
+                Action::ConfigSwitchTab(_) | Action::ConfigMoveUp | Action::ConfigMoveDown |
+                Action::ConfigMoveLeft | Action::ConfigMoveRight | Action::ConfigStartEdit |
+                Action::ConfigFinishEdit | Action::ConfigCancelEdit | Action::ConfigAddAgent |
+                Action::ConfigDeleteAgent | Action::ConfigReorderUp | Action::ConfigReorderDown |
+                Action::ConfigResetDefault | Action::ConfigInputChar(_) |
+                Action::ConfigInputBackspace | Action::ConfigRebindKey(_) => {
+                    config::handle_config_action(state, action);
                 }
 
                 // Global already handled

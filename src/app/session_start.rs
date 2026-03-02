@@ -15,17 +15,25 @@ fn spawn_single_session(
     workspace_path: &std::path::Path,
     agent_type: AgentType,
     dangerously_skip_permissions: bool,
+    worktree_path: Option<&std::path::Path>,
 ) -> bool {
+    // Use worktree path if it exists on disk, otherwise fall back to workspace path
+    let effective_dir = worktree_path
+        .filter(|p| p.exists())
+        .unwrap_or(workspace_path);
+
     let pty_rows = state.pane_rows();
     let cols = state.output_pane_cols();
 
-    state.system.create_session_buffers(session_id, cols, matches!(agent_type, AgentType::Codex));
+    let inline_mode = matches!(agent_type, AgentType::Codex)
+        || matches!(agent_type, AgentType::Custom { ref command, .. } if command == "codex");
+    state.system.create_session_buffers(session_id, cols, inline_mode);
 
     match pty_manager.spawn_session(SessionSpawnConfig {
         session_id,
         resume: agent_type.is_agent(),
         agent_type,
-        working_dir: workspace_path,
+        working_dir: effective_dir,
         rows: pty_rows,
         cols,
         pty_tx: pty_tx.clone(),
@@ -64,12 +72,12 @@ pub fn start_workspace_sessions(
     let workspace_path = workspace.path.clone();
 
     // Find all stopped sessions in this workspace
-    let stopped_sessions: Vec<(Uuid, AgentType, bool)> = state.data.sessions
+    let stopped_sessions: Vec<(Uuid, AgentType, bool, Option<std::path::PathBuf>)> = state.data.sessions
         .get(&workspace_id)
         .map(|sessions| {
             sessions.iter()
                 .filter(|s| matches!(s.status, SessionStatus::Stopped | SessionStatus::Errored))
-                .map(|s| (s.id, s.agent_type.clone(), s.dangerously_skip_permissions))
+                .map(|s| (s.id, s.agent_type.clone(), s.dangerously_skip_permissions, s.worktree_path.clone()))
                 .collect()
         })
         .unwrap_or_default();
@@ -79,10 +87,11 @@ pub fn start_workspace_sessions(
     }
 
     // Start each stopped session
-    for (session_id, agent_type, dangerously_skip_permissions) in stopped_sessions {
+    for (session_id, agent_type, dangerously_skip_permissions, worktree_path) in stopped_sessions {
         spawn_single_session(
             state, pty_manager, pty_tx,
             session_id, &workspace_path, agent_type, dangerously_skip_permissions,
+            worktree_path.as_deref(),
         );
     }
 
@@ -122,6 +131,7 @@ pub fn start_all_working_sessions(
                         agent_type: s.agent_type.clone(),
                         start_command: s.start_command.clone(),
                         dangerously_skip_permissions: s.dangerously_skip_permissions,
+                        worktree_path: s.worktree_path.clone(),
                     })
                     .collect()
             })
@@ -152,6 +162,7 @@ pub fn process_startup_queue(
         state, pty_manager, pty_tx,
         pending.session_id, &pending.workspace_path,
         pending.agent_type.clone(), pending.dangerously_skip_permissions,
+        pending.worktree_path.as_deref(),
     ) {
         // Send start command for terminals after a short delay
         if pending.agent_type.is_terminal() {

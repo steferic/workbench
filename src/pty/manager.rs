@@ -203,20 +203,9 @@ impl PtyManager {
                 }
             }
             AgentType::Codex => {
-                // Codex uses a subcommand for resume: `codex resume --last`
-                if resume {
-                    cmd = CommandBuilder::new("codex");
-                    cmd.arg("resume");
-                    cmd.arg("--last");
-                    if dangerously_skip_permissions {
-                        cmd.arg("--dangerously-bypass-approvals-and-sandbox");
-                    }
-                    cmd.cwd(working_dir);
-                } else if dangerously_skip_permissions {
+                if dangerously_skip_permissions {
                     cmd.arg("--dangerously-bypass-approvals-and-sandbox");
                 }
-                // Try inline mode to avoid alternate screen buffer cursor issues
-                cmd.arg("--no-alt-screen");
             }
             AgentType::Grok => {
                 if dangerously_skip_permissions {
@@ -226,6 +215,9 @@ impl PtyManager {
                 if resume {
                     cmd.arg("--continue");
                 }
+            }
+            AgentType::Custom { .. } => {
+                // Custom agents: just run the command as-is, no special flags
             }
             AgentType::Terminal(_) => {
                 // No special flags for terminals, they're just shells

@@ -270,6 +270,19 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
                 Style::default().fg(Color::Gray),
             )],
         ),
+        InputMode::ConfigWindow => (
+            vec![Span::styled(
+                " CONFIG ",
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )],
+            vec![Span::styled(
+                "Tab: switch tab  Enter: edit  Esc: close",
+                Style::default().fg(Color::Gray),
+            )],
+        ),
         InputMode::Normal => {
             let context_hints = match state.ui.focus {
                 FocusPanel::WorkspaceList => vec![

@@ -1,31 +1,29 @@
-use crate::app::{Action, AppState, FocusPanel, InputMode, PaneHelp, PendingDelete, TodosTab};
+use crate::app::{Action, AppState, ConfigTab, FocusPanel, InputMode, PaneHelp, PendingDelete, TodosTab};
 use crate::models::AgentType;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::EventHandler;
 
 impl EventHandler {
-    /// Check for global keybindings that work in any panel
-    fn check_global_keys(key: &KeyEvent) -> Option<Action> {
-        // Ctrl+z - Cycle workspace
-        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('z') {
-            return Some(Action::CycleNextWorkspace);
-        }
-        // Ctrl+x - Cycle session
-        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('x') {
-            return Some(Action::CycleNextSession);
-        }
-        // Ctrl+q - Quit
-        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('q') {
-            return Some(Action::InitiateQuit);
-        }
-        // F1 - Help
-        if key.code == KeyCode::F(1) {
-            return Some(Action::EnterHelpMode);
-        }
-        // F12 - Debug overlay
-        if key.code == KeyCode::F(12) {
-            return Some(Action::ToggleDebugOverlay);
+    /// Check for global keybindings that work in any panel (driven by UserConfig)
+    fn check_global_keys(key: &KeyEvent, user_config: &crate::config::user_config::UserConfig) -> Option<Action> {
+        use crate::config::keybindings::KeyCombo;
+
+        let pressed = KeyCombo::new(key.code, key.modifiers);
+        let pressed_str = pressed.display();
+
+        for (action_name, key_str) in &user_config.global_hotkeys {
+            if key_str == &pressed_str {
+                return match action_name.as_str() {
+                    "CycleNextWorkspace" => Some(Action::CycleNextWorkspace),
+                    "CycleNextSession" => Some(Action::CycleNextSession),
+                    "InitiateQuit" => Some(Action::InitiateQuit),
+                    "EnterHelpMode" => Some(Action::EnterHelpMode),
+                    "ToggleDebugOverlay" => Some(Action::ToggleDebugOverlay),
+                    "EnterConfigWindow" => Some(Action::EnterConfigWindow),
+                    _ => None,
+                };
+            }
         }
         None
     }
@@ -103,7 +101,7 @@ impl EventHandler {
                 };
             }
             InputMode::CreateSession => {
-                if let Some((agent_type, dangerously_skip_permissions, with_worktree)) = Self::agent_shortcut(&key)
+                if let Some((agent_type, dangerously_skip_permissions, with_worktree)) = Self::agent_shortcut(&key, &state.system.user_config.agents)
                 {
                     return Action::CreateSession(agent_type, dangerously_skip_permissions, with_worktree);
                 }
@@ -173,6 +171,48 @@ impl EventHandler {
                     _ => Action::Tick,
                 };
             }
+            InputMode::ConfigWindow => {
+                // If rebinding a hotkey, capture any key as the new binding
+                if state.ui.config_rebinding {
+                    return Action::ConfigRebindKey(key);
+                }
+                // If editing a field, handle text input
+                if state.ui.config_editing {
+                    return match key.code {
+                        KeyCode::Esc => Action::ConfigCancelEdit,
+                        KeyCode::Enter => Action::ConfigFinishEdit,
+                        KeyCode::Backspace => Action::ConfigInputBackspace,
+                        KeyCode::Char(c) => Action::ConfigInputChar(c),
+                        _ => Action::Tick,
+                    };
+                }
+                // Normal config navigation
+                return match key.code {
+                    KeyCode::Esc => Action::ExitConfigWindow,
+                    KeyCode::Char('1') => Action::ConfigSwitchTab(ConfigTab::Agents),
+                    KeyCode::Char('2') => Action::ConfigSwitchTab(ConfigTab::Hotkeys),
+                    KeyCode::Char('3') => Action::ConfigSwitchTab(ConfigTab::Scrollback),
+                    KeyCode::Tab => {
+                        let next = match state.ui.config_tab {
+                            ConfigTab::Agents => ConfigTab::Hotkeys,
+                            ConfigTab::Hotkeys => ConfigTab::Scrollback,
+                            ConfigTab::Scrollback => ConfigTab::Agents,
+                        };
+                        Action::ConfigSwitchTab(next)
+                    }
+                    KeyCode::Char('j') | KeyCode::Down => Action::ConfigMoveDown,
+                    KeyCode::Char('k') | KeyCode::Up => Action::ConfigMoveUp,
+                    KeyCode::Char('h') | KeyCode::Left => Action::ConfigMoveLeft,
+                    KeyCode::Char('l') | KeyCode::Right => Action::ConfigMoveRight,
+                    KeyCode::Enter => Action::ConfigStartEdit,
+                    KeyCode::Char('a') => Action::ConfigAddAgent,
+                    KeyCode::Char('d') => Action::ConfigDeleteAgent,
+                    KeyCode::Char('J') => Action::ConfigReorderDown,
+                    KeyCode::Char('K') => Action::ConfigReorderUp,
+                    KeyCode::Char('r') => Action::ConfigResetDefault,
+                    _ => Action::Tick,
+                };
+            }
             InputMode::Normal => {}
         }
 
@@ -208,8 +248,13 @@ impl EventHandler {
             };
         }
 
-        // Global F12 - toggle debug overlay (works in any mode)
+        // Global F12 - config window (works in any mode)
         if key.code == KeyCode::F(12) {
+            return Action::EnterConfigWindow;
+        }
+
+        // TEST: toggle debug overlay on F2-F11 to find which F-keys macOS passes through
+        if matches!(key.code, KeyCode::F(2) | KeyCode::F(3) | KeyCode::F(4) | KeyCode::F(5) | KeyCode::F(6) | KeyCode::F(7) | KeyCode::F(8) | KeyCode::F(9) | KeyCode::F(10) | KeyCode::F(11)) {
             return Action::ToggleDebugOverlay;
         }
 
@@ -234,7 +279,7 @@ impl EventHandler {
     }
 
     fn handle_workspace_list_keys(&self, key: KeyEvent, state: &AppState) -> Action {
-        if let Some(action) = Self::check_global_keys(&key) {
+        if let Some(action) = Self::check_global_keys(&key, &state.system.user_config) {
             return action;
         }
 
@@ -260,11 +305,11 @@ impl EventHandler {
     }
 
     fn handle_session_list_keys(&self, key: KeyEvent, state: &AppState) -> Action {
-        if let Some(action) = Self::check_global_keys(&key) {
+        if let Some(action) = Self::check_global_keys(&key, &state.system.user_config) {
             return action;
         }
 
-        if let Some((agent_type, dangerously_skip_permissions, with_worktree)) = Self::agent_shortcut(&key) {
+        if let Some((agent_type, dangerously_skip_permissions, with_worktree)) = Self::agent_shortcut(&key, &state.system.user_config.agents) {
             return Action::CreateSession(agent_type, dangerously_skip_permissions, with_worktree);
         }
 
@@ -414,7 +459,7 @@ impl EventHandler {
     }
 
     fn handle_todos_pane_keys(&self, key: KeyEvent, state: &AppState) -> Action {
-        if let Some(action) = Self::check_global_keys(&key) {
+        if let Some(action) = Self::check_global_keys(&key, &state.system.user_config) {
             return action;
         }
 
@@ -522,7 +567,7 @@ impl EventHandler {
     fn handle_utilities_pane_keys(&self, key: KeyEvent, state: &AppState) -> Action {
         use crate::app::{UtilityItem, UtilitySection};
 
-        if let Some(action) = Self::check_global_keys(&key) {
+        if let Some(action) = Self::check_global_keys(&key, &state.system.user_config) {
             return action;
         }
 
@@ -565,7 +610,7 @@ impl EventHandler {
     }
 
     fn handle_output_pane_keys(&self, key: KeyEvent, state: &AppState) -> Action {
-        if let Some(action) = Self::check_global_keys(&key) {
+        if let Some(action) = Self::check_global_keys(&key, &state.system.user_config) {
             return action;
         }
 
@@ -691,7 +736,7 @@ impl EventHandler {
     }
 
     fn handle_pinned_terminal_keys(&self, key: KeyEvent, state: &AppState, pane_idx: usize) -> Action {
-        if let Some(action) = Self::check_global_keys(&key) {
+        if let Some(action) = Self::check_global_keys(&key, &state.system.user_config) {
             return action;
         }
 
@@ -817,7 +862,7 @@ impl EventHandler {
         }
     }
 
-    pub(super) fn agent_shortcut(key: &KeyEvent) -> Option<(AgentType, bool, bool)> {
+    pub(super) fn agent_shortcut(key: &KeyEvent, agents: &[crate::config::user_config::AgentConfig]) -> Option<(AgentType, bool, bool)> {
         if key.modifiers.contains(KeyModifiers::CONTROL)
             || key.modifiers.contains(KeyModifiers::SUPER)
             || key.modifiers.contains(KeyModifiers::META)
@@ -828,16 +873,43 @@ impl EventHandler {
         let shifted = key.modifiers.contains(KeyModifiers::SHIFT);
         let with_worktree = key.modifiers.contains(KeyModifiers::ALT);
 
-        match key.code {
-            KeyCode::Char('1') => Some((AgentType::Claude, shifted, with_worktree)),
-            KeyCode::Char('2') => Some((AgentType::Gemini, shifted, with_worktree)),
-            KeyCode::Char('3') => Some((AgentType::Codex, shifted, with_worktree)),
-            KeyCode::Char('4') => Some((AgentType::Grok, shifted, with_worktree)),
-            KeyCode::Char('!') => Some((AgentType::Claude, true, with_worktree)),
-            KeyCode::Char('@') => Some((AgentType::Gemini, true, with_worktree)),
-            KeyCode::Char('#') => Some((AgentType::Codex, true, with_worktree)),
-            KeyCode::Char('$') => Some((AgentType::Grok, true, with_worktree)),
+        let key_char = match key.code {
+            KeyCode::Char(c) => c.to_string(),
+            _ => return None,
+        };
+
+        // Map shift+number to the number (e.g. '!' -> "1", '@' -> "2")
+        let unshifted = match key_char.as_str() {
+            "!" => Some("1"), "@" => Some("2"), "#" => Some("3"), "$" => Some("4"),
+            "%" => Some("5"), "^" => Some("6"), "&" => Some("7"), "*" => Some("8"),
+            "(" => Some("9"),
             _ => None,
+        };
+
+        for agent in agents {
+            if !agent.enabled { continue; }
+            let matches = agent.hotkey == key_char
+                || unshifted.map(|s| s == agent.hotkey).unwrap_or(false);
+            if matches {
+                let agent_type = config_to_agent_type(agent);
+                let skip_perms = shifted || unshifted.is_some();
+                return Some((agent_type, skip_perms, with_worktree));
+            }
         }
+        None
+    }
+}
+
+fn config_to_agent_type(agent: &crate::config::user_config::AgentConfig) -> AgentType {
+    match agent.command.as_str() {
+        "claude" => AgentType::Claude,
+        "gemini" => AgentType::Gemini,
+        "codex" => AgentType::Codex,
+        "grok" => AgentType::Grok,
+        _ => AgentType::Custom {
+            command: agent.command.clone(),
+            display_name: agent.display_name.clone(),
+            badge: agent.badge.clone(),
+        },
     }
 }

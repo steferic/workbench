@@ -79,10 +79,11 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
             get_content_length(screen, cursor_state.row)
         };
 
-        // Check if we need replay (scrolled beyond live parser content)
+        // Check if we need replay (scrolled beyond what the live parser buffer can show)
         let scroll_from_bottom_raw = state.ui.output_scroll_offset as usize;
+        let live_max_scroll = live_content_len.saturating_sub(viewport_height);
         let needs_replay = !is_alternate
-            && scroll_from_bottom_raw > 0
+            && scroll_from_bottom_raw > live_max_scroll
             && state.system.raw_output_buffers.get(&session_id).map(|b| !b.bytes.is_empty()).unwrap_or(false);
 
         // Inline sessions (Codex): render styled snapshot history with word wrapping.
@@ -152,7 +153,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
 
             if !cache_valid {
                 // Create replay parser and cache it
-                let replay_parser = create_replay_parser(raw_buf, cols);
+                let replay_parser = create_replay_parser(raw_buf, cols, state.system.user_config.replay_parser_rows);
                 let replay_screen = replay_parser.screen();
                 let replay_cursor = get_cursor_info(replay_screen);
                 let replay_content_len = get_content_length(replay_screen, replay_cursor.row);
@@ -171,7 +172,24 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
             let replay_screen = cache.parser.screen();
             let replay_cursor = get_cursor_info(replay_screen);
 
-            let selection = get_selection_bounds(&state.ui.text_selection, replay_screen.size());
+            // On live→replay transition, translate selection coordinates.
+            // The bottom of both parsers shows the same text, so live row R maps to
+            // replay row R + (replay_content_len - live_content_len).
+            if !state.ui.output_on_replay {
+                let prev_content_len = state.ui.output_content_length;
+                if replay_content_len > prev_content_len && prev_content_len > 0 {
+                    let offset = replay_content_len - prev_content_len;
+                    if let Some((row, col)) = state.ui.text_selection.start {
+                        state.ui.text_selection.start = Some((row + offset, col));
+                    }
+                    if let Some((row, col)) = state.ui.text_selection.end {
+                        state.ui.text_selection.end = Some((row + offset, col));
+                    }
+                }
+                state.ui.output_on_replay = true;
+            }
+
+            let selection = get_selection_bounds(&state.ui.text_selection, replay_content_len, replay_screen.size().1);
             let pane_height = Some(viewport_height as u16);
 
             let max_scroll = replay_content_len.saturating_sub(viewport_height);
@@ -198,6 +216,21 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
             (replay_lines, replay_content_len, sfb_clamped, so)
         } else {
             // Live parser path (at bottom or within live parser range)
+            // On replay→live transition, translate selection coordinates back
+            if state.ui.output_on_replay {
+                let prev_content_len = state.ui.output_content_length;
+                if prev_content_len > live_content_len && live_content_len > 0 {
+                    let offset = prev_content_len - live_content_len;
+                    if let Some((row, col)) = state.ui.text_selection.start {
+                        state.ui.text_selection.start = Some((row.saturating_sub(offset), col));
+                    }
+                    if let Some((row, col)) = state.ui.text_selection.end {
+                        state.ui.text_selection.end = Some((row.saturating_sub(offset), col));
+                    }
+                }
+                state.ui.output_on_replay = false;
+            }
+
             let prev_len = state.ui.output_content_length;
             let stable_len = if live_content_len >= prev_len {
                 live_content_len
@@ -215,7 +248,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
             let visible_start = so.saturating_sub(buffer_lines);
             let visible_count = viewport_height + buffer_lines * 2;
 
-            let selection = get_selection_bounds(&state.ui.text_selection, screen_size);
+            let selection = get_selection_bounds(&state.ui.text_selection, stable_len, screen_size.1);
             let pane_height = Some(viewport_height as u16);
             let mut lines = convert_vt100_to_lines_visible(
                 screen,

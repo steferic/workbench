@@ -1,4 +1,4 @@
-use crate::app::state::PaneHelp;
+use crate::app::state::{ConfigTab, PaneHelp};
 use crate::git::DiffStat;
 use crate::models::AgentType;
 use crossterm::event::KeyEvent;
@@ -213,5 +213,25 @@ pub enum Action {
     DiffStatsUpdated(HashMap<PathBuf, DiffStat>),
 
     // Debug
-    ToggleDebugOverlay,  // F12 - show terminal dimension debug info
+    ToggleDebugOverlay,  // F11 - show terminal dimension debug info
+
+    // Config window
+    EnterConfigWindow,
+    ExitConfigWindow,
+    ConfigSwitchTab(ConfigTab),
+    ConfigMoveUp,
+    ConfigMoveDown,
+    ConfigMoveLeft,
+    ConfigMoveRight,
+    ConfigStartEdit,
+    ConfigFinishEdit,
+    ConfigCancelEdit,
+    ConfigAddAgent,
+    ConfigDeleteAgent,
+    ConfigReorderUp,
+    ConfigReorderDown,
+    ConfigResetDefault,
+    ConfigInputChar(char),
+    ConfigInputBackspace,
+    ConfigRebindKey(KeyEvent),
 }

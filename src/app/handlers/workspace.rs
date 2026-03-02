@@ -88,6 +88,7 @@ pub fn handle_workspace_action(
                                         agent_type: s.agent_type.clone(),
                                         start_command: s.start_command.clone(),
                                         dangerously_skip_permissions: s.dangerously_skip_permissions,
+                                        worktree_path: s.worktree_path.clone(),
                                     })
                                     .collect()
                             })

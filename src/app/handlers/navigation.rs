@@ -81,7 +81,7 @@ fn copy_active_selection(state: &mut AppState) -> bool {
                         if !raw_buf.bytes.is_empty() {
                             if let Some(parser) = state.system.output_buffers.get(&session_id) {
                                 let cols = parser.screen().size().1;
-                                let replay = create_replay_parser(raw_buf, cols);
+                                let replay = create_replay_parser(raw_buf, cols, state.system.user_config.replay_parser_rows);
                                 let text = extract_selected_text(replay.screen(), start, end);
                                 copy_to_clipboard(&text);
                                 return true;
@@ -110,7 +110,7 @@ fn copy_active_selection(state: &mut AppState) -> bool {
                             if !raw_buf.bytes.is_empty() {
                                 if let Some(parser) = state.system.output_buffers.get(&session_id) {
                                     let cols = parser.screen().size().1;
-                                    let replay = create_replay_parser(raw_buf, cols);
+                                    let replay = create_replay_parser(raw_buf, cols, state.system.user_config.replay_parser_rows);
                                     let text = extract_selected_text(replay.screen(), start, end);
                                     copy_to_clipboard(&text);
                                     return true;
@@ -402,7 +402,7 @@ pub fn handle_navigation_action(
             // Simplified MouseClick logic using stored areas
             let (w, h) = state.system.terminal_size;
             let main_height = h.saturating_sub(1);
-            let divider_tolerance = 2u16;
+            let divider_tolerance = 1u16;
 
             let left_width = (w as f32 * state.ui.left_panel_ratio) as u16;
             if x >= left_width.saturating_sub(divider_tolerance) && x <= left_width + divider_tolerance && y < main_height {

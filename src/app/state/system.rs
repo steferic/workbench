@@ -1,5 +1,6 @@
-use crate::app::{PARSER_BUFFER_ROWS, RAW_OUTPUT_BUFFER_CAPACITY, TERMINAL_SCROLLBACK_LIMIT};
+use crate::app::PARSER_BUFFER_ROWS;
 use crate::config::KeybindingConfig;
+use crate::config::user_config::UserConfig;
 use crate::git::DiffStat;
 use crate::models::AgentType;
 use crate::pty::PtyHandle;
@@ -147,6 +148,8 @@ pub struct PendingSessionStart {
     pub agent_type: AgentType,
     pub start_command: Option<String>,
     pub dangerously_skip_permissions: bool,
+    /// If the session uses worktree isolation, spawn in this directory instead
+    pub worktree_path: Option<PathBuf>,
 }
 
 /// Circular buffer storing raw PTY output bytes for replay-based scrollback
@@ -249,6 +252,8 @@ pub struct SystemState {
     /// Styled scrollback history for inline sessions — accumulated screen snapshots
     /// with formatting (colors, bold) preserved as ratatui Line objects
     pub inline_styled_history: HashMap<Uuid, Vec<Line<'static>>>,
+    /// User configuration loaded from ~/.config/workbench/user_config.toml
+    pub user_config: UserConfig,
 }
 
 impl SystemState {
@@ -277,6 +282,7 @@ impl SystemState {
             inline_mode_sessions: HashSet::new(),
             inline_last_snapshot: HashMap::new(),
             inline_styled_history: HashMap::new(),
+            user_config: crate::config::user_config::load_user_config(),
         }
     }
 
@@ -284,9 +290,9 @@ impl SystemState {
     /// If `inline_mode` is true, raw buffer will store a scrollback-friendly
     /// version of the output (cursor repositioning stripped).
     pub fn create_session_buffers(&mut self, session_id: Uuid, cols: u16, inline_mode: bool) {
-        let parser = vt100::Parser::new(PARSER_BUFFER_ROWS, cols, TERMINAL_SCROLLBACK_LIMIT);
+        let parser = vt100::Parser::new(PARSER_BUFFER_ROWS, cols, self.user_config.live_scrollback_rows);
         self.output_buffers.insert(session_id, parser);
-        self.raw_output_buffers.insert(session_id, RawOutputBuffer::new(RAW_OUTPUT_BUFFER_CAPACITY));
+        self.raw_output_buffers.insert(session_id, RawOutputBuffer::new(self.user_config.scrollback_buffer_kb * 1024));
         if inline_mode {
             self.inline_mode_sessions.insert(session_id);
         }

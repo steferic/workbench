@@ -88,11 +88,12 @@ pub fn render_cursor(
 
 pub fn get_selection_bounds(
     selection: &TextSelection,
-    (rows, cols): (u16, u16),
+    content_length: usize,
+    cols: u16,
 ) -> Option<SelectionBounds> {
     let start = selection.start?;
     let end = selection.end?;
-    if rows == 0 || cols == 0 {
+    if content_length == 0 || cols == 0 {
         return None;
     }
 
@@ -104,7 +105,7 @@ pub fn get_selection_bounds(
         std::mem::swap(&mut start_col, &mut end_col);
     }
 
-    let max_row = rows.saturating_sub(1) as usize;
+    let max_row = content_length.saturating_sub(1);
     let max_col = cols.saturating_sub(1) as usize;
 
     Some(SelectionBounds {

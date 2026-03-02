@@ -1,4 +1,4 @@
-use crate::app::{AppState, FocusPanel, InputMode, ReplayCache, TextSelection};
+use crate::app::{AppState, FocusPanel, InputMode, ReplayCache};
 use crate::tui::replay::create_replay_parser;
 use crate::tui::utils::{convert_vt100_to_lines_visible, get_content_length, get_cursor_info, get_selection_bounds, render_cursor};
 use ratatui::{
@@ -55,11 +55,12 @@ pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index
         let scroll_from_bottom_raw = state.ui.pinned_scroll_offsets[pane_index] as usize;
         let session_id = pinned_session_id.unwrap();
 
+        let live_max_scroll = live_content_len.saturating_sub(viewport_height);
         let needs_replay = !is_alternate
-            && scroll_from_bottom_raw > 0
+            && scroll_from_bottom_raw > live_max_scroll
             && state.system.raw_output_buffers.get(&session_id).map(|b| !b.bytes.is_empty()).unwrap_or(false);
 
-        let (lines, stable_len, scroll_from_bottom, scroll_offset) = if needs_replay {
+        let (lines, stable_len, scroll_from_bottom, scroll_offset, sel_translated) = if needs_replay {
             let raw_buf = state.system.raw_output_buffers.get(&session_id).unwrap();
             let generation = raw_buf.generation;
             let cols = screen_size.1;
@@ -70,7 +71,7 @@ pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index
             }).unwrap_or(false);
 
             if !cache_valid {
-                let replay_parser = create_replay_parser(raw_buf, cols);
+                let replay_parser = create_replay_parser(raw_buf, cols, state.system.user_config.replay_parser_rows);
                 let replay_screen = replay_parser.screen();
                 let replay_cursor = get_cursor_info(replay_screen);
                 let replay_content_len = get_content_length(replay_screen, replay_cursor.row);
@@ -89,10 +90,27 @@ pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index
             let replay_screen = cache.parser.screen();
             let replay_cursor = get_cursor_info(replay_screen);
 
-            let default_selection = TextSelection::default();
+            // On live→replay transition, translate selection coordinates in a local copy
+            let mut sel_copy = state.ui.pinned_text_selections.get(pane_index)
+                .copied()
+                .unwrap_or_default();
+            if !state.ui.pinned_on_replay[pane_index] {
+                let prev_content_len = state.ui.pinned_content_lengths[pane_index];
+                if replay_content_len > prev_content_len && prev_content_len > 0 {
+                    let offset = replay_content_len - prev_content_len;
+                    if let Some((row, col)) = sel_copy.start {
+                        sel_copy.start = Some((row + offset, col));
+                    }
+                    if let Some((row, col)) = sel_copy.end {
+                        sel_copy.end = Some((row + offset, col));
+                    }
+                }
+            }
+
             let selection = get_selection_bounds(
-                state.ui.pinned_text_selections.get(pane_index).unwrap_or(&default_selection),
-                replay_screen.size(),
+                &sel_copy,
+                replay_content_len,
+                replay_screen.size().1,
             );
             let pane_height = Some(viewport_height as u16);
 
@@ -117,14 +135,9 @@ pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index
                 replay_lines.push(Line::raw(""));
             }
 
-            (replay_lines, replay_content_len, sfb_clamped, so)
+            (replay_lines, replay_content_len, sfb_clamped, so, sel_copy)
         } else {
             // Live parser path
-            let default_selection = TextSelection::default();
-            let selection = get_selection_bounds(
-                state.ui.pinned_text_selections.get(pane_index).unwrap_or(&default_selection),
-                screen_size,
-            );
             let pane_height = Some(viewport_height as u16);
 
             let prev_len = state.ui.pinned_content_lengths[pane_index];
@@ -135,6 +148,29 @@ pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index
             } else {
                 prev_len
             };
+
+            // On replay→live transition, translate selection coordinates back (local copy)
+            let mut sel_copy = state.ui.pinned_text_selections.get(pane_index)
+                .copied()
+                .unwrap_or_default();
+            if state.ui.pinned_on_replay[pane_index] {
+                let prev_content_len = state.ui.pinned_content_lengths[pane_index];
+                if prev_content_len > live_content_len && live_content_len > 0 {
+                    let offset = prev_content_len - live_content_len;
+                    if let Some((row, col)) = sel_copy.start {
+                        sel_copy.start = Some((row.saturating_sub(offset), col));
+                    }
+                    if let Some((row, col)) = sel_copy.end {
+                        sel_copy.end = Some((row.saturating_sub(offset), col));
+                    }
+                }
+            }
+
+            let selection = get_selection_bounds(
+                &sel_copy,
+                stable_len,
+                screen_size.1,
+            );
 
             let max_scroll = stable_len.saturating_sub(viewport_height);
             let sfb = scroll_from_bottom_raw.min(max_scroll);
@@ -157,9 +193,14 @@ pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index
                 lines.push(Line::raw(""));
             }
 
-            (lines, stable_len, sfb, so)
+            (lines, stable_len, sfb, so, sel_copy)
         };
 
+        // Update replay flag and persist translated selection after parser borrow is released
+        state.ui.pinned_on_replay[pane_index] = needs_replay;
+        if sel_translated.start.is_some() {
+            state.ui.pinned_text_selections[pane_index] = sel_translated;
+        }
         state.ui.pinned_content_lengths[pane_index] = stable_len;
 
         let paragraph = Paragraph::new(lines)

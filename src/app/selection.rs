@@ -30,7 +30,12 @@ pub fn extract_selected_text(
         let mut line = String::new();
         for col in row_start..=row_end {
             if let Some(cell) = screen.cell(row as u16, col as u16) {
-                line.push_str(&cell.contents());
+                let contents = cell.contents();
+                if contents.is_empty() {
+                    line.push(' ');
+                } else {
+                    line.push_str(&contents);
+                }
             }
         }
 

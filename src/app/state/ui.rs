@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use uuid::Uuid;
 
 use super::types::{
-    ConfigItem, ConfigTreeNode, Divider, FocusPanel, InputMode, PaneHelp, PendingDelete,
+    ConfigItem, ConfigTab, ConfigTreeNode, Divider, FocusPanel, InputMode, PaneHelp, PendingDelete,
     TextSelection, TodoPaneMode, TodosTab, UtilityItem, UtilitySection, WorkspaceAction,
 };
 
@@ -35,6 +35,10 @@ pub struct UIState {
     // Selection & Areas
     pub text_selection: TextSelection,
     pub pinned_text_selections: [TextSelection; MAX_PINNED_TERMINALS],
+    /// Tracks whether the output pane was using the replay parser last frame.
+    /// Used to detect live→replay transitions and translate selection coordinates.
+    pub output_on_replay: bool,
+    pub pinned_on_replay: [bool; MAX_PINNED_TERMINALS],
     pub drag_mouse_pos: Option<(u16, u16)>,  // Track mouse position during text selection drag for smooth scrolling
     pub output_pane_area: Option<(u16, u16, u16, u16)>,
     pub pinned_pane_areas: [Option<(u16, u16, u16, u16)>; MAX_PINNED_TERMINALS],
@@ -103,8 +107,16 @@ pub struct UIState {
     // Pane-specific help popup
     pub pane_help: Option<PaneHelp>,
 
-    // Debug overlay (F12)
+    // Debug overlay (F11)
     pub show_debug_overlay: bool,
+
+    // Config window state
+    pub config_tab: ConfigTab,
+    pub config_selected_row: usize,
+    pub config_selected_col: usize,
+    pub config_editing: bool,
+    pub config_edit_buffer: String,
+    pub config_rebinding: bool,
 }
 
 impl UIState {
@@ -129,6 +141,8 @@ impl UIState {
             file_browser_query: String::new(),
             text_selection: TextSelection::default(),
             pinned_text_selections: [TextSelection::default(); MAX_PINNED_TERMINALS],
+            output_on_replay: false,
+            pinned_on_replay: [false; MAX_PINNED_TERMINALS],
             drag_mouse_pos: None,
             output_pane_area: None,
             pinned_pane_areas: [None; MAX_PINNED_TERMINALS],
@@ -185,6 +199,12 @@ impl UIState {
             parallel_task_request_id: 0,
             pane_help: None,
             show_debug_overlay: false,
+            config_tab: ConfigTab::default(),
+            config_selected_row: 0,
+            config_selected_col: 0,
+            config_editing: false,
+            config_edit_buffer: String::new(),
+            config_rebinding: false,
         }
     }
 }

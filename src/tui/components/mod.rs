@@ -1,4 +1,5 @@
 pub mod banner;
+pub mod config_window;
 pub mod create_session_dialog;
 pub mod create_workspace_dialog;
 pub mod debug_overlay;

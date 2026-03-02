@@ -21,6 +21,15 @@ pub enum InputMode {
     ConfirmMergeWorktree,   // Confirm commit and merge worktree
     ConfirmParallelMerge,   // Confirm commit and merge parallel task worktree
     Help,
+    ConfigWindow,  // F12 configuration window
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ConfigTab {
+    #[default]
+    Agents,
+    Hotkeys,
+    Scrollback,
 }
 
 /// Workspace action selection (when pressing 'n' in workspace list)
