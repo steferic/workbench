@@ -6,9 +6,6 @@ use tui_textarea::{Input, Key};
 
 pub fn handle_input_action(state: &mut AppState, action: Action) -> Result<()> {
     match action {
-        Action::EnterHelpMode => {
-            state.ui.input_mode = InputMode::Help;
-        }
         Action::EnterWorkspaceActionMode => {
             state.ui.input_mode = InputMode::SelectWorkspaceAction;
             state.ui.selected_workspace_action = crate::app::WorkspaceAction::default();
@@ -204,12 +201,6 @@ pub fn handle_input_action(state: &mut AppState, action: Action) -> Result<()> {
             } else if let Some((_, selected)) = state.ui.parallel_task_agents.get_mut(idx) {
                 *selected = !*selected;
             }
-        }
-        Action::ShowPaneHelp(pane) => {
-            state.ui.pane_help = Some(pane);
-        }
-        Action::DismissPaneHelp => {
-            state.ui.pane_help = None;
         }
         Action::InitiateQuit => {
             state.ui.pending_quit = true;

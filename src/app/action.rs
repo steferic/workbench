@@ -1,4 +1,4 @@
-use crate::app::state::{ConfigTab, PaneHelp};
+use crate::app::state::ConfigTab;
 use crate::git::DiffStat;
 use crate::models::AgentType;
 use crossterm::event::KeyEvent;
@@ -75,12 +75,7 @@ pub enum Action {
     EnterWorkspaceNameMode,      // Text input for naming new workspace
     EnterCreateSessionMode,
     EnterSetStartCommandMode,
-    EnterHelpMode,
     ExitMode,
-
-    // Pane-specific help popups
-    ShowPaneHelp(PaneHelp),      // Show help popup for specific pane
-    DismissPaneHelp,             // Close pane help popup
 
     // Workspace action selection
     NextWorkspaceChoice,

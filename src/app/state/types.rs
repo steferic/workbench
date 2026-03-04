@@ -20,13 +20,13 @@ pub enum InputMode {
     CreateParallelTask,     // Modal for starting a parallel task
     ConfirmMergeWorktree,   // Confirm commit and merge worktree
     ConfirmParallelMerge,   // Confirm commit and merge parallel task worktree
-    Help,
     ConfigWindow,  // F12 configuration window
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ConfigTab {
     #[default]
+    QuickRef,
     Agents,
     Hotkeys,
     Scrollback,
@@ -94,15 +94,6 @@ impl UtilitySection {
             UtilitySection::Notepad => UtilitySection::Utilities,
         }
     }
-}
-
-/// Which pane-specific help popup is showing
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PaneHelp {
-    Workspaces,
-    Sessions,
-    Todos,
-    Utilities,
 }
 
 /// Mode for the todos pane

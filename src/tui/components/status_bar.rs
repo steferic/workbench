@@ -111,19 +111,6 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     }
 
     let (left_text, right_text) = match state.ui.input_mode {
-        InputMode::Help => (
-            vec![Span::styled(
-                " HELP ",
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            )],
-            vec![Span::styled(
-                "Press Esc or ? to close",
-                Style::default().fg(Color::Gray),
-            )],
-        ),
         InputMode::CreateWorkspace => (
             vec![Span::styled(
                 " NEW WORKSPACE ",

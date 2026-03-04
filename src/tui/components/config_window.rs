@@ -19,6 +19,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     render_tab_bar(frame, chunks[0], state);
 
     match state.ui.config_tab {
+        ConfigTab::QuickRef => render_quickref_tab(frame, chunks[1], state),
         ConfigTab::Agents => render_agents_tab(frame, chunks[1], state),
         ConfigTab::Hotkeys => render_hotkeys_tab(frame, chunks[1], state),
         ConfigTab::Scrollback => render_scrollback_tab(frame, chunks[1], state),
@@ -29,9 +30,10 @@ fn render_tab_bar(frame: &mut Frame, area: Rect, state: &AppState) {
     let active = state.ui.config_tab;
 
     let tabs = vec![
-        ("1", "Agents", ConfigTab::Agents),
-        ("2", "Hotkeys", ConfigTab::Hotkeys),
-        ("3", "Memory", ConfigTab::Scrollback),
+        ("1", "Quick Ref", ConfigTab::QuickRef),
+        ("2", "Agents", ConfigTab::Agents),
+        ("3", "Hotkeys", ConfigTab::Hotkeys),
+        ("4", "Memory", ConfigTab::Scrollback),
     ];
 
     let mut spans: Vec<Span> = Vec::new();
@@ -61,7 +63,7 @@ fn render_tab_bar(frame: &mut Frame, area: Rect, state: &AppState) {
     let line = Line::from(spans);
 
     let block = Block::default()
-        .title(" Settings (F12) ")
+        .title(" Help & Settings (F12) ")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan))
         .style(Style::default().bg(Color::Black));
@@ -69,6 +71,247 @@ fn render_tab_bar(frame: &mut Frame, area: Rect, state: &AppState) {
     let paragraph = Paragraph::new(vec![Line::from(""), line])
         .block(block);
 
+    frame.render_widget(paragraph, area);
+}
+
+fn render_quickref_tab(frame: &mut Frame, area: Rect, state: &AppState) {
+    let scroll_offset = state.ui.config_scroll_offset;
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    let section_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+    let key_style = Style::default().fg(Color::Cyan);
+    let sep_style = Style::default().fg(Color::DarkGray);
+
+    let separator = Line::from(Span::styled(
+        "  ──────────────────────────────────────────────────────",
+        sep_style,
+    ));
+
+    // -- Navigation --
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled("  Navigation", section_style)));
+    lines.push(separator.clone());
+    lines.push(Line::from(vec![
+        Span::styled("  j/k, Up/Down       ", key_style),
+        Span::raw("Move up/down in lists"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  h/l, Left/Right    ", key_style),
+        Span::raw("Switch between panels"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  Tab                ", key_style),
+        Span::raw("Cycle focus between panels"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  Shift+Left/Right   ", key_style),
+        Span::raw("Focus left/right panel"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  `                  ", key_style),
+        Span::raw("Jump to next idle session"),
+    ]));
+
+    // -- Workspaces --
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled("  Workspaces", section_style)));
+    lines.push(separator.clone());
+    lines.push(Line::from(vec![
+        Span::styled("  n                  ", key_style),
+        Span::raw("Create/open workspace"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  Enter              ", key_style),
+        Span::raw("Select workspace"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  w                  ", key_style),
+        Span::raw("Toggle working/paused"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  d                  ", key_style),
+        Span::raw("Delete workspace"),
+    ]));
+
+    // -- Sessions --
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled("  Sessions", section_style)));
+    lines.push(separator.clone());
+    lines.push(Line::from(vec![
+        Span::styled("  1/2/3/4            ", key_style),
+        Span::raw("New Claude/Gemini/Codex/Grok"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  !/@ /#/$           ", key_style),
+        Span::raw("Same but skip permissions"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  Alt+1-4            ", key_style),
+        Span::raw("Create in isolated worktree"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  Alt+!/@ /#         ", key_style),
+        Span::raw("Worktree + skip permissions"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  t                  ", key_style),
+        Span::raw("New terminal"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  P                  ", key_style),
+        Span::raw("Start parallel task"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  Enter              ", key_style),
+        Span::raw("Activate selected session"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  s                  ", key_style),
+        Span::raw("Stop session (graceful)"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  x                  ", key_style),
+        Span::raw("Kill session (force)"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  d                  ", key_style),
+        Span::raw("Delete session"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  p                  ", key_style),
+        Span::raw("Pin/unpin to side panel"),
+    ]));
+
+    // -- Worktrees --
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled("  Worktrees", section_style)));
+    lines.push(separator.clone());
+    lines.push(Line::from(vec![
+        Span::styled("  w                  ", key_style),
+        Span::raw("Open terminal in worktree"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  m                  ", key_style),
+        Span::raw("Merge worktree into main"),
+    ]));
+
+    // -- Todos --
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled("  Todos", section_style)));
+    lines.push(separator.clone());
+    lines.push(Line::from(vec![
+        Span::styled("  n                  ", key_style),
+        Span::raw("Create new todo"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  Enter              ", key_style),
+        Span::raw("Run todo with agent"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  y / Y              ", key_style),
+        Span::raw("Accept suggested / Accept all"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  x                  ", key_style),
+        Span::raw("Mark as done"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  X                  ", key_style),
+        Span::raw("Archive todo"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  d                  ", key_style),
+        Span::raw("Delete todo"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  Tab                ", key_style),
+        Span::raw("Switch tabs (Active/Archived/Reports)"),
+    ]));
+
+    // -- Todo Reports --
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled("  Todo Reports", section_style)));
+    lines.push(separator.clone());
+    lines.push(Line::from(vec![
+        Span::styled("  v                  ", key_style),
+        Span::raw("View report details"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  m                  ", key_style),
+        Span::raw("Merge selected attempt"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  d                  ", key_style),
+        Span::raw("Discard attempt"),
+    ]));
+
+    // -- Utilities --
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled("  Utilities", section_style)));
+    lines.push(separator.clone());
+    lines.push(Line::from(vec![
+        Span::styled("  Tab                ", key_style),
+        Span::raw("Switch tabs (Util/Sounds/Cfg/Notes)"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  Enter              ", key_style),
+        Span::raw("Toggle/activate item"),
+    ]));
+
+    // -- Output Pane --
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled("  Output Pane", section_style)));
+    lines.push(separator.clone());
+    lines.push(Line::from(vec![
+        Span::styled("  (type)             ", key_style),
+        Span::raw("Send input to active session"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  Ctrl+H             ", key_style),
+        Span::raw("Return to session list"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  Esc                ", key_style),
+        Span::raw("Send escape to agent (interrupt)"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  Ctrl+C             ", key_style),
+        Span::raw("Send interrupt signal"),
+    ]));
+
+    // -- General --
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled("  General", section_style)));
+    lines.push(separator.clone());
+    lines.push(Line::from(vec![
+        Span::styled("  F12                ", key_style),
+        Span::raw("Open this window"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  q                  ", key_style),
+        Span::raw("Quit workbench"),
+    ]));
+    lines.push(Line::from(""));
+
+    // Footer
+    lines.push(Line::from(Span::styled(
+        "  ──────────────────────────────────────────────────────",
+        sep_style,
+    )));
+    lines.push(Line::from(vec![
+        Span::styled("  [j/k]", Style::default().fg(Color::Cyan)),
+        Span::raw(" Scroll"),
+    ]));
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::DarkGray))
+        .style(Style::default().bg(Color::Black));
+
+    let paragraph = Paragraph::new(lines)
+        .block(block)
+        .scroll((scroll_offset as u16, 0));
     frame.render_widget(paragraph, area);
 }
 
@@ -195,9 +438,8 @@ fn format_action_name(action: &str) -> &str {
         "CycleNextWorkspace" => "Cycle Workspace",
         "CycleNextSession" => "Cycle Session",
         "InitiateQuit" => "Quit",
-        "EnterHelpMode" => "Help",
         "ToggleDebugOverlay" => "Debug Overlay",
-        "EnterConfigWindow" => "Config Window",
+        "EnterConfigWindow" => "Help & Settings",
         _ => action,
     }
 }

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use uuid::Uuid;
 
 use super::types::{
-    ConfigItem, ConfigTab, ConfigTreeNode, Divider, FocusPanel, InputMode, PaneHelp, PendingDelete,
+    ConfigItem, ConfigTab, ConfigTreeNode, Divider, FocusPanel, InputMode, PendingDelete,
     TextSelection, TodoPaneMode, TodosTab, UtilityItem, UtilitySection, WorkspaceAction,
 };
 
@@ -104,9 +104,6 @@ pub struct UIState {
     pub selected_report_idx: usize,  // Selected report in Reports tab
     pub parallel_task_request_id: u64,
 
-    // Pane-specific help popup
-    pub pane_help: Option<PaneHelp>,
-
     // Debug overlay (F11)
     pub show_debug_overlay: bool,
 
@@ -117,6 +114,7 @@ pub struct UIState {
     pub config_editing: bool,
     pub config_edit_buffer: String,
     pub config_rebinding: bool,
+    pub config_scroll_offset: usize,
 }
 
 impl UIState {
@@ -197,7 +195,6 @@ impl UIState {
             parallel_task_dangerous_mode: true,  // Default to dangerous mode for parallel tasks
             selected_report_idx: 0,
             parallel_task_request_id: 0,
-            pane_help: None,
             show_debug_overlay: false,
             config_tab: ConfigTab::default(),
             config_selected_row: 0,
@@ -205,6 +202,7 @@ impl UIState {
             config_editing: false,
             config_edit_buffer: String::new(),
             config_rebinding: false,
+            config_scroll_offset: 0,
         }
     }
 }

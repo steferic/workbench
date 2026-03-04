@@ -16,18 +16,12 @@
 "Ctrl-z" = "CycleNextWorkspace"
 "Ctrl-x" = "CycleNextSession"
 "Ctrl-q" = "InitiateQuit"
-"F1" = "EnterHelpMode"
-"F12" = "ToggleDebugOverlay"
+"F1" = "EnterConfigWindow"
+"F12" = "EnterConfigWindow"
 
 # ============================================================
 # Mode-specific keybindings
 # ============================================================
-
-[mode.help]
-"Esc" = "ExitMode"
-"q" = "ExitMode"
-"?" = "ExitMode"
-"Enter" = "ExitMode"
 
 [mode.workspace_action]
 "Esc" = "ExitMode"
@@ -103,8 +97,8 @@
 "n" = "EnterWorkspaceActionMode"
 "w" = "ToggleWorkspaceStatus"
 "d" = "InitiateDeleteWorkspace"
-"h" = "ShowPaneHelp"
-"?" = "EnterHelpMode"
+"h" = "EnterConfigWindow"
+"?" = "EnterConfigWindow"
 "q" = "InitiateQuit"
 "Esc" = "InitiateQuit"
 
@@ -130,8 +124,8 @@
 "X" = "CancelParallelTask"
 "m" = "MergeSessionWorktree"
 "w" = "SwitchToWorktree"
-"h" = "ShowPaneHelp"
-"?" = "EnterHelpMode"
+"h" = "EnterConfigWindow"
+"?" = "EnterConfigWindow"
 "q" = "Quit"
 "1" = "CreateClaude"
 "2" = "CreateGemini"
@@ -155,8 +149,8 @@
 "d" = "InitiateDeleteTodo"
 "v" = "ViewReport"
 "m" = "MergeSelectedReport"
-"h" = "ShowPaneHelp"
-"?" = "EnterHelpMode"
+"h" = "EnterConfigWindow"
+"?" = "EnterConfigWindow"
 "q" = "Quit"
 
 [panel.utilities_pane]
@@ -167,14 +161,14 @@
 "l" = "ActivateUtility"
 "Enter" = "ActivateUtility"
 "Tab" = "ToggleUtilitySection"
-"h" = "ShowPaneHelp"
-"?" = "EnterHelpMode"
+"h" = "EnterConfigWindow"
+"?" = "EnterConfigWindow"
 "q" = "Quit"
 
 [panel.output_pane]
 "h" = "FocusLeft"
 "Esc" = "FocusLeftOrSendEsc"
-"?" = "EnterHelpMode"
+"?" = "EnterConfigWindow"
 "q" = "Quit"
 "y" = "CopySelection"
 "Ctrl-h" = "FocusLeft"

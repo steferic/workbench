@@ -10,16 +10,27 @@ pub fn handle_config_action(state: &mut AppState, action: Action) {
             state.ui.config_selected_col = 0;
             state.ui.config_editing = false;
             state.ui.config_rebinding = false;
+            state.ui.config_scroll_offset = 0;
         }
         Action::ConfigMoveDown => {
-            let max = max_rows(state);
-            if max > 0 && state.ui.config_selected_row + 1 < max {
-                state.ui.config_selected_row += 1;
+            if state.ui.config_tab == ConfigTab::QuickRef {
+                state.ui.config_scroll_offset += 1;
+            } else {
+                let max = max_rows(state);
+                if max > 0 && state.ui.config_selected_row + 1 < max {
+                    state.ui.config_selected_row += 1;
+                }
             }
         }
         Action::ConfigMoveUp => {
-            if state.ui.config_selected_row > 0 {
-                state.ui.config_selected_row -= 1;
+            if state.ui.config_tab == ConfigTab::QuickRef {
+                if state.ui.config_scroll_offset > 0 {
+                    state.ui.config_scroll_offset -= 1;
+                }
+            } else {
+                if state.ui.config_selected_row > 0 {
+                    state.ui.config_selected_row -= 1;
+                }
             }
         }
         Action::ConfigMoveRight => {
@@ -36,6 +47,7 @@ pub fn handle_config_action(state: &mut AppState, action: Action) {
         }
         Action::ConfigStartEdit => {
             match state.ui.config_tab {
+                ConfigTab::QuickRef => {}
                 ConfigTab::Agents => {
                     if let Some(agent) = state.system.user_config.agents.get(state.ui.config_selected_row) {
                         state.ui.config_edit_buffer = match state.ui.config_selected_col {
@@ -157,6 +169,7 @@ pub fn handle_config_action(state: &mut AppState, action: Action) {
         Action::ConfigResetDefault => {
             let defaults = UserConfig::default();
             match state.ui.config_tab {
+                ConfigTab::QuickRef => {}
                 ConfigTab::Agents => {
                     state.system.user_config.agents = defaults.agents;
                     state.ui.config_selected_row = 0;
@@ -178,6 +191,7 @@ pub fn handle_config_action(state: &mut AppState, action: Action) {
 
 fn max_rows(state: &AppState) -> usize {
     match state.ui.config_tab {
+        ConfigTab::QuickRef => 0,
         ConfigTab::Agents => state.system.user_config.agents.len(),
         ConfigTab::Hotkeys => state.system.user_config.global_hotkeys.len(),
         ConfigTab::Scrollback => 3,

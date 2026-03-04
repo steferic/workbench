@@ -135,16 +135,9 @@ fn create_workspace_item<'a>(
     is_focused: bool,
     is_paused: bool,
 ) -> ListItem<'a> {
-    let running = state.workspace_running_count(ws.id);
-    let total = state.workspace_session_count(ws.id);
     let is_working = state.is_workspace_working(ws.id);
 
     let name = ws.name.clone();
-    let sessions_info = if total > 0 {
-        format!(" ({}/{})", running, total)
-    } else {
-        String::new()
-    };
 
     // Last active timestamp
     let last_active = ws.last_active_display();
@@ -165,8 +158,6 @@ fn create_workspace_item<'a>(
         Style::default().fg(Color::Gray)
     };
 
-    let info_style = Style::default().fg(Color::DarkGray);
-
     // Time style - slightly dimmer, different color for recency
     let time_style = if is_paused {
         Style::default().fg(Color::DarkGray)
@@ -183,7 +174,7 @@ fn create_workspace_item<'a>(
     // Check if workspace is loading (has pending sessions in startup queue)
     let is_loading = state.is_workspace_loading(ws.id);
 
-    // Working/Loading indicator (spinner)
+    // Working/Loading indicator (spinner) - fixed width so name doesn't shift
     // Blue = loading (sessions starting up), Yellow = working (actively processing)
     let working_indicator = if is_loading && !is_paused {
         Span::styled(
@@ -196,14 +187,13 @@ fn create_workspace_item<'a>(
             Style::default().fg(Color::Yellow),
         )
     } else {
-        Span::raw("")
+        Span::raw("  ")
     };
 
     ListItem::new(Line::from(vec![
         Span::styled(prefix.to_string(), style),
         working_indicator,
         Span::styled(name, style),
-        Span::styled(sessions_info, info_style),
         Span::styled(time_info, time_style),
     ]))
 }

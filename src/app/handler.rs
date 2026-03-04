@@ -331,15 +331,13 @@ pub fn process_action(
                 }
 
                 // Input actions
-                Action::EnterHelpMode | Action::ExitMode | Action::InputChar(_) |
+                Action::ExitMode | Action::InputChar(_) |
                 Action::InputBackspace | Action::NotepadInput(_) |
                 Action::FileBrowserUp | Action::FileBrowserDown | Action::FileBrowserEnter |
                 Action::FileBrowserBack | Action::FileBrowserSelect |
                 // Parallel task modal input actions
                 Action::EnterParallelTaskMode | Action::ToggleParallelAgent(_) |
                 Action::NextParallelAgent | Action::PrevParallelAgent |
-                // Pane help popup actions
-                Action::ShowPaneHelp(_) | Action::DismissPaneHelp |
                 // Quit confirmation actions
                 Action::InitiateQuit | Action::CancelQuit => {
                     input::handle_input_action(state, action)?;

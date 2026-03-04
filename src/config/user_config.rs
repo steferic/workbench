@@ -43,9 +43,8 @@ fn default_global_hotkeys() -> HashMap<String, String> {
     m.insert("CycleNextWorkspace".into(), "Ctrl-z".into());
     m.insert("CycleNextSession".into(), "Ctrl-x".into());
     m.insert("InitiateQuit".into(), "Ctrl-q".into());
-    m.insert("EnterHelpMode".into(), "F1".into());
     m.insert("ToggleDebugOverlay".into(), "F11".into());
-    m.insert("EnterConfigWindow".into(), "F12".into());
+    m.insert("EnterConfigWindow".into(), "F1".into());
     m
 }
 

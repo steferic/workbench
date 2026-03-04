@@ -1,6 +1,6 @@
 use crate::app::{AppState, InputMode};
 use crate::tui::components::{
-    banner, config_window, create_session_dialog, create_workspace_dialog, debug_overlay, help_popup,
+    banner, config_window, create_session_dialog, create_workspace_dialog, debug_overlay,
     merge_confirm_modal, output_pane, parallel_merge_confirm_modal, parallel_task_modal,
     pinned_terminal_pane, session_list, status_bar, todos_pane, utilities_pane, workspace_action_dialog,
     workspace_list, workspace_name_dialog,
@@ -136,9 +136,6 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, effects: &mut EffectsManage
 
     // Render modal overlays
     match state.ui.input_mode {
-        InputMode::Help => {
-            help_popup::render(frame, state);
-        }
         InputMode::SelectWorkspaceAction => {
             workspace_action_dialog::render(frame, state);
         }
@@ -171,11 +168,6 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, effects: &mut EffectsManage
             config_window::render(frame, state);
         }
         InputMode::Normal => {}
-    }
-
-    // Render pane-specific help popup if active
-    if let Some(pane_help) = state.ui.pane_help {
-        help_popup::render_pane_help(frame, state, pane_help);
     }
 
     // Trigger startup animation on first draw

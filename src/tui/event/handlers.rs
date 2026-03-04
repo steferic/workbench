@@ -1,4 +1,4 @@
-use crate::app::{Action, AppState, ConfigTab, FocusPanel, InputMode, PaneHelp, PendingDelete, TodosTab};
+use crate::app::{Action, AppState, ConfigTab, FocusPanel, InputMode, PendingDelete, TodosTab};
 use crate::models::AgentType;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -18,7 +18,7 @@ impl EventHandler {
                     "CycleNextWorkspace" => Some(Action::CycleNextWorkspace),
                     "CycleNextSession" => Some(Action::CycleNextSession),
                     "InitiateQuit" => Some(Action::InitiateQuit),
-                    "EnterHelpMode" => Some(Action::EnterHelpMode),
+                    "EnterHelpMode" => Some(Action::EnterConfigWindow),
                     "ToggleDebugOverlay" => Some(Action::ToggleDebugOverlay),
                     "EnterConfigWindow" => Some(Action::EnterConfigWindow),
                     _ => None,
@@ -31,14 +31,6 @@ impl EventHandler {
     pub(super) fn handle_key_event(&self, key: KeyEvent, state: &AppState) -> Action {
         // Handle input mode first
         match state.ui.input_mode {
-            InputMode::Help => {
-                return match key.code {
-                    KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') | KeyCode::Enter => {
-                        Action::ExitMode
-                    }
-                    _ => Action::Tick,
-                };
-            }
             InputMode::SelectWorkspaceAction => {
                 return match key.code {
                     KeyCode::Esc => Action::ExitMode,
@@ -189,14 +181,16 @@ impl EventHandler {
                 // Normal config navigation
                 return match key.code {
                     KeyCode::Esc => Action::ExitConfigWindow,
-                    KeyCode::Char('1') => Action::ConfigSwitchTab(ConfigTab::Agents),
-                    KeyCode::Char('2') => Action::ConfigSwitchTab(ConfigTab::Hotkeys),
-                    KeyCode::Char('3') => Action::ConfigSwitchTab(ConfigTab::Scrollback),
+                    KeyCode::Char('1') => Action::ConfigSwitchTab(ConfigTab::QuickRef),
+                    KeyCode::Char('2') => Action::ConfigSwitchTab(ConfigTab::Agents),
+                    KeyCode::Char('3') => Action::ConfigSwitchTab(ConfigTab::Hotkeys),
+                    KeyCode::Char('4') => Action::ConfigSwitchTab(ConfigTab::Scrollback),
                     KeyCode::Tab => {
                         let next = match state.ui.config_tab {
+                            ConfigTab::QuickRef => ConfigTab::Agents,
                             ConfigTab::Agents => ConfigTab::Hotkeys,
                             ConfigTab::Hotkeys => ConfigTab::Scrollback,
-                            ConfigTab::Scrollback => ConfigTab::Agents,
+                            ConfigTab::Scrollback => ConfigTab::QuickRef,
                         };
                         Action::ConfigSwitchTab(next)
                     }
@@ -229,14 +223,6 @@ impl EventHandler {
                 }
                 KeyCode::Esc => Action::CancelPendingDelete,
                 _ => Action::CancelPendingDelete,
-            };
-        }
-
-        // Handle pane help popup - dismiss with h or Esc
-        if state.ui.pane_help.is_some() {
-            return match key.code {
-                KeyCode::Char('h') | KeyCode::Esc => Action::DismissPaneHelp,
-                _ => Action::DismissPaneHelp,
             };
         }
 
@@ -297,8 +283,8 @@ impl EventHandler {
                     Action::Tick
                 }
             }
-            KeyCode::Char('h') => Action::ShowPaneHelp(PaneHelp::Workspaces),
-            KeyCode::Char('?') => Action::EnterHelpMode,
+            KeyCode::Char('h') => Action::EnterConfigWindow,
+            KeyCode::Char('?') => Action::EnterConfigWindow,
             KeyCode::Char('q') | KeyCode::Esc => Action::InitiateQuit,
             _ => Action::Tick,
         }
@@ -451,8 +437,8 @@ impl EventHandler {
                     Action::Tick
                 }
             }
-            KeyCode::Char('h') => Action::ShowPaneHelp(PaneHelp::Sessions),
-            KeyCode::Char('?') => Action::EnterHelpMode,
+            KeyCode::Char('h') => Action::EnterConfigWindow,
+            KeyCode::Char('?') => Action::EnterConfigWindow,
             KeyCode::Char('q') => Action::Quit,
             _ => Action::Tick,
         }
@@ -557,8 +543,8 @@ impl EventHandler {
                     Action::Tick
                 }
             }
-            KeyCode::Char('h') => Action::ShowPaneHelp(PaneHelp::Todos),
-            KeyCode::Char('?') => Action::EnterHelpMode,
+            KeyCode::Char('h') => Action::EnterConfigWindow,
+            KeyCode::Char('?') => Action::EnterConfigWindow,
             KeyCode::Char('q') => Action::Quit,
             _ => Action::Tick,
         }
@@ -602,8 +588,8 @@ impl EventHandler {
                 }
             }
             KeyCode::Tab => Action::ToggleUtilitySection,
-            KeyCode::Char('h') => Action::ShowPaneHelp(PaneHelp::Utilities),
-            KeyCode::Char('?') => Action::EnterHelpMode,
+            KeyCode::Char('h') => Action::EnterConfigWindow,
+            KeyCode::Char('?') => Action::EnterConfigWindow,
             KeyCode::Char('q') => Action::Quit,
             _ => Action::Tick,
         }
@@ -728,7 +714,7 @@ impl EventHandler {
         } else {
             match key.code {
                 KeyCode::Char('h') | KeyCode::Esc => Action::FocusLeft,
-                KeyCode::Char('?') => Action::EnterHelpMode,
+                KeyCode::Char('?') => Action::EnterConfigWindow,
                 KeyCode::Char('q') => Action::Quit,
                 _ => Action::Tick,
             }

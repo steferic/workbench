@@ -17,4 +17,4 @@ pub const PARSER_BUFFER_ROWS: u16 = 80;
 
 pub use action::{Action, ParallelMergePlan, ParallelWorktreeSpec, UtilityContentPayload};
 pub use runtime::run_tui;
-pub use state::{AppState, ConfigTab, ConfigTreeNode, Divider, FocusPanel, InputMode, PaneHelp, PendingDelete, PendingSessionStart, RawOutputBuffer, ReplayCache, TextSelection, TodoPaneMode, TodosTab, UtilityItem, UtilitySection, WorkspaceAction};
+pub use state::{AppState, ConfigTab, ConfigTreeNode, Divider, FocusPanel, InputMode, PendingDelete, PendingSessionStart, RawOutputBuffer, ReplayCache, TextSelection, TodoPaneMode, TodosTab, UtilityItem, UtilitySection, WorkspaceAction};
