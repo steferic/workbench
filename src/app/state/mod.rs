@@ -351,6 +351,7 @@ impl AppState {
         // Remove activity tracking
         self.data.last_activity.remove(&session_id);
         self.data.last_send_input.remove(&session_id);
+        self.data.work_started.remove(&session_id);
     }
 
     /// Check if a session is actively working (received output within last 2 seconds)
@@ -360,6 +361,13 @@ impl AppState {
         } else {
             false
         }
+    }
+
+    /// Check how long a session has been working in its current burst (in seconds)
+    pub fn session_work_duration(&self, session_id: Uuid) -> f32 {
+        self.data.work_started.get(&session_id)
+            .map(|started| started.elapsed().as_secs_f32())
+            .unwrap_or(0.0)
     }
 
     /// Check if a workspace has sessions waiting to start in the startup queue
@@ -443,25 +451,6 @@ impl AppState {
             .flatten()
             .filter(|s| s.status == SessionStatus::Running)
             .count()
-    }
-
-    pub fn workspace_session_count(&self, workspace_id: Uuid) -> usize {
-        self.data.sessions
-            .get(&workspace_id)
-            .map(|s| s.len())
-            .unwrap_or(0)
-    }
-
-    pub fn workspace_running_count(&self, workspace_id: Uuid) -> usize {
-        self.data.sessions
-            .get(&workspace_id)
-            .map(|sessions| {
-                sessions
-                    .iter()
-                    .filter(|s| s.status == SessionStatus::Running)
-                    .count()
-            })
-            .unwrap_or(0)
     }
 
     /// Check if any agent in a workspace is actively working

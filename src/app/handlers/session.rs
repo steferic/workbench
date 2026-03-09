@@ -882,6 +882,10 @@ pub fn handle_session_action(
                 .map(|t| t.elapsed().as_millis() < 500)
                 .unwrap_or(false);
             if !is_echo {
+                // Track when this work burst started (first output after being idle)
+                if !state.is_session_working(session_id) {
+                    state.data.work_started.insert(session_id, std::time::Instant::now());
+                }
                 state.data.last_activity.insert(session_id, std::time::Instant::now());
             }
         }

@@ -115,6 +115,11 @@ pub struct UIState {
     pub config_edit_buffer: String,
     pub config_rebinding: bool,
     pub config_scroll_offset: usize,
+
+    // Command palette state
+    pub palette_query: String,
+    pub palette_selected: usize,
+    pub pending_palette_action: Option<crate::app::Action>,
 }
 
 impl UIState {
@@ -203,6 +208,9 @@ impl UIState {
             config_edit_buffer: String::new(),
             config_rebinding: false,
             config_scroll_offset: 0,
+            palette_query: String::new(),
+            palette_selected: 0,
+            pending_palette_action: None,
         }
     }
 }

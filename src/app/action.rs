@@ -229,4 +229,13 @@ pub enum Action {
     ConfigInputChar(char),
     ConfigInputBackspace,
     ConfigRebindKey(KeyEvent),
+
+    // Command palette
+    EnterCommandPalette,
+    ExitCommandPalette,
+    CommandPaletteExecute,
+    CommandPaletteDown,
+    CommandPaletteUp,
+    CommandPaletteInput(char),
+    CommandPaletteBackspace,
 }

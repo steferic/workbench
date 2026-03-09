@@ -257,6 +257,19 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
                 Style::default().fg(Color::Gray),
             )],
         ),
+        InputMode::CommandPalette => (
+            vec![Span::styled(
+                " COMMAND PALETTE ",
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )],
+            vec![Span::styled(
+                "Type to filter  Enter: execute  Esc: close",
+                Style::default().fg(Color::Gray),
+            )],
+        ),
         InputMode::ConfigWindow => (
             vec![Span::styled(
                 " CONFIG ",

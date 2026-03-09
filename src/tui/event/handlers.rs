@@ -163,6 +163,17 @@ impl EventHandler {
                     _ => Action::Tick,
                 };
             }
+            InputMode::CommandPalette => {
+                return match key.code {
+                    KeyCode::Esc => Action::ExitCommandPalette,
+                    KeyCode::Enter => Action::CommandPaletteExecute,
+                    KeyCode::Down => Action::CommandPaletteDown,
+                    KeyCode::Up => Action::CommandPaletteUp,
+                    KeyCode::Backspace => Action::CommandPaletteBackspace,
+                    KeyCode::Char(c) => Action::CommandPaletteInput(c),
+                    _ => Action::Tick,
+                };
+            }
             InputMode::ConfigWindow => {
                 // If rebinding a hotkey, capture any key as the new binding
                 if state.ui.config_rebinding {
@@ -234,14 +245,9 @@ impl EventHandler {
             };
         }
 
-        // Global F12 - config window (works in any mode)
-        if key.code == KeyCode::F(12) {
-            return Action::EnterConfigWindow;
-        }
-
-        // TEST: toggle debug overlay on F2-F11 to find which F-keys macOS passes through
-        if matches!(key.code, KeyCode::F(2) | KeyCode::F(3) | KeyCode::F(4) | KeyCode::F(5) | KeyCode::F(6) | KeyCode::F(7) | KeyCode::F(8) | KeyCode::F(9) | KeyCode::F(10) | KeyCode::F(11)) {
-            return Action::ToggleDebugOverlay;
+        // Global Ctrl+P - command palette
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('p') {
+            return Action::EnterCommandPalette;
         }
 
         // Global window navigation with Shift+Left/Right arrows

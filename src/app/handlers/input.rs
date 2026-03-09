@@ -202,6 +202,44 @@ pub fn handle_input_action(state: &mut AppState, action: Action) -> Result<()> {
                 *selected = !*selected;
             }
         }
+        Action::EnterCommandPalette => {
+            state.ui.input_mode = InputMode::CommandPalette;
+            state.ui.palette_query.clear();
+            state.ui.palette_selected = 0;
+        }
+        Action::ExitCommandPalette => {
+            state.ui.input_mode = InputMode::Normal;
+            state.ui.palette_query.clear();
+            state.ui.palette_selected = 0;
+        }
+        Action::CommandPaletteInput(c) => {
+            state.ui.palette_query.push(c);
+            state.ui.palette_selected = 0;
+        }
+        Action::CommandPaletteBackspace => {
+            state.ui.palette_query.pop();
+            state.ui.palette_selected = 0;
+        }
+        Action::CommandPaletteDown => {
+            let count = crate::tui::components::command_palette::filtered_entries(&state.ui.palette_query).len();
+            if count > 0 && state.ui.palette_selected + 1 < count {
+                state.ui.palette_selected += 1;
+            }
+        }
+        Action::CommandPaletteUp => {
+            if state.ui.palette_selected > 0 {
+                state.ui.palette_selected -= 1;
+            }
+        }
+        Action::CommandPaletteExecute => {
+            let entries = crate::tui::components::command_palette::filtered_entries(&state.ui.palette_query);
+            if let Some(entry) = entries.into_iter().nth(state.ui.palette_selected) {
+                state.ui.input_mode = InputMode::Normal;
+                state.ui.palette_query.clear();
+                state.ui.palette_selected = 0;
+                state.ui.pending_palette_action = Some(entry.action);
+            }
+        }
         Action::InitiateQuit => {
             state.ui.pending_quit = true;
         }

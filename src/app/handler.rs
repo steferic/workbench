@@ -35,17 +35,29 @@ pub fn process_action(
             state.system.should_quit = true;
         }
         Action::Tick => {
+            // Check for pending palette action
+            if let Some(palette_action) = state.ui.pending_palette_action.take() {
+                let _ = process_action(state, palette_action, pty_manager, action_tx, pty_tx);
+            }
+
             state.tick_animation();
             navigation::handle_drag_auto_scroll(state);
             let newly_idle = state.update_idle_queue();
 
             // Play notification sound when agents go idle (debounced: max once per 5s)
+            // Only play if at least one session worked for ≥3 seconds to avoid
+            // spurious sounds from brief output bursts (shell init, prompt rendering)
             if state.system.agent_done_sound_enabled
                 && !newly_idle.is_empty()
                 && state.system.last_agent_done_sound.elapsed().as_secs() >= 5
             {
-                state.system.last_agent_done_sound = std::time::Instant::now();
-                crate::audio::play_sound(AGENT_DONE_WAV);
+                let any_meaningful = newly_idle.iter().any(|id|
+                    state.session_work_duration(*id) >= 3.0
+                );
+                if any_meaningful {
+                    state.system.last_agent_done_sound = std::time::Instant::now();
+                    crate::audio::play_sound(AGENT_DONE_WAV);
+                }
             }
 
             // Check if analyzer session went idle
@@ -330,6 +342,11 @@ pub fn process_action(
                     navigation::handle_navigation_action(state, action, pty_manager, pty_tx)?;
                 }
 
+                // Command palette actions
+                Action::EnterCommandPalette | Action::ExitCommandPalette |
+                Action::CommandPaletteExecute | Action::CommandPaletteDown |
+                Action::CommandPaletteUp | Action::CommandPaletteInput(_) |
+                Action::CommandPaletteBackspace |
                 // Input actions
                 Action::ExitMode | Action::InputChar(_) |
                 Action::InputBackspace | Action::NotepadInput(_) |

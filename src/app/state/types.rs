@@ -21,6 +21,7 @@ pub enum InputMode {
     ConfirmMergeWorktree,   // Confirm commit and merge worktree
     ConfirmParallelMerge,   // Confirm commit and merge parallel task worktree
     ConfigWindow,  // F12 configuration window
+    CommandPalette, // Ctrl+P command palette
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
