@@ -147,7 +147,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     // Agent sessions
     for &session_idx in &agent_indices {
         let session = &sessions[session_idx];
-        let item = create_session_item(state, session_idx, session, is_focused, &pinned_ids, false);
+        let item = create_session_item(state, session_idx, session, is_focused, pinned_ids, false);
         items.push(item);
         if session_idx == state.ui.selected_session_idx {
             selected_visual_idx = Some(current_visual_idx);
@@ -179,7 +179,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         // Parallel sessions
         for &session_idx in &parallel_indices {
             let session = &sessions[session_idx];
-            let item = create_session_item(state, session_idx, session, is_focused, &pinned_ids, true);
+            let item = create_session_item(state, session_idx, session, is_focused, pinned_ids, true);
             items.push(item);
             if session_idx == state.ui.selected_session_idx {
                 selected_visual_idx = Some(current_visual_idx);
@@ -200,7 +200,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     // Terminal sessions
     for &session_idx in &terminal_indices {
         let session = &sessions[session_idx];
-        let item = create_session_item(state, session_idx, session, is_focused, &pinned_ids, false);
+        let item = create_session_item(state, session_idx, session, is_focused, pinned_ids, false);
         items.push(item);
         if session_idx == state.ui.selected_session_idx {
             selected_visual_idx = Some(current_visual_idx);

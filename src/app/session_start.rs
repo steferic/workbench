@@ -1,4 +1,4 @@
-use crate::app::{Action, AppState, PendingSessionStart};
+use crate::app::{Action, AppState, PendingSessionStart, Toast, ToastLevel};
 use crate::models::{AgentType, SessionStatus, WorkspaceStatus};
 use crate::persistence;
 use crate::pty::{PtyManager, SessionSpawnConfig};
@@ -47,7 +47,15 @@ fn spawn_single_session(
             true
         }
         Err(_e) => {
-            // Don't use eprintln! in TUI - it corrupts the display
+            let duration = std::time::Duration::from_secs(5);
+            state.ui.toasts.push_back(Toast::new(
+                "Failed to start session on launch".to_string(),
+                ToastLevel::Error,
+                duration,
+            ));
+            while state.ui.toasts.len() > 5 {
+                state.ui.toasts.pop_front();
+            }
             state.system.remove_session_buffers(&session_id);
             if let Some(session) = state.get_session_mut(session_id) {
                 session.mark_errored();

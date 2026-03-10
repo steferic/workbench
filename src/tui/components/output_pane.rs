@@ -97,7 +97,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
                 let pane_width = inner_area.width.max(1) as usize;
                 let visual_lines: usize = text_lines.iter().map(|line| {
                     let w = line.width();
-                    if w == 0 { 1 } else { (w + pane_width - 1) / pane_width }
+                    if w == 0 { 1 } else { w.div_ceil(pane_width) }
                 }).sum();
 
                 let _ = parser;
@@ -124,7 +124,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
 
                 let paragraph = Paragraph::new(text_lines)
                     .block(block)
-                    .wrap(Wrap { trim: true })
+                    .wrap(Wrap { trim: false })
                     .scroll((so as u16, 0));
 
                 frame.render_widget(paragraph, area);
@@ -232,9 +232,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
             }
 
             let prev_len = state.ui.output_content_length;
-            let stable_len = if live_content_len >= prev_len {
-                live_content_len
-            } else if prev_len - live_content_len >= 20 {
+            let stable_len = if live_content_len >= prev_len || prev_len - live_content_len >= 20 {
                 live_content_len
             } else {
                 prev_len

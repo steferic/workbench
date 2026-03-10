@@ -21,11 +21,15 @@ pub struct UserConfig {
     pub agents: Vec<AgentConfig>,
     #[serde(default = "default_global_hotkeys")]
     pub global_hotkeys: HashMap<String, String>,
-    #[serde(default = "default_scrollback_buffer_kb")]
+    #[serde(default = "default_scrollback_mb")]
+    pub scrollback_mb: usize,
+
+    // Legacy fields — ignored on load, derived from scrollback_mb
+    #[serde(skip)]
     pub scrollback_buffer_kb: usize,
-    #[serde(default = "default_replay_parser_rows")]
+    #[serde(skip)]
     pub replay_parser_rows: u16,
-    #[serde(default = "default_live_scrollback_rows")]
+    #[serde(skip)]
     pub live_scrollback_rows: usize,
 }
 
@@ -43,24 +47,41 @@ fn default_global_hotkeys() -> HashMap<String, String> {
     m.insert("CycleNextWorkspace".into(), "Ctrl-z".into());
     m.insert("CycleNextSession".into(), "Ctrl-x".into());
     m.insert("InitiateQuit".into(), "Ctrl-q".into());
+    m.insert("TestToast".into(), "F2".into());
     m.insert("ToggleDebugOverlay".into(), "F11".into());
     m.insert("EnterConfigWindow".into(), "F1".into());
     m
 }
 
-fn default_scrollback_buffer_kb() -> usize { 512 }
-fn default_replay_parser_rows() -> u16 { 500 }
-fn default_live_scrollback_rows() -> usize { 200 }
+fn default_scrollback_mb() -> usize { 2 }
+
+impl UserConfig {
+    /// Derive the internal scrollback parameters from the single `scrollback_mb` value.
+    /// Call this after loading config from disk.
+    pub fn apply_scrollback_derived(&mut self) {
+        let mb = self.scrollback_mb.clamp(1, 16);
+        self.scrollback_mb = mb;
+        // Raw buffer: direct MB to KB conversion
+        self.scrollback_buffer_kb = mb * 1024;
+        // Replay parser rows: scale proportionally (1 MB = 500 rows)
+        self.replay_parser_rows = (mb as u16 * 500).clamp(500, 8000);
+        // Live scrollback rows: scale proportionally (1 MB = 200 rows)
+        self.live_scrollback_rows = (mb * 200).clamp(200, 4000);
+    }
+}
 
 impl Default for UserConfig {
     fn default() -> Self {
-        Self {
+        let mut config = Self {
             agents: default_agents(),
             global_hotkeys: default_global_hotkeys(),
-            scrollback_buffer_kb: default_scrollback_buffer_kb(),
-            replay_parser_rows: default_replay_parser_rows(),
-            live_scrollback_rows: default_live_scrollback_rows(),
-        }
+            scrollback_mb: default_scrollback_mb(),
+            scrollback_buffer_kb: 0,
+            replay_parser_rows: 0,
+            live_scrollback_rows: 0,
+        };
+        config.apply_scrollback_derived();
+        config
     }
 }
 
@@ -75,7 +96,7 @@ fn user_config_path() -> anyhow::Result<PathBuf> {
 }
 
 pub fn load_user_config() -> UserConfig {
-    match user_config_path() {
+    let mut config = match user_config_path() {
         Ok(path) if path.exists() => {
             fs::read_to_string(&path)
                 .ok()
@@ -83,7 +104,9 @@ pub fn load_user_config() -> UserConfig {
                 .unwrap_or_default()
         }
         _ => UserConfig::default(),
-    }
+    };
+    config.apply_scrollback_derived();
+    config
 }
 
 pub fn save_user_config(config: &UserConfig) -> anyhow::Result<()> {

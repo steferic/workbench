@@ -12,7 +12,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     let enabled_count = agents.iter().filter(|a| a.enabled).count();
     // Calculate height: header (5 lines) + agents + footer (3 lines)
     let needed_lines = 8 + enabled_count;
-    let height_pct = ((needed_lines * 100) / frame.area().height.max(1) as usize).max(25).min(60) as u16;
+    let height_pct = ((needed_lines * 100) / frame.area().height.max(1) as usize).clamp(25, 60) as u16;
     let area = centered_rect(40, height_pct, frame.area());
     frame.render_widget(Clear, area);
 

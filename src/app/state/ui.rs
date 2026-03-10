@@ -2,9 +2,11 @@ use crate::models::{AgentType, MAX_PINNED_TERMINALS};
 use std::path::PathBuf;
 use uuid::Uuid;
 
+use std::collections::VecDeque;
+
 use super::types::{
     ConfigItem, ConfigTab, ConfigTreeNode, Divider, FocusPanel, InputMode, PendingDelete,
-    TextSelection, TodoPaneMode, TodosTab, UtilityItem, UtilitySection, WorkspaceAction,
+    TextSelection, Toast, TodoPaneMode, TodosTab, UtilityItem, UtilitySection, WorkspaceAction,
 };
 
 pub struct UIState {
@@ -120,6 +122,9 @@ pub struct UIState {
     pub palette_query: String,
     pub palette_selected: usize,
     pub pending_palette_action: Option<crate::app::Action>,
+
+    // Toast notifications
+    pub toasts: VecDeque<Toast>,
 }
 
 impl UIState {
@@ -211,6 +216,7 @@ impl UIState {
             palette_query: String::new(),
             palette_selected: 0,
             pending_palette_action: None,
+            toasts: VecDeque::new(),
         }
     }
 }

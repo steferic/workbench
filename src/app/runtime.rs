@@ -1,4 +1,4 @@
-use crate::app::{Action, AppState};
+use crate::app::{Action, AppState, Toast, ToastLevel};
 use crate::audio::{AudioPlayer, LoopingAudio};
 use crate::models::Workspace;
 use crate::persistence;
@@ -44,8 +44,11 @@ pub async fn run_tui(initial_workspace: Option<PathBuf>) -> Result<()> {
             }
         }
         Err(_e) => {
-            // Don't use eprintln! in TUI - it corrupts the display
-            // Failed to load saved state, will start fresh
+            state.ui.toasts.push_back(Toast::new(
+                "Failed to load saved state — starting fresh".to_string(),
+                ToastLevel::Warning,
+                std::time::Duration::from_secs(4),
+            ));
         }
     }
 
@@ -62,8 +65,11 @@ pub async fn run_tui(initial_workspace: Option<PathBuf>) -> Result<()> {
             state.system.agent_done_sound_enabled = config.agent_done_sound_enabled;
         }
         Err(_e) => {
-            // Don't use eprintln! in TUI - it corrupts the display
-            // Failed to load config, will use defaults
+            state.ui.toasts.push_back(Toast::new(
+                "Failed to load config — using defaults".to_string(),
+                ToastLevel::Warning,
+                std::time::Duration::from_secs(4),
+            ));
         }
     }
 

@@ -1,4 +1,5 @@
 use crate::app::state::ConfigTab;
+use crate::app::state::ToastLevel;
 use crate::git::DiffStat;
 use crate::models::AgentType;
 use crossterm::event::KeyEvent;
@@ -35,6 +36,7 @@ pub struct ParallelMergePlan {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum Action {
     // Navigation
     MoveUp,
@@ -238,4 +240,8 @@ pub enum Action {
     CommandPaletteUp,
     CommandPaletteInput(char),
     CommandPaletteBackspace,
+
+    // Toast notifications
+    ShowToast(String, ToastLevel),
+    TestToast,
 }

@@ -21,6 +21,7 @@ impl EventHandler {
                     "EnterHelpMode" => Some(Action::EnterConfigWindow),
                     "ToggleDebugOverlay" => Some(Action::ToggleDebugOverlay),
                     "EnterConfigWindow" => Some(Action::EnterConfigWindow),
+                    "TestToast" => Some(Action::TestToast),
                     _ => None,
                 };
             }

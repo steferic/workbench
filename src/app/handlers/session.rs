@@ -1,4 +1,4 @@
-use crate::app::{Action, AppState, FocusPanel, InputMode, PendingDelete};
+use crate::app::{Action, AppState, FocusPanel, InputMode, PendingDelete, Toast, ToastLevel};
 use crate::git;
 use crate::models::{AgentType, AttemptStatus, Session};
 use crate::persistence;
@@ -9,6 +9,17 @@ use anyhow::Result;
 use ratatui::text::{Line, Span};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
+
+fn show_toast(state: &mut AppState, msg: impl Into<String>, level: ToastLevel) {
+    let duration = match level {
+        ToastLevel::Error => Duration::from_secs(5),
+        _ => Duration::from_secs(3),
+    };
+    state.ui.toasts.push_back(Toast::new(msg.into(), level, duration));
+    while state.ui.toasts.len() > 5 {
+        state.ui.toasts.pop_front();
+    }
+}
 
 const SHELL_KILL_TIMEOUT: Duration = Duration::from_millis(500);
 
@@ -64,73 +75,33 @@ fn is_box_drawing(c: char) -> bool {
     (0x2500..=0x257F).contains(&cp) || (0x2580..=0x259F).contains(&cp)
 }
 
-/// Clean styled lines from a TUI screen snapshot: strip box-drawing characters,
-/// trim whitespace, and join consecutive non-empty lines into paragraphs
-/// so text reflows at the output pane width. Preserves span styles (colors, bold).
-fn clean_and_join_styled_lines(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
-    // Step 1: Clean each line — strip box-drawing chars from spans, trim
+/// Clean styled lines from a TUI screen snapshot: strip box-drawing characters
+/// and trim trailing whitespace while preserving line structure and indentation.
+fn clean_styled_lines(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
     let cleaned: Vec<Line<'static>> = lines.into_iter().map(|line| {
-        // Replace box-drawing chars with spaces in each span
         let spans: Vec<Span<'static>> = line.spans.into_iter().map(|span| {
             let text: String = span.content.chars().map(|c| {
                 if is_box_drawing(c) { ' ' } else { c }
             }).collect();
             Span::styled(text, span.style)
         }).collect();
-        // Rebuild line, then trim leading/trailing whitespace
-        trim_styled_line(Line::from(spans))
+        trim_styled_line_end(Line::from(spans))
     }).collect();
 
-    // Step 2: Join consecutive non-empty lines into paragraphs (merge spans)
-    let mut result: Vec<Line<'static>> = Vec::new();
-    let mut current_spans: Vec<Span<'static>> = Vec::new();
-
-    for line in cleaned {
-        let is_empty = line.spans.is_empty()
-            || line.spans.iter().all(|s| s.content.trim().is_empty());
-
-        if is_empty {
-            if !current_spans.is_empty() {
-                result.push(Line::from(std::mem::take(&mut current_spans)));
-            }
-            result.push(Line::from(""));
-        } else {
-            if !current_spans.is_empty() {
-                current_spans.push(Span::raw(" "));
-            }
-            current_spans.extend(line.spans);
-        }
-    }
-    if !current_spans.is_empty() {
-        result.push(Line::from(current_spans));
-    }
-
-    // Remove leading/trailing empty lines
+    // Remove trailing empty lines
+    let mut result = cleaned;
     while result.last().map(|l| l.spans.is_empty() || l.width() == 0).unwrap_or(false) {
         result.pop();
-    }
-    while result.first().map(|l| l.spans.is_empty() || l.width() == 0).unwrap_or(false) {
-        result.remove(0);
     }
     result
 }
 
-/// Trim leading and trailing whitespace from a styled Line, preserving span styles.
-fn trim_styled_line(line: Line<'static>) -> Line<'static> {
+/// Trim only trailing whitespace from a styled Line, preserving leading indentation.
+fn trim_styled_line_end(line: Line<'static>) -> Line<'static> {
     if line.spans.is_empty() {
         return line;
     }
     let mut spans = line.spans;
-
-    // Trim leading whitespace from first span
-    if let Some(first) = spans.first_mut() {
-        let trimmed = first.content.trim_start().to_string();
-        *first = Span::styled(trimmed, first.style);
-    }
-    // Remove empty leading spans
-    while spans.first().map(|s| s.content.is_empty()).unwrap_or(false) {
-        spans.remove(0);
-    }
 
     // Trim trailing whitespace from last span
     if let Some(last) = spans.last_mut() {
@@ -193,8 +164,7 @@ pub fn handle_session_action(
                             (session, worktree_path)
                         }
                         Err(_e) => {
-                            // Don't use eprintln! in TUI - it corrupts the display
-                            // Fallback to regular session in workspace
+                            show_toast(state, "Worktree creation failed, using workspace directly", ToastLevel::Warning);
                             (Session::new(workspace_id, agent_type.clone(), dangerously_skip_permissions), workspace_path.clone())
                         }
                     }
@@ -235,8 +205,7 @@ pub fn handle_session_action(
                         let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
                     }
                     Err(_e) => {
-                        // Don't use eprintln! in TUI - it corrupts the display
-                        // Session was not added to state, just clean up the buffer
+                        show_toast(state, "Failed to spawn session", ToastLevel::Error);
                         state.system.remove_session_buffers(&session_id);
                     }
                 }
@@ -287,8 +256,7 @@ pub fn handle_session_action(
                         let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
                     }
                     Err(_e) => {
-                        // Don't use eprintln! in TUI - it corrupts the display
-                        // Session was not added to state, just clean up the buffer
+                        show_toast(state, "Failed to spawn terminal", ToastLevel::Error);
                         state.system.remove_session_buffers(&session_id);
                     }
                 }
@@ -368,8 +336,7 @@ pub fn handle_session_action(
                             let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
                         }
                         Err(_e) => {
-                            // Don't use eprintln! in TUI - it corrupts the display
-                            // Mark session as errored so user sees it failed
+                            show_toast(state, "Failed to restart session", ToastLevel::Error);
                             state.system.remove_session_buffers(&session_id);
                             if let Some(session) = state.get_session_mut(session_id) {
                                 session.mark_errored();
@@ -527,8 +494,7 @@ pub fn handle_session_action(
 
                 // Check if main workspace is clean before merging
                 if !git::is_clean(&workspace_path).unwrap_or(false) {
-                    // Don't use eprintln! in TUI - it corrupts the display
-                    // TODO: Add proper notification system for user feedback
+                    show_toast(state, "Merge blocked: workspace has uncommitted changes", ToastLevel::Warning);
                     return Ok(());
                 }
 
@@ -546,12 +512,10 @@ pub fn handle_session_action(
                         }
 
                         let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
-                        // Don't use eprintln! in TUI - it corrupts the display
-                        // Merge successful
+                        show_toast(state, "Worktree merged successfully", ToastLevel::Success);
                     }
                     Err(_e) => {
-                        // Don't use eprintln! in TUI - it corrupts the display
-                        // TODO: Add proper notification system for user feedback
+                        show_toast(state, "Merge failed — resolve conflicts manually", ToastLevel::Error);
                     }
                 }
             }
@@ -584,8 +548,7 @@ pub fn handle_session_action(
                 if let Some((workspace_path, worktree_path, branch_name, agent_name)) = merge_info {
                     // Check if main workspace is clean before merging
                     if !git::is_clean(&workspace_path).unwrap_or(false) {
-                        // Don't use eprintln! in TUI - it corrupts the display
-                        // TODO: Add proper notification system for user feedback
+                        show_toast(state, "Merge blocked: workspace has uncommitted changes", ToastLevel::Warning);
                         state.ui.input_mode = InputMode::Normal;
                         return Ok(());
                     }
@@ -593,8 +556,7 @@ pub fn handle_session_action(
                     // Commit all changes first
                     let commit_msg = format!("Agent {} work - auto-committed for merge", agent_name);
                     if let Err(_e) = git::commit_all_changes(&worktree_path, &commit_msg) {
-                        // Don't use eprintln! in TUI - it corrupts the display
-                        // TODO: Add proper notification system for user feedback
+                        show_toast(state, "Failed to commit worktree changes", ToastLevel::Error);
                         state.ui.input_mode = InputMode::Normal;
                         return Ok(());
                     }
@@ -612,12 +574,10 @@ pub fn handle_session_action(
                             }
 
                             let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
-                            // Don't use eprintln! in TUI - it corrupts the display
-                            // Merge successful
+                            show_toast(state, "Worktree committed and merged successfully", ToastLevel::Success);
                         }
                         Err(_e) => {
-                            // Don't use eprintln! in TUI - it corrupts the display
-                            // TODO: Add proper notification system for user feedback
+                            show_toast(state, "Merge failed — resolve conflicts manually", ToastLevel::Error);
                         }
                     }
                 }
@@ -703,8 +663,7 @@ pub fn handle_session_action(
                                 let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
                             }
                             Err(_e) => {
-                                // Don't use eprintln! in TUI - it corrupts the display
-                                // Session was not added to state, just clean up the buffer
+                                show_toast(state, "Failed to open worktree terminal", ToastLevel::Error);
                                 state.system.remove_session_buffers(&new_session_id);
                             }
                         }
@@ -839,13 +798,13 @@ pub fn handle_session_action(
                                 .map(|(_t, prev)| prev != &text)
                                 .unwrap_or(true);
                             if is_new {
-                                // Clean and join styled lines (strip box-drawing, merge paragraphs)
-                                let cleaned = clean_and_join_styled_lines(styled_lines);
+                                // Clean styled lines (strip box-drawing, trim) but keep line structure
+                                let cleaned = clean_styled_lines(styled_lines);
                                 if !cleaned.is_empty() {
                                     // Append to styled history
                                     let history = state.system.inline_styled_history
                                         .entry(session_id)
-                                        .or_insert_with(Vec::new);
+                                        .or_default();
                                     history.extend(cleaned);
                                     history.push(Line::from(""));  // separator between snapshots
 

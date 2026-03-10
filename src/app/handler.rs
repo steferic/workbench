@@ -40,6 +40,9 @@ pub fn process_action(
                 let _ = process_action(state, palette_action, pty_manager, action_tx, pty_tx);
             }
 
+            // Remove expired toasts
+            state.ui.toasts.retain(|t| !t.is_expired());
+
             state.tick_animation();
             navigation::handle_drag_auto_scroll(state);
             let newly_idle = state.update_idle_queue();
@@ -369,6 +372,39 @@ pub fn process_action(
                 Action::ViewReport | Action::MergeSelectedReport |
                 Action::ConfirmParallelMerge | Action::CancelParallelMerge => {
                     parallel::handle_parallel_action(state, action, pty_manager, action_tx, pty_tx)?;
+                }
+
+                // Toast notifications
+                Action::ShowToast(msg, level) => {
+                    use crate::app::Toast;
+                    let duration = match level {
+                        crate::app::ToastLevel::Error => std::time::Duration::from_secs(5),
+                        _ => std::time::Duration::from_secs(3),
+                    };
+                    state.ui.toasts.push_back(Toast::new(msg, level, duration));
+                    // Keep at most 5 toasts visible
+                    while state.ui.toasts.len() > 5 {
+                        state.ui.toasts.pop_front();
+                    }
+                }
+                Action::TestToast => {
+                    use crate::app::{Toast, ToastLevel};
+                    let messages: [(&str, ToastLevel); 4] = [
+                        ("Session started successfully", ToastLevel::Success),
+                        ("Workspace has uncommitted changes", ToastLevel::Warning),
+                        ("Failed to create worktree", ToastLevel::Error),
+                        ("Merge complete", ToastLevel::Info),
+                    ];
+                    let idx = state.system.animation_frame % messages.len();
+                    let (msg, level) = messages[idx];
+                    state.ui.toasts.push_back(Toast::new(
+                        msg.to_string(),
+                        level,
+                        std::time::Duration::from_secs(3),
+                    ));
+                    while state.ui.toasts.len() > 5 {
+                        state.ui.toasts.pop_front();
+                    }
                 }
 
                 // Debug overlay toggle

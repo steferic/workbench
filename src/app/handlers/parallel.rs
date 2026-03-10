@@ -1,4 +1,4 @@
-use crate::app::{Action, AppState, FocusPanel, InputMode, ParallelMergePlan, ParallelWorktreeSpec};
+use crate::app::{Action, AppState, FocusPanel, InputMode, ParallelMergePlan, ParallelWorktreeSpec, Toast, ToastLevel};
 use crate::git;
 use crate::models::{AgentType, AttemptStatus, ParallelTask, ParallelTaskAttempt, ParallelTaskStatus, Session};
 use crate::persistence;
@@ -67,10 +67,14 @@ pub fn handle_parallel_action(
                 worktrees,
             )?;
         }
-        Action::ParallelWorktreesFailed { request_id, error: _error } => {
+        Action::ParallelWorktreesFailed { request_id, error } => {
             if request_id == state.ui.parallel_task_request_id {
-                // Don't use eprintln! in TUI - it corrupts the display
-                // TODO: Add proper notification system for user feedback
+                let msg = format!("Parallel task failed: {}", error);
+                let duration = std::time::Duration::from_secs(5);
+                state.ui.toasts.push_back(Toast::new(msg, ToastLevel::Error, duration));
+                while state.ui.toasts.len() > 5 {
+                    state.ui.toasts.pop_front();
+                }
             }
         }
         Action::ParallelMergeFinished { plan, error } => {
@@ -285,6 +289,13 @@ fn handle_parallel_worktrees_ready(
                 state.data.last_activity.insert(session_id, std::time::Instant::now());
             }
             Err(_) => {
+                let agent_name = spec.agent_type.display_name();
+                let msg = format!("Failed to spawn {} for parallel task", agent_name);
+                let duration = std::time::Duration::from_secs(5);
+                state.ui.toasts.push_back(Toast::new(msg, ToastLevel::Error, duration));
+                while state.ui.toasts.len() > 5 {
+                    state.ui.toasts.pop_front();
+                }
                 state.system.remove_session_buffers(&session_id);
                 let workspace_path = workspace_path.clone();
                 let worktree_path = spec.worktree_path.clone();
@@ -422,9 +433,12 @@ fn handle_parallel_merge_finished(
     plan: ParallelMergePlan,
     error: Option<String>,
 ) -> Result<()> {
-    if error.is_some() {
-        // Don't use eprintln! in TUI - it corrupts the display
-        // TODO: Add proper notification system for user feedback
+    if let Some(err) = error {
+        let msg = format!("Parallel merge failed: {}", err);
+        state.ui.toasts.push_back(Toast::new(msg, ToastLevel::Error, std::time::Duration::from_secs(5)));
+        while state.ui.toasts.len() > 5 {
+            state.ui.toasts.pop_front();
+        }
         return Ok(());
     }
 

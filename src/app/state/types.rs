@@ -285,6 +285,39 @@ pub struct TextSelection {
     pub is_dragging: bool,
 }
 
+/// Toast notification level
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToastLevel {
+    Info,
+    Success,
+    Warning,
+    Error,
+}
+
+/// A toast notification message
+#[derive(Debug, Clone)]
+pub struct Toast {
+    pub message: String,
+    pub level: ToastLevel,
+    pub created_at: std::time::Instant,
+    pub duration: std::time::Duration,
+}
+
+impl Toast {
+    pub fn new(message: String, level: ToastLevel, duration: std::time::Duration) -> Self {
+        Self {
+            message,
+            level,
+            created_at: std::time::Instant::now(),
+            duration,
+        }
+    }
+
+    pub fn is_expired(&self) -> bool {
+        self.created_at.elapsed() >= self.duration
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Divider {
     LeftRight,         // Between left panel and right panel

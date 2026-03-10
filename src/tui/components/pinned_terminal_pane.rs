@@ -141,9 +141,7 @@ pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index
             let pane_height = Some(viewport_height as u16);
 
             let prev_len = state.ui.pinned_content_lengths[pane_index];
-            let stable_len = if live_content_len >= prev_len {
-                live_content_len
-            } else if prev_len - live_content_len >= 20 {
+            let stable_len = if live_content_len >= prev_len || prev_len - live_content_len >= 20 {
                 live_content_len
             } else {
                 prev_len

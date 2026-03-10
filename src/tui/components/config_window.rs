@@ -29,12 +29,10 @@ pub fn render(frame: &mut Frame, state: &AppState) {
 fn render_tab_bar(frame: &mut Frame, area: Rect, state: &AppState) {
     let active = state.ui.config_tab;
 
-    let tabs = vec![
-        ("1", "Quick Ref", ConfigTab::QuickRef),
+    let tabs = [("1", "Quick Ref", ConfigTab::QuickRef),
         ("2", "Agents", ConfigTab::Agents),
         ("3", "Hotkeys", ConfigTab::Hotkeys),
-        ("4", "Memory", ConfigTab::Scrollback),
-    ];
+        ("4", "Memory", ConfigTab::Scrollback)];
 
     let mut spans: Vec<Span> = Vec::new();
     spans.push(Span::raw("  "));
@@ -525,74 +523,69 @@ fn render_hotkeys_tab(frame: &mut Frame, area: Rect, state: &AppState) {
 
 fn render_scrollback_tab(frame: &mut Frame, area: Rect, state: &AppState) {
     let config = &state.system.user_config;
-    let selected_row = state.ui.config_selected_row;
     let editing = state.ui.config_editing;
     let edit_buffer = &state.ui.config_edit_buffer;
 
-    let settings: Vec<(&str, String, &str)> = vec![
-        (
-            "Raw buffer (KB)",
-            config.scrollback_buffer_kb.to_string(),
-            "Total bytes of raw terminal output kept per session. Increase to preserve more history when replaying output. Uses more memory.",
-        ),
-        (
-            "Replay rows",
-            config.replay_parser_rows.to_string(),
-            "Height of the virtual terminal used to replay raw output for scrollback. More rows = more visible scrollback lines with colors/formatting intact.",
-        ),
-        (
-            "Live scrollback rows",
-            config.live_scrollback_rows.to_string(),
-            "Lines the live terminal parser keeps above the visible area. Scroll up in a session to see this many lines of recent output.",
-        ),
-    ];
+    let row_bg = Color::DarkGray;
+
+    let val_display = if editing {
+        format!("{}_", edit_buffer)
+    } else {
+        format!("{}", config.scrollback_mb)
+    };
+
+    let val_style = if editing {
+        Style::default()
+            .fg(Color::Cyan)
+            .bg(row_bg)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::Cyan).bg(row_bg)
+    };
 
     let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::from(""));
 
-    for (idx, (label, value, desc)) in settings.iter().enumerate() {
-        let is_selected = idx == selected_row;
-        let row_bg = if is_selected {
-            Color::DarkGray
-        } else {
-            Color::Black
-        };
-        let row_fg = if is_selected {
-            Color::White
-        } else {
-            Color::Gray
-        };
+    lines.push(Line::from(vec![
+        Span::styled("  > ", Style::default().fg(Color::Cyan).bg(row_bg)),
+        Span::styled(
+            format!("{:<22}", "Scrollback (MB)"),
+            Style::default().fg(Color::White).bg(row_bg).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(val_display, val_style),
+        Span::styled(
+            "  (range: 1-16)".to_string(),
+            Style::default().fg(Color::DarkGray).bg(row_bg),
+        ),
+    ]));
 
-        let val_display = if editing && is_selected {
-            format!("{}_", edit_buffer)
-        } else {
-            value.clone()
-        };
+    lines.push(Line::from(vec![
+        Span::styled("    ", Style::default().bg(row_bg)),
+        Span::styled(
+            "Memory per session for terminal scrollback history.",
+            Style::default().fg(Color::DarkGray).bg(row_bg),
+        ),
+    ]));
+    lines.push(Line::from(""));
 
-        let val_style = if editing && is_selected {
-            Style::default()
-                .fg(Color::Cyan)
-                .bg(row_bg)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Color::Cyan).bg(row_bg)
-        };
+    // Show derived values as read-only info
+    lines.push(Line::from(vec![
+        Span::styled("    Current allocation per session:", Style::default().fg(Color::Gray)),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("      Raw buffer:       ", Style::default().fg(Color::DarkGray)),
+        Span::styled(format!("{} KB", config.scrollback_buffer_kb), Style::default().fg(Color::Gray)),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("      Replay rows:      ", Style::default().fg(Color::DarkGray)),
+        Span::styled(format!("{}", config.replay_parser_rows), Style::default().fg(Color::Gray)),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("      Live scrollback:  ", Style::default().fg(Color::DarkGray)),
+        Span::styled(format!("{} rows", config.live_scrollback_rows), Style::default().fg(Color::Gray)),
+    ]));
 
-        let marker = if is_selected { ">" } else { " " };
-
-        lines.push(Line::from(vec![
-            Span::styled(format!("  {} ", marker), Style::default().fg(Color::Cyan).bg(row_bg)),
-            Span::styled(format!("{:<22}", label), Style::default().fg(row_fg).bg(row_bg).add_modifier(if is_selected { Modifier::BOLD } else { Modifier::empty() })),
-            Span::styled(val_display, val_style),
-        ]));
-
-        // Description below the setting
-        lines.push(Line::from(vec![
-            Span::styled("    ", Style::default().bg(row_bg)),
-            Span::styled(desc.to_string(), Style::default().fg(Color::DarkGray).bg(row_bg)),
-        ]));
-        lines.push(Line::from(""));
-    }
+    lines.push(Line::from(""));
 
     // Footer
     lines.push(Line::from(Span::styled(
@@ -600,12 +593,10 @@ fn render_scrollback_tab(frame: &mut Frame, area: Rect, state: &AppState) {
         Style::default().fg(Color::DarkGray),
     )));
     lines.push(Line::from(vec![
-        Span::styled("  [j/k]", Style::default().fg(Color::Cyan)),
-        Span::raw(" Navigate  "),
-        Span::styled("[Enter]", Style::default().fg(Color::Cyan)),
+        Span::styled("  [Enter]", Style::default().fg(Color::Cyan)),
         Span::raw(" Edit  "),
         Span::styled("[r]", Style::default().fg(Color::Cyan)),
-        Span::raw(" Reset defaults"),
+        Span::raw(" Reset default"),
     ]));
     lines.push(Line::from(Span::styled(
         "  Changes apply to new sessions only",

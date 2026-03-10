@@ -27,18 +27,15 @@ pub fn handle_config_action(state: &mut AppState, action: Action) {
                 if state.ui.config_scroll_offset > 0 {
                     state.ui.config_scroll_offset -= 1;
                 }
-            } else {
-                if state.ui.config_selected_row > 0 {
-                    state.ui.config_selected_row -= 1;
-                }
+            } else if state.ui.config_selected_row > 0 {
+                state.ui.config_selected_row -= 1;
             }
         }
         Action::ConfigMoveRight => {
-            if state.ui.config_tab == ConfigTab::Agents {
-                if state.ui.config_selected_col < 3 {
+            if state.ui.config_tab == ConfigTab::Agents
+                && state.ui.config_selected_col < 3 {
                     state.ui.config_selected_col += 1;
                 }
-            }
         }
         Action::ConfigMoveLeft => {
             if state.ui.config_selected_col > 0 {
@@ -65,13 +62,7 @@ pub fn handle_config_action(state: &mut AppState, action: Action) {
                     state.ui.config_rebinding = true;
                 }
                 ConfigTab::Scrollback => {
-                    let val = match state.ui.config_selected_row {
-                        0 => state.system.user_config.scrollback_buffer_kb.to_string(),
-                        1 => state.system.user_config.replay_parser_rows.to_string(),
-                        2 => state.system.user_config.live_scrollback_rows.to_string(),
-                        _ => String::new(),
-                    };
-                    state.ui.config_edit_buffer = val;
+                    state.ui.config_edit_buffer = state.system.user_config.scrollback_mb.to_string();
                     state.ui.config_editing = true;
                 }
             }
@@ -96,12 +87,8 @@ pub fn handle_config_action(state: &mut AppState, action: Action) {
                 }
                 ConfigTab::Scrollback => {
                     if let Ok(val) = buf.parse::<usize>() {
-                        match state.ui.config_selected_row {
-                            0 => state.system.user_config.scrollback_buffer_kb = val.max(64).min(4096),
-                            1 => state.system.user_config.replay_parser_rows = (val.max(100).min(2000)) as u16,
-                            2 => state.system.user_config.live_scrollback_rows = val.max(50).min(1000),
-                            _ => {}
-                        }
+                        state.system.user_config.scrollback_mb = val.clamp(1, 16);
+                        state.system.user_config.apply_scrollback_derived();
                     }
                 }
                 _ => {}
@@ -178,9 +165,8 @@ pub fn handle_config_action(state: &mut AppState, action: Action) {
                     state.system.user_config.global_hotkeys = defaults.global_hotkeys;
                 }
                 ConfigTab::Scrollback => {
-                    state.system.user_config.scrollback_buffer_kb = defaults.scrollback_buffer_kb;
-                    state.system.user_config.replay_parser_rows = defaults.replay_parser_rows;
-                    state.system.user_config.live_scrollback_rows = defaults.live_scrollback_rows;
+                    state.system.user_config.scrollback_mb = defaults.scrollback_mb;
+                    state.system.user_config.apply_scrollback_derived();
                 }
             }
             let _ = save_user_config(&state.system.user_config);
@@ -194,7 +180,7 @@ fn max_rows(state: &AppState) -> usize {
         ConfigTab::QuickRef => 0,
         ConfigTab::Agents => state.system.user_config.agents.len(),
         ConfigTab::Hotkeys => state.system.user_config.global_hotkeys.len(),
-        ConfigTab::Scrollback => 3,
+        ConfigTab::Scrollback => 1,
     }
 }
 
