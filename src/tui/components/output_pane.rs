@@ -291,9 +291,18 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
         frame.render_widget(paragraph, area);
 
         // Render scrollbar if content exceeds viewport
-        if stable_len > viewport_height {
+        // Use the full content length (from replay cache if available) so the
+        // scrollbar thumb stays a consistent size whether we're on the live or
+        // replay rendering path.
+        let scrollbar_total = state.system.replay_caches.get(&session_id)
+            .map(|c| c.content_length.max(stable_len))
+            .unwrap_or(stable_len);
+        if scrollbar_total > viewport_height {
+            let scrollbar_max = scrollbar_total.saturating_sub(viewport_height);
+            let scrollbar_sfb = (state.ui.output_scroll_offset as usize).min(scrollbar_max);
+            let scrollbar_pos = scrollbar_max.saturating_sub(scrollbar_sfb);
             let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight);
-            let mut scrollbar_state = ScrollbarState::new(stable_len.saturating_sub(viewport_height)).position(scroll_offset);
+            let mut scrollbar_state = ScrollbarState::new(scrollbar_max).position(scrollbar_pos);
             frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
         }
 

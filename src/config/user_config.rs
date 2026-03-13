@@ -105,6 +105,10 @@ pub fn load_user_config() -> UserConfig {
         }
         _ => UserConfig::default(),
     };
+    // Merge any new default hotkeys that aren't in the saved config
+    for (action, key) in default_global_hotkeys() {
+        config.global_hotkeys.entry(action).or_insert(key);
+    }
     config.apply_scrollback_derived();
     config
 }
