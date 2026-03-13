@@ -53,7 +53,10 @@ pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index
         };
 
         let scroll_from_bottom_raw = state.ui.pinned_scroll_offsets[pane_index] as usize;
-        let session_id = pinned_session_id.unwrap();
+        let Some(session_id) = pinned_session_id else {
+            frame.render_widget(Paragraph::new("").block(block), area);
+            return;
+        };
 
         let live_max_scroll = live_content_len.saturating_sub(viewport_height);
         let needs_replay = !is_alternate
@@ -61,7 +64,10 @@ pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index
             && state.system.raw_output_buffers.get(&session_id).map(|b| !b.bytes.is_empty()).unwrap_or(false);
 
         let (lines, stable_len, scroll_from_bottom, scroll_offset, sel_translated) = if needs_replay {
-            let raw_buf = state.system.raw_output_buffers.get(&session_id).unwrap();
+            let Some(raw_buf) = state.system.raw_output_buffers.get(&session_id) else {
+                frame.render_widget(Paragraph::new("").block(block), area);
+                return;
+            };
             let generation = raw_buf.generation;
             let cols = screen_size.1;
 
@@ -85,7 +91,10 @@ pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index
             }
 
             // Render visible lines from the cached parser
-            let cache = state.system.replay_caches.get(&session_id).unwrap();
+            let Some(cache) = state.system.replay_caches.get(&session_id) else {
+                frame.render_widget(Paragraph::new("").block(block), area);
+                return;
+            };
             let replay_content_len = cache.content_length;
             let replay_screen = cache.parser.screen();
             let replay_cursor = get_cursor_info(replay_screen);

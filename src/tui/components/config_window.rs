@@ -81,7 +81,7 @@ fn render_quickref_tab(frame: &mut Frame, area: Rect, state: &AppState) {
     let key_style = Style::default().fg(Color::Cyan);
     let sep_style = Style::default().fg(Color::DarkGray);
 
-    let separator = Line::from(Span::styled(
+    let sep = || Line::from(Span::styled(
         "  ──────────────────────────────────────────────────────",
         sep_style,
     ));
@@ -89,7 +89,7 @@ fn render_quickref_tab(frame: &mut Frame, area: Rect, state: &AppState) {
     // -- Navigation --
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled("  Navigation", section_style)));
-    lines.push(separator.clone());
+    lines.push(sep());
     lines.push(Line::from(vec![
         Span::styled("  j/k, Up/Down       ", key_style),
         Span::raw("Move up/down in lists"),
@@ -114,7 +114,7 @@ fn render_quickref_tab(frame: &mut Frame, area: Rect, state: &AppState) {
     // -- Workspaces --
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled("  Workspaces", section_style)));
-    lines.push(separator.clone());
+    lines.push(sep());
     lines.push(Line::from(vec![
         Span::styled("  n                  ", key_style),
         Span::raw("Create/open workspace"),
@@ -135,7 +135,7 @@ fn render_quickref_tab(frame: &mut Frame, area: Rect, state: &AppState) {
     // -- Sessions --
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled("  Sessions", section_style)));
-    lines.push(separator.clone());
+    lines.push(sep());
     lines.push(Line::from(vec![
         Span::styled("  1/2/3/4            ", key_style),
         Span::raw("New Claude/Gemini/Codex/Grok"),
@@ -184,7 +184,7 @@ fn render_quickref_tab(frame: &mut Frame, area: Rect, state: &AppState) {
     // -- Worktrees --
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled("  Worktrees", section_style)));
-    lines.push(separator.clone());
+    lines.push(sep());
     lines.push(Line::from(vec![
         Span::styled("  w                  ", key_style),
         Span::raw("Open terminal in worktree"),
@@ -197,7 +197,7 @@ fn render_quickref_tab(frame: &mut Frame, area: Rect, state: &AppState) {
     // -- Todos --
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled("  Todos", section_style)));
-    lines.push(separator.clone());
+    lines.push(sep());
     lines.push(Line::from(vec![
         Span::styled("  n                  ", key_style),
         Span::raw("Create new todo"),
@@ -230,7 +230,7 @@ fn render_quickref_tab(frame: &mut Frame, area: Rect, state: &AppState) {
     // -- Todo Reports --
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled("  Todo Reports", section_style)));
-    lines.push(separator.clone());
+    lines.push(sep());
     lines.push(Line::from(vec![
         Span::styled("  v                  ", key_style),
         Span::raw("View report details"),
@@ -247,7 +247,7 @@ fn render_quickref_tab(frame: &mut Frame, area: Rect, state: &AppState) {
     // -- Utilities --
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled("  Utilities", section_style)));
-    lines.push(separator.clone());
+    lines.push(sep());
     lines.push(Line::from(vec![
         Span::styled("  Tab                ", key_style),
         Span::raw("Switch tabs (Util/Sounds/Cfg/Notes)"),
@@ -260,7 +260,7 @@ fn render_quickref_tab(frame: &mut Frame, area: Rect, state: &AppState) {
     // -- Output Pane --
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled("  Output Pane", section_style)));
-    lines.push(separator.clone());
+    lines.push(sep());
     lines.push(Line::from(vec![
         Span::styled("  (type)             ", key_style),
         Span::raw("Send input to active session"),
@@ -281,7 +281,7 @@ fn render_quickref_tab(frame: &mut Frame, area: Rect, state: &AppState) {
     // -- General --
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled("  General", section_style)));
-    lines.push(separator.clone());
+    lines.push(sep());
     lines.push(Line::from(vec![
         Span::styled("  F12                ", key_style),
         Span::raw("Open this window"),
