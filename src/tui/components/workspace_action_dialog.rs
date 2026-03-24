@@ -26,7 +26,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(3), // Options list
+            Constraint::Min(3),    // Options list
             Constraint::Length(2), // Help
         ])
         .split(inner);
@@ -75,7 +75,12 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         Span::raw(" Up  "),
         Span::styled("[↓/j]", Style::default().fg(Color::Cyan)),
         Span::raw(" Down  "),
-        Span::styled("[Enter]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "[Enter]",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" Select  "),
         Span::styled("[Esc]", Style::default().fg(Color::Yellow)),
         Span::raw(" Cancel"),

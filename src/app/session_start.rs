@@ -27,7 +27,9 @@ fn spawn_single_session(
 
     let inline_mode = matches!(agent_type, AgentType::Codex)
         || matches!(agent_type, AgentType::Custom { ref command, .. } if command == "codex");
-    state.system.create_session_buffers(session_id, cols, inline_mode);
+    state
+        .system
+        .create_session_buffers(session_id, cols, inline_mode);
 
     match pty_manager.spawn_session(SessionSpawnConfig {
         session_id,
@@ -80,12 +82,22 @@ pub fn start_workspace_sessions(
     let workspace_path = workspace.path.clone();
 
     // Find all stopped sessions in this workspace
-    let stopped_sessions: Vec<(Uuid, AgentType, bool, Option<std::path::PathBuf>)> = state.data.sessions
+    let stopped_sessions: Vec<(Uuid, AgentType, bool, Option<std::path::PathBuf>)> = state
+        .data
+        .sessions
         .get(&workspace_id)
         .map(|sessions| {
-            sessions.iter()
+            sessions
+                .iter()
                 .filter(|s| matches!(s.status, SessionStatus::Stopped | SessionStatus::Errored))
-                .map(|s| (s.id, s.agent_type.clone(), s.dangerously_skip_permissions, s.worktree_path.clone()))
+                .map(|s| {
+                    (
+                        s.id,
+                        s.agent_type.clone(),
+                        s.dangerously_skip_permissions,
+                        s.worktree_path.clone(),
+                    )
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -97,14 +109,24 @@ pub fn start_workspace_sessions(
     // Start each stopped session
     for (session_id, agent_type, dangerously_skip_permissions, worktree_path) in stopped_sessions {
         spawn_single_session(
-            state, pty_manager, pty_tx,
-            session_id, &workspace_path, agent_type, dangerously_skip_permissions,
+            state,
+            pty_manager,
+            pty_tx,
+            session_id,
+            &workspace_path,
+            agent_type,
+            dangerously_skip_permissions,
             worktree_path.as_deref(),
         );
     }
 
     // Touch workspace and save
-    if let Some(ws) = state.data.workspaces.iter_mut().find(|ws| ws.id == workspace_id) {
+    if let Some(ws) = state
+        .data
+        .workspaces
+        .iter_mut()
+        .find(|ws| ws.id == workspace_id)
+    {
         ws.touch();
     }
     let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
@@ -119,7 +141,10 @@ pub fn start_all_working_sessions(
     _action_tx: &mpsc::UnboundedSender<Action>,
 ) {
     // Get all Working workspace IDs and their paths
-    let working_workspaces: Vec<(Uuid, std::path::PathBuf)> = state.data.workspaces.iter()
+    let working_workspaces: Vec<(Uuid, std::path::PathBuf)> = state
+        .data
+        .workspaces
+        .iter()
         .filter(|ws| ws.status == WorkspaceStatus::Working)
         .map(|ws| (ws.id, ws.path.clone()))
         .collect();
@@ -127,10 +152,13 @@ pub fn start_all_working_sessions(
     // Queue all stopped sessions for staggered startup
     for (workspace_id, workspace_path) in working_workspaces {
         // Find all stopped sessions in this workspace
-        let stopped_sessions: Vec<PendingSessionStart> = state.data.sessions
+        let stopped_sessions: Vec<PendingSessionStart> = state
+            .data
+            .sessions
             .get(&workspace_id)
             .map(|sessions| {
-                sessions.iter()
+                sessions
+                    .iter()
                     .filter(|s| matches!(s.status, SessionStatus::Stopped | SessionStatus::Errored))
                     .map(|s| PendingSessionStart {
                         session_id: s.id,
@@ -167,9 +195,13 @@ pub fn process_startup_queue(
     };
 
     if spawn_single_session(
-        state, pty_manager, pty_tx,
-        pending.session_id, &pending.workspace_path,
-        pending.agent_type.clone(), pending.dangerously_skip_permissions,
+        state,
+        pty_manager,
+        pty_tx,
+        pending.session_id,
+        &pending.workspace_path,
+        pending.agent_type.clone(),
+        pending.dangerously_skip_permissions,
         pending.worktree_path.as_deref(),
     ) {
         // Send start command for terminals after a short delay
@@ -189,7 +221,12 @@ pub fn process_startup_queue(
         }
 
         // Touch workspace
-        if let Some(ws) = state.data.workspaces.iter_mut().find(|ws| ws.id == pending.workspace_id) {
+        if let Some(ws) = state
+            .data
+            .workspaces
+            .iter_mut()
+            .find(|ws| ws.id == pending.workspace_id)
+        {
             ws.touch();
         }
     }

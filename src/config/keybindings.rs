@@ -1,7 +1,6 @@
 use crossterm::event::{KeyCode, KeyModifiers};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 /// Default keybindings embedded at compile time
 const DEFAULT_KEYBINDINGS: &str = include_str!("defaults.toml");
@@ -230,30 +229,14 @@ impl KeybindingConfig {
     /// Parse a HashMap<String, String> into HashMap<KeyCombo, ActionName>
     fn parse_bindings(raw: &HashMap<String, String>) -> HashMap<KeyCombo, ActionName> {
         raw.iter()
-            .filter_map(|(key, action)| {
-                KeyCombo::parse(key).map(|combo| (combo, action.clone()))
-            })
+            .filter_map(|(key, action)| KeyCombo::parse(key).map(|combo| (combo, action.clone())))
             .collect()
     }
 }
 
-/// Load keybindings from user config, falling back to defaults
+/// Load the built-in keybinding reference used for pane-local help text.
 pub fn load_keybindings() -> KeybindingConfig {
-    // Try to load user config first
-    let user_config_path = get_user_config_path();
-
-    let toml_content = if user_config_path.exists() {
-        std::fs::read_to_string(&user_config_path).unwrap_or_else(|_| DEFAULT_KEYBINDINGS.to_string())
-    } else {
-        // Create user config directory and file with defaults
-        if let Some(parent) = user_config_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let _ = std::fs::write(&user_config_path, DEFAULT_KEYBINDINGS);
-        DEFAULT_KEYBINDINGS.to_string()
-    };
-
-    let raw: KeybindingsToml = toml::from_str(&toml_content).unwrap_or_default();
+    let raw: KeybindingsToml = toml::from_str(DEFAULT_KEYBINDINGS).unwrap_or_default();
 
     KeybindingConfig {
         global: KeybindingConfig::parse_bindings(&raw.global),
@@ -275,14 +258,6 @@ pub fn load_keybindings() -> KeybindingConfig {
         panel_output_pane: KeybindingConfig::parse_bindings(&raw.panel.output_pane),
         panel_pinned_terminal: KeybindingConfig::parse_bindings(&raw.panel.pinned_terminal),
     }
-}
-
-/// Get the path to user's keybindings config file
-pub fn get_user_config_path() -> PathBuf {
-    dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("workbench")
-        .join("keybindings.toml")
 }
 
 #[cfg(test)]

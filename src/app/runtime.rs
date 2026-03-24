@@ -16,10 +16,19 @@ use super::session_start::{process_startup_queue, start_all_working_sessions};
 // Audio constants
 const WRTI_STREAM_URL: &str = "https://wrti-live.streamguys1.com/classical-mp3";
 const VLC_BINARY: &str = "vlc";
-const OCEAN_WAV: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/sounds/ocean_waterside.wav");
+const OCEAN_WAV: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/assets/sounds/ocean_waterside.wav"
+);
 const CHIMES_WAV: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/sounds/wind_chimes.wav");
-const RAIN_WAV: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/sounds/rainforest_rain.wav");
-const STARTUP_WAV: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/sounds/startup_beep.wav");
+const RAIN_WAV: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/assets/sounds/rainforest_rain.wav"
+);
+const STARTUP_WAV: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/assets/sounds/startup_beep.wav"
+);
 
 pub async fn run_tui(initial_workspace: Option<PathBuf>) -> Result<()> {
     // Initialize terminal
@@ -173,8 +182,8 @@ async fn run_main_loop(
                 if ws.status == crate::models::WorkspaceStatus::Working {
                     let workspace_id = ws.id;
                     if let Some(sessions) = state.data.sessions.get(&workspace_id) {
-                        if let Some(first_agent) = sessions.iter()
-                            .find(|s| !s.agent_type.is_terminal())
+                        if let Some(first_agent) =
+                            sessions.iter().find(|s| !s.agent_type.is_terminal())
                         {
                             state.ui.active_session_id = Some(first_agent.id);
                         }

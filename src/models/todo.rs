@@ -44,8 +44,7 @@ impl Importance {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum TodoStatus {
     /// Suggested by analyzer, needs approval
     Suggested,
@@ -63,7 +62,6 @@ pub enum TodoStatus {
     /// Archived (hidden from main list but preserved)
     Archived,
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Todo {

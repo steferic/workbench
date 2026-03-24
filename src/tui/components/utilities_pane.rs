@@ -26,7 +26,11 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
     // Split inner area: tabs row + content + action bar (1 row)
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Min(1), Constraint::Length(1)])
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
         .split(inner_area);
 
     let tabs_area = chunks[0];
@@ -46,9 +50,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
                 .bg(Color::Cyan)
                 .add_modifier(Modifier::BOLD)
         } else if active {
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::White)
+            Style::default().fg(Color::Black).bg(Color::White)
         } else {
             Style::default().fg(Color::DarkGray)
         }
@@ -161,9 +163,7 @@ fn render_utilities_list(frame: &mut Frame, area: Rect, state: &AppState, is_foc
     let list = List::new(items).highlight_style(highlight_style);
 
     let mut list_state = ListState::default();
-    let selected_idx = tools
-        .iter()
-        .position(|i| *i == state.ui.selected_utility);
+    let selected_idx = tools.iter().position(|i| *i == state.ui.selected_utility);
     list_state.select(selected_idx);
 
     frame.render_stateful_widget(list, area, &mut list_state);
@@ -250,9 +250,7 @@ fn render_sounds_list(frame: &mut Frame, area: Rect, state: &AppState, is_focuse
     let list = List::new(items).highlight_style(highlight_style);
 
     let mut list_state = ListState::default();
-    let selected_idx = sounds
-        .iter()
-        .position(|i| *i == state.ui.selected_sound);
+    let selected_idx = sounds.iter().position(|i| *i == state.ui.selected_sound);
     list_state.select(selected_idx);
 
     frame.render_stateful_widget(list, area, &mut list_state);
@@ -290,7 +288,10 @@ fn render_config_list(frame: &mut Frame, area: Rect, state: &AppState, is_focuse
             let name = node.name();
 
             // Show hint to open terminal
-            let hint = Span::styled(" [Enter: open terminal]", Style::default().fg(Color::DarkGray));
+            let hint = Span::styled(
+                " [Enter: open terminal]",
+                Style::default().fg(Color::DarkGray),
+            );
 
             ListItem::new(Line::from(vec![
                 Span::styled(prefix, style),

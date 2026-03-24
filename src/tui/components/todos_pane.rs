@@ -17,13 +17,21 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     };
 
     // Count todos for title
-    let active_count = state.selected_workspace()
-        .map(|ws| ws.todos.iter().filter(|t| !t.is_done() && !t.is_archived()).count())
+    let active_count = state
+        .selected_workspace()
+        .map(|ws| {
+            ws.todos
+                .iter()
+                .filter(|t| !t.is_done() && !t.is_archived())
+                .count()
+        })
         .unwrap_or(0);
-    let review_count = state.selected_workspace()
+    let review_count = state
+        .selected_workspace()
         .map(|ws| ws.todos.iter().filter(|t| t.is_ready_for_review()).count())
         .unwrap_or(0);
-    let archived_count = state.selected_workspace()
+    let archived_count = state
+        .selected_workspace()
         .map(|ws| ws.todos.iter().filter(|t| t.is_archived()).count())
         .unwrap_or(0);
 
@@ -46,7 +54,9 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     };
 
     let title_style = if review_count > 0 {
-        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default()
     };
@@ -73,7 +83,11 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     // Split inner area: tab bar (1 row) + list + action bar (1 row)
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Min(1), Constraint::Length(1)])
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
         .split(inner_area);
 
     let tab_area = chunks[0];
@@ -87,14 +101,17 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         Style::default().fg(Color::Rgb(60, 60, 60))
     };
     let active_tab_style = if is_focused {
-        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::Gray)
     };
     let inactive_tab_style = tab_style;
 
     // Get reports count from active parallel task
-    let reports_count = state.selected_workspace()
+    let reports_count = state
+        .selected_workspace()
         .and_then(|ws| ws.active_parallel_task())
         .map(|t| t.attempts.len())
         .unwrap_or(0);
@@ -119,17 +136,21 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
 
     // Filter todos based on selected tab (Reports tab handled separately)
     let todos: Vec<_> = if state.ui.selected_todos_tab == TodosTab::Reports {
-        Vec::new()  // Reports tab shows parallel task attempts, not todos
+        Vec::new() // Reports tab shows parallel task attempts, not todos
     } else {
-        state.selected_workspace()
+        state
+            .selected_workspace()
             .map(|ws| {
-                ws.todos.iter().filter(|t| {
-                    match state.ui.selected_todos_tab {
-                        TodosTab::Active => !t.is_archived(),
-                        TodosTab::Archived => t.is_archived(),
-                        TodosTab::Reports => false,  // Handled separately
-                    }
-                }).collect()
+                ws.todos
+                    .iter()
+                    .filter(|t| {
+                        match state.ui.selected_todos_tab {
+                            TodosTab::Active => !t.is_archived(),
+                            TodosTab::Archived => t.is_archived(),
+                            TodosTab::Reports => false, // Handled separately
+                        }
+                    })
+                    .collect()
             })
             .unwrap_or_default()
     };
@@ -165,13 +186,20 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
                 Span::styled("[n]", Style::default().fg(Color::Cyan)),
                 Span::styled(" to add.", Style::default().fg(Color::DarkGray)),
             ])),
-            TodosTab::Archived => Paragraph::new(Line::from(vec![
-                Span::styled("  No archived todos.", Style::default().fg(Color::DarkGray)),
-            ])),
+            TodosTab::Archived => Paragraph::new(Line::from(vec![Span::styled(
+                "  No archived todos.",
+                Style::default().fg(Color::DarkGray),
+            )])),
             TodosTab::Reports => Paragraph::new(Line::from(vec![
-                Span::styled("  No reports yet. Press ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    "  No reports yet. Press ",
+                    Style::default().fg(Color::DarkGray),
+                ),
                 Span::styled("[P]", Style::default().fg(Color::Cyan)),
-                Span::styled(" in Sessions to start a parallel task.", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    " in Sessions to start a parallel task.",
+                    Style::default().fg(Color::DarkGray),
+                ),
             ])),
         };
         frame.render_widget(msg, list_area);
@@ -252,14 +280,23 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
                 TodoStatus::Suggested => Style::default().fg(Color::Cyan),
                 TodoStatus::Queued => Style::default().fg(Color::Magenta),
                 TodoStatus::InProgress { .. } => Style::default().fg(Color::Yellow),
-                TodoStatus::ReadyForReview { .. } => Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                TodoStatus::ReadyForReview { .. } => Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
                 _ => Style::default(),
             };
 
             // Calculate badge width for available space
-            let badge_width = diff_spans.len() + imp_spans.len() + if !diff_spans.is_empty() && !imp_spans.is_empty() { 1 } else { 0 };
+            let badge_width = diff_spans.len()
+                + imp_spans.len()
+                + if !diff_spans.is_empty() && !imp_spans.is_empty() {
+                    1
+                } else {
+                    0
+                };
             let desc = &todo.description;
-            let first_line_width = available_width.saturating_sub(status_label.len() + badge_width + 1);
+            let first_line_width =
+                available_width.saturating_sub(status_label.len() + badge_width + 1);
             let continuation_width = available_width;
 
             let mut lines: Vec<Line> = Vec::new();
@@ -286,14 +323,20 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
                 let mut is_first = true;
 
                 while !remaining.is_empty() {
-                    let max_width = if is_first { first_line_width } else { continuation_width };
+                    let max_width = if is_first {
+                        first_line_width
+                    } else {
+                        continuation_width
+                    };
 
                     // Find wrap point (prefer word boundary)
                     let wrap_at = if remaining.len() <= max_width {
                         remaining.len()
                     } else {
                         let search_range = &remaining[..max_width.min(remaining.len())];
-                        search_range.rfind(' ').unwrap_or(max_width.min(remaining.len()))
+                        search_range
+                            .rfind(' ')
+                            .unwrap_or(max_width.min(remaining.len()))
                     };
 
                     let (chunk, rest) = remaining.split_at(wrap_at);
@@ -320,7 +363,8 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
                         is_first = false;
                     } else {
                         // Continuation lines - indent to align with text
-                        let indent = "     ".to_string() + &" ".repeat(badge_width + if badge_width > 0 { 1 } else { 0 });
+                        let indent = "     ".to_string()
+                            + &" ".repeat(badge_width + if badge_width > 0 { 1 } else { 0 });
                         lines.push(Line::from(vec![
                             Span::raw(indent),
                             Span::styled(chunk.to_string(), name_style),
@@ -347,8 +391,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         Style::default()
     };
 
-    let list = List::new(items)
-        .highlight_style(highlight_style);
+    let list = List::new(items).highlight_style(highlight_style);
 
     let mut list_state = ListState::default();
     if !todos.is_empty() {
@@ -363,14 +406,21 @@ fn render_reports_tab(frame: &mut Frame, area: Rect, state: &AppState, is_focuse
     use crate::models::AttemptStatus;
     use ratatui::layout::{Constraint, Direction, Layout};
 
-    let parallel_task = state.selected_workspace()
+    let parallel_task = state
+        .selected_workspace()
         .and_then(|ws| ws.active_parallel_task());
 
     let Some(task) = parallel_task else {
         let msg = Paragraph::new(Line::from(vec![
-            Span::styled("  No active parallel task. Press ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                "  No active parallel task. Press ",
+                Style::default().fg(Color::DarkGray),
+            ),
             Span::styled("[P]", Style::default().fg(Color::Cyan)),
-            Span::styled(" in Sessions pane to start one.", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                " in Sessions pane to start one.",
+                Style::default().fg(Color::DarkGray),
+            ),
         ]));
         frame.render_widget(msg, area);
         return;
@@ -393,8 +443,16 @@ fn render_reports_tab(frame: &mut Frame, area: Rect, state: &AppState, is_focuse
         prompt_preview
     };
 
-    let running = task.attempts.iter().filter(|a| a.status == AttemptStatus::Running).count();
-    let completed = task.attempts.iter().filter(|a| a.status == AttemptStatus::Completed).count();
+    let running = task
+        .attempts
+        .iter()
+        .filter(|a| a.status == AttemptStatus::Running)
+        .count();
+    let completed = task
+        .attempts
+        .iter()
+        .filter(|a| a.status == AttemptStatus::Completed)
+        .count();
     let total = task.attempts.len();
 
     let status_text = if running > 0 {
@@ -412,7 +470,14 @@ fn render_reports_tab(frame: &mut Frame, area: Rect, state: &AppState, is_focuse
         ]),
         Line::from(vec![
             Span::styled("  Status: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(status_text, Style::default().fg(if running > 0 { Color::Yellow } else { Color::Green })),
+            Span::styled(
+                status_text,
+                Style::default().fg(if running > 0 {
+                    Color::Yellow
+                } else {
+                    Color::Green
+                }),
+            ),
         ]),
         Line::from(vec![
             Span::styled("  Source: ", Style::default().fg(Color::DarkGray)),
@@ -428,7 +493,8 @@ fn render_reports_tab(frame: &mut Frame, area: Rect, state: &AppState, is_focuse
         return;
     }
 
-    let items: Vec<ListItem> = task.attempts
+    let items: Vec<ListItem> = task
+        .attempts
         .iter()
         .enumerate()
         .map(|(i, attempt)| {
@@ -456,17 +522,26 @@ fn render_reports_tab(frame: &mut Frame, area: Rect, state: &AppState, is_focuse
             // First line: agent info and status
             let line1 = Line::from(vec![
                 Span::styled(prefix, style),
-                Span::styled(format!("[{}] ", agent_badge), Style::default().fg(Color::Magenta)),
+                Span::styled(
+                    format!("[{}] ", agent_badge),
+                    Style::default().fg(Color::Magenta),
+                ),
                 Span::styled(format!("{} ", agent_name), style),
                 Span::styled(status_icon, Style::default().fg(status_color)),
-                Span::styled(format!(" {}", attempt.status.display()), Style::default().fg(status_color)),
+                Span::styled(
+                    format!(" {}", attempt.status.display()),
+                    Style::default().fg(status_color),
+                ),
             ]);
 
             // Second line: branch name
             let line2 = Line::from(vec![
                 Span::raw("      "),
                 Span::styled("branch: ", Style::default().fg(Color::DarkGray)),
-                Span::styled(attempt.branch_name.clone(), Style::default().fg(Color::Cyan)),
+                Span::styled(
+                    attempt.branch_name.clone(),
+                    Style::default().fg(Color::Cyan),
+                ),
             ]);
 
             // Third line: report preview (if available)
@@ -500,8 +575,7 @@ fn render_reports_tab(frame: &mut Frame, area: Rect, state: &AppState, is_focuse
         Style::default()
     };
 
-    let list = List::new(items)
-        .highlight_style(highlight_style);
+    let list = List::new(items).highlight_style(highlight_style);
 
     let mut list_state = ListState::default();
     if !task.attempts.is_empty() {

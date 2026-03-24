@@ -1,7 +1,9 @@
-use crate::app::{Action, AppState, FocusPanel, InputMode, PendingDelete, TodoPaneMode, TodosTab, UtilityItem};
+use crate::app::utilities::load_utility_content;
+use crate::app::{
+    Action, AppState, FocusPanel, InputMode, PendingDelete, TodoPaneMode, TodosTab, UtilityItem,
+};
 use crate::models::SessionStatus;
 use crate::persistence;
-use crate::app::utilities::load_utility_content;
 use anyhow::Result;
 use tokio::sync::mpsc;
 
@@ -38,7 +40,11 @@ pub fn handle_todo_action(
             state.ui.input_buffer.clear();
         }
         Action::CreateTodo(description) => {
-            if let Some(ws) = state.data.workspaces.get_mut(state.ui.selected_workspace_idx) {
+            if let Some(ws) = state
+                .data
+                .workspaces
+                .get_mut(state.ui.selected_workspace_idx)
+            {
                 ws.add_todo(description);
                 let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
             }
@@ -46,16 +52,20 @@ pub fn handle_todo_action(
             state.ui.input_buffer.clear();
         }
         Action::MarkTodoDone => {
-            let todo_id = state.selected_workspace()
-                .and_then(|ws| {
-                    ws.todos.iter()
-                        .filter(|t| !t.is_archived())
-                        .nth(state.ui.selected_todo_idx)
-                        .map(|t| t.id)
-                });
+            let todo_id = state.selected_workspace().and_then(|ws| {
+                ws.todos
+                    .iter()
+                    .filter(|t| !t.is_archived())
+                    .nth(state.ui.selected_todo_idx)
+                    .map(|t| t.id)
+            });
 
             if let Some(id) = todo_id {
-                if let Some(ws) = state.data.workspaces.get_mut(state.ui.selected_workspace_idx) {
+                if let Some(ws) = state
+                    .data
+                    .workspaces
+                    .get_mut(state.ui.selected_workspace_idx)
+                {
                     if let Some(todo) = ws.get_todo_mut(id) {
                         todo.mark_done();
                         let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
@@ -64,13 +74,13 @@ pub fn handle_todo_action(
             }
         }
         Action::RunSelectedTodo => {
-            let selected_todo = state.selected_workspace()
-                .and_then(|ws| {
-                    ws.todos.iter()
-                        .filter(|t| !t.is_archived())
-                        .nth(state.ui.selected_todo_idx)
-                        .map(|t| (t.id, t.description.clone(), t.is_pending(), t.is_queued()))
-                });
+            let selected_todo = state.selected_workspace().and_then(|ws| {
+                ws.todos
+                    .iter()
+                    .filter(|t| !t.is_archived())
+                    .nth(state.ui.selected_todo_idx)
+                    .map(|t| (t.id, t.description.clone(), t.is_pending(), t.is_queued()))
+            });
 
             let (todo_id, description, is_pending, is_queued) = match selected_todo {
                 Some(data) => data,
@@ -78,19 +88,27 @@ pub fn handle_todo_action(
             };
 
             if !is_pending && !is_queued {
-                return Ok(())
+                return Ok(());
             }
 
-            let has_in_progress = state.data.workspaces.get(state.ui.selected_workspace_idx)
+            let has_in_progress = state
+                .data
+                .workspaces
+                .get(state.ui.selected_workspace_idx)
                 .map(|ws| ws.has_in_progress_todo())
                 .unwrap_or(false);
 
-            let todo_count = state.selected_workspace()
+            let todo_count = state
+                .selected_workspace()
                 .map(|ws| ws.todos.iter().filter(|t| !t.is_archived()).count())
                 .unwrap_or(0);
 
             if state.ui.todo_pane_mode == TodoPaneMode::Autorun && has_in_progress {
-                if let Some(ws) = state.data.workspaces.get_mut(state.ui.selected_workspace_idx) {
+                if let Some(ws) = state
+                    .data
+                    .workspaces
+                    .get_mut(state.ui.selected_workspace_idx)
+                {
                     if let Some(todo) = ws.get_todo_mut(todo_id) {
                         if todo.is_pending() {
                             todo.mark_queued();
@@ -101,31 +119,40 @@ pub fn handle_todo_action(
                 if state.ui.selected_todo_idx + 1 < todo_count {
                     state.ui.selected_todo_idx += 1;
                 }
-                return Ok(())
+                return Ok(());
             }
 
-            let current_workspace_id = state.data.workspaces.get(state.ui.selected_workspace_idx)
+            let current_workspace_id = state
+                .data
+                .workspaces
+                .get(state.ui.selected_workspace_idx)
                 .map(|ws| ws.id);
 
-            let target_session_id = state.ui.active_session_id
+            let target_session_id = state
+                .ui
+                .active_session_id
                 .filter(|id| state.data.idle_queue.contains(id))
                 .or_else(|| {
                     current_workspace_id.and_then(|ws_id| {
-                        state.data.sessions.get(&ws_id)
-                            .and_then(|sessions| {
-                                sessions.iter()
-                                    .find(|s| {
-                                        s.agent_type.is_agent() &&
-                                        s.status == SessionStatus::Running &&
-                                        state.data.idle_queue.contains(&s.id)
-                                    })
-                                    .map(|s| s.id)
-                            })
+                        state.data.sessions.get(&ws_id).and_then(|sessions| {
+                            sessions
+                                .iter()
+                                .find(|s| {
+                                    s.agent_type.is_agent()
+                                        && s.status == SessionStatus::Running
+                                        && state.data.idle_queue.contains(&s.id)
+                                })
+                                .map(|s| s.id)
+                        })
                     })
                 });
 
             if let Some(session_id) = target_session_id {
-                if let Some(ws) = state.data.workspaces.get_mut(state.ui.selected_workspace_idx) {
+                if let Some(ws) = state
+                    .data
+                    .workspaces
+                    .get_mut(state.ui.selected_workspace_idx)
+                {
                     if let Some(todo) = ws.get_todo_mut(todo_id) {
                         todo.assign_to(session_id);
                     }
@@ -141,7 +168,11 @@ pub fn handle_todo_action(
                     state.ui.selected_todo_idx += 1;
                 }
             } else if state.ui.todo_pane_mode == TodoPaneMode::Autorun {
-                if let Some(ws) = state.data.workspaces.get_mut(state.ui.selected_workspace_idx) {
+                if let Some(ws) = state
+                    .data
+                    .workspaces
+                    .get_mut(state.ui.selected_workspace_idx)
+                {
                     if let Some(todo) = ws.get_todo_mut(todo_id) {
                         if todo.is_pending() {
                             todo.mark_queued();
@@ -162,12 +193,19 @@ pub fn handle_todo_action(
         }
         Action::ConfirmDeleteTodo => {
             if let Some(PendingDelete::Todo(id, _)) = state.ui.pending_delete.take() {
-                if let Some(ws) = state.data.workspaces.get_mut(state.ui.selected_workspace_idx) {
+                if let Some(ws) = state
+                    .data
+                    .workspaces
+                    .get_mut(state.ui.selected_workspace_idx)
+                {
                     ws.remove_todo(id);
                     let filtered_count = match state.ui.selected_todos_tab {
                         TodosTab::Active => ws.todos.iter().filter(|t| !t.is_archived()).count(),
                         TodosTab::Archived => ws.todos.iter().filter(|t| t.is_archived()).count(),
-                        TodosTab::Reports => ws.active_parallel_task().map(|t| t.attempts.len()).unwrap_or(0),
+                        TodosTab::Reports => ws
+                            .active_parallel_task()
+                            .map(|t| t.attempts.len())
+                            .unwrap_or(0),
                     };
                     if filtered_count > 0 && state.ui.selected_todo_idx >= filtered_count {
                         state.ui.selected_todo_idx = filtered_count - 1;
@@ -202,13 +240,21 @@ pub fn handle_todo_action(
             }
         }
         Action::AddSuggestedTodo(description) => {
-            if let Some(ws) = state.data.workspaces.get_mut(state.ui.selected_workspace_idx) {
+            if let Some(ws) = state
+                .data
+                .workspaces
+                .get_mut(state.ui.selected_workspace_idx)
+            {
                 ws.add_suggested_todo(description);
                 let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
             }
         }
         Action::ApproveSuggestedTodo(todo_id) => {
-            if let Some(ws) = state.data.workspaces.get_mut(state.ui.selected_workspace_idx) {
+            if let Some(ws) = state
+                .data
+                .workspaces
+                .get_mut(state.ui.selected_workspace_idx)
+            {
                 if let Some(todo) = ws.get_todo_mut(todo_id) {
                     todo.approve();
                     let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
@@ -216,7 +262,11 @@ pub fn handle_todo_action(
             }
         }
         Action::ApproveAllSuggestedTodos => {
-            if let Some(ws) = state.data.workspaces.get_mut(state.ui.selected_workspace_idx) {
+            if let Some(ws) = state
+                .data
+                .workspaces
+                .get_mut(state.ui.selected_workspace_idx)
+            {
                 for todo in ws.todos.iter_mut() {
                     if todo.is_suggested() {
                         todo.approve();
@@ -226,7 +276,11 @@ pub fn handle_todo_action(
             }
         }
         Action::ArchiveTodo(todo_id) => {
-            if let Some(ws) = state.data.workspaces.get_mut(state.ui.selected_workspace_idx) {
+            if let Some(ws) = state
+                .data
+                .workspaces
+                .get_mut(state.ui.selected_workspace_idx)
+            {
                 if let Some(todo) = ws.get_todo_mut(todo_id) {
                     todo.archive();
                     let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
@@ -272,8 +326,11 @@ pub fn handle_todo_action(
             else if state.ui.selected_utility == UtilityItem::SuggestTodos {
                 let idle_agent = state.selected_workspace().and_then(|ws| {
                     state.data.sessions.get(&ws.id).and_then(|sessions| {
-                        sessions.iter()
-                            .find(|s| s.agent_type.is_agent() && state.data.idle_queue.contains(&s.id))
+                        sessions
+                            .iter()
+                            .find(|s| {
+                                s.agent_type.is_agent() && state.data.idle_queue.contains(&s.id)
+                            })
                             .map(|s| s.id)
                     })
                 });

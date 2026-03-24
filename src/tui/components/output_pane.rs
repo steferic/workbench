@@ -1,6 +1,9 @@
 use crate::app::{AppState, FocusPanel, InputMode, ReplayCache};
 use crate::tui::replay::create_replay_parser;
-use crate::tui::utils::{convert_vt100_to_lines_visible, get_content_length, get_cursor_info, get_selection_bounds, render_cursor};
+use crate::tui::utils::{
+    convert_vt100_to_lines_visible, get_content_length, get_cursor_info, get_selection_bounds,
+    render_cursor,
+};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -74,7 +77,8 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
     // No active session - show utility content or hints
     let lines: Vec<Line> = if !state.ui.utility_content.is_empty() {
         state
-            .ui.utility_content
+            .ui
+            .utility_content
             .iter()
             .map(|line| Line::from(Span::styled(line.clone(), Style::default().fg(Color::Gray))))
             .collect()
@@ -135,18 +139,32 @@ fn render_session_output(
     let live_max_scroll = live_content_len.saturating_sub(viewport_height);
     let needs_replay = !is_alternate
         && scroll_from_bottom_raw > live_max_scroll
-        && state.system.raw_output_buffers.get(&session_id).map(|b| !b.bytes.is_empty()).unwrap_or(false);
+        && state
+            .system
+            .raw_output_buffers
+            .get(&session_id)
+            .map(|b| !b.bytes.is_empty())
+            .unwrap_or(false);
 
     // Inline sessions (Codex): render styled snapshot history with word wrapping.
     if needs_replay && state.system.inline_mode_sessions.contains(&session_id) {
         if let Some(history) = state.system.inline_styled_history.get(&session_id) {
             let session = state.active_session();
-            let display_name = session.map(|s| s.agent_type.display_name()).unwrap_or_else(|| "Session".to_string());
+            let display_name = session
+                .map(|s| s.agent_type.display_name())
+                .unwrap_or_else(|| "Session".to_string());
             let short_id = session.map(|s| s.short_id()).unwrap_or_default();
             let duration = session.map(|s| s.duration_string()).unwrap_or_default();
             let visual_lines = render_inline_session(
-                frame, area, history, border_style, viewport_height,
-                scroll_from_bottom_raw, &display_name, &short_id, &duration,
+                frame,
+                area,
+                history,
+                border_style,
+                viewport_height,
+                scroll_from_bottom_raw,
+                &display_name,
+                &short_id,
+                &duration,
             );
             state.ui.output_content_length = visual_lines;
             return;
@@ -162,22 +180,29 @@ fn render_session_output(
         let cols = screen_size.1;
 
         // Check if cached parser is still valid (same generation + cols)
-        let cache_valid = state.system.replay_caches.get(&session_id).map(|c| {
-            c.generation == generation && c.cols == cols
-        }).unwrap_or(false);
+        let cache_valid = state
+            .system
+            .replay_caches
+            .get(&session_id)
+            .map(|c| c.generation == generation && c.cols == cols)
+            .unwrap_or(false);
 
         if !cache_valid {
-            let replay_parser = create_replay_parser(raw_buf, cols, state.system.user_config.replay_parser_rows);
+            let replay_parser =
+                create_replay_parser(raw_buf, cols, state.system.user_config.replay_parser_rows);
             let replay_screen = replay_parser.screen();
             let replay_cursor = get_cursor_info(replay_screen);
             let replay_content_len = get_content_length(replay_screen, replay_cursor.row);
 
-            state.system.replay_caches.insert(session_id, ReplayCache {
-                generation,
-                cols,
-                parser: replay_parser,
-                content_length: replay_content_len,
-            });
+            state.system.replay_caches.insert(
+                session_id,
+                ReplayCache {
+                    generation,
+                    cols,
+                    parser: replay_parser,
+                    content_length: replay_content_len,
+                },
+            );
         }
 
         let Some(cache) = state.system.replay_caches.get(&session_id) else {
@@ -202,7 +227,11 @@ fn render_session_output(
             state.ui.output_on_replay = true;
         }
 
-        let selection = get_selection_bounds(&state.ui.text_selection, replay_content_len, replay_screen.size().1);
+        let selection = get_selection_bounds(
+            &state.ui.text_selection,
+            replay_content_len,
+            replay_screen.size().1,
+        );
         let pane_height = Some(viewport_height as u16);
 
         let max_scroll = replay_content_len.saturating_sub(viewport_height);
@@ -283,11 +312,16 @@ fn render_session_output(
 
     // Show scroll indicator in title if scrolled
     let session = state.active_session();
-    let display_name = session.map(|s| s.agent_type.display_name()).unwrap_or_else(|| "Session".to_string());
+    let display_name = session
+        .map(|s| s.agent_type.display_name())
+        .unwrap_or_else(|| "Session".to_string());
     let short_id = session.map(|s| s.short_id()).unwrap_or_default();
     let duration = session.map(|s| s.duration_string()).unwrap_or_default();
     let title = if scroll_from_bottom > 0 {
-        format!(" {} - {} - {} [↑{}] ", display_name, short_id, duration, scroll_from_bottom)
+        format!(
+            " {} - {} - {} [↑{}] ",
+            display_name, short_id, duration, scroll_from_bottom
+        )
     } else {
         format!(" {} - {} - {} ", display_name, short_id, duration)
     };
@@ -307,7 +341,10 @@ fn render_session_output(
     // Use the full content length (from replay cache if available) so the
     // scrollbar thumb stays a consistent size whether we're on the live or
     // replay rendering path.
-    let scrollbar_total = state.system.replay_caches.get(&session_id)
+    let scrollbar_total = state
+        .system
+        .replay_caches
+        .get(&session_id)
         .map(|c| c.content_length.max(stable_len))
         .unwrap_or(stable_len);
     if scrollbar_total > viewport_height {
@@ -321,7 +358,10 @@ fn render_session_output(
 
     if is_focused && state.ui.input_mode == InputMode::Normal && scroll_from_bottom == 0 {
         let needs_terminal_cursor = session
-            .map(|s| s.agent_type.is_terminal() || matches!(s.agent_type, crate::models::AgentType::Codex))
+            .map(|s| {
+                s.agent_type.is_terminal()
+                    || matches!(s.agent_type, crate::models::AgentType::Codex)
+            })
             .unwrap_or(false);
 
         if needs_terminal_cursor {
@@ -350,10 +390,17 @@ fn render_inline_session(
     let pane_width = inner_area.width.max(1) as usize;
 
     // Compute visual line count from borrowed reference (no clone)
-    let visual_lines: usize = history.iter().map(|line| {
-        let w = line.width();
-        if w == 0 { 1 } else { w.div_ceil(pane_width) }
-    }).sum();
+    let visual_lines: usize = history
+        .iter()
+        .map(|line| {
+            let w = line.width();
+            if w == 0 {
+                1
+            } else {
+                w.div_ceil(pane_width)
+            }
+        })
+        .sum();
 
     let max_scroll = visual_lines.saturating_sub(viewport_height);
     let sfb = scroll_from_bottom_raw.min(max_scroll);
@@ -380,7 +427,10 @@ fn render_inline_session(
     };
 
     let title = if sfb > 0 {
-        format!(" {} - {} - {} [↑{}] ", display_name, short_id, duration, sfb)
+        format!(
+            " {} - {} - {} [↑{}] ",
+            display_name, short_id, duration, sfb
+        )
     } else {
         format!(" {} - {} - {} ", display_name, short_id, duration)
     };
@@ -462,10 +512,7 @@ fn render_pie_chart_view(frame: &mut Frame, area: Rect, state: &AppState, block:
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage(50),
-            Constraint::Percentage(50),
-        ])
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(inner_area);
 
     let chart_area = chunks[0];
@@ -473,7 +520,8 @@ fn render_pie_chart_view(frame: &mut Frame, area: Rect, state: &AppState, block:
 
     if !state.ui.pie_chart_data.is_empty() {
         let bars: Vec<Bar> = state
-            .ui.pie_chart_data
+            .ui
+            .pie_chart_data
             .iter()
             .map(|(label, value, color)| {
                 let short_label: String = label.chars().take(8).collect();
@@ -496,30 +544,37 @@ fn render_pie_chart_view(frame: &mut Frame, area: Rect, state: &AppState, block:
 
     // Pre-compute bullet color indices to avoid O(n²) scanning
     let mut bullet_count = 0usize;
-    let bullet_indices: Vec<Option<usize>> = state.ui.utility_content.iter().map(|line| {
-        if line.contains('●') || line.contains('○') {
-            let idx = bullet_count;
-            bullet_count += 1;
-            Some(idx)
-        } else {
-            None
-        }
-    }).collect();
+    let bullet_indices: Vec<Option<usize>> = state
+        .ui
+        .utility_content
+        .iter()
+        .map(|line| {
+            if line.contains('●') || line.contains('○') {
+                let idx = bullet_count;
+                bullet_count += 1;
+                Some(idx)
+            } else {
+                None
+            }
+        })
+        .collect();
 
     let lines: Vec<Line> = state
-        .ui.utility_content
+        .ui
+        .utility_content
         .iter()
         .enumerate()
         .map(|(i, line)| {
             if let Some(color_idx) = bullet_indices[i] {
                 if color_idx < state.ui.pie_chart_data.len() {
                     let (_, _, color) = &state.ui.pie_chart_data[color_idx];
-                    let split_at = line.char_indices().nth(3).map(|(i, _)| i).unwrap_or(line.len());
+                    let split_at = line
+                        .char_indices()
+                        .nth(3)
+                        .map(|(i, _)| i)
+                        .unwrap_or(line.len());
                     return Line::from(vec![
-                        Span::styled(
-                            line[..split_at].to_string(),
-                            Style::default().fg(*color),
-                        ),
+                        Span::styled(line[..split_at].to_string(), Style::default().fg(*color)),
                         Span::styled(
                             line[split_at..].to_string(),
                             Style::default().fg(Color::Gray),
@@ -543,10 +598,7 @@ fn render_calendar_view(frame: &mut Frame, area: Rect, state: &AppState, block: 
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Min(12),
-            Constraint::Length(8),
-        ])
+        .constraints([Constraint::Min(12), Constraint::Length(8)])
         .split(inner_area);
 
     let calendar_area = chunks[0];
@@ -628,7 +680,8 @@ fn render_calendar_view(frame: &mut Frame, area: Rect, state: &AppState, block: 
     }
 
     let lines: Vec<Line> = state
-        .ui.utility_content
+        .ui
+        .utility_content
         .iter()
         .map(|line| Line::from(Span::styled(line.clone(), Style::default().fg(Color::Gray))))
         .collect();

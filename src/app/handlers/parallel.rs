@@ -1,6 +1,11 @@
-use crate::app::{Action, AppState, FocusPanel, InputMode, ParallelMergePlan, ParallelWorktreeSpec, Toast, ToastLevel};
+use crate::app::{
+    Action, AppState, FocusPanel, InputMode, ParallelMergePlan, ParallelWorktreeSpec, Toast,
+    ToastLevel,
+};
 use crate::git;
-use crate::models::{AgentType, AttemptStatus, ParallelTask, ParallelTaskAttempt, ParallelTaskStatus, Session};
+use crate::models::{
+    AgentType, AttemptStatus, ParallelTask, ParallelTaskAttempt, ParallelTaskStatus, Session,
+};
 use crate::persistence;
 use crate::pty::{PtyManager, SessionSpawnConfig};
 use anyhow::{anyhow, Result};
@@ -71,7 +76,10 @@ pub fn handle_parallel_action(
             if request_id == state.ui.parallel_task_request_id {
                 let msg = format!("Parallel task failed: {}", error);
                 let duration = std::time::Duration::from_secs(5);
-                state.ui.toasts.push_back(Toast::new(msg, ToastLevel::Error, duration));
+                state
+                    .ui
+                    .toasts
+                    .push_back(Toast::new(msg, ToastLevel::Error, duration));
                 while state.ui.toasts.len() > 5 {
                     state.ui.toasts.pop_front();
                 }
@@ -90,7 +98,9 @@ fn start_parallel_task(
     action_tx: &mpsc::UnboundedSender<Action>,
 ) -> Result<()> {
     // Get selected agents
-    let selected_agents: Vec<_> = state.ui.parallel_task_agents
+    let selected_agents: Vec<_> = state
+        .ui
+        .parallel_task_agents
         .iter()
         .filter(|(_, selected)| *selected)
         .map(|(agent_type, _)| agent_type.clone())
@@ -110,7 +120,8 @@ fn start_parallel_task(
     }
 
     // Get workspace info
-    let workspace = state.selected_workspace()
+    let workspace = state
+        .selected_workspace()
         .ok_or_else(|| anyhow!("No workspace selected"))?;
     let workspace_id = workspace.id;
     let workspace_path = workspace.path.clone();
@@ -126,9 +137,16 @@ fn start_parallel_task(
     state.ui.parallel_task_request_id = request_id;
 
     // Cancel any existing active parallel tasks before creating a new one.
-    if let Some(ws) = state.data.workspaces.get_mut(state.ui.selected_workspace_idx) {
+    if let Some(ws) = state
+        .data
+        .workspaces
+        .get_mut(state.ui.selected_workspace_idx)
+    {
         for task in ws.parallel_tasks.iter_mut() {
-            if matches!(task.status, ParallelTaskStatus::Running | ParallelTaskStatus::AwaitingSelection) {
+            if matches!(
+                task.status,
+                ParallelTaskStatus::Running | ParallelTaskStatus::AwaitingSelection
+            ) {
                 task.status = ParallelTaskStatus::Cancelled;
             }
         }
@@ -151,16 +169,17 @@ fn start_parallel_task(
             return;
         }
 
-        let source_branch = git::get_current_branch(&workspace_path)
-            .unwrap_or_else(|_| "main".to_string());
-        let source_commit = git::get_head_commit(&workspace_path)
-            .unwrap_or_else(|_| "unknown".to_string());
+        let source_branch =
+            git::get_current_branch(&workspace_path).unwrap_or_else(|_| "main".to_string());
+        let source_commit =
+            git::get_head_commit(&workspace_path).unwrap_or_else(|_| "unknown".to_string());
 
         let mut worktrees = Vec::new();
         for agent_type in selected_agents {
             let agent_name = agent_type.badge().to_lowercase();
             let branch_name = format!("parallel-{}/{}", task_short_id, agent_name);
-            let worktree_path = git::get_attempt_worktree_path(&workspace_path, &task_short_id, &agent_name);
+            let worktree_path =
+                git::get_attempt_worktree_path(&workspace_path, &task_short_id, &agent_name);
 
             if git::create_worktree(&workspace_path, &branch_name, &worktree_path).is_err() {
                 continue;
@@ -208,7 +227,12 @@ fn handle_parallel_worktrees_ready(
         return Ok(());
     }
 
-    let workspace_idx = match state.data.workspaces.iter().position(|ws| ws.id == workspace_id) {
+    let workspace_idx = match state
+        .data
+        .workspaces
+        .iter()
+        .position(|ws| ws.id == workspace_id)
+    {
         Some(idx) => idx,
         None => return Ok(()),
     };
@@ -216,7 +240,10 @@ fn handle_parallel_worktrees_ready(
     // Cancel any existing active parallel tasks before creating a new one.
     if let Some(ws) = state.data.workspaces.get_mut(workspace_idx) {
         for task in ws.parallel_tasks.iter_mut() {
-            if matches!(task.status, ParallelTaskStatus::Running | ParallelTaskStatus::AwaitingSelection) {
+            if matches!(
+                task.status,
+                ParallelTaskStatus::Running | ParallelTaskStatus::AwaitingSelection
+            ) {
                 task.status = ParallelTaskStatus::Cancelled;
             }
         }
@@ -271,7 +298,11 @@ fn handle_parallel_worktrees_ready(
 
         let pty_rows = state.pane_rows();
         let cols = state.output_pane_cols();
-        state.system.create_session_buffers(session_id, cols, matches!(spec.agent_type, AgentType::Codex));
+        state.system.create_session_buffers(
+            session_id,
+            cols,
+            matches!(spec.agent_type, AgentType::Codex),
+        );
 
         match pty_manager.spawn_session(SessionSpawnConfig {
             session_id,
@@ -286,13 +317,19 @@ fn handle_parallel_worktrees_ready(
             Ok(handle) => {
                 state.system.pty_handles.insert(session_id, handle);
                 state.add_session(session);
-                state.data.last_activity.insert(session_id, std::time::Instant::now());
+                state
+                    .data
+                    .last_activity
+                    .insert(session_id, std::time::Instant::now());
             }
             Err(_) => {
                 let agent_name = spec.agent_type.display_name();
                 let msg = format!("Failed to spawn {} for parallel task", agent_name);
                 let duration = std::time::Duration::from_secs(5);
-                state.ui.toasts.push_back(Toast::new(msg, ToastLevel::Error, duration));
+                state
+                    .ui
+                    .toasts
+                    .push_back(Toast::new(msg, ToastLevel::Error, duration));
                 while state.ui.toasts.len() > 5 {
                     state.ui.toasts.pop_front();
                 }
@@ -310,17 +347,28 @@ fn handle_parallel_worktrees_ready(
     Ok(())
 }
 
-fn cancel_parallel_task(state: &mut AppState, task_id: Uuid, _pty_manager: &PtyManager) -> Result<()> {
-    let workspace_path = state.selected_workspace()
-        .map(|w| w.path.clone());
+fn cancel_parallel_task(
+    state: &mut AppState,
+    task_id: Uuid,
+    _pty_manager: &PtyManager,
+) -> Result<()> {
+    let workspace_path = state.selected_workspace().map(|w| w.path.clone());
 
     // First, collect all the info we need from the task
-    let (workspace_id, session_ids, worktree_paths): (Option<Uuid>, Vec<Uuid>, Vec<std::path::PathBuf>) = {
+    let (workspace_id, session_ids, worktree_paths): (
+        Option<Uuid>,
+        Vec<Uuid>,
+        Vec<std::path::PathBuf>,
+    ) = {
         let ws = state.data.workspaces.get(state.ui.selected_workspace_idx);
         if let Some(ws) = ws {
             if let Some(task) = ws.get_parallel_task(task_id) {
                 let ids: Vec<Uuid> = task.attempts.iter().map(|a| a.session_id).collect();
-                let paths: Vec<std::path::PathBuf> = task.attempts.iter().map(|a| a.worktree_path.clone()).collect();
+                let paths: Vec<std::path::PathBuf> = task
+                    .attempts
+                    .iter()
+                    .map(|a| a.worktree_path.clone())
+                    .collect();
                 (Some(ws.id), ids, paths)
             } else {
                 (None, vec![], vec![])
@@ -357,7 +405,11 @@ fn cancel_parallel_task(state: &mut AppState, task_id: Uuid, _pty_manager: &PtyM
     }
 
     // Mark task as cancelled and remove it
-    if let Some(ws) = state.data.workspaces.get_mut(state.ui.selected_workspace_idx) {
+    if let Some(ws) = state
+        .data
+        .workspaces
+        .get_mut(state.ui.selected_workspace_idx)
+    {
         if let Some(task) = ws.get_parallel_task_mut(task_id) {
             task.mark_cancelled();
         }
@@ -374,15 +426,27 @@ fn select_parallel_winner(
     action_tx: &mpsc::UnboundedSender<Action>,
 ) -> Result<()> {
     // Find the task and attempt info — only collect the winner's session/worktree
-    let (workspace_path, workspace_id, task_id, source_branch, winner_branch, winner_worktree_path, winner_session_id) = {
-        let ws = state.selected_workspace()
+    let (
+        workspace_path,
+        workspace_id,
+        task_id,
+        source_branch,
+        winner_branch,
+        winner_worktree_path,
+        winner_session_id,
+    ) = {
+        let ws = state
+            .selected_workspace()
             .ok_or_else(|| anyhow!("No workspace selected"))?;
 
-        let task = ws.parallel_tasks.iter()
+        let task = ws
+            .parallel_tasks
+            .iter()
             .find(|t| t.attempts.iter().any(|a| a.id == attempt_id))
             .ok_or_else(|| anyhow!("Task not found"))?;
 
-        let attempt = task.get_attempt(attempt_id)
+        let attempt = task
+            .get_attempt(attempt_id)
             .ok_or_else(|| anyhow!("Attempt not found"))?;
 
         (
@@ -435,7 +499,11 @@ fn handle_parallel_merge_finished(
 ) -> Result<()> {
     if let Some(err) = error {
         let msg = format!("Parallel merge failed: {}", err);
-        state.ui.toasts.push_back(Toast::new(msg, ToastLevel::Error, std::time::Duration::from_secs(5)));
+        state.ui.toasts.push_back(Toast::new(
+            msg,
+            ToastLevel::Error,
+            std::time::Duration::from_secs(5),
+        ));
         while state.ui.toasts.len() > 5 {
             state.ui.toasts.pop_front();
         }
@@ -465,7 +533,12 @@ fn handle_parallel_merge_finished(
     }
 
     // Remove only the merged attempt from the task
-    if let Some(ws) = state.data.workspaces.iter_mut().find(|ws| ws.id == plan.workspace_id) {
+    if let Some(ws) = state
+        .data
+        .workspaces
+        .iter_mut()
+        .find(|ws| ws.id == plan.workspace_id)
+    {
         if let Some(task) = ws.get_parallel_task_mut(plan.task_id) {
             task.attempts.retain(|a| a.id != plan.winner_attempt_id);
 
@@ -478,7 +551,8 @@ fn handle_parallel_merge_finished(
     }
 
     // Adjust selected report index if it's now out of bounds
-    let report_count = state.selected_workspace()
+    let report_count = state
+        .selected_workspace()
         .and_then(|ws| ws.active_parallel_task())
         .map(|t| t.attempts.len())
         .unwrap_or(0);
@@ -495,7 +569,9 @@ fn mark_attempt_completed(state: &mut AppState, session_id: Uuid) -> Result<()> 
     // Find and update the attempt
     for ws in state.data.workspaces.iter_mut() {
         for task in ws.parallel_tasks.iter_mut() {
-            if let Some(attempt) = task.attempts.iter_mut()
+            if let Some(attempt) = task
+                .attempts
+                .iter_mut()
                 .find(|a| a.session_id == session_id)
             {
                 attempt.status = AttemptStatus::Completed;
@@ -524,7 +600,8 @@ fn mark_attempt_completed(state: &mut AppState, session_id: Uuid) -> Result<()> 
 }
 
 fn handle_report_navigation(state: &mut AppState, action: &Action) {
-    let report_count = state.selected_workspace()
+    let report_count = state
+        .selected_workspace()
         .and_then(|ws| ws.active_parallel_task())
         .map(|t| t.attempts.len())
         .unwrap_or(0);
@@ -548,7 +625,8 @@ fn handle_report_navigation(state: &mut AppState, action: &Action) {
 
 fn view_selected_report(state: &mut AppState) {
     // Get the selected attempt
-    let attempt = state.selected_workspace()
+    let attempt = state
+        .selected_workspace()
         .and_then(|ws| ws.active_parallel_task())
         .and_then(|t| t.attempts.get(state.ui.selected_report_idx))
         .cloned();
@@ -562,7 +640,8 @@ fn view_selected_report(state: &mut AppState) {
 
 fn merge_selected_report(state: &mut AppState) -> Result<()> {
     // Get the selected attempt ID
-    let attempt_id = state.selected_workspace()
+    let attempt_id = state
+        .selected_workspace()
         .and_then(|ws| ws.active_parallel_task())
         .and_then(|t| t.attempts.get(state.ui.selected_report_idx))
         .map(|a| a.id);
@@ -592,8 +671,8 @@ fn confirm_parallel_merge(
 
 #[cfg(test)]
 mod tests {
-    use crate::app::{Action, AppState, FocusPanel, InputMode, ParallelWorktreeSpec};
     use super::handle_parallel_action;
+    use crate::app::{Action, AppState, FocusPanel, InputMode, ParallelWorktreeSpec};
     use crate::models::{
         AgentType, AttemptStatus, ParallelTask, ParallelTaskAttempt, ParallelTaskStatus, Workspace,
     };
@@ -648,7 +727,8 @@ mod tests {
 
         assert_eq!(state.ui.selected_report_idx, 0);
 
-        let report_count = state.selected_workspace()
+        let report_count = state
+            .selected_workspace()
             .and_then(|ws| ws.active_parallel_task())
             .map(|t| t.attempts.len())
             .unwrap_or(0);
@@ -700,7 +780,8 @@ mod tests {
         let task = create_test_task(ws_id, "Test task");
         state.data.workspaces[0].add_parallel_task(task);
 
-        let report_count = state.selected_workspace()
+        let report_count = state
+            .selected_workspace()
             .and_then(|ws| ws.active_parallel_task())
             .map(|t| t.attempts.len())
             .unwrap_or(0);
@@ -723,7 +804,8 @@ mod tests {
 
         assert!(state.ui.active_session_id.is_none());
 
-        let attempt = state.selected_workspace()
+        let attempt = state
+            .selected_workspace()
             .and_then(|ws| ws.active_parallel_task())
             .and_then(|t| t.attempts.get(state.ui.selected_report_idx))
             .cloned();
@@ -752,7 +834,8 @@ mod tests {
         state.data.workspaces[0].add_parallel_task(task);
 
         state.ui.selected_report_idx = 0;
-        let attempt = state.selected_workspace()
+        let attempt = state
+            .selected_workspace()
             .and_then(|ws| ws.active_parallel_task())
             .and_then(|t| t.attempts.get(state.ui.selected_report_idx))
             .cloned();
@@ -762,7 +845,8 @@ mod tests {
         assert_eq!(state.ui.active_session_id, Some(session1));
 
         state.ui.selected_report_idx = 1;
-        let attempt = state.selected_workspace()
+        let attempt = state
+            .selected_workspace()
             .and_then(|ws| ws.active_parallel_task())
             .and_then(|t| t.attempts.get(state.ui.selected_report_idx))
             .cloned();
@@ -789,14 +873,16 @@ mod tests {
         state.data.workspaces[0].add_parallel_task(task);
 
         state.ui.selected_report_idx = 0;
-        let attempt_id = state.selected_workspace()
+        let attempt_id = state
+            .selected_workspace()
             .and_then(|ws| ws.active_parallel_task())
             .and_then(|t| t.attempts.get(state.ui.selected_report_idx))
             .map(|a| a.id);
         assert_eq!(attempt_id, Some(attempt1_id));
 
         state.ui.selected_report_idx = 1;
-        let attempt_id = state.selected_workspace()
+        let attempt_id = state
+            .selected_workspace()
             .and_then(|ws| ws.active_parallel_task())
             .and_then(|t| t.attempts.get(state.ui.selected_report_idx))
             .map(|a| a.id);
@@ -817,28 +903,40 @@ mod tests {
         let _prompt = task.prompt.clone();
         state.data.workspaces[0].add_parallel_task(task);
 
-        let needs_prompt = state.selected_workspace()
-            .and_then(|ws| {
-                ws.parallel_tasks.iter()
-                    .find(|t| t.attempts.iter().any(|a| a.session_id == session_id && !a.prompt_sent))
-                    .map(|t| t.prompt.clone())
-            });
+        let needs_prompt = state.selected_workspace().and_then(|ws| {
+            ws.parallel_tasks
+                .iter()
+                .find(|t| {
+                    t.attempts
+                        .iter()
+                        .any(|a| a.session_id == session_id && !a.prompt_sent)
+                })
+                .map(|t| t.prompt.clone())
+        });
         assert_eq!(needs_prompt, Some("Fix the bug".to_string()));
 
         if let Some(ws) = state.data.workspaces.get_mut(0) {
             for task in ws.parallel_tasks.iter_mut() {
-                if let Some(attempt) = task.attempts.iter_mut().find(|a| a.session_id == session_id) {
+                if let Some(attempt) = task
+                    .attempts
+                    .iter_mut()
+                    .find(|a| a.session_id == session_id)
+                {
                     attempt.prompt_sent = true;
                 }
             }
         }
 
-        let needs_prompt = state.selected_workspace()
-            .and_then(|ws| {
-                ws.parallel_tasks.iter()
-                    .find(|t| t.attempts.iter().any(|a| a.session_id == session_id && !a.prompt_sent))
-                    .map(|t| t.prompt.clone())
-            });
+        let needs_prompt = state.selected_workspace().and_then(|ws| {
+            ws.parallel_tasks
+                .iter()
+                .find(|t| {
+                    t.attempts
+                        .iter()
+                        .any(|a| a.session_id == session_id && !a.prompt_sent)
+                })
+                .map(|t| t.prompt.clone())
+        });
         assert!(needs_prompt.is_none());
     }
 
@@ -856,9 +954,11 @@ mod tests {
         task.add_attempt(attempt2);
         state.data.workspaces[0].add_parallel_task(task);
 
-        let count_needing_prompt = state.selected_workspace()
+        let count_needing_prompt = state
+            .selected_workspace()
             .map(|ws| {
-                ws.parallel_tasks.iter()
+                ws.parallel_tasks
+                    .iter()
                     .flat_map(|t| t.attempts.iter())
                     .filter(|a| !a.prompt_sent)
                     .count()
@@ -874,9 +974,11 @@ mod tests {
             }
         }
 
-        let count_needing_prompt = state.selected_workspace()
+        let count_needing_prompt = state
+            .selected_workspace()
             .map(|ws| {
-                ws.parallel_tasks.iter()
+                ws.parallel_tasks
+                    .iter()
                     .flat_map(|t| t.attempts.iter())
                     .filter(|a| !a.prompt_sent)
                     .count()
@@ -896,22 +998,29 @@ mod tests {
         let task1_id = task1.id;
         state.data.workspaces[0].add_parallel_task(task1);
 
-        assert!(state.selected_workspace()
+        assert!(state
+            .selected_workspace()
             .and_then(|ws| ws.active_parallel_task())
             .is_some());
 
         if let Some(ws) = state.data.workspaces.get_mut(0) {
             for task in ws.parallel_tasks.iter_mut() {
-                if matches!(task.status, ParallelTaskStatus::Running | ParallelTaskStatus::AwaitingSelection) {
+                if matches!(
+                    task.status,
+                    ParallelTaskStatus::Running | ParallelTaskStatus::AwaitingSelection
+                ) {
                     task.status = ParallelTaskStatus::Cancelled;
                 }
             }
         }
 
-        let old_task = state.data.workspaces[0].get_parallel_task(task1_id).unwrap();
+        let old_task = state.data.workspaces[0]
+            .get_parallel_task(task1_id)
+            .unwrap();
         assert_eq!(old_task.status, ParallelTaskStatus::Cancelled);
 
-        assert!(state.selected_workspace()
+        assert!(state
+            .selected_workspace()
             .and_then(|ws| ws.active_parallel_task())
             .is_none());
     }
@@ -977,7 +1086,10 @@ mod tests {
 
         state.ui.input_mode = InputMode::CreateParallelTask;
         state.ui.parallel_task_prompt = "Fix the bug".to_string();
-        state.ui.parallel_task_agents.push((AgentType::Claude, true));
+        state
+            .ui
+            .parallel_task_agents
+            .push((AgentType::Claude, true));
 
         state.ui.input_mode = InputMode::Normal;
         state.ui.parallel_task_prompt.clear();

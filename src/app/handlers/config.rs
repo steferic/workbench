@@ -1,5 +1,5 @@
 use crate::app::{Action, AppState, ConfigTab};
-use crate::config::user_config::{AgentConfig, save_user_config, UserConfig};
+use crate::config::user_config::{save_user_config, AgentConfig, UserConfig};
 use crossterm::event::KeyEvent;
 
 pub fn handle_config_action(state: &mut AppState, action: Action) {
@@ -32,10 +32,9 @@ pub fn handle_config_action(state: &mut AppState, action: Action) {
             }
         }
         Action::ConfigMoveRight => {
-            if state.ui.config_tab == ConfigTab::Agents
-                && state.ui.config_selected_col < 3 {
-                    state.ui.config_selected_col += 1;
-                }
+            if state.ui.config_tab == ConfigTab::Agents && state.ui.config_selected_col < 3 {
+                state.ui.config_selected_col += 1;
+            }
         }
         Action::ConfigMoveLeft => {
             if state.ui.config_selected_col > 0 {
@@ -46,7 +45,12 @@ pub fn handle_config_action(state: &mut AppState, action: Action) {
             match state.ui.config_tab {
                 ConfigTab::QuickRef => {}
                 ConfigTab::Agents => {
-                    if let Some(agent) = state.system.user_config.agents.get(state.ui.config_selected_row) {
+                    if let Some(agent) = state
+                        .system
+                        .user_config
+                        .agents
+                        .get(state.ui.config_selected_row)
+                    {
                         state.ui.config_edit_buffer = match state.ui.config_selected_col {
                             0 => agent.hotkey.clone(),
                             1 => agent.display_name.clone(),
@@ -62,7 +66,8 @@ pub fn handle_config_action(state: &mut AppState, action: Action) {
                     state.ui.config_rebinding = true;
                 }
                 ConfigTab::Scrollback => {
-                    state.ui.config_edit_buffer = state.system.user_config.scrollback_mb.to_string();
+                    state.ui.config_edit_buffer =
+                        state.system.user_config.scrollback_mb.to_string();
                     state.ui.config_editing = true;
                 }
             }
@@ -71,7 +76,12 @@ pub fn handle_config_action(state: &mut AppState, action: Action) {
             let buf = state.ui.config_edit_buffer.clone();
             match state.ui.config_tab {
                 ConfigTab::Agents => {
-                    if let Some(agent) = state.system.user_config.agents.get_mut(state.ui.config_selected_row) {
+                    if let Some(agent) = state
+                        .system
+                        .user_config
+                        .agents
+                        .get_mut(state.ui.config_selected_row)
+                    {
                         match state.ui.config_selected_col {
                             0 => agent.hotkey = buf,
                             1 => agent.display_name = buf,
@@ -123,10 +133,17 @@ pub fn handle_config_action(state: &mut AppState, action: Action) {
             }
         }
         Action::ConfigDeleteAgent => {
-            if state.ui.config_tab == ConfigTab::Agents && !state.system.user_config.agents.is_empty() {
-                let row = state.ui.config_selected_row.min(state.system.user_config.agents.len() - 1);
+            if state.ui.config_tab == ConfigTab::Agents
+                && !state.system.user_config.agents.is_empty()
+            {
+                let row = state
+                    .ui
+                    .config_selected_row
+                    .min(state.system.user_config.agents.len() - 1);
                 state.system.user_config.agents.remove(row);
-                if state.ui.config_selected_row >= state.system.user_config.agents.len() && state.ui.config_selected_row > 0 {
+                if state.ui.config_selected_row >= state.system.user_config.agents.len()
+                    && state.ui.config_selected_row > 0
+                {
                     state.ui.config_selected_row -= 1;
                 }
                 let _ = save_user_config(&state.system.user_config);
@@ -190,11 +207,33 @@ fn handle_rebind(state: &mut AppState, key: KeyEvent) {
     let key_str = combo.display();
 
     // Get sorted hotkey list to find which action is selected
-    let mut actions: Vec<String> = state.system.user_config.global_hotkeys.keys().cloned().collect();
-    actions.sort();
+    let actions = crate::config::user_config::ordered_global_hotkey_actions(
+        &state.system.user_config.global_hotkeys,
+    );
 
     if let Some(action) = actions.get(state.ui.config_selected_row) {
-        state.system.user_config.global_hotkeys.insert(action.clone(), key_str);
+        for other_action in &actions {
+            if other_action != action
+                && state
+                    .system
+                    .user_config
+                    .global_hotkeys
+                    .get(other_action)
+                    .map(|binding| binding.eq_ignore_ascii_case(&key_str))
+                    .unwrap_or(false)
+            {
+                state
+                    .system
+                    .user_config
+                    .global_hotkeys
+                    .insert(other_action.clone(), String::new());
+            }
+        }
+        state
+            .system
+            .user_config
+            .global_hotkeys
+            .insert(action.clone(), key_str);
         let _ = save_user_config(&state.system.user_config);
     }
 

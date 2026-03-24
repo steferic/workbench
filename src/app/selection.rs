@@ -9,13 +9,12 @@ pub fn extract_selected_text(
     let (rows, cols) = screen.size();
 
     // Order the selection (start should be before end)
-    let (start_row, start_col, end_row, end_col) = if start.0 < end.0
-        || (start.0 == end.0 && start.1 <= end.1)
-    {
-        (start.0, start.1, end.0, end.1)
-    } else {
-        (end.0, end.1, start.0, start.1)
-    };
+    let (start_row, start_col, end_row, end_col) =
+        if start.0 < end.0 || (start.0 == end.0 && start.1 <= end.1) {
+            (start.0, start.1, end.0, end.1)
+        } else {
+            (end.0, end.1, start.0, start.1)
+        };
 
     let mut result = String::new();
 

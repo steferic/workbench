@@ -24,7 +24,10 @@ pub fn process_action(
             let handles: Vec<_> = state.system.pty_handles.drain().collect();
             for (session_id, handle) in handles {
                 // Check if this is a terminal session
-                let is_terminal = state.data.sessions.values()
+                let is_terminal = state
+                    .data
+                    .sessions
+                    .values()
                     .flat_map(|sessions| sessions.iter())
                     .find(|s| s.id == session_id)
                     .map(|s| s.agent_type.is_terminal())
@@ -54,9 +57,9 @@ pub fn process_action(
                 && !newly_idle.is_empty()
                 && state.system.last_agent_done_sound.elapsed().as_secs() >= 5
             {
-                let any_meaningful = newly_idle.iter().any(|id|
-                    state.session_work_duration(*id) >= 3.0
-                );
+                let any_meaningful = newly_idle
+                    .iter()
+                    .any(|id| state.session_work_duration(*id) >= 3.0);
                 if any_meaningful {
                     state.system.last_agent_done_sound = std::time::Instant::now();
                     crate::audio::play_sound(AGENT_DONE_WAV);
@@ -73,7 +76,8 @@ pub fn process_action(
                             if let Some(idx) = line.find("TODO: ") {
                                 let todo_text = line[idx + 6..].trim();
                                 if !todo_text.is_empty() && todo_text.len() > 5 {
-                                    let clean_text: String = todo_text.chars().filter(|c| !c.is_control()).collect();
+                                    let clean_text: String =
+                                        todo_text.chars().filter(|c| !c.is_control()).collect();
                                     let _ = action_tx.send(Action::AddSuggestedTodo(clean_text));
                                 }
                             }
@@ -86,7 +90,8 @@ pub fn process_action(
             // Process newly idle sessions
             for session_id in &newly_idle {
                 if let Some(workspace_id) = state.workspace_id_for_session(*session_id) {
-                    let has_in_progress = state.get_workspace(workspace_id)
+                    let has_in_progress = state
+                        .get_workspace(workspace_id)
                         .and_then(|ws| ws.todo_for_session(*session_id))
                         .map(|t| t.is_in_progress())
                         .unwrap_or(false);
@@ -100,16 +105,17 @@ pub fn process_action(
                     }
 
                     // Check if this is a parallel task session
-                    let parallel_info = state.get_workspace(workspace_id)
-                        .and_then(|ws| {
-                            ws.parallel_tasks.iter()
-                                .find(|t| t.attempts.iter().any(|a| a.session_id == *session_id))
-                                .and_then(|t| {
-                                    t.attempts.iter()
-                                        .find(|a| a.session_id == *session_id)
-                                        .map(|a| (t.full_prompt(), a.prompt_sent, a.status))
-                                })
-                        });
+                    let parallel_info = state.get_workspace(workspace_id).and_then(|ws| {
+                        ws.parallel_tasks
+                            .iter()
+                            .find(|t| t.attempts.iter().any(|a| a.session_id == *session_id))
+                            .and_then(|t| {
+                                t.attempts
+                                    .iter()
+                                    .find(|a| a.session_id == *session_id)
+                                    .map(|a| (t.full_prompt(), a.prompt_sent, a.status))
+                            })
+                    });
 
                     if let Some((full_prompt, prompt_sent, attempt_status)) = parallel_info {
                         use crate::models::AttemptStatus;
@@ -123,7 +129,11 @@ pub fn process_action(
                             // Mark the prompt as sent
                             if let Some(ws) = state.get_workspace_mut(workspace_id) {
                                 for task in ws.parallel_tasks.iter_mut() {
-                                    if let Some(attempt) = task.attempts.iter_mut().find(|a| a.session_id == *session_id) {
+                                    if let Some(attempt) = task
+                                        .attempts
+                                        .iter_mut()
+                                        .find(|a| a.session_id == *session_id)
+                                    {
                                         attempt.prompt_sent = true;
                                     }
                                 }
@@ -140,18 +150,21 @@ pub fn process_action(
             if state.ui.todo_pane_mode == crate::app::TodoPaneMode::Autorun {
                 for &session_id in &state.data.idle_queue {
                     if let Some(workspace_id) = state.workspace_id_for_session(session_id) {
-                        let has_in_progress = state.get_workspace(workspace_id)
+                        let has_in_progress = state
+                            .get_workspace(workspace_id)
                             .and_then(|ws| ws.todo_for_session(session_id))
                             .map(|t| t.is_in_progress())
                             .unwrap_or(false);
 
                         if !has_in_progress {
-                            let pending = state.get_workspace(workspace_id)
+                            let pending = state
+                                .get_workspace(workspace_id)
                                 .and_then(|ws| ws.next_pending_todo())
                                 .map(|t| (t.id, t.description.clone()));
 
                             if let Some((id, desc)) = pending {
-                                let _ = action_tx.send(Action::DispatchTodoToSession(session_id, id, desc));
+                                let _ = action_tx
+                                    .send(Action::DispatchTodoToSession(session_id, id, desc));
                                 break;
                             }
                         }
@@ -173,7 +186,8 @@ pub fn process_action(
                     // Parallel task attempts → diff vs source_branch
                     for task in &ws.parallel_tasks {
                         for attempt in &task.attempts {
-                            diff_requests.entry(attempt.worktree_path.clone())
+                            diff_requests
+                                .entry(attempt.worktree_path.clone())
                                 .or_insert_with(|| Some(task.source_branch.clone()));
                         }
                     }
@@ -214,14 +228,16 @@ pub fn process_action(
                     let workspace_id = ws.id;
 
                     // Get directory name for terminal name
-                    let dir_name = config_dir.file_name()
+                    let dir_name = config_dir
+                        .file_name()
                         .and_then(|n| n.to_str())
                         .unwrap_or("config")
                         .to_string();
 
                     // Create terminal session
                     let agent_type = crate::models::AgentType::Terminal(dir_name.clone());
-                    let mut session = crate::models::Session::new(workspace_id, agent_type.clone(), false);
+                    let mut session =
+                        crate::models::Session::new(workspace_id, agent_type.clone(), false);
 
                     // Set ls as the start command
                     session.start_command = Some("ls".to_string());
@@ -245,7 +261,9 @@ pub fn process_action(
                     }) {
                         Ok(handle) => {
                             state.system.pty_handles.insert(session_id, handle);
-                            state.system.create_session_buffers(session_id, pty_cols, false);
+                            state
+                                .system
+                                .create_session_buffers(session_id, pty_cols, false);
 
                             // Mark session as running
                             if let Some(s) = state.get_session_mut(session_id) {
@@ -297,7 +315,7 @@ pub fn process_action(
             // The specialized handlers internally match on the actions they care about and ignore others.
             // So I should clone the action? No, Action might not be cloneable (it is derived Clone though).
             // Better: match here and call the right handler.
-            
+
             match action {
                 // Workspace actions
                 Action::ToggleWorkspaceStatus | Action::InitiateDeleteWorkspace(_, _) |
@@ -335,7 +353,7 @@ pub fn process_action(
                 // Navigation actions
                 Action::MoveUp | Action::MoveDown | Action::FocusLeft | Action::FocusRight |
                 Action::NextPinnedPane | Action::PrevPinnedPane | Action::ScrollOutputUp |
-                Action::ScrollOutputDown | Action::CycleNextWorkspace | Action::CycleNextSession |
+                Action::ScrollOutputDown | Action::CycleNextWorkspace | Action::CyclePrevWorkspace | Action::CycleNextSession | Action::CyclePrevSession |
                 Action::MouseClick(_, _) |
                 Action::MouseDrag(_, _) | Action::MouseUp(_, _) | Action::CopySelection |
                 Action::Paste(_) | Action::ClearSelection | Action::SelectNextUtility |

@@ -19,13 +19,12 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         .bg(Color::Black)
         .add_modifier(Modifier::BOLD);
 
-    let dim_teal_style = Style::default()
-        .fg(Color::DarkGray)
-        .bg(Color::Black);
+    let dim_teal_style = Style::default().fg(Color::DarkGray).bg(Color::Black);
 
     // Get active workspace name
     let workspace_name = state
-        .data.workspaces
+        .data
+        .workspaces
         .get(state.ui.selected_workspace_idx)
         .map(|w| w.name.clone())
         .unwrap_or_else(|| "No Workspace".to_string());
@@ -73,8 +72,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         Span::styled(right_text, teal_style),
     ];
 
-    let paragraph = Paragraph::new(Line::from(spans))
-        .style(Style::default().bg(Color::Black));
+    let paragraph = Paragraph::new(Line::from(spans)).style(Style::default().bg(Color::Black));
 
     frame.render_widget(paragraph, area);
 }

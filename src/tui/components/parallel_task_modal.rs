@@ -94,8 +94,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
                 Span::styled("  > ", Style::default().fg(Color::Yellow)),
                 Span::styled(
                     checkbox,
-                    Style::default()
-                        .fg(if *selected { Color::Green } else { Color::Gray }),
+                    Style::default().fg(if *selected { Color::Green } else { Color::Gray }),
                 ),
                 Span::raw(" "),
                 Span::styled(
@@ -114,8 +113,11 @@ pub fn render(frame: &mut Frame, state: &AppState) {
                 Span::raw("    "),
                 Span::styled(
                     checkbox,
-                    Style::default()
-                        .fg(if *selected { Color::Green } else { Color::DarkGray }),
+                    Style::default().fg(if *selected {
+                        Color::Green
+                    } else {
+                        Color::DarkGray
+                    }),
                 ),
                 Span::raw(" "),
                 Span::styled(
@@ -132,14 +134,21 @@ pub fn render(frame: &mut Frame, state: &AppState) {
 
     // Dangerous mode checkbox - index = agent_count
     let danger_focused = state.ui.parallel_task_agent_idx == agent_count;
-    let danger_checkbox = if state.ui.parallel_task_dangerous_mode { "[x]" } else { "[ ]" };
+    let danger_checkbox = if state.ui.parallel_task_dangerous_mode {
+        "[x]"
+    } else {
+        "[ ]"
+    };
     let danger_line = if danger_focused {
         Line::from(vec![
             Span::styled("  > ", Style::default().fg(Color::Yellow)),
             Span::styled(
                 danger_checkbox,
-                Style::default()
-                    .fg(if state.ui.parallel_task_dangerous_mode { Color::Green } else { Color::Gray }),
+                Style::default().fg(if state.ui.parallel_task_dangerous_mode {
+                    Color::Green
+                } else {
+                    Color::Gray
+                }),
             ),
             Span::styled(
                 " Dangerous mode (skip permission prompts)",
@@ -153,8 +162,11 @@ pub fn render(frame: &mut Frame, state: &AppState) {
             Span::raw("    "),
             Span::styled(
                 danger_checkbox,
-                Style::default()
-                    .fg(if state.ui.parallel_task_dangerous_mode { Color::Green } else { Color::DarkGray }),
+                Style::default().fg(if state.ui.parallel_task_dangerous_mode {
+                    Color::Green
+                } else {
+                    Color::DarkGray
+                }),
             ),
             Span::raw(" Dangerous mode (skip permission prompts)"),
         ])
@@ -163,14 +175,21 @@ pub fn render(frame: &mut Frame, state: &AppState) {
 
     // Report checkbox - index = agent_count + 1
     let report_focused = state.ui.parallel_task_agent_idx == agent_count + 1;
-    let report_checkbox = if state.ui.parallel_task_request_report { "[x]" } else { "[ ]" };
+    let report_checkbox = if state.ui.parallel_task_request_report {
+        "[x]"
+    } else {
+        "[ ]"
+    };
     let report_line = if report_focused {
         Line::from(vec![
             Span::styled("  > ", Style::default().fg(Color::Yellow)),
             Span::styled(
                 report_checkbox,
-                Style::default()
-                    .fg(if state.ui.parallel_task_request_report { Color::Green } else { Color::Gray }),
+                Style::default().fg(if state.ui.parallel_task_request_report {
+                    Color::Green
+                } else {
+                    Color::Gray
+                }),
             ),
             Span::styled(
                 " Request report (PARALLEL_REPORT.md)",
@@ -184,8 +203,11 @@ pub fn render(frame: &mut Frame, state: &AppState) {
             Span::raw("    "),
             Span::styled(
                 report_checkbox,
-                Style::default()
-                    .fg(if state.ui.parallel_task_request_report { Color::Green } else { Color::DarkGray }),
+                Style::default().fg(if state.ui.parallel_task_request_report {
+                    Color::Green
+                } else {
+                    Color::DarkGray
+                }),
             ),
             Span::raw(" Request report (PARALLEL_REPORT.md)"),
         ])

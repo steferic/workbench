@@ -123,7 +123,8 @@ pub fn load() -> Result<PersistedState> {
     // (can happen if session was deleted without clearing the workspace reference)
     for workspace in state.workspaces.iter_mut() {
         if let Some(worktree_session_id) = workspace.active_worktree_session_id {
-            let session_exists = state.sessions
+            let session_exists = state
+                .sessions
                 .get(&workspace.id)
                 .map(|sessions| sessions.iter().any(|s| s.id == worktree_session_id))
                 .unwrap_or(false);
@@ -144,10 +145,7 @@ struct PersistedStateRef<'a> {
     notepad_content: &'a HashMap<Uuid, String>,
 }
 
-pub fn save(
-    workspaces: &[Workspace],
-    sessions: &HashMap<Uuid, Vec<Session>>,
-) -> Result<()> {
+pub fn save(workspaces: &[Workspace], sessions: &HashMap<Uuid, Vec<Session>>) -> Result<()> {
     static EMPTY: std::sync::LazyLock<HashMap<Uuid, String>> =
         std::sync::LazyLock::new(HashMap::new);
     save_with_notepad(workspaces, sessions, &EMPTY)

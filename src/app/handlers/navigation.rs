@@ -1,7 +1,11 @@
-use crate::app::{Action, AppState, Divider, FocusPanel, InputMode, TextSelection, UtilityItem, UtilitySection};
 use crate::app::pty_ops::resize_ptys_to_panes;
-use crate::app::selection::{clear_all_pinned_selections, copy_to_clipboard, extract_selected_text};
+use crate::app::selection::{
+    clear_all_pinned_selections, copy_to_clipboard, extract_selected_text,
+};
 use crate::app::session_start::start_workspace_sessions;
+use crate::app::{
+    Action, AppState, Divider, FocusPanel, InputMode, TextSelection, UtilityItem, UtilitySection,
+};
 use crate::persistence;
 use crate::pty::PtyManager;
 use anyhow::Result;
@@ -81,7 +85,11 @@ fn copy_active_selection(state: &mut AppState) -> bool {
                         if !raw_buf.bytes.is_empty() {
                             if let Some(parser) = state.system.output_buffers.get(&session_id) {
                                 let cols = parser.screen().size().1;
-                                let replay = create_replay_parser(raw_buf, cols, state.system.user_config.replay_parser_rows);
+                                let replay = create_replay_parser(
+                                    raw_buf,
+                                    cols,
+                                    state.system.user_config.replay_parser_rows,
+                                );
                                 let text = extract_selected_text(replay.screen(), start, end);
                                 copy_to_clipboard(&text);
                                 return true;
@@ -110,7 +118,11 @@ fn copy_active_selection(state: &mut AppState) -> bool {
                             if !raw_buf.bytes.is_empty() {
                                 if let Some(parser) = state.system.output_buffers.get(&session_id) {
                                     let cols = parser.screen().size().1;
-                                    let replay = create_replay_parser(raw_buf, cols, state.system.user_config.replay_parser_rows);
+                                    let replay = create_replay_parser(
+                                        raw_buf,
+                                        cols,
+                                        state.system.user_config.replay_parser_rows,
+                                    );
                                     let text = extract_selected_text(replay.screen(), start, end);
                                     copy_to_clipboard(&text);
                                     return true;
@@ -141,11 +153,8 @@ fn restore_workspace_session(state: &mut AppState) {
 
         if let Some(sessions) = state.data.sessions.get(&ws_id) {
             // Try to restore the last active session
-            let restored = last_session_id.and_then(|last_id| {
-                sessions.iter()
-                    .enumerate()
-                    .find(|(_, s)| s.id == last_id)
-            });
+            let restored = last_session_id
+                .and_then(|last_id| sessions.iter().enumerate().find(|(_, s)| s.id == last_id));
 
             if let Some((idx, session)) = restored {
                 state.ui.selected_session_idx = idx;
@@ -153,7 +162,8 @@ fn restore_workspace_session(state: &mut AppState) {
                 state.ui.output_scroll_offset = 0;
             } else {
                 // Fall back to first agent (non-terminal) session
-                let first_agent = sessions.iter()
+                let first_agent = sessions
+                    .iter()
                     .enumerate()
                     .find(|(_, s)| !s.agent_type.is_terminal());
 
@@ -267,7 +277,8 @@ pub fn handle_navigation_action(
                     }
                 }
             };
-            if prev_focus == FocusPanel::WorkspaceList && state.ui.focus == FocusPanel::SessionList {
+            if prev_focus == FocusPanel::WorkspaceList && state.ui.focus == FocusPanel::SessionList
+            {
                 start_workspace_sessions(state, pty_manager, pty_tx);
             }
         }
@@ -311,7 +322,10 @@ pub fn handle_navigation_action(
             use crate::models::WorkspaceStatus;
 
             // Only cycle through "Working" workspaces, in visual order
-            let working_indices: Vec<usize> = state.data.workspaces.iter()
+            let working_indices: Vec<usize> = state
+                .data
+                .workspaces
+                .iter()
                 .enumerate()
                 .filter(|(_, ws)| ws.status == WorkspaceStatus::Working)
                 .map(|(idx, _)| idx)
@@ -319,12 +333,17 @@ pub fn handle_navigation_action(
 
             if !working_indices.is_empty() {
                 // Save current active session to current workspace before switching
-                if let Some(current_ws) = state.data.workspaces.get_mut(state.ui.selected_workspace_idx) {
+                if let Some(current_ws) = state
+                    .data
+                    .workspaces
+                    .get_mut(state.ui.selected_workspace_idx)
+                {
                     current_ws.last_active_session_id = state.ui.active_session_id;
                 }
 
                 // Find current position in the working list
-                let current_pos = working_indices.iter()
+                let current_pos = working_indices
+                    .iter()
                     .position(|&idx| idx == state.ui.selected_workspace_idx);
 
                 // Move to next working workspace (or first if not currently on a working one)
@@ -339,12 +358,50 @@ pub fn handle_navigation_action(
                 restore_workspace_session(state);
             }
         }
+        Action::CyclePrevWorkspace => {
+            use crate::models::WorkspaceStatus;
+
+            let working_indices: Vec<usize> = state
+                .data
+                .workspaces
+                .iter()
+                .enumerate()
+                .filter(|(_, ws)| ws.status == WorkspaceStatus::Working)
+                .map(|(idx, _)| idx)
+                .collect();
+
+            if !working_indices.is_empty() {
+                if let Some(current_ws) = state
+                    .data
+                    .workspaces
+                    .get_mut(state.ui.selected_workspace_idx)
+                {
+                    current_ws.last_active_session_id = state.ui.active_session_id;
+                }
+
+                let current_pos = working_indices
+                    .iter()
+                    .position(|&idx| idx == state.ui.selected_workspace_idx);
+
+                let prev_idx = match current_pos {
+                    Some(pos) => {
+                        working_indices[(pos + working_indices.len() - 1) % working_indices.len()]
+                    }
+                    None => *working_indices.last().unwrap(),
+                };
+
+                state.ui.selected_workspace_idx = prev_idx;
+                restore_workspace_session(state);
+            }
+        }
         Action::CycleNextSession => {
             // Cycle through agents only (Agents -> Parallel), skip terminals
             // Get parallel task session IDs first
-            let parallel_session_ids: Vec<Uuid> = state.selected_workspace()
+            let parallel_session_ids: Vec<Uuid> = state
+                .selected_workspace()
                 .map(|ws| {
-                    ws.parallel_tasks.iter()
+                    ws.parallel_tasks
+                        .iter()
                         .flat_map(|t| t.attempts.iter().map(|a| a.session_id))
                         .collect()
                 })
@@ -355,27 +412,31 @@ pub fn handle_navigation_action(
                 let sessions = state.sessions_for_selected_workspace();
 
                 // Agents: non-terminal, non-parallel
-                let agent_indices: Vec<usize> = sessions.iter()
+                let agent_indices: Vec<usize> = sessions
+                    .iter()
                     .enumerate()
-                    .filter(|(_, s)| !s.agent_type.is_terminal() && !parallel_session_ids.contains(&s.id))
+                    .filter(|(_, s)| {
+                        !s.agent_type.is_terminal() && !parallel_session_ids.contains(&s.id)
+                    })
                     .map(|(i, _)| i)
                     .collect();
 
                 // Parallel sessions (these are also agents)
-                let parallel_indices: Vec<usize> = sessions.iter()
+                let parallel_indices: Vec<usize> = sessions
+                    .iter()
                     .enumerate()
                     .filter(|(_, s)| parallel_session_ids.contains(&s.id))
                     .map(|(i, _)| i)
                     .collect();
 
                 // Combined visual order (agents only, no terminals)
-                let visual_order: Vec<usize> = agent_indices.into_iter()
-                    .chain(parallel_indices)
-                    .collect();
+                let visual_order: Vec<usize> =
+                    agent_indices.into_iter().chain(parallel_indices).collect();
 
                 if !visual_order.is_empty() {
                     // Find current position in visual order
-                    let current_pos = visual_order.iter()
+                    let current_pos = visual_order
+                        .iter()
                         .position(|&idx| idx == state.ui.selected_session_idx);
 
                     // Move to next in visual order (or first if not found)
@@ -398,6 +459,63 @@ pub fn handle_navigation_action(
                 state.ui.focus = FocusPanel::OutputPane;
             }
         }
+        Action::CyclePrevSession => {
+            let parallel_session_ids: Vec<Uuid> = state
+                .selected_workspace()
+                .map(|ws| {
+                    ws.parallel_tasks
+                        .iter()
+                        .flat_map(|t| t.attempts.iter().map(|a| a.session_id))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            let session_info: Option<(usize, Uuid)> = {
+                let sessions = state.sessions_for_selected_workspace();
+
+                let agent_indices: Vec<usize> = sessions
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, s)| {
+                        !s.agent_type.is_terminal() && !parallel_session_ids.contains(&s.id)
+                    })
+                    .map(|(i, _)| i)
+                    .collect();
+
+                let parallel_indices: Vec<usize> = sessions
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, s)| parallel_session_ids.contains(&s.id))
+                    .map(|(i, _)| i)
+                    .collect();
+
+                let visual_order: Vec<usize> =
+                    agent_indices.into_iter().chain(parallel_indices).collect();
+
+                if !visual_order.is_empty() {
+                    let current_pos = visual_order
+                        .iter()
+                        .position(|&idx| idx == state.ui.selected_session_idx);
+
+                    let prev_visual_pos = match current_pos {
+                        Some(pos) => (pos + visual_order.len() - 1) % visual_order.len(),
+                        None => visual_order.len() - 1,
+                    };
+
+                    let prev_idx = visual_order[prev_visual_pos];
+                    sessions.get(prev_idx).map(|s| (prev_idx, s.id))
+                } else {
+                    None
+                }
+            };
+
+            if let Some((prev_idx, session_id)) = session_info {
+                state.ui.selected_session_idx = prev_idx;
+                state.ui.active_session_id = Some(session_id);
+                state.ui.output_scroll_offset = 0;
+                state.ui.focus = FocusPanel::OutputPane;
+            }
+        }
         Action::MouseClick(x, y) => {
             // Simplified MouseClick logic using stored areas
             let (w, h) = state.system.terminal_size;
@@ -405,7 +523,10 @@ pub fn handle_navigation_action(
             let divider_tolerance = 1u16;
 
             let left_width = (w as f32 * state.ui.left_panel_ratio) as u16;
-            if x >= left_width.saturating_sub(divider_tolerance) && x <= left_width + divider_tolerance && y < main_height {
+            if x >= left_width.saturating_sub(divider_tolerance)
+                && x <= left_width + divider_tolerance
+                && y < main_height
+            {
                 state.ui.dragging_divider = Some(Divider::LeftRight);
                 state.ui.drag_start_pos = Some((x, y));
                 state.ui.drag_start_ratio = state.ui.left_panel_ratio;
@@ -413,7 +534,10 @@ pub fn handle_navigation_action(
             }
 
             let workspace_height = (main_height as f32 * state.ui.workspace_ratio) as u16;
-            if x < left_width && y >= workspace_height.saturating_sub(divider_tolerance) && y <= workspace_height + divider_tolerance {
+            if x < left_width
+                && y >= workspace_height.saturating_sub(divider_tolerance)
+                && y <= workspace_height + divider_tolerance
+            {
                 state.ui.dragging_divider = Some(Divider::WorkspaceSession);
                 state.ui.drag_start_pos = Some((x, y));
                 state.ui.drag_start_ratio = state.ui.workspace_ratio;
@@ -424,7 +548,10 @@ pub fn handle_navigation_action(
             let sessions_height = (lower_left_height as f32 * state.ui.sessions_ratio) as u16;
             let sessions_todos_divider_y = workspace_height + sessions_height;
 
-            if x < left_width && y >= sessions_todos_divider_y.saturating_sub(divider_tolerance) && y <= sessions_todos_divider_y + divider_tolerance {
+            if x < left_width
+                && y >= sessions_todos_divider_y.saturating_sub(divider_tolerance)
+                && y <= sessions_todos_divider_y + divider_tolerance
+            {
                 state.ui.dragging_divider = Some(Divider::SessionsTodos);
                 state.ui.drag_start_pos = Some((x, y));
                 state.ui.drag_start_ratio = state.ui.sessions_ratio;
@@ -435,7 +562,10 @@ pub fn handle_navigation_action(
             let todos_height = (remaining_height as f32 * state.ui.todos_ratio) as u16;
             let todos_utilities_divider_y = sessions_todos_divider_y + todos_height;
 
-            if x < left_width && y >= todos_utilities_divider_y.saturating_sub(divider_tolerance) && y <= todos_utilities_divider_y + divider_tolerance {
+            if x < left_width
+                && y >= todos_utilities_divider_y.saturating_sub(divider_tolerance)
+                && y <= todos_utilities_divider_y + divider_tolerance
+            {
                 state.ui.dragging_divider = Some(Divider::TodosUtilities);
                 state.ui.drag_start_pos = Some((x, y));
                 state.ui.drag_start_ratio = state.ui.todos_ratio;
@@ -445,7 +575,10 @@ pub fn handle_navigation_action(
             if state.should_show_split() {
                 if let Some((ox, _, ow, _)) = state.ui.output_pane_area {
                     let divider_x = ox + ow;
-                    if x >= divider_x.saturating_sub(divider_tolerance) && x <= divider_x + divider_tolerance && y < main_height {
+                    if x >= divider_x.saturating_sub(divider_tolerance)
+                        && x <= divider_x + divider_tolerance
+                        && y < main_height
+                    {
                         state.ui.dragging_divider = Some(Divider::OutputPinned);
                         state.ui.drag_start_pos = Some((x, y));
                         state.ui.drag_start_ratio = state.ui.output_split_ratio;
@@ -458,12 +591,16 @@ pub fn handle_navigation_action(
                     for pane_idx in 0..(pinned_count - 1) {
                         if let Some((_, py, _, ph)) = state.ui.pinned_pane_areas[pane_idx] {
                             let divider_y = py + ph;
-                            if y >= divider_y.saturating_sub(divider_tolerance) && y <= divider_y + divider_tolerance {
+                            if y >= divider_y.saturating_sub(divider_tolerance)
+                                && y <= divider_y + divider_tolerance
+                            {
                                 if let Some((px, _, pw, _)) = state.ui.pinned_pane_areas[0] {
                                     if x >= px && x < px + pw {
-                                        state.ui.dragging_divider = Some(Divider::PinnedPanes(pane_idx));
+                                        state.ui.dragging_divider =
+                                            Some(Divider::PinnedPanes(pane_idx));
                                         state.ui.drag_start_pos = Some((x, y));
-                                        state.ui.drag_start_ratio = state.ui.pinned_pane_ratios[pane_idx];
+                                        state.ui.drag_start_ratio =
+                                            state.ui.pinned_pane_ratios[pane_idx];
                                         return Ok(());
                                     }
                                 }
@@ -568,26 +705,34 @@ pub fn handle_navigation_action(
                         state.ui.workspace_ratio = new_ratio;
                     }
                     Divider::SessionsTodos => {
-                        let workspace_height = (main_height as f32 * state.ui.workspace_ratio) as u16;
+                        let workspace_height =
+                            (main_height as f32 * state.ui.workspace_ratio) as u16;
                         let lower_left_height = main_height.saturating_sub(workspace_height);
                         let y_in_lower_left = y.saturating_sub(workspace_height);
-                        let new_ratio = (y_in_lower_left as f32 / lower_left_height as f32).clamp(0.15, 0.70);
+                        let new_ratio =
+                            (y_in_lower_left as f32 / lower_left_height as f32).clamp(0.15, 0.70);
                         state.ui.sessions_ratio = new_ratio;
                     }
                     Divider::TodosUtilities => {
-                        let workspace_height = (main_height as f32 * state.ui.workspace_ratio) as u16;
+                        let workspace_height =
+                            (main_height as f32 * state.ui.workspace_ratio) as u16;
                         let lower_left_height = main_height.saturating_sub(workspace_height);
-                        let sessions_height = (lower_left_height as f32 * state.ui.sessions_ratio) as u16;
+                        let sessions_height =
+                            (lower_left_height as f32 * state.ui.sessions_ratio) as u16;
                         let remaining_height = lower_left_height.saturating_sub(sessions_height);
-                        let y_in_remaining = y.saturating_sub(workspace_height).saturating_sub(sessions_height);
-                        let new_ratio = (y_in_remaining as f32 / remaining_height as f32).clamp(0.20, 0.80);
+                        let y_in_remaining = y
+                            .saturating_sub(workspace_height)
+                            .saturating_sub(sessions_height);
+                        let new_ratio =
+                            (y_in_remaining as f32 / remaining_height as f32).clamp(0.20, 0.80);
                         state.ui.todos_ratio = new_ratio;
                     }
                     Divider::OutputPinned => {
                         let left_width = (w as f32 * state.ui.left_panel_ratio) as u16;
                         let right_panel_width = w.saturating_sub(left_width);
                         let x_in_right = x.saturating_sub(left_width);
-                        let new_ratio = (x_in_right as f32 / right_panel_width as f32).clamp(0.20, 0.80);
+                        let new_ratio =
+                            (x_in_right as f32 / right_panel_width as f32).clamp(0.20, 0.80);
                         state.ui.output_split_ratio = new_ratio;
                     }
                     Divider::PinnedPanes(pane_idx) => {
@@ -597,7 +742,10 @@ pub fn handle_navigation_action(
                             let sum: f32 = ratios.iter().take(count).sum();
 
                             if let Some((_, py, _, _)) = state.ui.pinned_pane_areas[0] {
-                                let pinned_total_height = state.ui.pinned_pane_areas.iter()
+                                let pinned_total_height = state
+                                    .ui
+                                    .pinned_pane_areas
+                                    .iter()
                                     .take(count)
                                     .filter_map(|a| a.map(|(_, _, _, h)| h))
                                     .sum::<u16>();
@@ -608,7 +756,8 @@ pub fn handle_navigation_action(
                                 let combined_ratio = ratios[pane_idx] + ratios[pane_idx + 1];
                                 let ratio_above: f32 = ratios.iter().take(pane_idx).sum();
 
-                                let new_upper_ratio = ((new_split - ratio_above / sum) * sum).clamp(0.1, combined_ratio - 0.1);
+                                let new_upper_ratio = ((new_split - ratio_above / sum) * sum)
+                                    .clamp(0.1, combined_ratio - 0.1);
                                 ratios[pane_idx] = new_upper_ratio;
                                 ratios[pane_idx + 1] = combined_ratio - new_upper_ratio;
 
@@ -732,7 +881,11 @@ pub fn handle_navigation_action(
                 }
                 // Save notepad contents after paste
                 let notepad_contents = state.notepad_content_for_persistence();
-                let _ = persistence::save_with_notepad(&state.data.workspaces, &state.data.sessions, &notepad_contents);
+                let _ = persistence::save_with_notepad(
+                    &state.data.workspaces,
+                    &state.data.sessions,
+                    &notepad_contents,
+                );
             } else if let Some(session_id) = paste_target_session_id(state) {
                 let data = bracketed_paste_payload(&text);
                 if let Some(handle) = state.system.pty_handles.get_mut(&session_id) {
@@ -753,21 +906,29 @@ pub fn handle_navigation_action(
             match state.ui.utility_section {
                 UtilitySection::Utilities => {
                     let tools = UtilityItem::tools();
-                    let current_idx = tools.iter().position(|u| *u == state.ui.selected_utility).unwrap_or(0);
+                    let current_idx = tools
+                        .iter()
+                        .position(|u| *u == state.ui.selected_utility)
+                        .unwrap_or(0);
                     if current_idx < tools.len() - 1 {
                         state.ui.selected_utility = tools[current_idx + 1];
                     }
                 }
                 UtilitySection::Sounds => {
                     let sounds = UtilityItem::sounds();
-                    let current_idx = sounds.iter().position(|u| *u == state.ui.selected_sound).unwrap_or(0);
+                    let current_idx = sounds
+                        .iter()
+                        .position(|u| *u == state.ui.selected_sound)
+                        .unwrap_or(0);
                     if current_idx < sounds.len() - 1 {
                         state.ui.selected_sound = sounds[current_idx + 1];
                     }
                 }
                 UtilitySection::GlobalConfig => {
                     // Navigate config tree
-                    if state.ui.config_tree_selected < state.ui.config_tree_nodes.len().saturating_sub(1) {
+                    if state.ui.config_tree_selected
+                        < state.ui.config_tree_nodes.len().saturating_sub(1)
+                    {
                         state.ui.config_tree_selected += 1;
                     }
                 }
@@ -778,14 +939,20 @@ pub fn handle_navigation_action(
             match state.ui.utility_section {
                 UtilitySection::Utilities => {
                     let tools = UtilityItem::tools();
-                    let current_idx = tools.iter().position(|u| *u == state.ui.selected_utility).unwrap_or(0);
+                    let current_idx = tools
+                        .iter()
+                        .position(|u| *u == state.ui.selected_utility)
+                        .unwrap_or(0);
                     if current_idx > 0 {
                         state.ui.selected_utility = tools[current_idx - 1];
                     }
                 }
                 UtilitySection::Sounds => {
                     let sounds = UtilityItem::sounds();
-                    let current_idx = sounds.iter().position(|u| *u == state.ui.selected_sound).unwrap_or(0);
+                    let current_idx = sounds
+                        .iter()
+                        .position(|u| *u == state.ui.selected_sound)
+                        .unwrap_or(0);
                     if current_idx > 0 {
                         state.ui.selected_sound = sounds[current_idx - 1];
                     }
@@ -802,7 +969,9 @@ pub fn handle_navigation_action(
         Action::ToggleUtilitySection => {
             state.ui.utility_section = state.ui.utility_section.toggle();
             // Initialize config tree when switching to GlobalConfig section
-            if state.ui.utility_section == UtilitySection::GlobalConfig && state.ui.config_tree_nodes.is_empty() {
+            if state.ui.utility_section == UtilitySection::GlobalConfig
+                && state.ui.config_tree_nodes.is_empty()
+            {
                 crate::app::utilities::init_config_tree(state);
             }
         }
@@ -869,8 +1038,10 @@ pub fn handle_drag_auto_scroll(state: &mut AppState) {
             let speed = if distance_from_edge == 0 {
                 MAX_SCROLL_SPEED
             } else {
-                let ratio = (SCROLL_EDGE_ZONE.saturating_sub(distance_from_edge)) as f32 / SCROLL_EDGE_ZONE as f32;
-                (BASE_SCROLL_SPEED as f32 + (MAX_SCROLL_SPEED - BASE_SCROLL_SPEED) as f32 * ratio) as u16
+                let ratio = (SCROLL_EDGE_ZONE.saturating_sub(distance_from_edge)) as f32
+                    / SCROLL_EDGE_ZONE as f32;
+                (BASE_SCROLL_SPEED as f32 + (MAX_SCROLL_SPEED - BASE_SCROLL_SPEED) as f32 * ratio)
+                    as u16
             };
             (true, false, speed.max(BASE_SCROLL_SPEED))
         } else if y >= bottom_threshold {
@@ -879,8 +1050,10 @@ pub fn handle_drag_auto_scroll(state: &mut AppState) {
             let speed = if distance_from_edge == 0 {
                 MAX_SCROLL_SPEED
             } else {
-                let ratio = (SCROLL_EDGE_ZONE.saturating_sub(distance_from_edge)) as f32 / SCROLL_EDGE_ZONE as f32;
-                (BASE_SCROLL_SPEED as f32 + (MAX_SCROLL_SPEED - BASE_SCROLL_SPEED) as f32 * ratio) as u16
+                let ratio = (SCROLL_EDGE_ZONE.saturating_sub(distance_from_edge)) as f32
+                    / SCROLL_EDGE_ZONE as f32;
+                (BASE_SCROLL_SPEED as f32 + (MAX_SCROLL_SPEED - BASE_SCROLL_SPEED) as f32 * ratio)
+                    as u16
             };
             (false, true, speed.max(BASE_SCROLL_SPEED))
         } else {
@@ -930,7 +1103,8 @@ pub fn handle_drag_auto_scroll(state: &mut AppState) {
                 let (scroll_up, scroll_down, speed) = calc_scroll(mouse_y, pane_top, pane_bottom);
 
                 if scroll_up {
-                    state.ui.pinned_scroll_offsets[idx] = state.ui.pinned_scroll_offsets[idx].saturating_add(speed);
+                    state.ui.pinned_scroll_offsets[idx] =
+                        state.ui.pinned_scroll_offsets[idx].saturating_add(speed);
                     if let Some((row, col)) = pane_text_position(
                         (ax, ay, aw, ah),
                         mouse_x,
@@ -941,7 +1115,8 @@ pub fn handle_drag_auto_scroll(state: &mut AppState) {
                         state.ui.pinned_text_selections[idx].end = Some((row, col));
                     }
                 } else if scroll_down {
-                    state.ui.pinned_scroll_offsets[idx] = state.ui.pinned_scroll_offsets[idx].saturating_sub(speed);
+                    state.ui.pinned_scroll_offsets[idx] =
+                        state.ui.pinned_scroll_offsets[idx].saturating_sub(speed);
                     if let Some((row, col)) = pane_text_position(
                         (ax, ay, aw, ah),
                         mouse_x,

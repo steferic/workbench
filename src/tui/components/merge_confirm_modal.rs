@@ -25,13 +25,22 @@ pub fn render(frame: &mut Frame, state: &AppState) {
 
     // Get merge info
     let (branch_name, main_branch) = if let Some(session_id) = state.ui.merging_session_id {
-        let session_info = state.data.sessions.values()
+        let session_info = state
+            .data
+            .sessions
+            .values()
             .flatten()
             .find(|s| s.id == session_id);
 
         if let Some(session) = session_info {
-            let branch = session.worktree_branch.clone().unwrap_or_else(|| "unknown".to_string());
-            let workspace_path = state.data.workspaces.iter()
+            let branch = session
+                .worktree_branch
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string());
+            let workspace_path = state
+                .data
+                .workspaces
+                .iter()
                 .find(|w| w.id == session.workspace_id)
                 .map(|w| w.path.clone());
 
@@ -65,11 +74,15 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     let message = Paragraph::new(vec![
         Line::from(vec![
             Span::styled("⚠ ", Style::default().fg(Color::Yellow)),
-            Span::styled("Worktree has uncommitted changes", Style::default().fg(Color::White)),
+            Span::styled(
+                "Worktree has uncommitted changes",
+                Style::default().fg(Color::White),
+            ),
         ]),
-        Line::from(vec![
-            Span::styled("  Commit all changes and merge?", Style::default().fg(Color::Gray)),
-        ]),
+        Line::from(vec![Span::styled(
+            "  Commit all changes and merge?",
+            Style::default().fg(Color::Gray),
+        )]),
     ]);
     frame.render_widget(message, message_area);
 
@@ -77,18 +90,33 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     let branch_info = Paragraph::new(vec![
         Line::from(vec![
             Span::styled("  From: ", Style::default().fg(Color::Gray)),
-            Span::styled(&branch_name, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                &branch_name,
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]),
         Line::from(vec![
             Span::styled("  Into: ", Style::default().fg(Color::Gray)),
-            Span::styled(&main_branch, Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                &main_branch,
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]),
     ]);
     frame.render_widget(branch_info, branch_area);
 
     // Help
     let help = Paragraph::new(Line::from(vec![
-        Span::styled("[Y/Enter]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "[Y/Enter]",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" Commit & Merge  "),
         Span::styled("[N/Esc]", Style::default().fg(Color::Red)),
         Span::raw(" Cancel"),

@@ -1,5 +1,7 @@
-use crate::app::{Action, AppState, InputMode, PendingDelete, PendingSessionStart, WorkspaceAction};
 use crate::app::handlers::session::terminate_session_handle;
+use crate::app::{
+    Action, AppState, InputMode, PendingDelete, PendingSessionStart, WorkspaceAction,
+};
 use crate::models::{SessionStatus, Workspace, WorkspaceStatus};
 use crate::persistence;
 use crate::pty::PtyManager;
@@ -22,17 +24,24 @@ pub fn handle_workspace_action(
                 let old_status = ws.status;
 
                 // Toggle the status
-                if let Some(ws) = state.data.workspaces.get_mut(state.ui.selected_workspace_idx) {
+                if let Some(ws) = state
+                    .data
+                    .workspaces
+                    .get_mut(state.ui.selected_workspace_idx)
+                {
                     ws.toggle_status();
                 }
 
                 match old_status {
                     WorkspaceStatus::Working => {
                         // Pausing: tear down all PTYs, buffers, and activity tracking
-                        let session_ids: Vec<_> = state.data.sessions
+                        let session_ids: Vec<_> = state
+                            .data
+                            .sessions
                             .get(&workspace_id)
                             .map(|sessions| {
-                                sessions.iter()
+                                sessions
+                                    .iter()
                                     .filter(|s| s.status == SessionStatus::Running)
                                     .map(|s| (s.id, s.agent_type.is_terminal()))
                                     .collect()
@@ -67,7 +76,11 @@ pub fn handle_workspace_action(
                         // Save and clear active session if it belonged to this workspace
                         if let Some(active_id) = state.ui.active_session_id {
                             if ids.contains(&active_id) {
-                                if let Some(ws) = state.data.workspaces.get_mut(state.ui.selected_workspace_idx) {
+                                if let Some(ws) = state
+                                    .data
+                                    .workspaces
+                                    .get_mut(state.ui.selected_workspace_idx)
+                                {
                                     ws.last_active_session_id = Some(active_id);
                                 }
                                 state.ui.active_session_id = None;
@@ -76,18 +89,27 @@ pub fn handle_workspace_action(
                     }
                     WorkspaceStatus::Paused => {
                         // Resuming: queue stopped sessions for staggered startup
-                        let stopped_sessions: Vec<PendingSessionStart> = state.data.sessions
+                        let stopped_sessions: Vec<PendingSessionStart> = state
+                            .data
+                            .sessions
                             .get(&workspace_id)
                             .map(|sessions| {
-                                sessions.iter()
-                                    .filter(|s| matches!(s.status, SessionStatus::Stopped | SessionStatus::Errored))
+                                sessions
+                                    .iter()
+                                    .filter(|s| {
+                                        matches!(
+                                            s.status,
+                                            SessionStatus::Stopped | SessionStatus::Errored
+                                        )
+                                    })
                                     .map(|s| PendingSessionStart {
                                         session_id: s.id,
                                         workspace_id,
                                         workspace_path: workspace_path.clone(),
                                         agent_type: s.agent_type.clone(),
                                         start_command: s.start_command.clone(),
-                                        dangerously_skip_permissions: s.dangerously_skip_permissions,
+                                        dangerously_skip_permissions: s
+                                            .dangerously_skip_permissions,
                                         worktree_path: s.worktree_path.clone(),
                                     })
                                     .collect()
@@ -99,12 +121,15 @@ pub fn handle_workspace_action(
                         }
 
                         // Restore the last active session for this workspace
-                        if let Some(ws) = state.data.workspaces.get(state.ui.selected_workspace_idx) {
+                        if let Some(ws) = state.data.workspaces.get(state.ui.selected_workspace_idx)
+                        {
                             if let Some(last_id) = ws.last_active_session_id {
                                 state.ui.active_session_id = Some(last_id);
                                 state.ui.output_scroll_offset = 0;
                                 if let Some(sessions) = state.data.sessions.get(&workspace_id) {
-                                    if let Some((idx, _)) = sessions.iter().enumerate().find(|(_, s)| s.id == last_id) {
+                                    if let Some((idx, _)) =
+                                        sessions.iter().enumerate().find(|(_, s)| s.id == last_id)
+                                    {
                                         state.ui.selected_session_idx = idx;
                                     }
                                 }
@@ -133,7 +158,9 @@ pub fn handle_workspace_action(
                 // Remove the workspace
                 if let Some(idx) = state.data.workspaces.iter().position(|w| w.id == id) {
                     state.data.workspaces.remove(idx);
-                    if state.ui.selected_workspace_idx >= state.data.workspaces.len() && !state.data.workspaces.is_empty() {
+                    if state.ui.selected_workspace_idx >= state.data.workspaces.len()
+                        && !state.data.workspaces.is_empty()
+                    {
                         state.ui.selected_workspace_idx = state.data.workspaces.len() - 1;
                     }
                     state.ui.selected_session_idx = 0;
@@ -147,38 +174,42 @@ pub fn handle_workspace_action(
         }
         Action::NextWorkspaceChoice => {
             let actions = WorkspaceAction::all();
-            let current_idx = actions.iter().position(|a| *a == state.ui.selected_workspace_action).unwrap_or(0);
+            let current_idx = actions
+                .iter()
+                .position(|a| *a == state.ui.selected_workspace_action)
+                .unwrap_or(0);
             if current_idx < actions.len() - 1 {
                 state.ui.selected_workspace_action = actions[current_idx + 1];
             }
         }
         Action::PrevWorkspaceChoice => {
             let actions = WorkspaceAction::all();
-            let current_idx = actions.iter().position(|a| *a == state.ui.selected_workspace_action).unwrap_or(0);
+            let current_idx = actions
+                .iter()
+                .position(|a| *a == state.ui.selected_workspace_action)
+                .unwrap_or(0);
             if current_idx > 0 {
                 state.ui.selected_workspace_action = actions[current_idx - 1];
             }
         }
-        Action::ConfirmWorkspaceChoice => {
-            match state.ui.selected_workspace_action {
-                WorkspaceAction::CreateNew => {
-                    state.ui.workspace_create_mode = true;
-                    state.ui.input_mode = InputMode::CreateWorkspace;
-                    state.ui.input_buffer.clear();
-                    state.ui.file_browser_query.clear();
-                    state.ui.file_browser_path = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
-                    state.refresh_file_browser();
-                }
-                WorkspaceAction::OpenExisting => {
-                    state.ui.workspace_create_mode = false;
-                    state.ui.input_mode = InputMode::CreateWorkspace;
-                    state.ui.input_buffer.clear();
-                    state.ui.file_browser_query.clear();
-                    state.ui.file_browser_path = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
-                    state.refresh_file_browser();
-                }
+        Action::ConfirmWorkspaceChoice => match state.ui.selected_workspace_action {
+            WorkspaceAction::CreateNew => {
+                state.ui.workspace_create_mode = true;
+                state.ui.input_mode = InputMode::CreateWorkspace;
+                state.ui.input_buffer.clear();
+                state.ui.file_browser_query.clear();
+                state.ui.file_browser_path = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
+                state.refresh_file_browser();
             }
-        }
+            WorkspaceAction::OpenExisting => {
+                state.ui.workspace_create_mode = false;
+                state.ui.input_mode = InputMode::CreateWorkspace;
+                state.ui.input_buffer.clear();
+                state.ui.file_browser_query.clear();
+                state.ui.file_browser_path = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
+                state.refresh_file_browser();
+            }
+        },
         Action::EnterWorkspaceNameMode => {
             state.ui.input_mode = InputMode::EnterWorkspaceName;
             state.ui.input_buffer.clear();

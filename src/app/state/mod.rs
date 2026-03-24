@@ -56,7 +56,8 @@ impl AppState {
         let right_panel_width = (w as f32 * (1.0 - self.ui.left_panel_ratio)) as u16;
 
         if self.should_show_split() {
-            let pinned_width = (right_panel_width as f32 * (1.0 - self.ui.output_split_ratio)) as u16;
+            let pinned_width =
+                (right_panel_width as f32 * (1.0 - self.ui.output_split_ratio)) as u16;
             pinned_width.saturating_sub(2)
         } else {
             0
@@ -88,13 +89,19 @@ impl AppState {
 
     /// Returns workspace indices in visual order (Working first, then Paused)
     pub fn workspace_visual_order(&self) -> Vec<usize> {
-        let mut working: Vec<usize> = self.data.workspaces.iter()
+        let mut working: Vec<usize> = self
+            .data
+            .workspaces
+            .iter()
             .enumerate()
             .filter(|(_, ws)| ws.status == WorkspaceStatus::Working)
             .map(|(i, _)| i)
             .collect();
 
-        let paused: Vec<usize> = self.data.workspaces.iter()
+        let paused: Vec<usize> = self
+            .data
+            .workspaces
+            .iter()
             .enumerate()
             .filter(|(_, ws)| ws.status == WorkspaceStatus::Paused)
             .map(|(i, _)| i)
@@ -112,7 +119,10 @@ impl AppState {
         }
 
         // Find current position in visual order
-        if let Some(pos) = visual_order.iter().position(|&idx| idx == self.ui.selected_workspace_idx) {
+        if let Some(pos) = visual_order
+            .iter()
+            .position(|&idx| idx == self.ui.selected_workspace_idx)
+        {
             if pos > 0 {
                 self.ui.selected_workspace_idx = visual_order[pos - 1];
                 self.ui.selected_session_idx = 0;
@@ -128,7 +138,10 @@ impl AppState {
         }
 
         // Find current position in visual order
-        if let Some(pos) = visual_order.iter().position(|&idx| idx == self.ui.selected_workspace_idx) {
+        if let Some(pos) = visual_order
+            .iter()
+            .position(|&idx| idx == self.ui.selected_workspace_idx)
+        {
             if pos < visual_order.len() - 1 {
                 self.ui.selected_workspace_idx = visual_order[pos + 1];
                 self.ui.selected_session_idx = 0;
@@ -140,13 +153,15 @@ impl AppState {
     pub fn session_visual_order(&self) -> Vec<usize> {
         let sessions = self.sessions_for_selected_workspace();
 
-        let mut agents: Vec<usize> = sessions.iter()
+        let mut agents: Vec<usize> = sessions
+            .iter()
             .enumerate()
             .filter(|(_, s)| !s.agent_type.is_terminal())
             .map(|(i, _)| i)
             .collect();
 
-        let terminals: Vec<usize> = sessions.iter()
+        let terminals: Vec<usize> = sessions
+            .iter()
             .enumerate()
             .filter(|(_, s)| s.agent_type.is_terminal())
             .map(|(i, _)| i)
@@ -164,7 +179,10 @@ impl AppState {
         }
 
         // Find current position in visual order
-        if let Some(pos) = visual_order.iter().position(|&idx| idx == self.ui.selected_session_idx) {
+        if let Some(pos) = visual_order
+            .iter()
+            .position(|&idx| idx == self.ui.selected_session_idx)
+        {
             if pos > 0 {
                 self.ui.selected_session_idx = visual_order[pos - 1];
             }
@@ -179,7 +197,10 @@ impl AppState {
         }
 
         // Find current position in visual order
-        if let Some(pos) = visual_order.iter().position(|&idx| idx == self.ui.selected_session_idx) {
+        if let Some(pos) = visual_order
+            .iter()
+            .position(|&idx| idx == self.ui.selected_session_idx)
+        {
             if pos < visual_order.len() - 1 {
                 self.ui.selected_session_idx = visual_order[pos + 1];
             }
@@ -194,7 +215,8 @@ impl AppState {
     }
 
     pub fn selected_session(&self) -> Option<&Session> {
-        self.sessions_for_selected_workspace().get(self.ui.selected_session_idx)
+        self.sessions_for_selected_workspace()
+            .get(self.ui.selected_session_idx)
     }
 
     /// Check if the active session is one of the pinned terminals
@@ -213,7 +235,8 @@ impl AppState {
         if self.should_show_split() && self.active_is_pinned() {
             return None;
         }
-        self.ui.active_session_id
+        self.ui
+            .active_session_id
             .and_then(|id| self.system.output_buffers.get(&id))
     }
 
@@ -223,12 +246,9 @@ impl AppState {
         if self.should_show_split() && self.active_is_pinned() {
             return None;
         }
-        self.ui.active_session_id.and_then(|id| {
-            self.data.sessions
-                .values()
-                .flatten()
-                .find(|s| s.id == id)
-        })
+        self.ui
+            .active_session_id
+            .and_then(|id| self.data.sessions.values().flatten().find(|s| s.id == id))
     }
 
     /// Get all pinned terminal IDs for the current workspace
@@ -259,12 +279,8 @@ impl AppState {
 
     /// Get the pinned terminal session at a specific index
     pub fn pinned_terminal_session_at(&self, index: usize) -> Option<&Session> {
-        self.pinned_terminal_id_at(index).and_then(|id| {
-            self.data.sessions
-                .values()
-                .flatten()
-                .find(|s| s.id == id)
-        })
+        self.pinned_terminal_id_at(index)
+            .and_then(|id| self.data.sessions.values().flatten().find(|s| s.id == id))
     }
 
     /// Check if we should show split view (has at least one pinned terminal and split is enabled)
@@ -280,7 +296,13 @@ impl AppState {
             return vec![];
         }
 
-        let ratios: Vec<f32> = self.ui.pinned_pane_ratios.iter().take(count).copied().collect();
+        let ratios: Vec<f32> = self
+            .ui
+            .pinned_pane_ratios
+            .iter()
+            .take(count)
+            .copied()
+            .collect();
         let sum: f32 = ratios.iter().sum();
 
         if sum <= 0.0 {
@@ -297,14 +319,16 @@ impl AppState {
 
     pub fn add_session(&mut self, session: Session) {
         let workspace_id = session.workspace_id;
-        self.data.sessions
+        self.data
+            .sessions
             .entry(workspace_id)
             .or_default()
             .push(session);
     }
 
     pub fn get_session_mut(&mut self, session_id: Uuid) -> Option<&mut Session> {
-        self.data.sessions
+        self.data
+            .sessions
             .values_mut()
             .flatten()
             .find(|s| s.id == session_id)
@@ -312,19 +336,21 @@ impl AppState {
 
     /// Get the workspace ID that contains a session
     pub fn workspace_id_for_session(&self, session_id: Uuid) -> Option<Uuid> {
-        self.data.sessions.iter()
-            .find_map(|(ws_id, sessions)| {
-                if sessions.iter().any(|s| s.id == session_id) {
-                    Some(*ws_id)
-                } else {
-                    None
-                }
-            })
+        self.data.sessions.iter().find_map(|(ws_id, sessions)| {
+            if sessions.iter().any(|s| s.id == session_id) {
+                Some(*ws_id)
+            } else {
+                None
+            }
+        })
     }
 
     /// Get mutable reference to workspace by ID
     pub fn get_workspace_mut(&mut self, workspace_id: Uuid) -> Option<&mut Workspace> {
-        self.data.workspaces.iter_mut().find(|ws| ws.id == workspace_id)
+        self.data
+            .workspaces
+            .iter_mut()
+            .find(|ws| ws.id == workspace_id)
     }
 
     /// Get reference to workspace by ID
@@ -365,19 +391,27 @@ impl AppState {
 
     /// Check how long a session has been working in its current burst (in seconds)
     pub fn session_work_duration(&self, session_id: Uuid) -> f32 {
-        self.data.work_started.get(&session_id)
+        self.data
+            .work_started
+            .get(&session_id)
             .map(|started| started.elapsed().as_secs_f32())
             .unwrap_or(0.0)
     }
 
     /// Check if a workspace has sessions waiting to start in the startup queue
     pub fn is_workspace_loading(&self, workspace_id: Uuid) -> bool {
-        self.system.startup_queue.iter().any(|p| p.workspace_id == workspace_id)
+        self.system
+            .startup_queue
+            .iter()
+            .any(|p| p.workspace_id == workspace_id)
     }
 
     /// Get spinner character for animation
     pub fn spinner_char(&self) -> &'static str {
-        const SPINNER_FRAMES: &[&str] = &["\u{280B}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283C}", "\u{2834}", "\u{2826}", "\u{2827}", "\u{2807}", "\u{280F}"];
+        const SPINNER_FRAMES: &[&str] = &[
+            "\u{280B}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283C}", "\u{2834}", "\u{2826}",
+            "\u{2827}", "\u{2807}", "\u{280F}",
+        ];
         SPINNER_FRAMES[self.system.animation_frame % SPINNER_FRAMES.len()]
     }
 
@@ -399,13 +433,19 @@ impl AppState {
     /// Returns IDs of sessions that just became idle (new to the queue)
     pub fn update_idle_queue(&mut self) -> Vec<Uuid> {
         // Get IDs of "Working" workspaces only
-        let working_workspace_ids: Vec<Uuid> = self.data.workspaces.iter()
+        let working_workspace_ids: Vec<Uuid> = self
+            .data
+            .workspaces
+            .iter()
             .filter(|ws| ws.status == WorkspaceStatus::Working)
             .map(|ws| ws.id)
             .collect();
 
         // Get all running AGENT sessions from WORKING workspaces (exclude terminals)
-        let running_agent_sessions: Vec<Uuid> = self.data.sessions.iter()
+        let running_agent_sessions: Vec<Uuid> = self
+            .data
+            .sessions
+            .iter()
             .filter(|(ws_id, _)| working_workspace_ids.contains(ws_id))
             .flat_map(|(_, sessions)| sessions)
             .filter(|s| s.status == SessionStatus::Running && s.agent_type.is_agent())
@@ -413,15 +453,16 @@ impl AppState {
             .collect();
 
         // Check which sessions are currently working (to avoid borrow issues)
-        let working_sessions: Vec<Uuid> = running_agent_sessions.iter()
+        let working_sessions: Vec<Uuid> = running_agent_sessions
+            .iter()
             .filter(|id| self.is_session_working(**id))
             .copied()
             .collect();
 
         // Remove sessions that are no longer running or are now working
-        self.data.idle_queue.retain(|id| {
-            running_agent_sessions.contains(id) && !working_sessions.contains(id)
-        });
+        self.data
+            .idle_queue
+            .retain(|id| running_agent_sessions.contains(id) && !working_sessions.contains(id));
 
         // Track which sessions are newly idle
         let mut newly_idle = Vec::new();
@@ -446,7 +487,8 @@ impl AppState {
     }
 
     pub fn running_session_count(&self) -> usize {
-        self.data.sessions
+        self.data
+            .sessions
             .values()
             .flatten()
             .filter(|s| s.status == SessionStatus::Running)
@@ -455,7 +497,8 @@ impl AppState {
 
     /// Check if any agent in a workspace is actively working
     pub fn is_workspace_working(&self, workspace_id: Uuid) -> bool {
-        self.data.sessions
+        self.data
+            .sessions
             .get(&workspace_id)
             .map(|sessions| {
                 sessions
@@ -474,7 +517,9 @@ impl AppState {
 
     /// Get notepad content as string for persistence
     pub fn notepad_content_for_persistence(&self) -> HashMap<Uuid, String> {
-        self.data.notepads.iter()
+        self.data
+            .notepads
+            .iter()
             .map(|(id, ta)| (*id, ta.lines().join("\n")))
             .filter(|(_, content)| !content.is_empty())
             .collect()

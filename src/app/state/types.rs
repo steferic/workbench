@@ -11,17 +11,17 @@ pub enum FocusPanel {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputMode {
     Normal,
-    SelectWorkspaceAction,  // Choose between Create New or Open Existing
-    CreateWorkspace,        // Browse to select existing directory (Open Existing)
-    EnterWorkspaceName,     // Enter name for new workspace (Create New)
+    SelectWorkspaceAction, // Choose between Create New or Open Existing
+    CreateWorkspace,       // Browse to select existing directory (Open Existing)
+    EnterWorkspaceName,    // Enter name for new workspace (Create New)
     CreateSession,
     CreateTodo,
     SetStartCommand,
-    CreateParallelTask,     // Modal for starting a parallel task
-    ConfirmMergeWorktree,   // Confirm commit and merge worktree
-    ConfirmParallelMerge,   // Confirm commit and merge parallel task worktree
-    ConfigWindow,  // F12 configuration window
-    CommandPalette, // Ctrl+P command palette
+    CreateParallelTask,   // Modal for starting a parallel task
+    ConfirmMergeWorktree, // Confirm commit and merge worktree
+    ConfirmParallelMerge, // Confirm commit and merge parallel task worktree
+    ConfigWindow,         // F1 configuration window
+    CommandPalette,       // Ctrl+P command palette
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -71,9 +71,9 @@ impl WorkspaceAction {
 /// Pending delete confirmation
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PendingDelete {
-    Session(uuid::Uuid, String),    // Session ID and name for display
-    Workspace(uuid::Uuid, String),  // Workspace ID and name for display
-    Todo(uuid::Uuid, String),       // Todo ID and description for display
+    Session(uuid::Uuid, String),   // Session ID and name for display
+    Workspace(uuid::Uuid, String), // Workspace ID and name for display
+    Todo(uuid::Uuid, String),      // Todo ID and description for display
 }
 
 /// Sections in the utilities pane
@@ -101,7 +101,7 @@ impl UtilitySection {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TodoPaneMode {
     #[default]
-    Write,   // Manual mode - create todos and run one at a time
+    Write, // Manual mode - create todos and run one at a time
     Autorun, // Auto-dispatch todos to idle agents sequentially
 }
 
@@ -120,7 +120,7 @@ pub enum TodosTab {
     #[default]
     Active,
     Archived,
-    Reports,  // Reports from parallel task agents
+    Reports, // Reports from parallel task agents
 }
 
 impl TodosTab {
@@ -229,11 +229,24 @@ pub enum ConfigItem {
 #[allow(dead_code)]
 pub enum ConfigTreeNode {
     /// Root item (Claude, Gemini, etc.)
-    Root { name: String, path: std::path::PathBuf, expanded: bool },
+    Root {
+        name: String,
+        path: std::path::PathBuf,
+        expanded: bool,
+    },
     /// A directory that can be expanded (unused - keeping for potential tree view)
-    Directory { name: String, path: std::path::PathBuf, expanded: bool, depth: usize },
+    Directory {
+        name: String,
+        path: std::path::PathBuf,
+        expanded: bool,
+        depth: usize,
+    },
     /// A file that can be opened (unused - keeping for potential tree view)
-    File { name: String, path: std::path::PathBuf, depth: usize },
+    File {
+        name: String,
+        path: std::path::PathBuf,
+        depth: usize,
+    },
 }
 
 impl ConfigTreeNode {
@@ -256,9 +269,13 @@ impl ConfigTreeNode {
     pub fn icon(&self) -> &'static str {
         match self {
             ConfigTreeNode::Root { expanded: true, .. } => "\u{1F4C2}", // Open folder
-            ConfigTreeNode::Root { expanded: false, .. } => "\u{1F4C1}", // Closed folder
+            ConfigTreeNode::Root {
+                expanded: false, ..
+            } => "\u{1F4C1}", // Closed folder
             ConfigTreeNode::Directory { expanded: true, .. } => "\u{1F4C2}",
-            ConfigTreeNode::Directory { expanded: false, .. } => "\u{1F4C1}",
+            ConfigTreeNode::Directory {
+                expanded: false, ..
+            } => "\u{1F4C1}",
             ConfigTreeNode::File { name, .. } => {
                 if name.ends_with(".json") {
                     "\u{1F4C4}" // Document
@@ -320,10 +337,10 @@ impl Toast {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Divider {
-    LeftRight,         // Between left panel and right panel
-    WorkspaceSession,  // Between workspace list and session list (horizontal)
-    SessionsTodos,     // Between sessions and todos in lower-left (horizontal)
-    TodosUtilities,    // Between todos and utilities in lower-left (horizontal)
-    OutputPinned,      // Between output pane and pinned terminal
+    LeftRight,          // Between left panel and right panel
+    WorkspaceSession,   // Between workspace list and session list (horizontal)
+    SessionsTodos,      // Between sessions and todos in lower-left (horizontal)
+    TodosUtilities,     // Between todos and utilities in lower-left (horizontal)
+    OutputPinned,       // Between output pane and pinned terminal
     PinnedPanes(usize), // Between pinned panes (index is the pane above the divider)
 }

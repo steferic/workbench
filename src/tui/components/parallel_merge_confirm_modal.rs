@@ -23,19 +23,20 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     frame.render_widget(block, area);
 
     // Get merge info from the stored attempt
-    let (branch_name, source_branch) = if let Some(attempt_id) = state.ui.merging_parallel_attempt_id {
-        let info = state.selected_workspace().and_then(|ws| {
-            ws.parallel_tasks.iter()
-                .find_map(|t| {
-                    t.attempts.iter()
+    let (branch_name, source_branch) =
+        if let Some(attempt_id) = state.ui.merging_parallel_attempt_id {
+            let info = state.selected_workspace().and_then(|ws| {
+                ws.parallel_tasks.iter().find_map(|t| {
+                    t.attempts
+                        .iter()
                         .find(|a| a.id == attempt_id)
                         .map(|a| (a.branch_name.clone(), t.source_branch.clone()))
                 })
-        });
-        info.unwrap_or_else(|| ("unknown".to_string(), "main".to_string()))
-    } else {
-        ("unknown".to_string(), "main".to_string())
-    };
+            });
+            info.unwrap_or_else(|| ("unknown".to_string(), "main".to_string()))
+        } else {
+            ("unknown".to_string(), "main".to_string())
+        };
 
     // Split into: message, branch info, help
     let chunks = Layout::default()
@@ -55,11 +56,15 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     let message = Paragraph::new(vec![
         Line::from(vec![
             Span::styled("⚠ ", Style::default().fg(Color::Yellow)),
-            Span::styled("Uncommitted changes will be auto-committed", Style::default().fg(Color::White)),
+            Span::styled(
+                "Uncommitted changes will be auto-committed",
+                Style::default().fg(Color::White),
+            ),
         ]),
-        Line::from(vec![
-            Span::styled("  Commit all changes and merge into source?", Style::default().fg(Color::Gray)),
-        ]),
+        Line::from(vec![Span::styled(
+            "  Commit all changes and merge into source?",
+            Style::default().fg(Color::Gray),
+        )]),
     ]);
     frame.render_widget(message, message_area);
 
@@ -67,18 +72,33 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     let branch_info = Paragraph::new(vec![
         Line::from(vec![
             Span::styled("  From: ", Style::default().fg(Color::Gray)),
-            Span::styled(&branch_name, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                &branch_name,
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]),
         Line::from(vec![
             Span::styled("  Into: ", Style::default().fg(Color::Gray)),
-            Span::styled(&source_branch, Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                &source_branch,
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]),
     ]);
     frame.render_widget(branch_info, branch_area);
 
     // Help
     let help = Paragraph::new(Line::from(vec![
-        Span::styled("[Y/Enter]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "[Y/Enter]",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" Commit & Merge  "),
         Span::styled("[N/Esc]", Style::default().fg(Color::Red)),
         Span::raw(" Cancel"),

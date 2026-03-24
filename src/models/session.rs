@@ -108,11 +108,7 @@ impl Session {
     }
 
     /// Create a terminal for viewing a worktree
-    pub fn new_worktree_viewer(
-        workspace_id: Uuid,
-        name: String,
-        viewing_session_id: Uuid,
-    ) -> Self {
+    pub fn new_worktree_viewer(workspace_id: Uuid, name: String, viewing_session_id: Uuid) -> Self {
         Self {
             id: Uuid::new_v4(),
             workspace_id,

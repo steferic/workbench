@@ -39,9 +39,11 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     let pinned_ids = state.pinned_terminal_ids();
 
     // Get parallel task info for this workspace
-    let parallel_session_ids: Vec<Uuid> = state.selected_workspace()
+    let parallel_session_ids: Vec<Uuid> = state
+        .selected_workspace()
         .map(|ws| {
-            ws.parallel_tasks.iter()
+            ws.parallel_tasks
+                .iter()
                 .flat_map(|t| t.attempts.iter().map(|a| a.session_id))
                 .collect()
         })
@@ -69,32 +71,40 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     // Branch indicator at the top - show active worktree branch if one is selected
     if let Some(workspace) = state.selected_workspace() {
         // Check if there's an active worktree session
-        let (branch_name, is_worktree) = if let Some(worktree_session_id) = workspace.active_worktree_session_id {
-            // Get the branch from the session's worktree
-            state.data.sessions.values()
-                .flatten()
-                .find(|s| s.id == worktree_session_id)
-                .and_then(|s| s.worktree_branch.clone())
-                .map(|b| (b, true))
-                .unwrap_or_else(|| {
-                    // Fallback to main branch if session not found
-                    // Use fast file-based read instead of spawning git subprocess
-                    let main = git::get_current_branch_fast(&workspace.path)
-                        .unwrap_or_else(|| "unknown".to_string());
-                    (main, false)
-                })
-        } else {
-            // No worktree active - show main branch
-            // Use fast file-based read instead of spawning git subprocess
-            let main = git::get_current_branch_fast(&workspace.path)
-                .unwrap_or_else(|| "unknown".to_string());
-            (main, false)
-        };
+        let (branch_name, is_worktree) =
+            if let Some(worktree_session_id) = workspace.active_worktree_session_id {
+                // Get the branch from the session's worktree
+                state
+                    .data
+                    .sessions
+                    .values()
+                    .flatten()
+                    .find(|s| s.id == worktree_session_id)
+                    .and_then(|s| s.worktree_branch.clone())
+                    .map(|b| (b, true))
+                    .unwrap_or_else(|| {
+                        // Fallback to main branch if session not found
+                        // Use fast file-based read instead of spawning git subprocess
+                        let main = git::get_current_branch_fast(&workspace.path)
+                            .unwrap_or_else(|| "unknown".to_string());
+                        (main, false)
+                    })
+            } else {
+                // No worktree active - show main branch
+                // Use fast file-based read instead of spawning git subprocess
+                let main = git::get_current_branch_fast(&workspace.path)
+                    .unwrap_or_else(|| "unknown".to_string());
+                (main, false)
+            };
 
         let branch_style = if is_worktree {
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
         };
         let icon_style = if is_worktree {
             Style::default().fg(Color::Yellow)
@@ -118,13 +128,19 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
             if stat.insertions > 0 || stat.deletions > 0 {
                 branch_spans.push(Span::raw(" "));
                 if stat.insertions > 0 {
-                    branch_spans.push(Span::styled(format!("+{}", stat.insertions), Style::default().fg(Color::Green)));
+                    branch_spans.push(Span::styled(
+                        format!("+{}", stat.insertions),
+                        Style::default().fg(Color::Green),
+                    ));
                 }
                 if stat.deletions > 0 {
                     if stat.insertions > 0 {
                         branch_spans.push(Span::raw(" "));
                     }
-                    branch_spans.push(Span::styled(format!("-{}", stat.deletions), Style::default().fg(Color::Red)));
+                    branch_spans.push(Span::styled(
+                        format!("-{}", stat.deletions),
+                        Style::default().fg(Color::Red),
+                    ));
                 }
             }
         }
@@ -137,10 +153,13 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
 
     // Agents section header
     if !agent_indices.is_empty() {
-        let header_style = Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD);
-        items.push(ListItem::new(Line::from(vec![
-            Span::styled("── Agents ──", header_style),
-        ])));
+        let header_style = Style::default()
+            .fg(Color::Magenta)
+            .add_modifier(Modifier::BOLD);
+        items.push(ListItem::new(Line::from(vec![Span::styled(
+            "── Agents ──",
+            header_style,
+        )])));
         current_visual_idx += 1;
     }
 
@@ -158,7 +177,8 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     // Parallel task section
     if !parallel_indices.is_empty() {
         // Get task prompt preview
-        let task_preview = state.selected_workspace()
+        let task_preview = state
+            .selected_workspace()
             .and_then(|ws| ws.active_parallel_task())
             .map(|t| {
                 let preview: String = t.prompt.chars().take(30).collect();
@@ -170,16 +190,20 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
             })
             .unwrap_or_else(|| "Parallel Task".to_string());
 
-        let header_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
-        items.push(ListItem::new(Line::from(vec![
-            Span::styled(format!("── {} ──", task_preview), header_style),
-        ])));
+        let header_style = Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD);
+        items.push(ListItem::new(Line::from(vec![Span::styled(
+            format!("── {} ──", task_preview),
+            header_style,
+        )])));
         current_visual_idx += 1;
 
         // Parallel sessions
         for &session_idx in &parallel_indices {
             let session = &sessions[session_idx];
-            let item = create_session_item(state, session_idx, session, is_focused, pinned_ids, true);
+            let item =
+                create_session_item(state, session_idx, session, is_focused, pinned_ids, true);
             items.push(item);
             if session_idx == state.ui.selected_session_idx {
                 selected_visual_idx = Some(current_visual_idx);
@@ -190,10 +214,13 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
 
     // Terminals section header
     if !terminal_indices.is_empty() {
-        let header_style = Style::default().fg(Color::Green).add_modifier(Modifier::BOLD);
-        items.push(ListItem::new(Line::from(vec![
-            Span::styled("── Terminals ──", header_style),
-        ])));
+        let header_style = Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD);
+        items.push(ListItem::new(Line::from(vec![Span::styled(
+            "── Terminals ──",
+            header_style,
+        )])));
         current_visual_idx += 1;
     }
 
@@ -217,8 +244,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         Style::default()
     };
 
-    let list = List::new(items)
-        .highlight_style(highlight_style);
+    let list = List::new(items).highlight_style(highlight_style);
 
     let mut list_state = ListState::default();
     list_state.select(selected_visual_idx);
@@ -257,7 +283,8 @@ fn create_session_item<'a>(
     let is_active = state.ui.active_session_id == Some(session.id);
     let is_working = state.is_session_working(session.id);
     let is_pinned = pinned_ids.contains(&session.id);
-    let is_worktree_active = state.selected_workspace()
+    let is_worktree_active = state
+        .selected_workspace()
         .and_then(|ws| ws.active_worktree_session_id)
         .map(|id| id == session.id)
         .unwrap_or(false);
@@ -284,18 +311,21 @@ fn create_session_item<'a>(
     };
 
     // Dangerous mode indicator (skip permissions)
-    let dangerous_indicator = if session.dangerously_skip_permissions && session.agent_type.is_agent() {
-        Span::styled(" ⚡", Style::default().fg(Color::Rgb(255, 100, 50)))
-    } else {
-        Span::raw("")
-    };
+    let dangerous_indicator =
+        if session.dangerously_skip_permissions && session.agent_type.is_agent() {
+            Span::styled(" ⚡", Style::default().fg(Color::Rgb(255, 100, 50)))
+        } else {
+            Span::raw("")
+        };
 
     // Show worktree indicator with short ID for parallel or regular worktree sessions
     let branch_indicator = if is_parallel {
         // Get the branch name from the parallel task attempt and extract just the ID
-        let branch_name = state.selected_workspace()
+        let branch_name = state
+            .selected_workspace()
             .and_then(|ws| {
-                ws.parallel_tasks.iter()
+                ws.parallel_tasks
+                    .iter()
                     .flat_map(|t| t.attempts.iter())
                     .find(|a| a.session_id == session.id)
                     .map(|a| a.branch_name.clone())
@@ -306,15 +336,14 @@ fn create_session_item<'a>(
             // Extract just the ID part (last segment after final '-')
             let short_id = branch_name.rsplit('-').next().unwrap_or(&branch_name);
             let style = if is_worktree_active {
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::Cyan)
             };
             let suffix = if is_worktree_active { " ◀" } else { "" };
-            Span::styled(
-                format!(" ⎇ {}{}", short_id, suffix),
-                style,
-            )
+            Span::styled(format!(" ⎇ {}{}", short_id, suffix), style)
         } else {
             Span::raw("")
         }
@@ -322,15 +351,14 @@ fn create_session_item<'a>(
         // Regular session with worktree - extract just the ID part
         let short_id = branch.rsplit('-').next().unwrap_or(branch);
         let style = if is_worktree_active {
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::Cyan)
         };
         let suffix = if is_worktree_active { " ◀" } else { "" };
-        Span::styled(
-            format!(" ⎇ {}{}", short_id, suffix),
-            style,
-        )
+        Span::styled(format!(" ⎇ {}{}", short_id, suffix), style)
     } else {
         Span::raw("")
     };

@@ -32,10 +32,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         ];
 
         let right_text = vec![
-            Span::styled(
-                "Press ",
-                Style::default().fg(Color::Gray),
-            ),
+            Span::styled("Press ", Style::default().fg(Color::Gray)),
             Span::styled(
                 "[d]",
                 Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
@@ -48,7 +45,9 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
 
         let left_len: usize = left_text.iter().map(|s| s.content.len()).sum();
         let right_len: usize = right_text.iter().map(|s| s.content.len()).sum();
-        let padding = area.width.saturating_sub(left_len as u16 + right_len as u16 + 2);
+        let padding = area
+            .width
+            .saturating_sub(left_len as u16 + right_len as u16 + 2);
 
         let mut spans = left_text;
         spans.push(Span::raw(" ".repeat(padding as usize)));
@@ -75,15 +74,14 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
             Span::raw(" "),
             Span::styled(
                 "Are you sure you want to exit?",
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
             ),
         ];
 
         let right_text = vec![
-            Span::styled(
-                "Press ",
-                Style::default().fg(Color::Gray),
-            ),
+            Span::styled("Press ", Style::default().fg(Color::Gray)),
             Span::styled(
                 "[Esc/q/y]",
                 Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
@@ -96,7 +94,9 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
 
         let left_len: usize = left_text.iter().map(|s| s.content.len()).sum();
         let right_len: usize = right_text.iter().map(|s| s.content.len()).sum();
-        let padding = area.width.saturating_sub(left_len as u16 + right_len as u16 + 2);
+        let padding = area
+            .width
+            .saturating_sub(left_len as u16 + right_len as u16 + 2);
 
         let mut spans = left_text;
         spans.push(Span::raw(" ".repeat(padding as usize)));
@@ -141,50 +141,46 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
                 Style::default().fg(Color::Gray),
             )],
         ),
-        InputMode::SetStartCommand => {
-            (
-                vec![
-                    Span::styled(
-                        " START COMMAND ",
-                        Style::default()
-                            .fg(Color::Black)
-                            .bg(Color::Magenta)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::raw(" $ "),
-                    Span::styled(
-                        format!("{}_", state.ui.input_buffer),
-                        Style::default().fg(Color::White),
-                    ),
-                ],
-                vec![Span::styled(
-                    "Enter command to run on terminal start, Enter to save, Esc to cancel",
-                    Style::default().fg(Color::Gray),
-                )],
-            )
-        }
-        InputMode::CreateTodo => {
-            (
-                vec![
-                    Span::styled(
-                        " NEW TODO ",
-                        Style::default()
-                            .fg(Color::Black)
-                            .bg(Color::Green)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::raw(" "),
-                    Span::styled(
-                        format!("{}_", state.ui.input_buffer),
-                        Style::default().fg(Color::White),
-                    ),
-                ],
-                vec![Span::styled(
-                    "Enter todo description, press Enter to create, Esc to cancel",
-                    Style::default().fg(Color::Gray),
-                )],
-            )
-        }
+        InputMode::SetStartCommand => (
+            vec![
+                Span::styled(
+                    " START COMMAND ",
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Magenta)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" $ "),
+                Span::styled(
+                    format!("{}_", state.ui.input_buffer),
+                    Style::default().fg(Color::White),
+                ),
+            ],
+            vec![Span::styled(
+                "Enter command to run on terminal start, Enter to save, Esc to cancel",
+                Style::default().fg(Color::Gray),
+            )],
+        ),
+        InputMode::CreateTodo => (
+            vec![
+                Span::styled(
+                    " NEW TODO ",
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" "),
+                Span::styled(
+                    format!("{}_", state.ui.input_buffer),
+                    Style::default().fg(Color::White),
+                ),
+            ],
+            vec![Span::styled(
+                "Enter todo description, press Enter to create, Esc to cancel",
+                Style::default().fg(Color::Gray),
+            )],
+        ),
         InputMode::SelectWorkspaceAction => (
             vec![Span::styled(
                 " ADD WORKSPACE ",
@@ -401,10 +397,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
                         .fg(Color::Yellow)
                         .add_modifier(Modifier::BOLD),
                 ));
-                status.push(Span::styled(
-                    " [`]",
-                    Style::default().fg(Color::Yellow),
-                ));
+                status.push(Span::styled(" [`]", Style::default().fg(Color::Yellow)));
             }
 
             // Performance metrics - always visible

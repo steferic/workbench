@@ -4,7 +4,7 @@
 //! multiple agents to work on the same repository simultaneously without
 //! conflicts.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -107,15 +107,10 @@ pub fn create_branch(repo_path: &Path, branch_name: &str) -> Result<()> {
 /// This creates a new git worktree at the specified path, checking out
 /// the given branch. If the branch doesn't exist, it will be created
 /// at the current HEAD.
-pub fn create_worktree(
-    repo_path: &Path,
-    branch_name: &str,
-    worktree_path: &Path,
-) -> Result<()> {
+pub fn create_worktree(repo_path: &Path, branch_name: &str, worktree_path: &Path) -> Result<()> {
     // Ensure parent directory exists
     if let Some(parent) = worktree_path.parent() {
-        std::fs::create_dir_all(parent)
-            .context("Failed to create worktree parent directory")?;
+        std::fs::create_dir_all(parent).context("Failed to create worktree parent directory")?;
     }
 
     // Create branch first (git worktree add -b would fail if branch exists)
@@ -148,11 +143,7 @@ pub fn create_worktree(
 /// Remove a worktree
 ///
 /// Optionally also deletes the associated branch.
-pub fn remove_worktree(
-    repo_path: &Path,
-    worktree_path: &Path,
-    delete_branch: bool,
-) -> Result<()> {
+pub fn remove_worktree(repo_path: &Path, worktree_path: &Path, delete_branch: bool) -> Result<()> {
     // Get branch name before removing worktree (for later deletion)
     let branch_name = if delete_branch {
         get_worktree_branch(worktree_path).ok()

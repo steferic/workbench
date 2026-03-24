@@ -40,7 +40,8 @@ pub fn render(frame: &mut Frame, state: &AppState) {
 
     // Show parent path
     let path_display = state
-        .ui.file_browser_path
+        .ui
+        .file_browser_path
         .to_str()
         .map(|s| {
             if let Some(home) = dirs::home_dir() {
@@ -78,9 +79,16 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     let input_text = Paragraph::new(Line::from(vec![
         Span::styled(
             &state.ui.input_buffer,
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(cursor_char, Style::default().fg(Color::Yellow).add_modifier(Modifier::SLOW_BLINK)),
+        Span::styled(
+            cursor_char,
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::SLOW_BLINK),
+        ),
     ]));
     frame.render_widget(input_text, input_inner);
 
@@ -88,7 +96,10 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     let preview_path = if state.ui.input_buffer.is_empty() {
         "<enter project name>".to_string()
     } else {
-        state.ui.file_browser_path.join(&state.ui.input_buffer)
+        state
+            .ui
+            .file_browser_path
+            .join(&state.ui.input_buffer)
             .to_str()
             .map(|s| {
                 if let Some(home) = dirs::home_dir() {
@@ -117,7 +128,12 @@ pub fn render(frame: &mut Frame, state: &AppState) {
 
     // Render help
     let help = Paragraph::new(Line::from(vec![
-        Span::styled("[Enter]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "[Enter]",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" Create  "),
         Span::styled("[Esc]", Style::default().fg(Color::Yellow)),
         Span::raw(" Cancel"),

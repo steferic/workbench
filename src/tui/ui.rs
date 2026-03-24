@@ -81,10 +81,30 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, effects: &mut EffectsManage
     let utilities_area = lower_chunks[2];
 
     // Store areas in state for mouse interaction
-    state.ui.workspace_area = Some((workspace_area.x, workspace_area.y, workspace_area.width, workspace_area.height));
-    state.ui.session_area = Some((session_area.x, session_area.y, session_area.width, session_area.height));
-    state.ui.todos_area = Some((todos_area.x, todos_area.y, todos_area.width, todos_area.height));
-    state.ui.utilities_area = Some((utilities_area.x, utilities_area.y, utilities_area.width, utilities_area.height));
+    state.ui.workspace_area = Some((
+        workspace_area.x,
+        workspace_area.y,
+        workspace_area.width,
+        workspace_area.height,
+    ));
+    state.ui.session_area = Some((
+        session_area.x,
+        session_area.y,
+        session_area.width,
+        session_area.height,
+    ));
+    state.ui.todos_area = Some((
+        todos_area.x,
+        todos_area.y,
+        todos_area.width,
+        todos_area.height,
+    ));
+    state.ui.utilities_area = Some((
+        utilities_area.x,
+        utilities_area.y,
+        utilities_area.width,
+        utilities_area.height,
+    ));
 
     // Render left components
     workspace_list::render(frame, workspace_area, state);
@@ -105,7 +125,12 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, effects: &mut EffectsManage
             .split(right_panel);
 
         let output_area = right_split[0];
-        state.ui.output_pane_area = Some((output_area.x, output_area.y, output_area.width, output_area.height));
+        state.ui.output_pane_area = Some((
+            output_area.x,
+            output_area.y,
+            output_area.width,
+            output_area.height,
+        ));
         output_pane::render(frame, output_area, state);
 
         // Render multiple pinned panes stacked vertically
@@ -114,14 +139,20 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, effects: &mut EffectsManage
             let pinned_areas = split_pinned_area(right_split[1], state);
             for (idx, area) in pinned_areas.iter().enumerate() {
                 if idx < pinned_count {
-                    state.ui.pinned_pane_areas[idx] = Some((area.x, area.y, area.width, area.height));
+                    state.ui.pinned_pane_areas[idx] =
+                        Some((area.x, area.y, area.width, area.height));
                     pinned_terminal_pane::render_at(frame, *area, state, idx);
                 }
             }
         }
     } else {
         // Single pane - full width
-        state.ui.output_pane_area = Some((right_panel.x, right_panel.y, right_panel.width, right_panel.height));
+        state.ui.output_pane_area = Some((
+            right_panel.x,
+            right_panel.y,
+            right_panel.width,
+            right_panel.height,
+        ));
         // Clear pinned areas if not in split view
         for area in state.ui.pinned_pane_areas.iter_mut() {
             *area = None;

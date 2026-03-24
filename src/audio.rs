@@ -105,7 +105,11 @@ struct LoopingPlayer {
 
 impl LoopingAudio {
     pub fn new(wav_path: &'static str) -> Self {
-        Self { player: None, was_playing: false, wav_path }
+        Self {
+            player: None,
+            was_playing: false,
+            wav_path,
+        }
     }
 
     /// Sync the player with the desired play state.
@@ -143,7 +147,10 @@ impl LoopingAudio {
         let samples: Vec<i16> = source.collect();
         let buffer = rodio::buffer::SamplesBuffer::new(channels, sample_rate, samples);
         sink.append(buffer.repeat_infinite());
-        Some(LoopingPlayer { _stream: stream, sink })
+        Some(LoopingPlayer {
+            _stream: stream,
+            sink,
+        })
     }
 }
 

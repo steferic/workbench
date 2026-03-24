@@ -29,10 +29,12 @@ pub fn render(frame: &mut Frame, state: &AppState) {
 fn render_tab_bar(frame: &mut Frame, area: Rect, state: &AppState) {
     let active = state.ui.config_tab;
 
-    let tabs = [("1", "Quick Ref", ConfigTab::QuickRef),
+    let tabs = [
+        ("1", "Quick Ref", ConfigTab::QuickRef),
         ("2", "Agents", ConfigTab::Agents),
         ("3", "Hotkeys", ConfigTab::Hotkeys),
-        ("4", "Memory", ConfigTab::Scrollback)];
+        ("4", "Memory", ConfigTab::Scrollback),
+    ];
 
     let mut spans: Vec<Span> = Vec::new();
     spans.push(Span::raw("  "));
@@ -41,7 +43,10 @@ fn render_tab_bar(frame: &mut Frame, area: Rect, state: &AppState) {
         if *tab == active {
             spans.push(Span::styled(
                 format!(" {} {} ", num, label),
-                Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
             ));
         } else {
             spans.push(Span::styled(
@@ -61,13 +66,12 @@ fn render_tab_bar(frame: &mut Frame, area: Rect, state: &AppState) {
     let line = Line::from(spans);
 
     let block = Block::default()
-        .title(" Help & Settings (F12) ")
+        .title(" Help & Settings (F1) ")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan))
         .style(Style::default().bg(Color::Black));
 
-    let paragraph = Paragraph::new(vec![Line::from(""), line])
-        .block(block);
+    let paragraph = Paragraph::new(vec![Line::from(""), line]).block(block);
 
     frame.render_widget(paragraph, area);
 }
@@ -77,14 +81,18 @@ fn render_quickref_tab(frame: &mut Frame, area: Rect, state: &AppState) {
 
     let mut lines: Vec<Line> = Vec::new();
 
-    let section_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+    let section_style = Style::default()
+        .fg(Color::Yellow)
+        .add_modifier(Modifier::BOLD);
     let key_style = Style::default().fg(Color::Cyan);
     let sep_style = Style::default().fg(Color::DarkGray);
 
-    let sep = || Line::from(Span::styled(
-        "  ──────────────────────────────────────────────────────",
-        sep_style,
-    ));
+    let sep = || {
+        Line::from(Span::styled(
+            "  ──────────────────────────────────────────────────────",
+            sep_style,
+        ))
+    };
 
     // -- Navigation --
     lines.push(Line::from(""));
@@ -283,7 +291,7 @@ fn render_quickref_tab(frame: &mut Frame, area: Rect, state: &AppState) {
     lines.push(Line::from(Span::styled("  General", section_style)));
     lines.push(sep());
     lines.push(Line::from(vec![
-        Span::styled("  F12                ", key_style),
+        Span::styled("  F1                 ", key_style),
         Span::raw("Open this window"),
     ]));
     lines.push(Line::from(vec![
@@ -433,8 +441,10 @@ fn render_agents_tab(frame: &mut Frame, area: Rect, state: &AppState) {
 
 fn format_action_name(action: &str) -> &str {
     match action {
-        "CycleNextWorkspace" => "Cycle Workspace",
-        "CycleNextSession" => "Cycle Session",
+        "CycleNextWorkspace" => "Cycle Workspace →",
+        "CyclePrevWorkspace" => "Cycle Workspace ←",
+        "CycleNextSession" => "Cycle Session →",
+        "CyclePrevSession" => "Cycle Session ←",
         "InitiateQuit" => "Quit",
         "ToggleDebugOverlay" => "Debug Overlay",
         "EnterConfigWindow" => "Help & Settings",
@@ -447,16 +457,17 @@ fn render_hotkeys_tab(frame: &mut Frame, area: Rect, state: &AppState) {
     let selected_row = state.ui.config_selected_row;
     let rebinding = state.ui.config_rebinding;
 
-    // Sort by action name for consistent ordering
-    let mut sorted_keys: Vec<&String> = hotkeys.keys().collect();
-    sorted_keys.sort();
+    let ordered_actions = crate::config::user_config::ordered_global_hotkey_actions(hotkeys);
 
     let mut lines: Vec<Line> = Vec::new();
 
     // Header
     lines.push(Line::from(""));
     lines.push(Line::from(vec![
-        Span::styled("  Action                    ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            "  Action                    ",
+            Style::default().fg(Color::DarkGray),
+        ),
         Span::styled("Key", Style::default().fg(Color::DarkGray)),
     ]));
     lines.push(Line::from(Span::styled(
@@ -464,7 +475,7 @@ fn render_hotkeys_tab(frame: &mut Frame, area: Rect, state: &AppState) {
         Style::default().fg(Color::DarkGray),
     )));
 
-    for (idx, action) in sorted_keys.iter().enumerate() {
+    for (idx, action) in ordered_actions.iter().enumerate() {
         let is_selected = idx == selected_row;
         let row_bg = if is_selected {
             Color::DarkGray
@@ -478,10 +489,13 @@ fn render_hotkeys_tab(frame: &mut Frame, area: Rect, state: &AppState) {
         };
 
         let display_name = format_action_name(action);
-        let key_val = hotkeys.get(*action).map(|s| s.as_str()).unwrap_or("???");
+        let key_val = hotkeys.get(action).map(|s| s.as_str()).unwrap_or("???");
 
         let key_display = if rebinding && is_selected {
-            Span::styled("Press a key...", Style::default().fg(Color::Yellow).bg(row_bg))
+            Span::styled(
+                "Press a key...",
+                Style::default().fg(Color::Yellow).bg(row_bg),
+            )
         } else {
             Span::styled(key_val.to_string(), Style::default().fg(row_fg).bg(row_bg))
         };
@@ -550,7 +564,10 @@ fn render_scrollback_tab(frame: &mut Frame, area: Rect, state: &AppState) {
         Span::styled("  > ", Style::default().fg(Color::Cyan).bg(row_bg)),
         Span::styled(
             format!("{:<22}", "Scrollback (MB)"),
-            Style::default().fg(Color::White).bg(row_bg).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::White)
+                .bg(row_bg)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled(val_display, val_style),
         Span::styled(
@@ -569,20 +586,39 @@ fn render_scrollback_tab(frame: &mut Frame, area: Rect, state: &AppState) {
     lines.push(Line::from(""));
 
     // Show derived values as read-only info
+    lines.push(Line::from(vec![Span::styled(
+        "    Current allocation per session:",
+        Style::default().fg(Color::Gray),
+    )]));
     lines.push(Line::from(vec![
-        Span::styled("    Current allocation per session:", Style::default().fg(Color::Gray)),
+        Span::styled(
+            "      Raw buffer:       ",
+            Style::default().fg(Color::DarkGray),
+        ),
+        Span::styled(
+            format!("{} KB", config.scrollback_buffer_kb),
+            Style::default().fg(Color::Gray),
+        ),
     ]));
     lines.push(Line::from(vec![
-        Span::styled("      Raw buffer:       ", Style::default().fg(Color::DarkGray)),
-        Span::styled(format!("{} KB", config.scrollback_buffer_kb), Style::default().fg(Color::Gray)),
+        Span::styled(
+            "      Replay rows:      ",
+            Style::default().fg(Color::DarkGray),
+        ),
+        Span::styled(
+            format!("{}", config.replay_parser_rows),
+            Style::default().fg(Color::Gray),
+        ),
     ]));
     lines.push(Line::from(vec![
-        Span::styled("      Replay rows:      ", Style::default().fg(Color::DarkGray)),
-        Span::styled(format!("{}", config.replay_parser_rows), Style::default().fg(Color::Gray)),
-    ]));
-    lines.push(Line::from(vec![
-        Span::styled("      Live scrollback:  ", Style::default().fg(Color::DarkGray)),
-        Span::styled(format!("{} rows", config.live_scrollback_rows), Style::default().fg(Color::Gray)),
+        Span::styled(
+            "      Live scrollback:  ",
+            Style::default().fg(Color::DarkGray),
+        ),
+        Span::styled(
+            format!("{} rows", config.live_scrollback_rows),
+            Style::default().fg(Color::Gray),
+        ),
     ]));
 
     lines.push(Line::from(""));

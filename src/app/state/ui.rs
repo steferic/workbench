@@ -24,7 +24,7 @@ pub struct UIState {
     // Dialog & Input
     pub input_buffer: String,
     pub pending_delete: Option<PendingDelete>,
-    pub pending_quit: bool,  // First Esc/q press - waiting for confirmation
+    pub pending_quit: bool, // First Esc/q press - waiting for confirmation
 
     // File browser state
     pub file_browser_path: PathBuf,
@@ -41,7 +41,7 @@ pub struct UIState {
     /// Used to detect live→replay transitions and translate selection coordinates.
     pub output_on_replay: bool,
     pub pinned_on_replay: [bool; MAX_PINNED_TERMINALS],
-    pub drag_mouse_pos: Option<(u16, u16)>,  // Track mouse position during text selection drag for smooth scrolling
+    pub drag_mouse_pos: Option<(u16, u16)>, // Track mouse position during text selection drag for smooth scrolling
     pub output_pane_area: Option<(u16, u16, u16, u16)>,
     pub pinned_pane_areas: [Option<(u16, u16, u16, u16)>; MAX_PINNED_TERMINALS],
     pub workspace_area: Option<(u16, u16, u16, u16)>,
@@ -65,12 +65,12 @@ pub struct UIState {
 
     // Utilities pane
     pub utility_section: UtilitySection,
-    pub selected_utility: UtilityItem,  // For Utilities section (tools)
-    pub selected_sound: UtilityItem,    // For Sounds section
+    pub selected_utility: UtilityItem, // For Utilities section (tools)
+    pub selected_sound: UtilityItem,   // For Sounds section
     #[allow(dead_code)]
     pub selected_config: ConfigItem,
-    pub config_tree_nodes: Vec<ConfigTreeNode>,  // Flattened visible tree nodes
-    pub config_tree_selected: usize,             // Selected node in tree
+    pub config_tree_nodes: Vec<ConfigTreeNode>, // Flattened visible tree nodes
+    pub config_tree_selected: usize,            // Selected node in tree
     pub utility_content: Vec<String>,
     pub utility_scroll_offset: usize,
     pub pie_chart_data: Vec<(String, f64, ratatui::style::Color)>,
@@ -85,8 +85,8 @@ pub struct UIState {
     // Contextual IDs
     pub editing_session_id: Option<Uuid>,
     pub analyzer_session_id: Option<Uuid>,
-    pub merging_session_id: Option<Uuid>,  // Session being merged (for ConfirmMergeWorktree modal)
-    pub merging_parallel_attempt_id: Option<Uuid>,  // Parallel attempt being merged
+    pub merging_session_id: Option<Uuid>, // Session being merged (for ConfirmMergeWorktree modal)
+    pub merging_parallel_attempt_id: Option<Uuid>, // Parallel attempt being merged
 
     // Todos pane
     pub selected_todo_idx: usize,
@@ -99,11 +99,11 @@ pub struct UIState {
 
     // Parallel task modal state
     pub parallel_task_prompt: String,
-    pub parallel_task_agents: Vec<(AgentType, bool)>,  // Agent type and whether selected
-    pub parallel_task_agent_idx: usize,  // Currently focused agent in selection
-    pub parallel_task_request_report: bool,  // Whether to request PARALLEL_REPORT.md
-    pub parallel_task_dangerous_mode: bool,  // Whether to skip permission prompts
-    pub selected_report_idx: usize,  // Selected report in Reports tab
+    pub parallel_task_agents: Vec<(AgentType, bool)>, // Agent type and whether selected
+    pub parallel_task_agent_idx: usize,               // Currently focused agent in selection
+    pub parallel_task_request_report: bool,           // Whether to request PARALLEL_REPORT.md
+    pub parallel_task_dangerous_mode: bool,           // Whether to skip permission prompts
+    pub selected_report_idx: usize,                   // Selected report in Reports tab
     pub parallel_task_request_id: u64,
 
     // Debug overlay (F11)

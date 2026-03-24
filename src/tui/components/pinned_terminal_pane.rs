@@ -1,6 +1,9 @@
 use crate::app::{AppState, FocusPanel, InputMode, ReplayCache};
 use crate::tui::replay::create_replay_parser;
-use crate::tui::utils::{convert_vt100_to_lines_visible, get_content_length, get_cursor_info, get_selection_bounds, render_cursor};
+use crate::tui::utils::{
+    convert_vt100_to_lines_visible, get_content_length, get_cursor_info, get_selection_bounds,
+    render_cursor,
+};
 use ratatui::{
     layout::Rect,
     style::{Color, Style},
@@ -11,7 +14,8 @@ use ratatui::{
 
 /// Render a specific pinned terminal pane at the given index
 pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index: usize) {
-    let is_focused = matches!(state.ui.focus, FocusPanel::PinnedTerminalPane(idx) if idx == pane_index);
+    let is_focused =
+        matches!(state.ui.focus, FocusPanel::PinnedTerminalPane(idx) if idx == pane_index);
 
     let border_style = if is_focused {
         Style::default().fg(Color::Cyan)
@@ -21,7 +25,13 @@ pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index
 
     let title = state
         .pinned_terminal_session_at(pane_index)
-        .map(|s| format!(" {} [pinned {}] ", s.agent_type.display_name(), pane_index + 1))
+        .map(|s| {
+            format!(
+                " {} [pinned {}] ",
+                s.agent_type.display_name(),
+                pane_index + 1
+            )
+        })
         .unwrap_or_else(|| format!(" Pinned {} ", pane_index + 1));
 
     let block = Block::default()
@@ -61,9 +71,15 @@ pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index
         let live_max_scroll = live_content_len.saturating_sub(viewport_height);
         let needs_replay = !is_alternate
             && scroll_from_bottom_raw > live_max_scroll
-            && state.system.raw_output_buffers.get(&session_id).map(|b| !b.bytes.is_empty()).unwrap_or(false);
+            && state
+                .system
+                .raw_output_buffers
+                .get(&session_id)
+                .map(|b| !b.bytes.is_empty())
+                .unwrap_or(false);
 
-        let (lines, stable_len, scroll_from_bottom, scroll_offset, sel_translated) = if needs_replay {
+        let (lines, stable_len, scroll_from_bottom, scroll_offset, sel_translated) = if needs_replay
+        {
             let Some(raw_buf) = state.system.raw_output_buffers.get(&session_id) else {
                 frame.render_widget(Paragraph::new("").block(block), area);
                 return;
@@ -72,22 +88,32 @@ pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index
             let cols = screen_size.1;
 
             // Check if cached parser is still valid (same generation + cols)
-            let cache_valid = state.system.replay_caches.get(&session_id).map(|c| {
-                c.generation == generation && c.cols == cols
-            }).unwrap_or(false);
+            let cache_valid = state
+                .system
+                .replay_caches
+                .get(&session_id)
+                .map(|c| c.generation == generation && c.cols == cols)
+                .unwrap_or(false);
 
             if !cache_valid {
-                let replay_parser = create_replay_parser(raw_buf, cols, state.system.user_config.replay_parser_rows);
+                let replay_parser = create_replay_parser(
+                    raw_buf,
+                    cols,
+                    state.system.user_config.replay_parser_rows,
+                );
                 let replay_screen = replay_parser.screen();
                 let replay_cursor = get_cursor_info(replay_screen);
                 let replay_content_len = get_content_length(replay_screen, replay_cursor.row);
 
-                state.system.replay_caches.insert(session_id, ReplayCache {
-                    generation,
-                    cols,
-                    parser: replay_parser,
-                    content_length: replay_content_len,
-                });
+                state.system.replay_caches.insert(
+                    session_id,
+                    ReplayCache {
+                        generation,
+                        cols,
+                        parser: replay_parser,
+                        content_length: replay_content_len,
+                    },
+                );
             }
 
             // Render visible lines from the cached parser
@@ -100,7 +126,10 @@ pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index
             let replay_cursor = get_cursor_info(replay_screen);
 
             // On live→replay transition, translate selection coordinates in a local copy
-            let mut sel_copy = state.ui.pinned_text_selections.get(pane_index)
+            let mut sel_copy = state
+                .ui
+                .pinned_text_selections
+                .get(pane_index)
                 .copied()
                 .unwrap_or_default();
             if !state.ui.pinned_on_replay[pane_index] {
@@ -116,11 +145,8 @@ pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index
                 }
             }
 
-            let selection = get_selection_bounds(
-                &sel_copy,
-                replay_content_len,
-                replay_screen.size().1,
-            );
+            let selection =
+                get_selection_bounds(&sel_copy, replay_content_len, replay_screen.size().1);
             let pane_height = Some(viewport_height as u16);
 
             let max_scroll = replay_content_len.saturating_sub(viewport_height);
@@ -157,7 +183,10 @@ pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index
             };
 
             // On replay→live transition, translate selection coordinates back (local copy)
-            let mut sel_copy = state.ui.pinned_text_selections.get(pane_index)
+            let mut sel_copy = state
+                .ui
+                .pinned_text_selections
+                .get(pane_index)
                 .copied()
                 .unwrap_or_default();
             if state.ui.pinned_on_replay[pane_index] {
@@ -173,11 +202,7 @@ pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index
                 }
             }
 
-            let selection = get_selection_bounds(
-                &sel_copy,
-                stable_len,
-                screen_size.1,
-            );
+            let selection = get_selection_bounds(&sel_copy, stable_len, screen_size.1);
 
             let max_scroll = stable_len.saturating_sub(viewport_height);
             let sfb = scroll_from_bottom_raw.min(max_scroll);
@@ -219,7 +244,9 @@ pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index
         // Render scrollbar if content exceeds viewport
         if stable_len > viewport_height {
             let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight);
-            let mut scrollbar_state = ScrollbarState::new(stable_len.saturating_sub(viewport_height)).position(scroll_offset);
+            let mut scrollbar_state =
+                ScrollbarState::new(stable_len.saturating_sub(viewport_height))
+                    .position(scroll_offset);
             frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
         }
 
@@ -227,7 +254,10 @@ pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index
             if let Some(info) = cursor_state {
                 let needs_terminal_cursor = state
                     .pinned_terminal_session_at(pane_index)
-                    .map(|s| s.agent_type.is_terminal() || matches!(s.agent_type, crate::models::AgentType::Codex))
+                    .map(|s| {
+                        s.agent_type.is_terminal()
+                            || matches!(s.agent_type, crate::models::AgentType::Codex)
+                    })
                     .unwrap_or(false);
 
                 if needs_terminal_cursor {
@@ -245,8 +275,7 @@ pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index
             )),
         ];
 
-        let paragraph = Paragraph::new(lines)
-            .block(block);
+        let paragraph = Paragraph::new(lines).block(block);
 
         frame.render_widget(paragraph, area);
     }

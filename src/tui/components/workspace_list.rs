@@ -36,13 +36,19 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     let action_area = chunks[1];
 
     // Separate workspaces into working and paused
-    let working_indices: Vec<usize> = state.data.workspaces.iter()
+    let working_indices: Vec<usize> = state
+        .data
+        .workspaces
+        .iter()
         .enumerate()
         .filter(|(_, ws)| ws.status == WorkspaceStatus::Working)
         .map(|(i, _)| i)
         .collect();
 
-    let paused_indices: Vec<usize> = state.data.workspaces.iter()
+    let paused_indices: Vec<usize> = state
+        .data
+        .workspaces
+        .iter()
         .enumerate()
         .filter(|(_, ws)| ws.status == WorkspaceStatus::Paused)
         .map(|(i, _)| i)
@@ -54,10 +60,13 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
 
     // Working section header
     if !working_indices.is_empty() || paused_indices.is_empty() {
-        let header_style = Style::default().fg(Color::Green).add_modifier(Modifier::BOLD);
-        items.push(ListItem::new(Line::from(vec![
-            Span::styled("── Working ──", header_style),
-        ])));
+        let header_style = Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD);
+        items.push(ListItem::new(Line::from(vec![Span::styled(
+            "── Working ──",
+            header_style,
+        )])));
         current_visual_idx += 1;
     }
 
@@ -73,10 +82,13 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
 
     // Paused section header
     if !paused_indices.is_empty() {
-        let header_style = Style::default().fg(Color::Rgb(255, 165, 0)).add_modifier(Modifier::BOLD);
-        items.push(ListItem::new(Line::from(vec![
-            Span::styled("── Paused ──", header_style),
-        ])));
+        let header_style = Style::default()
+            .fg(Color::Rgb(255, 165, 0))
+            .add_modifier(Modifier::BOLD);
+        items.push(ListItem::new(Line::from(vec![Span::styled(
+            "── Paused ──",
+            header_style,
+        )])));
         current_visual_idx += 1;
     }
 
@@ -99,8 +111,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         Style::default()
     };
 
-    let list = List::new(items)
-        .highlight_style(highlight_style);
+    let list = List::new(items).highlight_style(highlight_style);
 
     // Use ListState for automatic scrolling
     let mut list_state = ListState::default();

@@ -1,10 +1,10 @@
+use crate::app::TextSelection;
 use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
     Frame,
 };
-use crate::app::TextSelection;
 
 #[derive(Clone, Copy)]
 pub struct SelectionBounds {
@@ -214,7 +214,10 @@ pub fn convert_vt100_to_lines_visible(
                 }
 
                 if cell_style != current_style && !current_text.is_empty() {
-                    spans.push(Span::styled(std::mem::take(&mut current_text), current_style));
+                    spans.push(Span::styled(
+                        std::mem::take(&mut current_text),
+                        current_style,
+                    ));
                 }
                 current_style = cell_style;
 
@@ -234,7 +237,10 @@ pub fn convert_vt100_to_lines_visible(
                 current_text.truncate(trimmed_len);
             }
             if !current_text.is_empty() {
-                spans.push(Span::styled(std::mem::take(&mut current_text), current_style));
+                spans.push(Span::styled(
+                    std::mem::take(&mut current_text),
+                    current_style,
+                ));
             }
         }
 
@@ -245,7 +251,10 @@ pub fn convert_vt100_to_lines_visible(
     // For alternate screen (nvim, etc.), preserve all rows for proper layout
     if !is_alternate {
         while all_lines.len() > (cursor_row as usize + 1)
-            && all_lines.last().map(|l| l.spans.is_empty()).unwrap_or(false)
+            && all_lines
+                .last()
+                .map(|l| l.spans.is_empty())
+                .unwrap_or(false)
         {
             all_lines.pop();
         }

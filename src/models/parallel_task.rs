@@ -65,9 +65,10 @@ impl ParallelTask {
     /// Check if all attempts are completed (either done or failed)
     pub fn all_attempts_finished(&self) -> bool {
         !self.attempts.is_empty()
-            && self.attempts.iter().all(|a| {
-                matches!(a.status, AttemptStatus::Completed | AttemptStatus::Failed)
-            })
+            && self
+                .attempts
+                .iter()
+                .all(|a| matches!(a.status, AttemptStatus::Completed | AttemptStatus::Failed))
     }
 
     /// Mark the task as awaiting selection (all agents done)
@@ -189,7 +190,6 @@ impl AttemptStatus {
             Self::Failed => "Failed",
         }
     }
-
 }
 
 #[cfg(test)]
@@ -382,7 +382,10 @@ mod tests {
 
         attempt.set_report("This is the agent's report about the changes made.".to_string());
         assert!(attempt.report_content.is_some());
-        assert_eq!(attempt.report_preview().unwrap(), "This is the agent's report about the changes made.");
+        assert_eq!(
+            attempt.report_preview().unwrap(),
+            "This is the agent's report about the changes made."
+        );
     }
 
     #[test]
@@ -421,10 +424,16 @@ mod tests {
         assert_eq!(task.attempts.len(), 3);
 
         let idx = 0;
-        assert_eq!(task.attempts.get(idx).unwrap().agent_type, AgentType::Claude);
+        assert_eq!(
+            task.attempts.get(idx).unwrap().agent_type,
+            AgentType::Claude
+        );
 
         let idx = 1;
-        assert_eq!(task.attempts.get(idx).unwrap().agent_type, AgentType::Gemini);
+        assert_eq!(
+            task.attempts.get(idx).unwrap().agent_type,
+            AgentType::Gemini
+        );
 
         let idx = 2;
         assert_eq!(task.attempts.get(idx).unwrap().agent_type, AgentType::Codex);
@@ -476,7 +485,8 @@ mod tests {
         task.attempts[0].set_report("Claude's solution: refactored the login module.".to_string());
 
         task.attempts[1].status = AttemptStatus::Completed;
-        task.attempts[1].set_report("Gemini's approach: added new authentication layer.".to_string());
+        task.attempts[1]
+            .set_report("Gemini's approach: added new authentication layer.".to_string());
 
         task.attempts[2].status = AttemptStatus::Failed;
 
@@ -506,7 +516,10 @@ mod tests {
         assert_eq!(restored.prompt, task.prompt);
         assert_eq!(restored.attempts.len(), 1);
         assert!(restored.attempts[0].prompt_sent);
-        assert_eq!(restored.attempts[0].report_content, Some("Test report".to_string()));
+        assert_eq!(
+            restored.attempts[0].report_content,
+            Some("Test report".to_string())
+        );
     }
 
     // ==================== Request Report Tests ====================

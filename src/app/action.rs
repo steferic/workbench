@@ -45,13 +45,15 @@ pub enum Action {
     FocusRight,
     ScrollOutputUp,
     ScrollOutputDown,
-    CycleNextWorkspace,  // ` (backtick) - cycle through workspaces
-    CycleNextSession,    // ~ (Shift+backtick) - cycle through sessions in current workspace
+    CycleNextWorkspace, // F7 - cycle forward through workspaces
+    CyclePrevWorkspace, // F6 - cycle backward through workspaces
+    CycleNextSession,   // F9 - cycle forward through sessions
+    CyclePrevSession,   // F8 - cycle backward through sessions
 
     // Workspace operations
     ToggleWorkspaceStatus,
-    InitiateDeleteWorkspace(Uuid, String),  // (id, name) - first 'd' press
-    ConfirmDeleteWorkspace,                  // second 'd' press
+    InitiateDeleteWorkspace(Uuid, String), // (id, name) - first 'd' press
+    ConfirmDeleteWorkspace,                // second 'd' press
 
     // Session operations
     CreateSession(AgentType, bool, bool), // (agent_type, dangerously_skip_permissions, with_worktree)
@@ -59,12 +61,12 @@ pub enum Action {
     RestartSession(Uuid),
     StopSession(Uuid),
     KillSession(Uuid),
-    InitiateDeleteSession(Uuid, String),    // (id, name) - first 'd' press
-    ConfirmDeleteSession,                    // second 'd' press
-    MergeSessionWorktree(Uuid),             // Merge session's worktree branch into main
-    SwitchToWorktree(Option<Uuid>),         // Switch to session's worktree (None = back to main)
-    ConfirmMergeWithCommit,                 // Commit changes and merge to main
-    CancelMerge,                            // Cancel the merge modal
+    InitiateDeleteSession(Uuid, String), // (id, name) - first 'd' press
+    ConfirmDeleteSession,                // second 'd' press
+    MergeSessionWorktree(Uuid),          // Merge session's worktree branch into main
+    SwitchToWorktree(Option<Uuid>),      // Switch to session's worktree (None = back to main)
+    ConfirmMergeWithCommit,              // Commit changes and merge to main
+    CancelMerge,                         // Cancel the merge modal
 
     // PTY interaction
     SendInput(Uuid, Vec<u8>),
@@ -73,8 +75,8 @@ pub enum Action {
     SessionExited(Uuid, i32),
 
     // UI modes
-    EnterWorkspaceActionMode,    // Opens the Create/Open workspace selector
-    EnterWorkspaceNameMode,      // Text input for naming new workspace
+    EnterWorkspaceActionMode, // Opens the Create/Open workspace selector
+    EnterWorkspaceNameMode,   // Text input for naming new workspace
     EnterCreateSessionMode,
     EnterSetStartCommandMode,
     ExitMode,
@@ -82,25 +84,25 @@ pub enum Action {
     // Workspace action selection
     NextWorkspaceChoice,
     PrevWorkspaceChoice,
-    ConfirmWorkspaceChoice,      // Confirm selected action (Create New or Open Existing)
-    CreateNewWorkspace(String),  // Create new workspace with given name in current dir
+    ConfirmWorkspaceChoice, // Confirm selected action (Create New or Open Existing)
+    CreateNewWorkspace(String), // Create new workspace with given name in current dir
 
     // Start command
     SetStartCommand(Uuid, String),
 
     // Mouse selection
-    MouseDrag(u16, u16),    // (x, y) coordinates during drag
-    MouseUp(u16, u16),      // (x, y) coordinates on release
-    CopySelection,          // Copy selected text to clipboard
-    ClearSelection,         // Clear current selection
+    MouseDrag(u16, u16), // (x, y) coordinates during drag
+    MouseUp(u16, u16),   // (x, y) coordinates on release
+    CopySelection,       // Copy selected text to clipboard
+    ClearSelection,      // Clear current selection
 
     // Split pane / pinned terminals (up to 4)
-    PinSession(Uuid),         // Pin a terminal to the workspace's pinned pane area
-    UnpinSession(Uuid),       // Remove a specific terminal from pinned list
-    UnpinFocusedSession,      // Remove the currently focused pinned terminal
-    ToggleSplitView,          // Toggle between split and full-width view
-    NextPinnedPane,           // Move focus to next pinned pane
-    PrevPinnedPane,           // Move focus to previous pinned pane
+    PinSession(Uuid),    // Pin a terminal to the workspace's pinned pane area
+    UnpinSession(Uuid),  // Remove a specific terminal from pinned list
+    UnpinFocusedSession, // Remove the currently focused pinned terminal
+    ToggleSplitView,     // Toggle between split and full-width view
+    NextPinnedPane,      // Move focus to next pinned pane
+    PrevPinnedPane,      // Move focus to previous pinned pane
 
     // Terminal creation
     CreateTerminal, // Auto-named terminal
@@ -119,49 +121,49 @@ pub enum Action {
     // Utilities pane
     SelectNextUtility,
     SelectPrevUtility,
-    ActivateUtility,    // Load and display utility content in output pane
+    ActivateUtility,      // Load and display utility content in output pane
     ToggleUtilitySection, // Switch between Util, Sounds, Config, and Notepad sections
-    ToggleConfigItem,   // Toggle the selected config item (e.g., banner visibility)
-    ToggleBrownNoise,   // Toggle brown noise player on/off
+    ToggleConfigItem,     // Toggle the selected config item (e.g., banner visibility)
+    ToggleBrownNoise,     // Toggle brown noise player on/off
     ToggleClassicalRadio, // Toggle WRTI classical radio stream on/off
-    ToggleOceanWaves,   // Toggle ocean waves sound on/off
-    ToggleWindChimes,   // Toggle wind chimes sound on/off
+    ToggleOceanWaves,     // Toggle ocean waves sound on/off
+    ToggleWindChimes,     // Toggle wind chimes sound on/off
     ToggleRainforestRain, // Toggle rainforest rain sound on/off
     UtilityContentLoaded(UtilityContentPayload),
 
     // Notepad operations (tui-textarea handles all editing)
-    NotepadInput(KeyEvent),  // Pass key event to TextArea widget
+    NotepadInput(KeyEvent), // Pass key event to TextArea widget
 
     // Todo operations
     SelectNextTodo,
     SelectPrevTodo,
-    EnterCreateTodoMode,       // Enter mode to type a new todo
-    CreateTodo(String),        // Create a new todo with description
-    MarkTodoDone,              // Mark selected todo as done
-    RunSelectedTodo,           // Dispatch selected todo to active session
-    ToggleTodoPaneMode,        // Toggle between Write and Autorun modes
-    InitiateDeleteTodo(Uuid, String),  // First 'd' press on todo
-    ConfirmDeleteTodo,                  // Second 'd' press
+    EnterCreateTodoMode,              // Enter mode to type a new todo
+    CreateTodo(String),               // Create a new todo with description
+    MarkTodoDone,                     // Mark selected todo as done
+    RunSelectedTodo,                  // Dispatch selected todo to active session
+    ToggleTodoPaneMode,               // Toggle between Write and Autorun modes
+    InitiateDeleteTodo(Uuid, String), // First 'd' press on todo
+    ConfirmDeleteTodo,                // Second 'd' press
 
     // Auto-dispatch todos
-    DispatchTodoToSession(Uuid, Uuid, String),  // (session_id, todo_id, description)
-    MarkTodoReadyForReview(Uuid),               // (todo_id) - agent went idle after dispatch
+    DispatchTodoToSession(Uuid, Uuid, String), // (session_id, todo_id, description)
+    MarkTodoReadyForReview(Uuid),              // (todo_id) - agent went idle after dispatch
 
     // Todo suggestion
-    AddSuggestedTodo(String),                   // Add a suggested todo (from analyzer)
-    ApproveSuggestedTodo(Uuid),                 // Approve suggested todo -> becomes Pending
-    ApproveAllSuggestedTodos,                   // Approve all suggested todos at once
-    ArchiveTodo(Uuid),                          // Archive a todo (hide from main list)
-    ToggleTodosTab,                             // Switch between Active and Archived tabs
+    AddSuggestedTodo(String),   // Add a suggested todo (from analyzer)
+    ApproveSuggestedTodo(Uuid), // Approve suggested todo -> becomes Pending
+    ApproveAllSuggestedTodos,   // Approve all suggested todos at once
+    ArchiveTodo(Uuid),          // Archive a todo (hide from main list)
+    ToggleTodosTab,             // Switch between Active and Archived tabs
 
     // Parallel task operations
-    EnterParallelTaskMode,                      // Open parallel task modal (P key)
-    ToggleParallelAgent(usize),                 // Toggle agent selection in modal
-    NextParallelAgent,                          // Move to next agent in selection
-    PrevParallelAgent,                          // Move to previous agent in selection
-    StartParallelTask,                          // Confirm and start the parallel task
-    CancelParallelTask(Uuid),                   // Cancel a running parallel task
-    ParallelAttemptCompleted(Uuid),             // An agent finished its attempt
+    EnterParallelTaskMode,          // Open parallel task modal (P key)
+    ToggleParallelAgent(usize),     // Toggle agent selection in modal
+    NextParallelAgent,              // Move to next agent in selection
+    PrevParallelAgent,              // Move to previous agent in selection
+    StartParallelTask,              // Confirm and start the parallel task
+    CancelParallelTask(Uuid),       // Cancel a running parallel task
+    ParallelAttemptCompleted(Uuid), // An agent finished its attempt
     ParallelWorktreesReady {
         request_id: u64,
         task_id: Uuid,
@@ -185,10 +187,10 @@ pub enum Action {
     // Reports tab
     SelectNextReport,
     SelectPrevReport,
-    ViewReport,                                 // View full report in output pane
-    MergeSelectedReport,                        // Merge winner from reports tab
-    ConfirmParallelMerge,                       // Confirm parallel merge after seeing uncommitted changes
-    CancelParallelMerge,                        // Cancel parallel merge
+    ViewReport,           // View full report in output pane
+    MergeSelectedReport,  // Merge winner from reports tab
+    ConfirmParallelMerge, // Confirm parallel merge after seeing uncommitted changes
+    CancelParallelMerge,  // Cancel parallel merge
 
     // Mouse
     MouseClick(u16, u16), // (x, y) coordinates
@@ -197,9 +199,9 @@ pub enum Action {
     CancelPendingDelete,
 
     // Quit confirmation
-    InitiateQuit,      // First Esc/q press - show confirmation
-    ConfirmQuit,       // Second Esc/q press - actually quit
-    CancelQuit,        // Any other key - cancel quit
+    InitiateQuit, // First Esc/q press - show confirmation
+    ConfirmQuit,  // Second Esc/q press - actually quit
+    CancelQuit,   // Any other key - cancel quit
 
     // App control
     Quit,
@@ -210,7 +212,7 @@ pub enum Action {
     DiffStatsUpdated(HashMap<PathBuf, DiffStat>),
 
     // Debug
-    ToggleDebugOverlay,  // F11 - show terminal dimension debug info
+    ToggleDebugOverlay, // F11 - show terminal dimension debug info
 
     // Config window
     EnterConfigWindow,

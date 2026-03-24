@@ -1,6 +1,5 @@
 # Workbench Keybindings Configuration
-# Edit this file to customize your keybindings
-# Location: ~/.config/workbench/keybindings.toml
+# Built-in keybinding defaults and reference
 #
 # Key format:
 #   - Single keys: "j", "k", "`", "?"
@@ -13,11 +12,12 @@
 # Global keybindings (work anywhere, even in terminal input)
 # ============================================================
 [global]
-"Ctrl-z" = "CycleNextWorkspace"
-"Ctrl-x" = "CycleNextSession"
+"F6" = "CyclePrevWorkspace"
+"F7" = "CycleNextWorkspace"
+"F8" = "CyclePrevSession"
+"F9" = "CycleNextSession"
 "Ctrl-q" = "InitiateQuit"
 "F1" = "EnterConfigWindow"
-"F12" = "EnterConfigWindow"
 
 # ============================================================
 # Mode-specific keybindings

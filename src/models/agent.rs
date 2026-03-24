@@ -6,7 +6,11 @@ pub enum AgentType {
     Gemini,
     Codex,
     Grok,
-    Custom { command: String, display_name: String, badge: String },
+    Custom {
+        command: String,
+        display_name: String,
+        badge: String,
+    },
     Terminal(String), // Named terminal with custom name
 }
 
@@ -20,7 +24,8 @@ impl AgentType {
             AgentType::Custom { command, .. } => command.as_str(),
             AgentType::Terminal(_) => {
                 // Use $SHELL or default to bash
-                std::env::var("SHELL").ok()
+                std::env::var("SHELL")
+                    .ok()
                     .map(|_| "shell") // Placeholder, actual shell resolved at spawn time
                     .unwrap_or("bash")
             }

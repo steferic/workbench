@@ -1,5 +1,4 @@
 use crate::app::{Action, AppState, ConfigTreeNode, UtilityContentPayload, UtilityItem};
-use crate::config::keybindings::get_user_config_path;
 use std::path::Path;
 use tokio::sync::mpsc;
 use tokio::task;
@@ -194,27 +193,34 @@ fn load_suggest_todos_info(state: &mut AppState) {
 
 /// Show keybindings config information
 fn load_keybindings_info(state: &mut AppState) {
-    let config_path = get_user_config_path();
+    let config_path = crate::config::user_config::get_user_config_path()
+        .unwrap_or_else(|_| std::path::PathBuf::from("~/.config/workbench/user_config.toml"));
     let kb = &state.system.keybindings;
+    let hotkeys = &state.system.user_config.global_hotkeys;
 
     let mut content = vec![
         "".to_string(),
         "  Keybindings".to_string(),
         "  ===========".to_string(),
         "".to_string(),
-        format!("  Config: {}", config_path.display()),
+        format!("  Global hotkeys: {}", config_path.display()),
         "".to_string(),
         "  Global".to_string(),
         "  ------".to_string(),
     ];
 
     // Show global bindings
-    let mut global_bindings: Vec<_> = kb.global.iter().collect();
-    global_bindings.sort_by_key(|(k, _)| k.display());
-    for (combo, action) in global_bindings {
-        content.push(format!("  {:12}  {}", combo.display(), action));
+    for action in crate::config::user_config::ordered_global_hotkey_actions(hotkeys) {
+        let key = hotkeys
+            .get(&action)
+            .map(|binding| binding.as_str())
+            .unwrap_or("");
+        content.push(format!("  {:12}  {}", key, action));
     }
 
+    content.push("".to_string());
+    content.push("  Built-in Panel Navigation".to_string());
+    content.push("  -------------------------".to_string());
     content.push("".to_string());
     content.push("  Workspace List".to_string());
     content.push("  --------------".to_string());
@@ -270,8 +276,8 @@ fn load_keybindings_info(state: &mut AppState) {
     }
 
     content.push("".to_string());
-    content.push("  Edit the config file to customize keybindings.".to_string());
-    content.push("  Restart workbench to apply changes.".to_string());
+    content.push("  Global hotkeys are configured in user_config.toml.".to_string());
+    content.push("  Panel bindings listed here are built-in defaults.".to_string());
 
     state.ui.utility_content = content;
 }
@@ -370,12 +376,10 @@ fn build_file_tree(workspace_path: &Path) -> Vec<String> {
         .output();
 
     let files: Vec<String> = match output {
-        Ok(output) if output.status.success() => {
-            String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .map(|s| s.to_string())
-                .collect()
-        }
+        Ok(output) if output.status.success() => String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(|s| s.to_string())
+            .collect(),
         _ => {
             // Fallback: manual directory walk (limited)
             content.push(format!("  {}/", ws_name));
@@ -415,11 +419,7 @@ fn build_file_tree(workspace_path: &Path) -> Vec<String> {
     // Render tree with visual characters
     content.push(format!("  {}/", ws_name));
 
-    fn render_tree(
-        node: &TreeNode,
-        prefix: &str,
-        content: &mut Vec<String>,
-    ) {
+    fn render_tree(node: &TreeNode, prefix: &str, content: &mut Vec<String>) {
         let entries: Vec<_> = node.children.iter().collect();
         let count = entries.len();
 
@@ -472,12 +472,10 @@ fn build_top_files(
         .output();
 
     let files: Vec<String> = match output {
-        Ok(output) if output.status.success() => {
-            String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .map(|s| s.to_string())
-                .collect()
-        }
+        Ok(output) if output.status.success() => String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(|s| s.to_string())
+            .collect(),
         _ => {
             content.push("  (not a git repository)".to_string());
             return (content, Vec::new());
@@ -534,11 +532,7 @@ fn build_top_files(
     let mut pie_chart_data = Vec::new();
     for (i, (path, lines)) in top_files.iter().enumerate() {
         // Get file name only for label
-        let label = path
-            .split('/')
-            .next_back()
-            .unwrap_or(path)
-            .to_string();
+        let label = path.split('/').next_back().unwrap_or(path).to_string();
         pie_chart_data.push((label, *lines as f64, colors[i % colors.len()]));
     }
 
@@ -593,7 +587,11 @@ fn build_top_files(
     }
 
     content.push("".to_string());
-    content.push(format!("  Total: {} lines across {} files", all_total, files.len()));
+    content.push(format!(
+        "  Total: {} lines across {} files",
+        all_total,
+        files.len()
+    ));
 
     (content, pie_chart_data)
 }
@@ -647,4 +645,3 @@ pub fn init_config_tree(state: &mut AppState) {
     state.ui.config_tree_nodes = nodes;
     state.ui.config_tree_selected = 0;
 }
-

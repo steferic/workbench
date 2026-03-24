@@ -59,14 +59,10 @@ impl EffectsManager {
     /// Create a slide-in effect for a pane with optional delay
     fn create_pane_effect(&self, area: Rect, delay_ms: u32) -> Effect {
         let timer = (EFFECT_DURATION_MS, Interpolation::Linear);
-        let slide = fx::slide_in(Motion::UpToDown, 10, 0, SLIDE_BG, timer)
-            .with_area(area);
+        let slide = fx::slide_in(Motion::UpToDown, 10, 0, SLIDE_BG, timer).with_area(area);
 
         if delay_ms > 0 {
-            fx::sequence(&[
-                fx::sleep(delay_ms),
-                slide,
-            ])
+            fx::sequence(&[fx::sleep(delay_ms), slide])
         } else {
             slide
         }

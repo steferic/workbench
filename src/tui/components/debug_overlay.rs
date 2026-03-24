@@ -1,5 +1,7 @@
 use crate::app::AppState;
-use crate::tui::utils::{convert_vt100_to_lines, get_content_length, get_cursor_info, get_selection_bounds};
+use crate::tui::utils::{
+    convert_vt100_to_lines, get_content_length, get_cursor_info, get_selection_bounds,
+};
 use ratatui::{
     layout::{Alignment, Rect},
     style::{Color, Modifier, Style},
@@ -27,7 +29,9 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     let mut lines = vec![
         Line::from(Span::styled(
             "Debug: Terminal Dimensions",
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
     ];
@@ -78,7 +82,11 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     lines.push(Line::from(""));
 
     // Active session's vt100 parser size
-    if let Some(parser) = state.ui.active_session_id.and_then(|id| state.system.output_buffers.get(&id)) {
+    if let Some(parser) = state
+        .ui
+        .active_session_id
+        .and_then(|id| state.system.output_buffers.get(&id))
+    {
         let screen = parser.screen();
         let (rows, cols) = screen.size();
         lines.push(Line::from(vec![
@@ -90,7 +98,10 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         let expected_cols = output_cols;
         if cols != expected_cols {
             lines.push(Line::from(vec![
-                Span::styled("  ⚠ COLS MISMATCH! ", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "  ⚠ COLS MISMATCH! ",
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                ),
                 Span::styled(
                     format!("Expected {} cols", expected_cols),
                     Style::default().fg(Color::Red),
@@ -119,7 +130,8 @@ pub fn render(frame: &mut Frame, state: &AppState) {
 
         // Count actual rendered lines
         let content_len = get_content_length(screen, cursor_info.row);
-        let selection = get_selection_bounds(&state.ui.text_selection, content_len, screen.size().1);
+        let selection =
+            get_selection_bounds(&state.ui.text_selection, content_len, screen.size().1);
         let rendered_lines = convert_vt100_to_lines(screen, selection, cursor_info.row);
         lines.push(Line::from(vec![
             Span::styled("Rendered Lines: ", Style::default().fg(Color::DarkGray)),
@@ -127,7 +139,10 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         ]));
 
         // Count non-empty lines
-        let non_empty = rendered_lines.iter().filter(|l| !l.spans.is_empty()).count();
+        let non_empty = rendered_lines
+            .iter()
+            .filter(|l| !l.spans.is_empty())
+            .count();
         lines.push(Line::from(vec![
             Span::styled("Non-empty Lines: ", Style::default().fg(Color::DarkGray)),
             Span::raw(format!("{}", non_empty)),
@@ -148,11 +163,19 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     lines.push(Line::from(""));
     lines.push(Line::from(vec![
         Span::styled("Banner: ", Style::default().fg(Color::DarkGray)),
-        Span::raw(if state.ui.banner_visible { "Visible" } else { "Hidden" }),
+        Span::raw(if state.ui.banner_visible {
+            "Visible"
+        } else {
+            "Hidden"
+        }),
     ]));
     lines.push(Line::from(vec![
         Span::styled("Split View: ", Style::default().fg(Color::DarkGray)),
-        Span::raw(if state.should_show_split() { "Active" } else { "Disabled" }),
+        Span::raw(if state.should_show_split() {
+            "Active"
+        } else {
+            "Disabled"
+        }),
     ]));
 
     lines.push(Line::from(""));

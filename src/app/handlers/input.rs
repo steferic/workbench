@@ -26,7 +26,8 @@ pub fn handle_input_action(state: &mut AppState, action: Action) -> Result<()> {
             state.ui.editing_session_id = None;
         }
         Action::EnterSetStartCommandMode => {
-            let session_info = state.selected_session()
+            let session_info = state
+                .selected_session()
                 .filter(|s| s.agent_type.is_terminal())
                 .map(|s| (s.id, s.start_command.clone()));
 
@@ -51,7 +52,8 @@ pub fn handle_input_action(state: &mut AppState, action: Action) -> Result<()> {
         }
         Action::InputChar(c) => {
             // Handle input based on current mode
-            if state.ui.input_mode == InputMode::CreateWorkspace && !state.ui.workspace_create_mode {
+            if state.ui.input_mode == InputMode::CreateWorkspace && !state.ui.workspace_create_mode
+            {
                 state.ui.file_browser_query.push(c);
                 state.apply_file_browser_filter();
             } else if state.ui.input_mode == InputMode::CreateParallelTask {
@@ -62,7 +64,8 @@ pub fn handle_input_action(state: &mut AppState, action: Action) -> Result<()> {
         }
         Action::InputBackspace => {
             // Handle backspace based on current mode
-            if state.ui.input_mode == InputMode::CreateWorkspace && !state.ui.workspace_create_mode {
+            if state.ui.input_mode == InputMode::CreateWorkspace && !state.ui.workspace_create_mode
+            {
                 state.ui.file_browser_query.pop();
                 state.apply_file_browser_filter();
             } else if state.ui.input_mode == InputMode::CreateParallelTask {
@@ -102,7 +105,11 @@ pub fn handle_input_action(state: &mut AppState, action: Action) -> Result<()> {
                 textarea.input(input);
             }
             let notepad_contents = state.notepad_content_for_persistence();
-            let _ = persistence::save_with_notepad(&state.data.workspaces, &state.data.sessions, &notepad_contents);
+            let _ = persistence::save_with_notepad(
+                &state.data.workspaces,
+                &state.data.sessions,
+                &notepad_contents,
+            );
         }
         Action::FileBrowserUp => {
             if state.ui.file_browser_selected > 0 {
@@ -113,11 +120,14 @@ pub fn handle_input_action(state: &mut AppState, action: Action) -> Result<()> {
             }
         }
         Action::FileBrowserDown => {
-            if state.ui.file_browser_selected < state.ui.file_browser_entries.len().saturating_sub(1) {
+            if state.ui.file_browser_selected
+                < state.ui.file_browser_entries.len().saturating_sub(1)
+            {
                 state.ui.file_browser_selected += 1;
                 let visible_height = 15;
                 if state.ui.file_browser_selected >= state.ui.file_browser_scroll + visible_height {
-                    state.ui.file_browser_scroll = state.ui.file_browser_selected - visible_height + 1;
+                    state.ui.file_browser_scroll =
+                        state.ui.file_browser_selected - visible_height + 1;
                 }
             }
         }
@@ -128,7 +138,11 @@ pub fn handle_input_action(state: &mut AppState, action: Action) -> Result<()> {
             state.file_browser_go_up();
         }
         Action::FileBrowserSelect => {
-            let path = if let Some(selected) = state.ui.file_browser_entries.get(state.ui.file_browser_selected) {
+            let path = if let Some(selected) = state
+                .ui
+                .file_browser_entries
+                .get(state.ui.file_browser_selected)
+            {
                 selected.clone()
             } else {
                 state.ui.file_browser_path.clone()
@@ -154,10 +168,17 @@ pub fn handle_input_action(state: &mut AppState, action: Action) -> Result<()> {
                 // Pre-select agents that have running sessions in the workspace
                 let ws_id = state.selected_workspace().map(|w| w.id);
                 if let Some(workspace_id) = ws_id {
-                    let running_agents: Vec<_> = state.data.sessions.get(&workspace_id)
+                    let running_agents: Vec<_> = state
+                        .data
+                        .sessions
+                        .get(&workspace_id)
                         .map(|sessions| {
-                            sessions.iter()
-                                .filter(|s| s.agent_type.is_agent() && s.status == crate::models::SessionStatus::Running)
+                            sessions
+                                .iter()
+                                .filter(|s| {
+                                    s.agent_type.is_agent()
+                                        && s.status == crate::models::SessionStatus::Running
+                                })
                                 .map(|s| s.agent_type.clone())
                                 .collect()
                         })
@@ -175,7 +196,8 @@ pub fn handle_input_action(state: &mut AppState, action: Action) -> Result<()> {
             // Total items = agents + 2 (dangerous mode + report checkboxes)
             let total_items = agent_count + 2;
             if total_items > 0 {
-                state.ui.parallel_task_agent_idx = (state.ui.parallel_task_agent_idx + 1) % total_items;
+                state.ui.parallel_task_agent_idx =
+                    (state.ui.parallel_task_agent_idx + 1) % total_items;
             }
         }
         Action::PrevParallelAgent => {
@@ -221,7 +243,9 @@ pub fn handle_input_action(state: &mut AppState, action: Action) -> Result<()> {
             state.ui.palette_selected = 0;
         }
         Action::CommandPaletteDown => {
-            let count = crate::tui::components::command_palette::filtered_entries(&state.ui.palette_query).len();
+            let count =
+                crate::tui::components::command_palette::filtered_entries(&state.ui.palette_query)
+                    .len();
             if count > 0 && state.ui.palette_selected + 1 < count {
                 state.ui.palette_selected += 1;
             }
@@ -232,7 +256,8 @@ pub fn handle_input_action(state: &mut AppState, action: Action) -> Result<()> {
             }
         }
         Action::CommandPaletteExecute => {
-            let entries = crate::tui::components::command_palette::filtered_entries(&state.ui.palette_query);
+            let entries =
+                crate::tui::components::command_palette::filtered_entries(&state.ui.palette_query);
             if let Some(entry) = entries.into_iter().nth(state.ui.palette_selected) {
                 state.ui.input_mode = InputMode::Normal;
                 state.ui.palette_query.clear();

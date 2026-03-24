@@ -59,9 +59,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
             ),
             Span::styled(
                 format!(" {} ", msg),
-                Style::default()
-                    .fg(Color::White)
-                    .bg(Color::DarkGray),
+                Style::default().fg(Color::White).bg(Color::DarkGray),
             ),
         ]);
 

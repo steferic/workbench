@@ -66,13 +66,16 @@ pub fn render(frame: &mut Frame, state: &AppState) {
 
     // Show the highlighted entry's name (what will actually be selected)
     let workspace_name = state
-        .ui.file_browser_entries
+        .ui
+        .file_browser_entries
         .get(state.ui.file_browser_selected)
         .and_then(|p| p.file_name())
         .and_then(|n| n.to_str())
         .unwrap_or_else(|| {
             // Fallback to current directory name if no entry highlighted
-            state.ui.file_browser_path
+            state
+                .ui
+                .file_browser_path
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("unknown")
@@ -84,24 +87,19 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         Paragraph::new(vec![
             Line::from(vec![
                 Span::styled(" Parent: ", Style::default().fg(Color::Gray)),
-                Span::styled(
-                    path_display,
-                    Style::default().fg(Color::Yellow),
-                ),
+                Span::styled(path_display, Style::default().fg(Color::Yellow)),
             ]),
-            Line::from(vec![
-                Span::styled(" New project will be created in this folder", Style::default().fg(Color::DarkGray)),
-            ]),
+            Line::from(vec![Span::styled(
+                " New project will be created in this folder",
+                Style::default().fg(Color::DarkGray),
+            )]),
         ])
     } else {
         // Open existing mode: show what will be selected
         Paragraph::new(vec![
             Line::from(vec![
                 Span::styled(" Path: ", Style::default().fg(Color::Gray)),
-                Span::styled(
-                    path_display,
-                    Style::default().fg(Color::Cyan),
-                ),
+                Span::styled(path_display, Style::default().fg(Color::Cyan)),
             ]),
             Line::from(vec![
                 Span::styled(" Name: ", Style::default().fg(Color::Gray)),
@@ -140,9 +138,13 @@ pub fn render(frame: &mut Frame, state: &AppState) {
 
         frame.render_widget(Paragraph::new(search_line), search_inner);
 
-        let cursor_x = search_inner.x.saturating_add(" Find: ".len() as u16)
+        let cursor_x = search_inner
+            .x
+            .saturating_add(" Find: ".len() as u16)
             .saturating_add(query.len() as u16);
-        let max_x = search_inner.x.saturating_add(search_inner.width.saturating_sub(1));
+        let max_x = search_inner
+            .x
+            .saturating_add(search_inner.width.saturating_sub(1));
         let x = cursor_x.min(max_x);
         frame.set_cursor_position((x, search_inner.y));
     }
@@ -207,13 +209,20 @@ pub fn render(frame: &mut Frame, state: &AppState) {
                 ];
 
                 if is_repo {
-                    spans.push(Span::styled(" (repo)", Style::default().fg(Color::DarkGray)));
+                    spans.push(Span::styled(
+                        " (repo)",
+                        Style::default().fg(Color::DarkGray),
+                    ));
                 }
 
                 let base_len = prefix.chars().count()
                     + icon.chars().count()
                     + name.chars().count()
-                    + if is_repo { " (repo)".chars().count() } else { 0 };
+                    + if is_repo {
+                        " (repo)".chars().count()
+                    } else {
+                        0
+                    };
 
                 let available = max_width
                     .saturating_sub(base_len)
@@ -256,7 +265,9 @@ pub fn render(frame: &mut Frame, state: &AppState) {
 
     let mut list_state = ListState::default();
     if !state.ui.file_browser_entries.is_empty() {
-        list_state.select(Some(state.ui.file_browser_selected - state.ui.file_browser_scroll));
+        list_state.select(Some(
+            state.ui.file_browser_selected - state.ui.file_browser_scroll,
+        ));
     }
 
     frame.render_stateful_widget(list, list_area, &mut list_state);
@@ -275,8 +286,16 @@ pub fn render(frame: &mut Frame, state: &AppState) {
                 Span::raw(" Open"),
             ]),
             Line::from(vec![
-                Span::styled("[Space/Tab]", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                Span::styled(" Create here → Enter name  ", Style::default().fg(Color::White)),
+                Span::styled(
+                    "[Space/Tab]",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    " Create here → Enter name  ",
+                    Style::default().fg(Color::White),
+                ),
                 Span::styled("[Esc]", Style::default().fg(Color::Yellow)),
                 Span::raw(" Cancel"),
             ]),
@@ -294,9 +313,19 @@ pub fn render(frame: &mut Frame, state: &AppState) {
                 Span::raw(" Open"),
             ]),
             Line::from(vec![
-                Span::styled("[Type]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "[Type]",
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::styled(" Path or filter  ", Style::default().fg(Color::White)),
-                Span::styled("[Space/Tab]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "[Space/Tab]",
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::styled(" Select as workspace  ", Style::default().fg(Color::White)),
                 Span::styled("[Esc]", Style::default().fg(Color::Yellow)),
                 Span::raw(" Cancel"),

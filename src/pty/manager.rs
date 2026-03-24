@@ -1,5 +1,7 @@
 use anyhow::{Context, Result};
-use portable_pty::{native_pty_system, Child, ChildKiller, CommandBuilder, MasterPty, PtySize, PtySystem};
+use portable_pty::{
+    native_pty_system, Child, ChildKiller, CommandBuilder, MasterPty, PtySize, PtySystem,
+};
 use std::io::{Read, Write};
 use std::path::Path;
 use std::time::Duration;
@@ -361,14 +363,18 @@ impl PtyManager {
                     }
 
                     // Strip alternate screen sequences for inline-mode agents (e.g. Codex)
-                    if strip_alt_screen && !data.is_empty() && Self::has_alt_screen_sequences(&data) {
+                    if strip_alt_screen && !data.is_empty() && Self::has_alt_screen_sequences(&data)
+                    {
                         data = Self::strip_alt_screen_sequences(&data);
                     }
 
                     if !data.is_empty()
-                        && pty_tx.blocking_send(Action::PtyOutput(session_id, data)).is_err() {
-                            break;
-                        }
+                        && pty_tx
+                            .blocking_send(Action::PtyOutput(session_id, data))
+                            .is_err()
+                    {
+                        break;
+                    }
                 }
                 Err(_e) => {
                     // Don't use eprintln! in TUI - it corrupts the display
@@ -537,9 +543,12 @@ impl PtyManager {
         while i + 4 < data.len() {
             if data[i] == 0x1b && data[i + 1] == b'[' && data[i + 2] == b'?' {
                 let rest = &data[i + 3..];
-                if rest.starts_with(b"1049h") || rest.starts_with(b"1049l")
-                    || rest.starts_with(b"1047h") || rest.starts_with(b"1047l")
-                    || rest.starts_with(b"47h") || rest.starts_with(b"47l")
+                if rest.starts_with(b"1049h")
+                    || rest.starts_with(b"1049l")
+                    || rest.starts_with(b"1047h")
+                    || rest.starts_with(b"1047l")
+                    || rest.starts_with(b"47h")
+                    || rest.starts_with(b"47l")
                 {
                     return true;
                 }
@@ -558,12 +567,30 @@ impl PtyManager {
         while i < data.len() {
             if data[i] == 0x1b && i + 4 < data.len() && data[i + 1] == b'[' && data[i + 2] == b'?' {
                 let rest = &data[i + 3..];
-                if rest.starts_with(b"1049h") { i += 8; continue; }
-                if rest.starts_with(b"1049l") { i += 8; continue; }
-                if rest.starts_with(b"1047h") { i += 8; continue; }
-                if rest.starts_with(b"1047l") { i += 8; continue; }
-                if rest.starts_with(b"47h") { i += 6; continue; }
-                if rest.starts_with(b"47l") { i += 6; continue; }
+                if rest.starts_with(b"1049h") {
+                    i += 8;
+                    continue;
+                }
+                if rest.starts_with(b"1049l") {
+                    i += 8;
+                    continue;
+                }
+                if rest.starts_with(b"1047h") {
+                    i += 8;
+                    continue;
+                }
+                if rest.starts_with(b"1047l") {
+                    i += 8;
+                    continue;
+                }
+                if rest.starts_with(b"47h") {
+                    i += 6;
+                    continue;
+                }
+                if rest.starts_with(b"47l") {
+                    i += 6;
+                    continue;
+                }
             }
             result.push(data[i]);
             i += 1;
@@ -579,11 +606,26 @@ impl PtyManager {
         while i < data.len() {
             if data[i] == 0x1b && i + 2 < data.len() && data[i + 1] == b'[' {
                 let rest = &data[i + 2..];
-                if rest.starts_with(b"6n") { i += 4; continue; }
-                if rest.starts_with(b">0c") { i += 5; continue; }
-                if rest.starts_with(b">c") { i += 4; continue; }
-                if rest.starts_with(b"0c") { i += 4; continue; }
-                if !rest.is_empty() && rest[0] == b'c' { i += 3; continue; }
+                if rest.starts_with(b"6n") {
+                    i += 4;
+                    continue;
+                }
+                if rest.starts_with(b">0c") {
+                    i += 5;
+                    continue;
+                }
+                if rest.starts_with(b">c") {
+                    i += 4;
+                    continue;
+                }
+                if rest.starts_with(b"0c") {
+                    i += 4;
+                    continue;
+                }
+                if !rest.is_empty() && rest[0] == b'c' {
+                    i += 3;
+                    continue;
+                }
             }
             result.push(data[i]);
             i += 1;
@@ -619,7 +661,11 @@ impl PtyManager {
                     if strip_alt_screen && Self::has_alt_screen_sequences(&data) {
                         data = Self::strip_alt_screen_sequences(&data);
                     }
-                    if !data.is_empty() && pty_tx.blocking_send(Action::PtyOutput(session_id, data)).is_err() {
+                    if !data.is_empty()
+                        && pty_tx
+                            .blocking_send(Action::PtyOutput(session_id, data))
+                            .is_err()
+                    {
                         break;
                     }
                 }
@@ -664,9 +710,7 @@ mod tests {
             Err(anyhow::anyhow!("unused"))
         }
 
-        fn take_writer(
-            &self,
-        ) -> std::result::Result<Box<dyn io::Write + Send>, anyhow::Error> {
+        fn take_writer(&self) -> std::result::Result<Box<dyn io::Write + Send>, anyhow::Error> {
             Err(anyhow::anyhow!("unused"))
         }
 

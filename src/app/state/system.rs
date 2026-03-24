@@ -1,6 +1,6 @@
 use crate::app::PARSER_BUFFER_ROWS;
-use crate::config::KeybindingConfig;
 use crate::config::user_config::UserConfig;
+use crate::config::KeybindingConfig;
 use crate::git::DiffStat;
 use crate::models::AgentType;
 use crate::pty::PtyHandle;
@@ -290,9 +290,16 @@ impl SystemState {
     /// If `inline_mode` is true, raw buffer will store a scrollback-friendly
     /// version of the output (cursor repositioning stripped).
     pub fn create_session_buffers(&mut self, session_id: Uuid, cols: u16, inline_mode: bool) {
-        let parser = vt100::Parser::new(PARSER_BUFFER_ROWS, cols, self.user_config.live_scrollback_rows);
+        let parser = vt100::Parser::new(
+            PARSER_BUFFER_ROWS,
+            cols,
+            self.user_config.live_scrollback_rows,
+        );
         self.output_buffers.insert(session_id, parser);
-        self.raw_output_buffers.insert(session_id, RawOutputBuffer::new(self.user_config.scrollback_buffer_kb * 1024));
+        self.raw_output_buffers.insert(
+            session_id,
+            RawOutputBuffer::new(self.user_config.scrollback_buffer_kb * 1024),
+        );
         if inline_mode {
             self.inline_mode_sessions.insert(session_id);
         }

@@ -6,24 +6,31 @@ use super::EventHandler;
 
 impl EventHandler {
     /// Check for global keybindings that work in any panel (driven by UserConfig)
-    fn check_global_keys(key: &KeyEvent, user_config: &crate::config::user_config::UserConfig) -> Option<Action> {
+    fn check_global_keys(
+        key: &KeyEvent,
+        user_config: &crate::config::user_config::UserConfig,
+    ) -> Option<Action> {
         use crate::config::keybindings::KeyCombo;
 
         let pressed = KeyCombo::new(key.code, key.modifiers);
         let pressed_str = pressed.display();
 
-        for (action_name, key_str) in &user_config.global_hotkeys {
-            if key_str == &pressed_str {
-                return match action_name.as_str() {
-                    "CycleNextWorkspace" => Some(Action::CycleNextWorkspace),
-                    "CycleNextSession" => Some(Action::CycleNextSession),
-                    "InitiateQuit" => Some(Action::InitiateQuit),
-                    "EnterHelpMode" => Some(Action::EnterConfigWindow),
-                    "ToggleDebugOverlay" => Some(Action::ToggleDebugOverlay),
-                    "EnterConfigWindow" => Some(Action::EnterConfigWindow),
-                    "TestToast" => Some(Action::TestToast),
-                    _ => None,
-                };
+        for action_name in crate::config::user_config::global_hotkey_actions() {
+            if let Some(key_str) = user_config.global_hotkeys.get(*action_name) {
+                if !key_str.is_empty() && key_str.eq_ignore_ascii_case(&pressed_str) {
+                    return match *action_name {
+                        "CycleNextWorkspace" => Some(Action::CycleNextWorkspace),
+                        "CyclePrevWorkspace" => Some(Action::CyclePrevWorkspace),
+                        "CycleNextSession" => Some(Action::CycleNextSession),
+                        "CyclePrevSession" => Some(Action::CyclePrevSession),
+                        "InitiateQuit" => Some(Action::InitiateQuit),
+                        "EnterHelpMode" => Some(Action::EnterConfigWindow),
+                        "ToggleDebugOverlay" => Some(Action::ToggleDebugOverlay),
+                        "EnterConfigWindow" => Some(Action::EnterConfigWindow),
+                        "TestToast" => Some(Action::TestToast),
+                        _ => None,
+                    };
+                }
             }
         }
         None
@@ -63,8 +70,12 @@ impl EventHandler {
                         KeyCode::Esc => Action::ExitMode,
                         KeyCode::Char('j') | KeyCode::Down => Action::FileBrowserDown,
                         KeyCode::Char('k') | KeyCode::Up => Action::FileBrowserUp,
-                        KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter => Action::FileBrowserEnter,
-                        KeyCode::Char('h') | KeyCode::Left | KeyCode::Backspace => Action::FileBrowserBack,
+                        KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter => {
+                            Action::FileBrowserEnter
+                        }
+                        KeyCode::Char('h') | KeyCode::Left | KeyCode::Backspace => {
+                            Action::FileBrowserBack
+                        }
                         KeyCode::Char(' ') | KeyCode::Tab => Action::EnterWorkspaceNameMode,
                         _ => Action::Tick,
                     };
@@ -94,9 +105,14 @@ impl EventHandler {
                 };
             }
             InputMode::CreateSession => {
-                if let Some((agent_type, dangerously_skip_permissions, with_worktree)) = Self::agent_shortcut(&key, &state.system.user_config.agents)
+                if let Some((agent_type, dangerously_skip_permissions, with_worktree)) =
+                    Self::agent_shortcut(&key, &state.system.user_config.agents)
                 {
-                    return Action::CreateSession(agent_type, dangerously_skip_permissions, with_worktree);
+                    return Action::CreateSession(
+                        agent_type,
+                        dangerously_skip_permissions,
+                        with_worktree,
+                    );
                 }
                 return match key.code {
                     KeyCode::Esc => Action::ExitMode,
@@ -153,14 +169,20 @@ impl EventHandler {
             InputMode::ConfirmMergeWorktree => {
                 return match key.code {
                     KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => Action::CancelMerge,
-                    KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => Action::ConfirmMergeWithCommit,
+                    KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
+                        Action::ConfirmMergeWithCommit
+                    }
                     _ => Action::Tick,
                 };
             }
             InputMode::ConfirmParallelMerge => {
                 return match key.code {
-                    KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => Action::CancelParallelMerge,
-                    KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => Action::ConfirmParallelMerge,
+                    KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+                        Action::CancelParallelMerge
+                    }
+                    KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
+                        Action::ConfirmParallelMerge
+                    }
                     _ => Action::Tick,
                 };
             }
@@ -225,14 +247,12 @@ impl EventHandler {
         // Handle pending delete confirmation
         if state.ui.pending_delete.is_some() {
             return match key.code {
-                KeyCode::Char('d') => {
-                    match &state.ui.pending_delete {
-                        Some(PendingDelete::Session(_, _)) => Action::ConfirmDeleteSession,
-                        Some(PendingDelete::Workspace(_, _)) => Action::ConfirmDeleteWorkspace,
-                        Some(PendingDelete::Todo(_, _)) => Action::ConfirmDeleteTodo,
-                        None => Action::Tick,
-                    }
-                }
+                KeyCode::Char('d') => match &state.ui.pending_delete {
+                    Some(PendingDelete::Session(_, _)) => Action::ConfirmDeleteSession,
+                    Some(PendingDelete::Workspace(_, _)) => Action::ConfirmDeleteWorkspace,
+                    Some(PendingDelete::Todo(_, _)) => Action::ConfirmDeleteTodo,
+                    None => Action::Tick,
+                },
                 KeyCode::Esc => Action::CancelPendingDelete,
                 _ => Action::CancelPendingDelete,
             };
@@ -241,7 +261,9 @@ impl EventHandler {
         // Handle pending quit confirmation
         if state.ui.pending_quit {
             return match key.code {
-                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('y') | KeyCode::Char('Y') => Action::ConfirmQuit,
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    Action::ConfirmQuit
+                }
                 _ => Action::CancelQuit,
             };
         }
@@ -267,7 +289,9 @@ impl EventHandler {
             FocusPanel::TodosPane => self.handle_todos_pane_keys(key, state),
             FocusPanel::UtilitiesPane => self.handle_utilities_pane_keys(key, state),
             FocusPanel::OutputPane => self.handle_output_pane_keys(key, state),
-            FocusPanel::PinnedTerminalPane(idx) => self.handle_pinned_terminal_keys(key, state, idx),
+            FocusPanel::PinnedTerminalPane(idx) => {
+                self.handle_pinned_terminal_keys(key, state, idx)
+            }
         }
     }
 
@@ -302,7 +326,9 @@ impl EventHandler {
             return action;
         }
 
-        if let Some((agent_type, dangerously_skip_permissions, with_worktree)) = Self::agent_shortcut(&key, &state.system.user_config.agents) {
+        if let Some((agent_type, dangerously_skip_permissions, with_worktree)) =
+            Self::agent_shortcut(&key, &state.system.user_config.agents)
+        {
             return Action::CreateSession(agent_type, dangerously_skip_permissions, with_worktree);
         }
 
@@ -315,7 +341,8 @@ impl EventHandler {
                 if let Some(session) = state.selected_session() {
                     if matches!(
                         session.status,
-                        crate::models::SessionStatus::Stopped | crate::models::SessionStatus::Errored
+                        crate::models::SessionStatus::Stopped
+                            | crate::models::SessionStatus::Errored
                     ) {
                         Action::RestartSession(session.id)
                     } else {
@@ -329,7 +356,8 @@ impl EventHandler {
                 if let Some(session) = state.selected_session() {
                     if matches!(
                         session.status,
-                        crate::models::SessionStatus::Stopped | crate::models::SessionStatus::Errored
+                        crate::models::SessionStatus::Stopped
+                            | crate::models::SessionStatus::Errored
                     ) {
                         Action::RestartSession(session.id)
                     } else {
@@ -398,13 +426,12 @@ impl EventHandler {
             KeyCode::Char('P') => Action::EnterParallelTaskMode,
             KeyCode::Char('X') => {
                 if let Some(session) = state.selected_session() {
-                    if let Some(task_id) = state.selected_workspace()
-                        .and_then(|ws| {
-                            ws.parallel_tasks.iter()
-                                .find(|t| t.attempts.iter().any(|a| a.session_id == session.id))
-                                .map(|t| t.id)
-                        })
-                    {
+                    if let Some(task_id) = state.selected_workspace().and_then(|ws| {
+                        ws.parallel_tasks
+                            .iter()
+                            .find(|t| t.attempts.iter().any(|a| a.session_id == session.id))
+                            .map(|t| t.id)
+                    }) {
                         Action::CancelParallelTask(task_id)
                     } else {
                         Action::Tick
@@ -427,7 +454,8 @@ impl EventHandler {
             KeyCode::Char('w') => {
                 if let Some(session) = state.selected_session() {
                     if session.has_worktree() {
-                        let is_active = state.selected_workspace()
+                        let is_active = state
+                            .selected_workspace()
                             .and_then(|ws| ws.active_worktree_session_id)
                             .map(|id| id == session.id)
                             .unwrap_or(false);
@@ -458,7 +486,8 @@ impl EventHandler {
 
         let get_selected_todo = || -> Option<&crate::models::Todo> {
             state.selected_workspace().and_then(|ws| {
-                ws.todos.iter()
+                ws.todos
+                    .iter()
                     .filter(|t| match state.ui.selected_todos_tab {
                         TodosTab::Active => !t.is_archived(),
                         TodosTab::Archived => t.is_archived(),
@@ -485,14 +514,17 @@ impl EventHandler {
             }
             KeyCode::Char('l') => Action::FocusRight,
             KeyCode::Tab => Action::ToggleTodosTab,
-            KeyCode::Char('v') | KeyCode::Enter if state.ui.selected_todos_tab == TodosTab::Reports => {
+            KeyCode::Char('v') | KeyCode::Enter
+                if state.ui.selected_todos_tab == TodosTab::Reports =>
+            {
                 Action::ViewReport
             }
             KeyCode::Char('m') if state.ui.selected_todos_tab == TodosTab::Reports => {
                 Action::MergeSelectedReport
             }
             KeyCode::Char('d') if state.ui.selected_todos_tab == TodosTab::Reports => {
-                if let Some(task_id) = state.selected_workspace()
+                if let Some(task_id) = state
+                    .selected_workspace()
                     .and_then(|ws| ws.active_parallel_task())
                     .map(|t| t.id)
                 {
@@ -577,23 +609,19 @@ impl EventHandler {
         match key.code {
             KeyCode::Char('j') | KeyCode::Down => Action::SelectNextUtility,
             KeyCode::Char('k') | KeyCode::Up => Action::SelectPrevUtility,
-            KeyCode::Char('l') | KeyCode::Enter => {
-                match state.ui.utility_section {
-                    UtilitySection::Utilities => Action::ActivateUtility,
-                    UtilitySection::Sounds => {
-                        match state.ui.selected_sound {
-                            UtilityItem::BrownNoise => Action::ToggleBrownNoise,
-                            UtilityItem::ClassicalRadio => Action::ToggleClassicalRadio,
-                            UtilityItem::OceanWaves => Action::ToggleOceanWaves,
-                            UtilityItem::WindChimes => Action::ToggleWindChimes,
-                            UtilityItem::RainforestRain => Action::ToggleRainforestRain,
-                            _ => Action::Tick,
-                        }
-                    }
-                    UtilitySection::GlobalConfig => Action::ToggleConfigItem,
-                    UtilitySection::Notepad => Action::Tick,
-                }
-            }
+            KeyCode::Char('l') | KeyCode::Enter => match state.ui.utility_section {
+                UtilitySection::Utilities => Action::ActivateUtility,
+                UtilitySection::Sounds => match state.ui.selected_sound {
+                    UtilityItem::BrownNoise => Action::ToggleBrownNoise,
+                    UtilityItem::ClassicalRadio => Action::ToggleClassicalRadio,
+                    UtilityItem::OceanWaves => Action::ToggleOceanWaves,
+                    UtilityItem::WindChimes => Action::ToggleWindChimes,
+                    UtilityItem::RainforestRain => Action::ToggleRainforestRain,
+                    _ => Action::Tick,
+                },
+                UtilitySection::GlobalConfig => Action::ToggleConfigItem,
+                UtilitySection::Notepad => Action::Tick,
+            },
             KeyCode::Tab => Action::ToggleUtilitySection,
             KeyCode::Char('h') => Action::EnterConfigWindow,
             KeyCode::Char('?') => Action::EnterConfigWindow,
@@ -625,11 +653,17 @@ impl EventHandler {
         if let Some(session_id) = state.ui.active_session_id {
             match key.code {
                 KeyCode::Esc => Action::SendInput(session_id, vec![0x1b]),
-                KeyCode::Up if key.modifiers.contains(KeyModifiers::SHIFT) => Action::ScrollOutputUp,
-                KeyCode::Down if key.modifiers.contains(KeyModifiers::SHIFT) => Action::ScrollOutputDown,
+                KeyCode::Up if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                    Action::ScrollOutputUp
+                }
+                KeyCode::Down if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                    Action::ScrollOutputDown
+                }
                 KeyCode::PageUp => Action::ScrollOutputUp,
                 KeyCode::PageDown => Action::ScrollOutputDown,
-                KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => Action::FocusLeft,
+                KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    Action::FocusLeft
+                }
                 KeyCode::BackTab => Action::SendInput(session_id, b"\x1b[Z".to_vec()),
                 KeyCode::Char(c) => {
                     let data = if key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -728,12 +762,23 @@ impl EventHandler {
         }
     }
 
-    fn handle_pinned_terminal_keys(&self, key: KeyEvent, state: &AppState, pane_idx: usize) -> Action {
+    fn handle_pinned_terminal_keys(
+        &self,
+        key: KeyEvent,
+        state: &AppState,
+        pane_idx: usize,
+    ) -> Action {
         if let Some(action) = Self::check_global_keys(&key, &state.system.user_config) {
             return action;
         }
 
-        if state.ui.pinned_text_selections.get(pane_idx).map(|s| s.start.is_some()).unwrap_or(false) {
+        if state
+            .ui
+            .pinned_text_selections
+            .get(pane_idx)
+            .map(|s| s.start.is_some())
+            .unwrap_or(false)
+        {
             match key.code {
                 KeyCode::Char('y') => return Action::CopySelection,
                 KeyCode::Char('c') | KeyCode::Char('C')
@@ -751,13 +796,25 @@ impl EventHandler {
         if let Some(session_id) = state.pinned_terminal_id_at(pane_idx) {
             match key.code {
                 KeyCode::Esc => Action::SendInput(session_id, vec![0x1b]),
-                KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => Action::FocusLeft,
+                KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    Action::FocusLeft
+                }
                 KeyCode::BackTab => Action::SendInput(session_id, b"\x1b[Z".to_vec()),
-                KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => Action::NextPinnedPane,
-                KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => Action::PrevPinnedPane,
-                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => Action::UnpinFocusedSession,
-                KeyCode::Up if key.modifiers.contains(KeyModifiers::SHIFT) => Action::ScrollOutputUp,
-                KeyCode::Down if key.modifiers.contains(KeyModifiers::SHIFT) => Action::ScrollOutputDown,
+                KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    Action::NextPinnedPane
+                }
+                KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    Action::PrevPinnedPane
+                }
+                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    Action::UnpinFocusedSession
+                }
+                KeyCode::Up if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                    Action::ScrollOutputUp
+                }
+                KeyCode::Down if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                    Action::ScrollOutputDown
+                }
                 KeyCode::PageUp => Action::ScrollOutputUp,
                 KeyCode::PageDown => Action::ScrollOutputDown,
                 KeyCode::Char(c) => {
@@ -855,7 +912,10 @@ impl EventHandler {
         }
     }
 
-    pub(super) fn agent_shortcut(key: &KeyEvent, agents: &[crate::config::user_config::AgentConfig]) -> Option<(AgentType, bool, bool)> {
+    pub(super) fn agent_shortcut(
+        key: &KeyEvent,
+        agents: &[crate::config::user_config::AgentConfig],
+    ) -> Option<(AgentType, bool, bool)> {
         if key.modifiers.contains(KeyModifiers::CONTROL)
             || key.modifiers.contains(KeyModifiers::SUPER)
             || key.modifiers.contains(KeyModifiers::META)
@@ -873,16 +933,24 @@ impl EventHandler {
 
         // Map shift+number to the number (e.g. '!' -> "1", '@' -> "2")
         let unshifted = match key_char.as_str() {
-            "!" => Some("1"), "@" => Some("2"), "#" => Some("3"), "$" => Some("4"),
-            "%" => Some("5"), "^" => Some("6"), "&" => Some("7"), "*" => Some("8"),
+            "!" => Some("1"),
+            "@" => Some("2"),
+            "#" => Some("3"),
+            "$" => Some("4"),
+            "%" => Some("5"),
+            "^" => Some("6"),
+            "&" => Some("7"),
+            "*" => Some("8"),
             "(" => Some("9"),
             _ => None,
         };
 
         for agent in agents {
-            if !agent.enabled { continue; }
-            let matches = agent.hotkey == key_char
-                || unshifted.map(|s| s == agent.hotkey).unwrap_or(false);
+            if !agent.enabled {
+                continue;
+            }
+            let matches =
+                agent.hotkey == key_char || unshifted.map(|s| s == agent.hotkey).unwrap_or(false);
             if matches {
                 let agent_type = config_to_agent_type(agent);
                 let skip_perms = shifted || unshifted.is_some();

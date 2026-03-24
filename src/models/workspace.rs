@@ -168,7 +168,9 @@ impl Workspace {
     /// Get the next dispatchable todo (Queued first, then Pending)
     pub fn next_pending_todo(&self) -> Option<&Todo> {
         // Queued todos take priority
-        self.todos.iter().find(|t| t.is_queued())
+        self.todos
+            .iter()
+            .find(|t| t.is_queued())
             .or_else(|| self.todos.iter().find(|t| t.is_pending()))
     }
 
@@ -179,16 +181,16 @@ impl Workspace {
 
     /// Get the IN-PROGRESS todo for a session (not ReadyForReview or Done)
     pub fn todo_for_session(&self, session_id: Uuid) -> Option<&Todo> {
-        self.todos.iter().find(|t| {
-            t.is_in_progress() && t.assigned_session_id() == Some(session_id)
-        })
+        self.todos
+            .iter()
+            .find(|t| t.is_in_progress() && t.assigned_session_id() == Some(session_id))
     }
 
     /// Get mutable IN-PROGRESS todo for a session
     pub fn todo_for_session_mut(&mut self, session_id: Uuid) -> Option<&mut Todo> {
-        self.todos.iter_mut().find(|t| {
-            t.is_in_progress() && t.assigned_session_id() == Some(session_id)
-        })
+        self.todos
+            .iter_mut()
+            .find(|t| t.is_in_progress() && t.assigned_session_id() == Some(session_id))
     }
 
     // ============ Parallel Task Management ============
@@ -211,9 +213,12 @@ impl Workspace {
     /// Get the active (running) parallel task, if any
     pub fn active_parallel_task(&self) -> Option<&ParallelTask> {
         use super::parallel_task::ParallelTaskStatus;
-        self.parallel_tasks
-            .iter()
-            .find(|t| matches!(t.status, ParallelTaskStatus::Running | ParallelTaskStatus::AwaitingSelection))
+        self.parallel_tasks.iter().find(|t| {
+            matches!(
+                t.status,
+                ParallelTaskStatus::Running | ParallelTaskStatus::AwaitingSelection
+            )
+        })
     }
 
     /// Remove a parallel task by ID
@@ -222,7 +227,6 @@ impl Workspace {
         self.parallel_tasks.retain(|t| t.id != task_id);
         self.parallel_tasks.len() < len_before
     }
-
 }
 
 #[cfg(test)]
@@ -231,7 +235,10 @@ mod tests {
     use crate::models::{AgentType, ParallelTask, ParallelTaskAttempt, ParallelTaskStatus};
 
     fn create_test_workspace() -> Workspace {
-        Workspace::new("test-workspace".to_string(), std::env::temp_dir().join("workspace"))
+        Workspace::new(
+            "test-workspace".to_string(),
+            std::env::temp_dir().join("workspace"),
+        )
     }
 
     fn create_test_task(workspace_id: Uuid) -> ParallelTask {
@@ -433,7 +440,10 @@ mod tests {
         // Before adding a new task, cancel the old one
         // (This is what parallel.rs does)
         for task in ws.parallel_tasks.iter_mut() {
-            if matches!(task.status, ParallelTaskStatus::Running | ParallelTaskStatus::AwaitingSelection) {
+            if matches!(
+                task.status,
+                ParallelTaskStatus::Running | ParallelTaskStatus::AwaitingSelection
+            ) {
                 task.status = ParallelTaskStatus::Cancelled;
             }
         }

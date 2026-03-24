@@ -15,19 +15,81 @@ pub struct PaletteEntry {
 
 fn palette_entries() -> Vec<PaletteEntry> {
     vec![
-        PaletteEntry { name: "Create Claude Session", action: Action::CreateSession(crate::models::AgentType::Claude, false, false), keybinding: "1" },
-        PaletteEntry { name: "Create Gemini Session", action: Action::CreateSession(crate::models::AgentType::Gemini, false, false), keybinding: "2" },
-        PaletteEntry { name: "Create Codex Session", action: Action::CreateSession(crate::models::AgentType::Codex, false, false), keybinding: "3" },
-        PaletteEntry { name: "Create Grok Session", action: Action::CreateSession(crate::models::AgentType::Grok, false, false), keybinding: "4" },
-        PaletteEntry { name: "Create Terminal", action: Action::CreateTerminal, keybinding: "t" },
-        PaletteEntry { name: "Start Parallel Task", action: Action::EnterParallelTaskMode, keybinding: "P" },
-        PaletteEntry { name: "New Workspace", action: Action::EnterWorkspaceActionMode, keybinding: "n" },
-        PaletteEntry { name: "Toggle Split View", action: Action::ToggleSplitView, keybinding: "\\" },
-        PaletteEntry { name: "Cycle Next Workspace", action: Action::CycleNextWorkspace, keybinding: "Ctrl+Z" },
-        PaletteEntry { name: "Cycle Next Session", action: Action::CycleNextSession, keybinding: "Ctrl+X" },
-        PaletteEntry { name: "Help & Settings", action: Action::EnterConfigWindow, keybinding: "F12" },
-        PaletteEntry { name: "Toggle Debug Overlay", action: Action::ToggleDebugOverlay, keybinding: "" },
-        PaletteEntry { name: "Quit", action: Action::InitiateQuit, keybinding: "q" },
+        PaletteEntry {
+            name: "Create Claude Session",
+            action: Action::CreateSession(crate::models::AgentType::Claude, false, false),
+            keybinding: "1",
+        },
+        PaletteEntry {
+            name: "Create Gemini Session",
+            action: Action::CreateSession(crate::models::AgentType::Gemini, false, false),
+            keybinding: "2",
+        },
+        PaletteEntry {
+            name: "Create Codex Session",
+            action: Action::CreateSession(crate::models::AgentType::Codex, false, false),
+            keybinding: "3",
+        },
+        PaletteEntry {
+            name: "Create Grok Session",
+            action: Action::CreateSession(crate::models::AgentType::Grok, false, false),
+            keybinding: "4",
+        },
+        PaletteEntry {
+            name: "Create Terminal",
+            action: Action::CreateTerminal,
+            keybinding: "t",
+        },
+        PaletteEntry {
+            name: "Start Parallel Task",
+            action: Action::EnterParallelTaskMode,
+            keybinding: "P",
+        },
+        PaletteEntry {
+            name: "New Workspace",
+            action: Action::EnterWorkspaceActionMode,
+            keybinding: "n",
+        },
+        PaletteEntry {
+            name: "Toggle Split View",
+            action: Action::ToggleSplitView,
+            keybinding: "\\",
+        },
+        PaletteEntry {
+            name: "Cycle Next Workspace",
+            action: Action::CycleNextWorkspace,
+            keybinding: "F7",
+        },
+        PaletteEntry {
+            name: "Cycle Prev Workspace",
+            action: Action::CyclePrevWorkspace,
+            keybinding: "F6",
+        },
+        PaletteEntry {
+            name: "Cycle Next Session",
+            action: Action::CycleNextSession,
+            keybinding: "F9",
+        },
+        PaletteEntry {
+            name: "Cycle Prev Session",
+            action: Action::CyclePrevSession,
+            keybinding: "F8",
+        },
+        PaletteEntry {
+            name: "Help & Settings",
+            action: Action::EnterConfigWindow,
+            keybinding: "F1",
+        },
+        PaletteEntry {
+            name: "Toggle Debug Overlay",
+            action: Action::ToggleDebugOverlay,
+            keybinding: "",
+        },
+        PaletteEntry {
+            name: "Quit",
+            action: Action::InitiateQuit,
+            keybinding: "q",
+        },
     ]
 }
 
@@ -56,9 +118,10 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         .style(Style::default().bg(Color::Black));
 
     let input_text = format!("> {}_", state.ui.palette_query);
-    let input_paragraph = Paragraph::new(Line::from(vec![
-        Span::styled(input_text, Style::default().fg(Color::White)),
-    ]))
+    let input_paragraph = Paragraph::new(Line::from(vec![Span::styled(
+        input_text,
+        Style::default().fg(Color::White),
+    )]))
     .block(input_block);
 
     frame.render_widget(input_paragraph, chunks[0]);
@@ -72,7 +135,9 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         .map(|(i, entry)| {
             let is_selected = i == state.ui.palette_selected;
             let name_style = if is_selected {
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::Gray)
             };
@@ -107,7 +172,12 @@ pub fn render(frame: &mut Frame, state: &AppState) {
 
     let mut list_state = ListState::default();
     if !entries.is_empty() {
-        list_state.select(Some(state.ui.palette_selected.min(entries.len().saturating_sub(1))));
+        list_state.select(Some(
+            state
+                .ui
+                .palette_selected
+                .min(entries.len().saturating_sub(1)),
+        ));
     }
 
     frame.render_stateful_widget(list, chunks[1], &mut list_state);

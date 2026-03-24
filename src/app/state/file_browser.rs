@@ -43,7 +43,12 @@ impl AppState {
     }
 
     pub fn file_browser_enter_selected(&mut self) {
-        if let Some(path) = self.ui.file_browser_entries.get(self.ui.file_browser_selected).cloned() {
+        if let Some(path) = self
+            .ui
+            .file_browser_entries
+            .get(self.ui.file_browser_selected)
+            .cloned()
+        {
             self.ui.file_browser_path = path;
             self.ui.file_browser_query.clear();
             self.refresh_file_browser();
