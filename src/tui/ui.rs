@@ -2,7 +2,7 @@ use crate::app::{AppState, InputMode};
 use crate::tui::components::{
     banner, command_palette, config_window, create_session_dialog, create_workspace_dialog,
     debug_overlay, merge_confirm_modal, output_pane, parallel_merge_confirm_modal,
-    parallel_task_modal, pinned_terminal_pane, session_list, status_bar, toast, todos_pane,
+    parallel_task_modal, pinned_terminal_pane, session_list, status_bar, todos_pane,
     utilities_pane, workspace_action_dialog, workspace_list, workspace_name_dialog,
 };
 use crate::tui::effects::{EffectsManager, StartupAreas};
@@ -246,8 +246,9 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, effects: &mut EffectsManage
     // Process active effects
     effects.process(frame);
 
-    // Toast notifications (above status bar, below debug overlay)
-    toast::render(frame, state);
+    // Toast notifications are intentionally suppressed — the in-app toast
+    // surface didn't earn its keep. State machinery and helpers remain so
+    // callers don't need to change; they're just not rendered.
 
     // Debug overlay (F11)
     if state.ui.show_debug_overlay {

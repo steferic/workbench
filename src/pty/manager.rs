@@ -16,6 +16,14 @@ use std::os::unix::io::{FromRawFd, RawFd};
 use crate::app::Action;
 use crate::models::AgentType;
 
+fn report_session_exited(pty_tx: &mpsc::Sender<Action>, session_id: Uuid, exit_code: i32) {
+    if let Err(err) = pty_tx.blocking_send(Action::SessionExited(session_id, exit_code)) {
+        crate::logger::warn(format!(
+            "failed to report session {session_id} exit status: {err}"
+        ));
+    }
+}
+
 pub struct PtyHandle {
     pub master: Box<dyn MasterPty + Send>,
     pub child_killer: Box<dyn ChildKiller + Send + Sync>,
@@ -63,7 +71,9 @@ impl PtyHandle {
                 }
 
                 // Escalate to SIGKILL if the group is still alive.
-                let _ = self.signal_process_group(pgid, libc::SIGKILL);
+                if let Err(err) = self.signal_process_group(pgid, libc::SIGKILL) {
+                    crate::logger::warn(format!("failed to kill PTY process group: {err}"));
+                }
                 return Ok(());
             }
         }
@@ -136,6 +146,7 @@ pub struct SessionSpawnConfig<'a> {
     pub pty_tx: mpsc::Sender<Action>,
     pub resume: bool,
     pub dangerously_skip_permissions: bool,
+    pub use_alternate_screen: bool,
 }
 
 pub struct PtyManager {
@@ -159,6 +170,7 @@ impl PtyManager {
             pty_tx,
             resume,
             dangerously_skip_permissions,
+            use_alternate_screen,
         } = config;
 
         // Create PTY pair
@@ -266,7 +278,7 @@ impl PtyManager {
         let pty_tx = pty_tx.clone();
         let sid = session_id;
         let pty_rows = rows;
-        let strip_alt_screen = matches!(agent_type, AgentType::Codex);
+        let strip_alt_screen = matches!(agent_type, AgentType::Codex) || !use_alternate_screen;
         std::thread::spawn(move || {
             #[cfg(unix)]
             Self::read_pty_output_with_dsr(
@@ -324,7 +336,7 @@ impl PtyManager {
                             1
                         }
                     };
-                    let _ = pty_tx.blocking_send(Action::SessionExited(session_id, exit_code));
+                    report_session_exited(&pty_tx, session_id, exit_code);
                     break;
                 }
                 Ok(n) => {
@@ -346,18 +358,34 @@ impl PtyManager {
 
                             if has_dsr {
                                 let dsr_response = format!("\x1b[{};{}R", cursor_row, cursor_col);
-                                let _ = file.write_all(dsr_response.as_bytes());
+                                if let Err(err) = file.write_all(dsr_response.as_bytes()) {
+                                    crate::logger::warn(format!(
+                                        "failed to write cursor-position response: {err}"
+                                    ));
+                                }
                             }
 
                             if has_da {
-                                let _ = file.write_all(DA_RESPONSE);
+                                if let Err(err) = file.write_all(DA_RESPONSE) {
+                                    crate::logger::warn(format!(
+                                        "failed to write device-attributes response: {err}"
+                                    ));
+                                }
                             }
 
                             if has_da2 {
-                                let _ = file.write_all(DA2_RESPONSE);
+                                if let Err(err) = file.write_all(DA2_RESPONSE) {
+                                    crate::logger::warn(format!(
+                                        "failed to write secondary device-attributes response: {err}"
+                                    ));
+                                }
                             }
 
-                            let _ = file.flush();
+                            if let Err(err) = file.flush() {
+                                crate::logger::warn(format!(
+                                    "failed to flush terminal query response: {err}"
+                                ));
+                            }
                             data = Self::strip_terminal_queries(&data);
                         }
                     }
@@ -368,17 +396,19 @@ impl PtyManager {
                         data = Self::strip_alt_screen_sequences(&data);
                     }
 
-                    if !data.is_empty()
-                        && pty_tx
-                            .blocking_send(Action::PtyOutput(session_id, data))
-                            .is_err()
-                    {
-                        break;
+                    if !data.is_empty() {
+                        if let Err(err) = pty_tx.blocking_send(Action::PtyOutput(session_id, data))
+                        {
+                            crate::logger::warn(format!(
+                                "failed to report PTY output for session {session_id}: {err}"
+                            ));
+                            break;
+                        }
                     }
                 }
                 Err(_e) => {
                     // Don't use eprintln! in TUI - it corrupts the display
-                    let _ = pty_tx.blocking_send(Action::SessionExited(session_id, 1));
+                    report_session_exited(&pty_tx, session_id, 1);
                     break;
                 }
             }
@@ -653,7 +683,7 @@ impl PtyManager {
                             1
                         }
                     };
-                    let _ = pty_tx.blocking_send(Action::SessionExited(session_id, exit_code));
+                    report_session_exited(&pty_tx, session_id, exit_code);
                     break;
                 }
                 Ok(n) => {
@@ -661,17 +691,19 @@ impl PtyManager {
                     if strip_alt_screen && Self::has_alt_screen_sequences(&data) {
                         data = Self::strip_alt_screen_sequences(&data);
                     }
-                    if !data.is_empty()
-                        && pty_tx
-                            .blocking_send(Action::PtyOutput(session_id, data))
-                            .is_err()
-                    {
-                        break;
+                    if !data.is_empty() {
+                        if let Err(err) = pty_tx.blocking_send(Action::PtyOutput(session_id, data))
+                        {
+                            crate::logger::warn(format!(
+                                "failed to report PTY output for session {session_id}: {err}"
+                            ));
+                            break;
+                        }
                     }
                 }
                 Err(_e) => {
                     // Don't use eprintln! in TUI - it corrupts the display
-                    let _ = pty_tx.blocking_send(Action::SessionExited(session_id, 1));
+                    report_session_exited(&pty_tx, session_id, 1);
                     break;
                 }
             }

@@ -28,7 +28,9 @@ pub fn resize_ptys_to_panes(state: &mut AppState) {
         };
 
         // Resize the PTY - this updates TIOCGWINSZ which apps query for terminal size
-        let _ = handle.resize(rows, cols);
+        if let Err(err) = handle.resize(rows, cols) {
+            crate::logger::warn(format!("failed to resize PTY {session_id}: {err}"));
+        }
     }
 
     // Resize vt100 parsers to match new column widths.

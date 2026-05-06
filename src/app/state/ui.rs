@@ -1,4 +1,4 @@
-use crate::models::{AgentType, MAX_PINNED_TERMINALS};
+use crate::models::{AgentType, Workspace, MAX_PINNED_TERMINALS};
 use std::path::PathBuf;
 use uuid::Uuid;
 
@@ -8,6 +8,52 @@ use super::types::{
     ConfigItem, ConfigTab, ConfigTreeNode, Divider, FocusPanel, InputMode, PendingDelete,
     TextSelection, Toast, TodoPaneMode, TodosTab, UtilityItem, UtilitySection, WorkspaceAction,
 };
+
+/// Per-pinned-pane runtime UI state. Lives inside `WorkspaceUiState` and is
+/// index-aligned with `Workspace.pinned_terminal_ids`. Pin/unpin must mutate
+/// both Vecs in lockstep — go through `AppState::pin_terminal_for_selected` /
+/// `unpin_terminal_for_selected` to keep the invariant.
+#[derive(Default, Debug, Clone)]
+pub struct PinnedPaneState {
+    pub scroll_offset: u16,
+    pub text_selection: TextSelection,
+    pub on_replay: bool,
+    pub content_length: usize,
+}
+
+/// Per-workspace ephemeral UI state. Switching workspaces no longer wipes
+/// these values — each workspace keeps its own scroll positions, selection,
+/// focused pane, etc. Nothing here is persisted; on app restart, only
+/// `Workspace.last_active_session_id` is reapplied via `for_workspace`.
+#[derive(Default, Debug)]
+pub struct WorkspaceUiState {
+    pub selected_session_idx: usize,
+    pub active_session_id: Option<Uuid>,
+    pub focused_pinned_pane: usize,
+    pub output_scroll_offset: u16,
+    pub output_on_replay: bool,
+    pub output_content_length: usize,
+    /// Selection in the OUTPUT pane only. Pinned-pane selections live on
+    /// the per-pane `PinnedPaneState`.
+    pub text_selection: TextSelection,
+    pub drag_mouse_pos: Option<(u16, u16)>,
+    /// Index-aligned with `Workspace.pinned_terminal_ids`. Length must always
+    /// match — see pin/unpin helpers.
+    pub pinned_panes: Vec<PinnedPaneState>,
+}
+
+impl WorkspaceUiState {
+    /// Construct fresh state for a workspace, seeding `active_session_id`
+    /// from the workspace's persisted `last_active_session_id` so the
+    /// "remember last session" behavior survives lazy initialization.
+    pub fn for_workspace(ws: &Workspace) -> Self {
+        Self {
+            active_session_id: ws.last_active_session_id,
+            pinned_panes: vec![PinnedPaneState::default(); ws.pinned_terminal_ids.len()],
+            ..Self::default()
+        }
+    }
+}
 
 pub struct UIState {
     pub focus: FocusPanel,

@@ -37,6 +37,7 @@ fn default_true() -> bool {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct UserConfig {
     #[serde(default = "default_agents")]
     pub agents: Vec<AgentConfig>,
@@ -44,6 +45,8 @@ pub struct UserConfig {
     pub global_hotkeys: HashMap<String, String>,
     #[serde(default = "default_scrollback_mb")]
     pub scrollback_mb: usize,
+    #[serde(default = "default_true")]
+    pub use_alternate_screen: bool,
 
     // Legacy fields — ignored on load, derived from scrollback_mb
     #[serde(skip)]
@@ -203,6 +206,7 @@ impl Default for UserConfig {
             agents: default_agents(),
             global_hotkeys: default_global_hotkeys(),
             scrollback_mb: default_scrollback_mb(),
+            use_alternate_screen: default_true(),
             scrollback_buffer_kb: 0,
             replay_parser_rows: 0,
             live_scrollback_rows: 0,
@@ -224,10 +228,19 @@ pub fn get_user_config_path() -> anyhow::Result<PathBuf> {
 
 pub fn load_user_config() -> UserConfig {
     let mut config = match get_user_config_path() {
-        Ok(path) if path.exists() => fs::read_to_string(&path)
-            .ok()
-            .and_then(|s| toml::from_str(&s).ok())
-            .unwrap_or_default(),
+        Ok(path) if path.exists() => match fs::read_to_string(&path) {
+            Ok(s) => match toml::from_str(&s) {
+                Ok(cfg) => cfg,
+                Err(e) => {
+                    eprintln!("Failed to parse user_config.toml: {}", e);
+                    UserConfig::default()
+                }
+            },
+            Err(e) => {
+                eprintln!("Failed to read user_config.toml: {}", e);
+                UserConfig::default()
+            }
+        },
         _ => UserConfig::default(),
     };
     normalize_global_hotkeys(&mut config.global_hotkeys);

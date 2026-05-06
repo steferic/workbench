@@ -4,8 +4,7 @@ use crate::config::KeybindingConfig;
 use crate::git::DiffStat;
 use crate::models::AgentType;
 use crate::pty::PtyHandle;
-use ratatui::text::Line;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
@@ -244,16 +243,10 @@ pub struct SystemState {
     pub agent_done_sound_enabled: bool,
     /// Last time the agent-done sound was played (for debouncing)
     pub last_agent_done_sound: Instant,
-    /// Sessions that run in inline/TUI mode (e.g. Codex) and need raw buffer
-    /// stripping to preserve scrollback history
-    pub inline_mode_sessions: HashSet<Uuid>,
-    /// Last snapshot time + content hash for inline sessions (throttle + dedup)
-    pub inline_last_snapshot: HashMap<Uuid, (Instant, String)>,
-    /// Styled scrollback history for inline sessions — accumulated screen snapshots
-    /// with formatting (colors, bold) preserved as ratatui Line objects
-    pub inline_styled_history: HashMap<Uuid, Vec<Line<'static>>>,
     /// User configuration loaded from ~/.config/workbench/user_config.toml
     pub user_config: UserConfig,
+    /// Whether to use alternate screen mode (from CLI or config)
+    pub use_alternate_screen: bool,
 }
 
 impl SystemState {
@@ -279,17 +272,13 @@ impl SystemState {
             last_diff_refresh: Instant::now(),
             agent_done_sound_enabled: true,
             last_agent_done_sound: Instant::now(),
-            inline_mode_sessions: HashSet::new(),
-            inline_last_snapshot: HashMap::new(),
-            inline_styled_history: HashMap::new(),
             user_config: crate::config::user_config::load_user_config(),
+            use_alternate_screen: true,
         }
     }
 
     /// Create parser + raw output buffer for a new session.
-    /// If `inline_mode` is true, raw buffer will store a scrollback-friendly
-    /// version of the output (cursor repositioning stripped).
-    pub fn create_session_buffers(&mut self, session_id: Uuid, cols: u16, inline_mode: bool) {
+    pub fn create_session_buffers(&mut self, session_id: Uuid, cols: u16) {
         let parser = vt100::Parser::new(
             PARSER_BUFFER_ROWS,
             cols,
@@ -300,9 +289,6 @@ impl SystemState {
             session_id,
             RawOutputBuffer::new(self.user_config.scrollback_buffer_kb * 1024),
         );
-        if inline_mode {
-            self.inline_mode_sessions.insert(session_id);
-        }
     }
 
     /// Remove parser + raw output buffer + replay cache for a session
@@ -310,9 +296,7 @@ impl SystemState {
         self.output_buffers.remove(session_id);
         self.raw_output_buffers.remove(session_id);
         self.replay_caches.remove(session_id);
-        self.inline_mode_sessions.remove(session_id);
-        self.inline_last_snapshot.remove(session_id);
-        self.inline_styled_history.remove(session_id);
+        // Note: Do NOT remove inline_styled_history — preserve scrollback history across pause/resume
     }
 }
 

@@ -1,16 +1,23 @@
 use crate::app::pty_ops::resize_ptys_to_panes;
 use crate::app::selection::{
-    clear_all_pinned_selections, copy_to_clipboard, extract_selected_text,
+    clear_active_text_selection, clear_all_pinned_selections, copy_active_selection,
+    pane_text_position,
 };
 use crate::app::session_start::start_workspace_sessions;
+use crate::app::workspace_nav::{
+    cycle_next_working_workspace, cycle_prev_working_workspace, move_workspace_selection,
+    set_selected_workspace, workspace_index_at_position,
+};
 use crate::app::{
     Action, AppState, Divider, FocusPanel, InputMode, TextSelection, UtilityItem, UtilitySection,
 };
-use crate::persistence;
+use crate::persistence::GlobalConfig;
 use crate::pty::PtyManager;
 use anyhow::Result;
 use tokio::sync::mpsc;
 use uuid::Uuid;
+
+use super::{report_runtime_error, save_config, save_state_with_notepad};
 
 fn bracketed_paste_payload(text: &str) -> Vec<u8> {
     let mut data = Vec::with_capacity(text.len() + 10);
@@ -27,165 +34,9 @@ fn paste_target_session_id(state: &AppState) -> Option<Uuid> {
     }
 }
 
-fn pane_text_position(
-    area: (u16, u16, u16, u16),
-    x: u16,
-    y: u16,
-    content_length: usize,
-    scroll_from_bottom: u16,
-) -> Option<(usize, usize)> {
-    let (area_x, area_y, area_w, area_h) = area;
-    let inner_w = area_w.saturating_sub(2);
-    let inner_h = area_h.saturating_sub(2);
-
-    if inner_w == 0 || inner_h == 0 || content_length == 0 {
-        return None;
-    }
-
-    let right_edge = area_x.saturating_add(area_w).saturating_sub(1);
-    let bottom_edge = area_y.saturating_add(area_h).saturating_sub(1);
-    if x <= area_x || x >= right_edge || y <= area_y || y >= bottom_edge {
-        return None;
-    }
-
-    let col_in_view = x.saturating_sub(area_x).saturating_sub(1) as usize;
-    let row_in_view = y.saturating_sub(area_y).saturating_sub(1) as usize;
-
-    if col_in_view >= inner_w as usize || row_in_view >= inner_h as usize {
-        return None;
-    }
-
-    let viewport_height = inner_h as usize;
-    let max_scroll = content_length.saturating_sub(viewport_height);
-    let scroll_from_bottom = (scroll_from_bottom as usize).min(max_scroll);
-    let scroll_offset = max_scroll.saturating_sub(scroll_from_bottom);
-
-    let row = scroll_offset
-        .saturating_add(row_in_view)
-        .min(content_length.saturating_sub(1));
-
-    Some((row, col_in_view))
-}
-
 fn is_in_area(x: u16, y: u16, area: (u16, u16, u16, u16)) -> bool {
     let (ax, ay, aw, ah) = area;
     x >= ax && x < ax + aw && y >= ay && y < ay + ah
-}
-
-fn copy_active_selection(state: &mut AppState) -> bool {
-    use crate::tui::replay::create_replay_parser;
-
-    if let (Some(start), Some(end)) = (state.ui.text_selection.start, state.ui.text_selection.end) {
-        if start != end {
-            // Check if we need replay for text extraction (scrolled deep)
-            let scroll_from_bottom = state.ui.output_scroll_offset;
-            if let Some(session_id) = state.ui.active_session_id {
-                if scroll_from_bottom > 0 {
-                    if let Some(raw_buf) = state.system.raw_output_buffers.get(&session_id) {
-                        if !raw_buf.bytes.is_empty() {
-                            if let Some(parser) = state.system.output_buffers.get(&session_id) {
-                                let cols = parser.screen().size().1;
-                                let replay = create_replay_parser(
-                                    raw_buf,
-                                    cols,
-                                    state.system.user_config.replay_parser_rows,
-                                );
-                                let text = extract_selected_text(replay.screen(), start, end);
-                                copy_to_clipboard(&text);
-                                return true;
-                            }
-                        }
-                    }
-                }
-            }
-            // Fallback: use live parser
-            if let Some(parser) = state.active_output() {
-                let text = extract_selected_text(parser.screen(), start, end);
-                copy_to_clipboard(&text);
-                return true;
-            }
-        }
-    }
-
-    for idx in 0..state.pinned_count() {
-        let sel = &state.ui.pinned_text_selections[idx];
-        if let (Some(start), Some(end)) = (sel.start, sel.end) {
-            if start != end {
-                let scroll_from_bottom = state.ui.pinned_scroll_offsets[idx];
-                if let Some(session_id) = state.pinned_terminal_id_at(idx) {
-                    if scroll_from_bottom > 0 {
-                        if let Some(raw_buf) = state.system.raw_output_buffers.get(&session_id) {
-                            if !raw_buf.bytes.is_empty() {
-                                if let Some(parser) = state.system.output_buffers.get(&session_id) {
-                                    let cols = parser.screen().size().1;
-                                    let replay = create_replay_parser(
-                                        raw_buf,
-                                        cols,
-                                        state.system.user_config.replay_parser_rows,
-                                    );
-                                    let text = extract_selected_text(replay.screen(), start, end);
-                                    copy_to_clipboard(&text);
-                                    return true;
-                                }
-                            }
-                        }
-                    }
-                }
-                if let Some(parser) = state.pinned_terminal_output_at(idx) {
-                    let text = extract_selected_text(parser.screen(), start, end);
-                    copy_to_clipboard(&text);
-                    return true;
-                }
-            }
-        }
-    }
-
-    false
-}
-
-/// Restore the last active session for the currently selected workspace.
-/// Falls back to the first agent session if no last active session is found.
-fn restore_workspace_session(state: &mut AppState) {
-    let next_idx = state.ui.selected_workspace_idx;
-    if let Some(ws) = state.data.workspaces.get(next_idx) {
-        let ws_id = ws.id;
-        let last_session_id = ws.last_active_session_id;
-
-        if let Some(sessions) = state.data.sessions.get(&ws_id) {
-            // Try to restore the last active session
-            let restored = last_session_id
-                .and_then(|last_id| sessions.iter().enumerate().find(|(_, s)| s.id == last_id));
-
-            if let Some((idx, session)) = restored {
-                state.ui.selected_session_idx = idx;
-                state.ui.active_session_id = Some(session.id);
-                state.ui.output_scroll_offset = 0;
-            } else {
-                // Fall back to first agent (non-terminal) session
-                let first_agent = sessions
-                    .iter()
-                    .enumerate()
-                    .find(|(_, s)| !s.agent_type.is_terminal());
-
-                if let Some((idx, session)) = first_agent {
-                    state.ui.selected_session_idx = idx;
-                    state.ui.active_session_id = Some(session.id);
-                    state.ui.output_scroll_offset = 0;
-                } else if let Some((idx, session)) = sessions.iter().enumerate().next() {
-                    // Fall back to first session of any type
-                    state.ui.selected_session_idx = idx;
-                    state.ui.active_session_id = Some(session.id);
-                    state.ui.output_scroll_offset = 0;
-                } else {
-                    state.ui.selected_session_idx = 0;
-                    state.ui.active_session_id = None;
-                }
-            }
-        } else {
-            state.ui.selected_session_idx = 0;
-            state.ui.active_session_id = None;
-        }
-    }
 }
 
 pub fn handle_navigation_action(
@@ -197,16 +48,7 @@ pub fn handle_navigation_action(
     match action {
         Action::MoveUp => match state.ui.focus {
             FocusPanel::WorkspaceList => {
-                let prev_idx = state.ui.selected_workspace_idx;
-                // Save current workspace's active session before switching
-                if let Some(current_ws) = state.data.workspaces.get_mut(prev_idx) {
-                    current_ws.last_active_session_id = state.ui.active_session_id;
-                }
-                state.select_prev_workspace();
-                if state.ui.selected_workspace_idx != prev_idx {
-                    restore_workspace_session(state);
-                    start_workspace_sessions(state, pty_manager, pty_tx);
-                }
+                move_workspace_selection(state, true, pty_manager, pty_tx);
             }
             FocusPanel::SessionList => {
                 state.select_prev_session();
@@ -215,16 +57,7 @@ pub fn handle_navigation_action(
         },
         Action::MoveDown => match state.ui.focus {
             FocusPanel::WorkspaceList => {
-                let prev_idx = state.ui.selected_workspace_idx;
-                // Save current workspace's active session before switching
-                if let Some(current_ws) = state.data.workspaces.get_mut(prev_idx) {
-                    current_ws.last_active_session_id = state.ui.active_session_id;
-                }
-                state.select_next_workspace();
-                if state.ui.selected_workspace_idx != prev_idx {
-                    restore_workspace_session(state);
-                    start_workspace_sessions(state, pty_manager, pty_tx);
-                }
+                move_workspace_selection(state, false, pty_manager, pty_tx);
             }
             FocusPanel::SessionList => {
                 state.select_next_session();
@@ -318,81 +151,69 @@ pub fn handle_navigation_action(
                 state.ui.output_scroll_offset = state.ui.output_scroll_offset.saturating_sub(3);
             }
         }
-        Action::CycleNextWorkspace => {
-            use crate::models::WorkspaceStatus;
-
-            // Only cycle through "Working" workspaces, in visual order
-            let working_indices: Vec<usize> = state
-                .data
-                .workspaces
-                .iter()
-                .enumerate()
-                .filter(|(_, ws)| ws.status == WorkspaceStatus::Working)
-                .map(|(idx, _)| idx)
-                .collect();
-
-            if !working_indices.is_empty() {
-                // Save current active session to current workspace before switching
-                if let Some(current_ws) = state
-                    .data
-                    .workspaces
-                    .get_mut(state.ui.selected_workspace_idx)
-                {
-                    current_ws.last_active_session_id = state.ui.active_session_id;
+        Action::MouseScrollUp(x, y) => {
+            if let Some(area) = state.ui.workspace_area {
+                if is_in_area(x, y, area) {
+                    state.ui.focus = FocusPanel::WorkspaceList;
+                    move_workspace_selection(state, true, pty_manager, pty_tx);
+                    return Ok(());
                 }
+            }
 
-                // Find current position in the working list
-                let current_pos = working_indices
-                    .iter()
-                    .position(|&idx| idx == state.ui.selected_workspace_idx);
+            for (idx, area_opt) in state.ui.pinned_pane_areas.iter().enumerate() {
+                if let Some(area) = *area_opt {
+                    if is_in_area(x, y, area) {
+                        state.ui.focus = FocusPanel::PinnedTerminalPane(idx);
+                        state.ui.focused_pinned_pane = idx;
+                        if let Some(offset) = state.ui.pinned_scroll_offsets.get_mut(idx) {
+                            *offset = offset.saturating_add(3);
+                        }
+                        return Ok(());
+                    }
+                }
+            }
 
-                // Move to next working workspace (or first if not currently on a working one)
-                let next_idx = match current_pos {
-                    Some(pos) => working_indices[(pos + 1) % working_indices.len()],
-                    None => working_indices[0],
-                };
-
-                state.ui.selected_workspace_idx = next_idx;
-
-                // Restore the last active session for this workspace, or fall back to first agent
-                restore_workspace_session(state);
+            if let Some(area) = state.ui.output_pane_area {
+                if is_in_area(x, y, area) {
+                    state.ui.focus = FocusPanel::OutputPane;
+                    state.ui.output_scroll_offset = state.ui.output_scroll_offset.saturating_add(3);
+                }
             }
         }
-        Action::CyclePrevWorkspace => {
-            use crate::models::WorkspaceStatus;
-
-            let working_indices: Vec<usize> = state
-                .data
-                .workspaces
-                .iter()
-                .enumerate()
-                .filter(|(_, ws)| ws.status == WorkspaceStatus::Working)
-                .map(|(idx, _)| idx)
-                .collect();
-
-            if !working_indices.is_empty() {
-                if let Some(current_ws) = state
-                    .data
-                    .workspaces
-                    .get_mut(state.ui.selected_workspace_idx)
-                {
-                    current_ws.last_active_session_id = state.ui.active_session_id;
+        Action::MouseScrollDown(x, y) => {
+            if let Some(area) = state.ui.workspace_area {
+                if is_in_area(x, y, area) {
+                    state.ui.focus = FocusPanel::WorkspaceList;
+                    move_workspace_selection(state, false, pty_manager, pty_tx);
+                    return Ok(());
                 }
-
-                let current_pos = working_indices
-                    .iter()
-                    .position(|&idx| idx == state.ui.selected_workspace_idx);
-
-                let prev_idx = match current_pos {
-                    Some(pos) => {
-                        working_indices[(pos + working_indices.len() - 1) % working_indices.len()]
-                    }
-                    None => *working_indices.last().unwrap(),
-                };
-
-                state.ui.selected_workspace_idx = prev_idx;
-                restore_workspace_session(state);
             }
+
+            for (idx, area_opt) in state.ui.pinned_pane_areas.iter().enumerate() {
+                if let Some(area) = *area_opt {
+                    if is_in_area(x, y, area) {
+                        state.ui.focus = FocusPanel::PinnedTerminalPane(idx);
+                        state.ui.focused_pinned_pane = idx;
+                        if let Some(offset) = state.ui.pinned_scroll_offsets.get_mut(idx) {
+                            *offset = offset.saturating_sub(3);
+                        }
+                        return Ok(());
+                    }
+                }
+            }
+
+            if let Some(area) = state.ui.output_pane_area {
+                if is_in_area(x, y, area) {
+                    state.ui.focus = FocusPanel::OutputPane;
+                    state.ui.output_scroll_offset = state.ui.output_scroll_offset.saturating_sub(3);
+                }
+            }
+        }
+        Action::CycleNextWorkspace => {
+            cycle_next_working_workspace(state);
+        }
+        Action::CyclePrevWorkspace => {
+            cycle_prev_working_workspace(state);
         }
         Action::CycleNextSession => {
             // Cycle through agents only (Agents -> Parallel), skip terminals
@@ -453,6 +274,9 @@ pub fn handle_navigation_action(
             };
 
             if let Some((next_idx, session_id)) = session_info {
+                if state.ui.active_session_id != Some(session_id) {
+                    clear_active_text_selection(state);
+                }
                 state.ui.selected_session_idx = next_idx;
                 state.ui.active_session_id = Some(session_id);
                 state.ui.output_scroll_offset = 0;
@@ -510,6 +334,9 @@ pub fn handle_navigation_action(
             };
 
             if let Some((prev_idx, session_id)) = session_info {
+                if state.ui.active_session_id != Some(session_id) {
+                    clear_active_text_selection(state);
+                }
                 state.ui.selected_session_idx = prev_idx;
                 state.ui.active_session_id = Some(session_id);
                 state.ui.output_scroll_offset = 0;
@@ -616,6 +443,9 @@ pub fn handle_navigation_action(
             if let Some(area) = state.ui.workspace_area {
                 if is_in_area(x, y, area) {
                     state.ui.focus = FocusPanel::WorkspaceList;
+                    if let Some(workspace_idx) = workspace_index_at_position(state, x, y) {
+                        set_selected_workspace(state, workspace_idx, pty_manager, pty_tx);
+                    }
                     return Ok(());
                 }
             }
@@ -809,7 +639,7 @@ pub fn handle_navigation_action(
                 state.ui.dragging_divider = None;
                 state.ui.drag_start_pos = None;
                 resize_ptys_to_panes(state);
-                let config = persistence::GlobalConfig {
+                let config = GlobalConfig {
                     banner_visible: state.ui.banner_visible,
                     left_panel_ratio: state.ui.left_panel_ratio,
                     workspace_ratio: state.ui.workspace_ratio,
@@ -818,7 +648,7 @@ pub fn handle_navigation_action(
                     output_split_ratio: state.ui.output_split_ratio,
                     agent_done_sound_enabled: state.system.agent_done_sound_enabled,
                 };
-                let _ = persistence::save_config(&config);
+                save_config(state, &config, "failed to save pane layout config");
                 return Ok(());
             }
 
@@ -879,17 +709,21 @@ pub fn handle_navigation_action(
                 if let Some(textarea) = state.current_notepad() {
                     textarea.insert_str(&text);
                 }
-                // Save notepad contents after paste
-                let notepad_contents = state.notepad_content_for_persistence();
-                let _ = persistence::save_with_notepad(
-                    &state.data.workspaces,
-                    &state.data.sessions,
-                    &notepad_contents,
-                );
+                save_state_with_notepad(state, "failed to save notepad paste");
             } else if let Some(session_id) = paste_target_session_id(state) {
                 let data = bracketed_paste_payload(&text);
-                if let Some(handle) = state.system.pty_handles.get_mut(&session_id) {
-                    let _ = handle.send_input(&data);
+                let send_error = state
+                    .system
+                    .pty_handles
+                    .get_mut(&session_id)
+                    .and_then(|handle| handle.send_input(&data).err());
+                if let Some(err) = send_error {
+                    report_runtime_error(
+                        state,
+                        "failed to paste into PTY",
+                        err,
+                        "Failed to paste into session",
+                    );
                 }
                 if let Some(workspace_id) = state.workspace_id_for_session(session_id) {
                     if let Some(ws) = state.get_workspace_mut(workspace_id) {
@@ -1129,5 +963,65 @@ pub fn handle_drag_auto_scroll(state: &mut AppState) {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::handle_navigation_action;
+    use crate::app::{Action, AppState, FocusPanel};
+    use crate::models::{Workspace, WorkspaceStatus};
+    use crate::pty::PtyManager;
+    use std::path::PathBuf;
+    use tokio::sync::mpsc;
+
+    fn workspace(name: &str, status: WorkspaceStatus) -> Workspace {
+        let mut workspace = Workspace::new(name.to_string(), PathBuf::from(format!("/tmp/{name}")));
+        workspace.status = status;
+        workspace
+    }
+
+    #[test]
+    fn mouse_click_on_paused_workspace_selects_it() {
+        let mut state = AppState::default();
+        state.data.workspaces = vec![
+            workspace("alpha", WorkspaceStatus::Working),
+            workspace("beta", WorkspaceStatus::Paused),
+        ];
+        state.ui.workspace_area = Some((0, 0, 20, 7));
+        state.ui.focus = FocusPanel::OutputPane;
+
+        let pty_manager = PtyManager::new();
+        let (pty_tx, _) = mpsc::channel(1);
+
+        handle_navigation_action(&mut state, Action::MouseClick(2, 4), &pty_manager, &pty_tx)
+            .unwrap();
+
+        assert_eq!(state.ui.focus, FocusPanel::WorkspaceList);
+        assert_eq!(state.ui.selected_workspace_idx, 1);
+    }
+
+    #[test]
+    fn mouse_scroll_in_workspace_moves_workspace_selection() {
+        let mut state = AppState::default();
+        state.data.workspaces = vec![
+            workspace("alpha", WorkspaceStatus::Working),
+            workspace("beta", WorkspaceStatus::Paused),
+        ];
+        state.ui.workspace_area = Some((0, 0, 20, 7));
+
+        let pty_manager = PtyManager::new();
+        let (pty_tx, _) = mpsc::channel(1);
+
+        handle_navigation_action(
+            &mut state,
+            Action::MouseScrollDown(2, 2),
+            &pty_manager,
+            &pty_tx,
+        )
+        .unwrap();
+
+        assert_eq!(state.ui.focus, FocusPanel::WorkspaceList);
+        assert_eq!(state.ui.selected_workspace_idx, 1);
     }
 }

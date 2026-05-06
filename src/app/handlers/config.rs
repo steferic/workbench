@@ -2,6 +2,15 @@ use crate::app::{Action, AppState, ConfigTab};
 use crate::config::user_config::{save_user_config, AgentConfig, UserConfig};
 use crossterm::event::KeyEvent;
 
+use super::report_persistence_error;
+
+fn save_current_user_config(state: &mut AppState) {
+    let config = state.system.user_config.clone();
+    if let Err(err) = save_user_config(&config) {
+        report_persistence_error(state, "failed to save user config", err);
+    }
+}
+
 pub fn handle_config_action(state: &mut AppState, action: Action) {
     match action {
         Action::ConfigSwitchTab(tab) => {
@@ -105,7 +114,7 @@ pub fn handle_config_action(state: &mut AppState, action: Action) {
             }
             state.ui.config_editing = false;
             state.ui.config_edit_buffer.clear();
-            let _ = save_user_config(&state.system.user_config);
+            save_current_user_config(state);
         }
         Action::ConfigCancelEdit => {
             state.ui.config_editing = false;
@@ -129,7 +138,7 @@ pub fn handle_config_action(state: &mut AppState, action: Action) {
                     enabled: true,
                 });
                 state.ui.config_selected_row = state.system.user_config.agents.len() - 1;
-                let _ = save_user_config(&state.system.user_config);
+                save_current_user_config(state);
             }
         }
         Action::ConfigDeleteAgent => {
@@ -146,7 +155,7 @@ pub fn handle_config_action(state: &mut AppState, action: Action) {
                 {
                     state.ui.config_selected_row -= 1;
                 }
-                let _ = save_user_config(&state.system.user_config);
+                save_current_user_config(state);
             }
         }
         Action::ConfigReorderUp => {
@@ -154,7 +163,7 @@ pub fn handle_config_action(state: &mut AppState, action: Action) {
                 let row = state.ui.config_selected_row;
                 state.system.user_config.agents.swap(row, row - 1);
                 state.ui.config_selected_row -= 1;
-                let _ = save_user_config(&state.system.user_config);
+                save_current_user_config(state);
             }
         }
         Action::ConfigReorderDown => {
@@ -163,7 +172,7 @@ pub fn handle_config_action(state: &mut AppState, action: Action) {
                 if row + 1 < state.system.user_config.agents.len() {
                     state.system.user_config.agents.swap(row, row + 1);
                     state.ui.config_selected_row += 1;
-                    let _ = save_user_config(&state.system.user_config);
+                    save_current_user_config(state);
                 }
             }
         }
@@ -186,7 +195,7 @@ pub fn handle_config_action(state: &mut AppState, action: Action) {
                     state.system.user_config.apply_scrollback_derived();
                 }
             }
-            let _ = save_user_config(&state.system.user_config);
+            save_current_user_config(state);
         }
         _ => {}
     }
@@ -234,7 +243,7 @@ fn handle_rebind(state: &mut AppState, key: KeyEvent) {
             .user_config
             .global_hotkeys
             .insert(action.clone(), key_str);
-        let _ = save_user_config(&state.system.user_config);
+        save_current_user_config(state);
     }
 
     state.ui.config_rebinding = false;

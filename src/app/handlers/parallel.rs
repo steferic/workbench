@@ -4,14 +4,15 @@ use crate::app::{
 };
 use crate::git;
 use crate::models::{
-    AgentType, AttemptStatus, ParallelTask, ParallelTaskAttempt, ParallelTaskStatus, Session,
+    AttemptStatus, ParallelTask, ParallelTaskAttempt, ParallelTaskStatus, Session,
 };
-use crate::persistence;
 use crate::pty::{PtyManager, SessionSpawnConfig};
 use anyhow::{anyhow, Result};
 use tokio::sync::mpsc;
 use tokio::task;
 use uuid::Uuid;
+
+use super::{report_background_error, report_runtime_error, save_state};
 
 pub fn handle_parallel_action(
     state: &mut AppState,
@@ -157,15 +158,17 @@ fn start_parallel_task(
     state.ui.parallel_task_prompt.clear();
     state.ui.focus = FocusPanel::SessionList;
 
-    let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
+    save_state(state, "failed to save parallel task start");
 
     let action_tx = action_tx.clone();
     task::spawn_blocking(move || {
         if !git::is_git_repo(&workspace_path) {
-            let _ = action_tx.send(Action::ParallelWorktreesFailed {
+            if let Err(err) = action_tx.send(Action::ParallelWorktreesFailed {
                 request_id,
                 error: "Not a git repository".to_string(),
-            });
+            }) {
+                report_background_error("failed to report parallel worktree failure", err);
+            }
             return;
         }
 
@@ -181,7 +184,8 @@ fn start_parallel_task(
             let worktree_path =
                 git::get_attempt_worktree_path(&workspace_path, &task_short_id, &agent_name);
 
-            if git::create_worktree(&workspace_path, &branch_name, &worktree_path).is_err() {
+            if let Err(err) = git::create_worktree(&workspace_path, &branch_name, &worktree_path) {
+                report_background_error("failed to create parallel worktree", err);
                 continue;
             }
 
@@ -192,7 +196,7 @@ fn start_parallel_task(
             });
         }
 
-        let _ = action_tx.send(Action::ParallelWorktreesReady {
+        if let Err(err) = action_tx.send(Action::ParallelWorktreesReady {
             request_id,
             task_id,
             workspace_id,
@@ -202,7 +206,9 @@ fn start_parallel_task(
             source_branch,
             source_commit,
             worktrees,
-        });
+        }) {
+            report_background_error("failed to report parallel worktrees ready", err);
+        }
     });
 
     Ok(())
@@ -250,6 +256,12 @@ fn handle_parallel_worktrees_ready(
     }
 
     if worktrees.is_empty() {
+        report_runtime_error(
+            state,
+            "parallel task produced no worktrees",
+            "no worktrees created",
+            "Failed to create parallel worktrees",
+        );
         return Ok(());
     }
 
@@ -298,11 +310,7 @@ fn handle_parallel_worktrees_ready(
 
         let pty_rows = state.pane_rows();
         let cols = state.output_pane_cols();
-        state.system.create_session_buffers(
-            session_id,
-            cols,
-            matches!(spec.agent_type, AgentType::Codex),
-        );
+        state.system.create_session_buffers(session_id, cols);
 
         match pty_manager.spawn_session(SessionSpawnConfig {
             session_id,
@@ -313,6 +321,7 @@ fn handle_parallel_worktrees_ready(
             pty_tx: pty_tx.clone(),
             resume: false,
             dangerously_skip_permissions,
+            use_alternate_screen: state.system.use_alternate_screen,
         }) {
             Ok(handle) => {
                 state.system.pty_handles.insert(session_id, handle);
@@ -337,13 +346,18 @@ fn handle_parallel_worktrees_ready(
                 let workspace_path = workspace_path.clone();
                 let worktree_path = spec.worktree_path.clone();
                 task::spawn_blocking(move || {
-                    let _ = git::remove_worktree(&workspace_path, &worktree_path, true);
+                    if let Err(err) = git::remove_worktree(&workspace_path, &worktree_path, true) {
+                        report_background_error(
+                            "failed to remove unspawned parallel worktree",
+                            err,
+                        );
+                    }
                 });
             }
         }
     }
 
-    let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
+    save_state(state, "failed to save parallel task sessions");
     Ok(())
 }
 
@@ -381,7 +395,14 @@ fn cancel_parallel_task(
     // Kill all sessions and cleanup worktrees
     for session_id in &session_ids {
         if let Some(mut handle) = state.system.pty_handles.remove(session_id) {
-            let _ = handle.kill();
+            if let Err(err) = handle.kill() {
+                report_runtime_error(
+                    state,
+                    "failed to kill parallel session",
+                    err,
+                    "Failed to stop session",
+                );
+            }
         }
         state.system.remove_session_buffers(session_id);
     }
@@ -392,7 +413,9 @@ fn cancel_parallel_task(
             let ws_path = ws_path.clone();
             let worktree_path = worktree_path.clone();
             task::spawn_blocking(move || {
-                let _ = git::remove_worktree(&ws_path, &worktree_path, true);
+                if let Err(err) = git::remove_worktree(&ws_path, &worktree_path, true) {
+                    report_background_error("failed to remove cancelled parallel worktree", err);
+                }
             });
         }
     }
@@ -416,7 +439,7 @@ fn cancel_parallel_task(
         ws.remove_parallel_task(task_id);
     }
 
-    let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
+    save_state(state, "failed to save cancelled parallel task");
     Ok(())
 }
 
@@ -476,17 +499,21 @@ fn select_parallel_winner(
         // Auto-commit any uncommitted changes in the winner's worktree before merging.
         // Agents often edit files without committing — without this, those changes
         // would be lost when the worktree is force-removed during cleanup.
-        if git::worktree_has_changes(&plan.winner_worktree_path) {
-            let _ = git::commit_all_changes(
+        let result = if git::worktree_has_changes(&plan.winner_worktree_path) {
+            git::commit_all_changes(
                 &plan.winner_worktree_path,
                 "parallel task: auto-commit uncommitted changes",
-            );
-        }
-
-        let result = git::checkout_branch(&plan.workspace_path, &plan.source_branch)
-            .and_then(|_| git::merge_branch(&plan.workspace_path, &plan.winner_branch));
+            )
+            .and_then(|_| git::checkout_branch(&plan.workspace_path, &plan.source_branch))
+            .and_then(|_| git::merge_branch(&plan.workspace_path, &plan.winner_branch))
+        } else {
+            git::checkout_branch(&plan.workspace_path, &plan.source_branch)
+                .and_then(|_| git::merge_branch(&plan.workspace_path, &plan.winner_branch))
+        };
         let error = result.err().map(|e| e.to_string());
-        let _ = action_tx.send(Action::ParallelMergeFinished { plan, error });
+        if let Err(err) = action_tx.send(Action::ParallelMergeFinished { plan, error }) {
+            report_background_error("failed to report parallel merge result", err);
+        }
     });
 
     Ok(())
@@ -513,7 +540,14 @@ fn handle_parallel_merge_finished(
     // Kill only the merged attempt's session
     for session_id in &plan.session_ids {
         if let Some(mut handle) = state.system.pty_handles.remove(session_id) {
-            let _ = handle.kill();
+            if let Err(err) = handle.kill() {
+                report_runtime_error(
+                    state,
+                    "failed to kill merged parallel session",
+                    err,
+                    "Failed to stop session",
+                );
+            }
         }
         state.system.remove_session_buffers(session_id);
     }
@@ -523,7 +557,9 @@ fn handle_parallel_merge_finished(
         let workspace_path = plan.workspace_path.clone();
         let worktree_path = plan.winner_worktree_path.clone();
         task::spawn_blocking(move || {
-            let _ = git::remove_worktree(&workspace_path, &worktree_path, true);
+            if let Err(err) = git::remove_worktree(&workspace_path, &worktree_path, true) {
+                report_background_error("failed to remove merged parallel worktree", err);
+            }
         });
     }
 
@@ -560,7 +596,7 @@ fn handle_parallel_merge_finished(
         state.ui.selected_report_idx = report_count - 1;
     }
 
-    let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
+    save_state(state, "failed to save parallel merge");
 
     Ok(())
 }
@@ -580,8 +616,11 @@ fn mark_attempt_completed(state: &mut AppState, session_id: Uuid) -> Result<()> 
                 if task.request_report {
                     let report_path = attempt.worktree_path.join("PARALLEL_REPORT.md");
                     if report_path.exists() {
-                        if let Ok(content) = std::fs::read_to_string(&report_path) {
-                            attempt.set_report(content);
+                        match std::fs::read_to_string(&report_path) {
+                            Ok(content) => attempt.set_report(content),
+                            Err(err) => {
+                                report_background_error("failed to read parallel report", err)
+                            }
                         }
                     }
                 }
@@ -591,7 +630,7 @@ fn mark_attempt_completed(state: &mut AppState, session_id: Uuid) -> Result<()> 
                     task.mark_awaiting_selection();
                 }
 
-                let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
+                save_state(state, "failed to save parallel attempt completion");
                 return Ok(());
             }
         }

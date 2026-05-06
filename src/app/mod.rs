@@ -7,6 +7,7 @@ mod selection;
 mod session_start;
 mod state;
 mod utilities;
+mod workspace_nav;
 
 // Terminal buffer configuration
 // Live parser rows - small viewport, just enough for current screen.
@@ -19,6 +20,7 @@ pub use action::{Action, ParallelMergePlan, ParallelWorktreeSpec, UtilityContent
 pub use runtime::run_tui;
 pub use state::{
     AppState, ConfigTab, ConfigTreeNode, Divider, FocusPanel, InputMode, PendingDelete,
-    PendingSessionStart, RawOutputBuffer, ReplayCache, TextSelection, Toast, ToastLevel,
-    TodoPaneMode, TodosTab, UtilityItem, UtilitySection, WorkspaceAction,
+    PendingSessionStart, PinnedPaneState, RawOutputBuffer, ReplayCache, TextSelection, Toast,
+    ToastLevel, TodoPaneMode, TodosTab, UtilityItem, UtilitySection, WorkspaceAction,
+    WorkspaceUiState,
 };

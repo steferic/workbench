@@ -1,4 +1,6 @@
 mod handlers;
+mod key_modes;
+mod shortcuts;
 
 use crate::app::{Action, AppState};
 use anyhow::Result;
@@ -13,8 +15,8 @@ enum TerminalEvent {
     MouseDown(u16, u16),
     MouseDrag(u16, u16),
     MouseUp(u16, u16),
-    MouseScrollUp,
-    MouseScrollDown,
+    MouseScrollUp(u16, u16),
+    MouseScrollDown(u16, u16),
     Resize(u16, u16),
     Tick,
 }
@@ -51,8 +53,12 @@ impl EventHandler {
                             MouseEventKind::Up(MouseButton::Left) => {
                                 TerminalEvent::MouseUp(mouse.column, mouse.row)
                             }
-                            MouseEventKind::ScrollUp => TerminalEvent::MouseScrollUp,
-                            MouseEventKind::ScrollDown => TerminalEvent::MouseScrollDown,
+                            MouseEventKind::ScrollUp => {
+                                TerminalEvent::MouseScrollUp(mouse.column, mouse.row)
+                            }
+                            MouseEventKind::ScrollDown => {
+                                TerminalEvent::MouseScrollDown(mouse.column, mouse.row)
+                            }
                             _ => TerminalEvent::Tick,
                         },
                         Ok(Event::Resize(w, h)) => TerminalEvent::Resize(w, h),
@@ -101,8 +107,8 @@ impl EventHandler {
                 TerminalEvent::MouseDown(x, y) => Ok(Action::MouseClick(x, y)),
                 TerminalEvent::MouseDrag(x, y) => Ok(Action::MouseDrag(x, y)),
                 TerminalEvent::MouseUp(x, y) => Ok(Action::MouseUp(x, y)),
-                TerminalEvent::MouseScrollUp => Ok(Action::ScrollOutputUp),
-                TerminalEvent::MouseScrollDown => Ok(Action::ScrollOutputDown),
+                TerminalEvent::MouseScrollUp(x, y) => Ok(Action::MouseScrollUp(x, y)),
+                TerminalEvent::MouseScrollDown(x, y) => Ok(Action::MouseScrollDown(x, y)),
                 TerminalEvent::Resize(w, h) => Ok(Action::Resize(w, h)),
                 TerminalEvent::Tick => Ok(Action::Tick),
             };
@@ -126,8 +132,8 @@ impl EventHandler {
                     TerminalEvent::MouseDown(x, y) => Ok(Action::MouseClick(x, y)),
                     TerminalEvent::MouseDrag(x, y) => Ok(Action::MouseDrag(x, y)),
                     TerminalEvent::MouseUp(x, y) => Ok(Action::MouseUp(x, y)),
-                    TerminalEvent::MouseScrollUp => Ok(Action::ScrollOutputUp),
-                    TerminalEvent::MouseScrollDown => Ok(Action::ScrollOutputDown),
+                    TerminalEvent::MouseScrollUp(x, y) => Ok(Action::MouseScrollUp(x, y)),
+                    TerminalEvent::MouseScrollDown(x, y) => Ok(Action::MouseScrollDown(x, y)),
                     TerminalEvent::Resize(w, h) => Ok(Action::Resize(w, h)),
                     TerminalEvent::Tick => Ok(Action::Tick),
                 }

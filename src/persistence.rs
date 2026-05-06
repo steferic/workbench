@@ -1,13 +1,25 @@
 use crate::models::{Session, SessionStatus, Workspace};
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use uuid::Uuid;
 
+/// Schema version of `state.json`. Bump this whenever the on-disk format
+/// gains a required field or otherwise becomes incompatible with the prior
+/// shape, and add a migration arm in `migrate_state`. Files without a
+/// `version` field on disk are treated as version 1 (the original shape).
+pub const STATE_SCHEMA_VERSION: u32 = 1;
+
+fn default_state_version() -> u32 {
+    1
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PersistedState {
+    #[serde(default = "default_state_version")]
+    pub version: u32,
     pub workspaces: Vec<Workspace>,
     pub sessions: HashMap<Uuid, Vec<Session>>,
     #[serde(default)]
@@ -80,11 +92,38 @@ impl Default for GlobalConfig {
 impl PersistedState {
     pub fn new() -> Self {
         Self {
+            version: STATE_SCHEMA_VERSION,
             workspaces: Vec::new(),
             sessions: HashMap::new(),
             notepad_content: HashMap::new(),
         }
     }
+}
+
+/// Migrate a raw JSON value written by an older schema version up to the
+/// current shape. Currently a no-op (we only have v1), but future bumps add
+/// arms here. Files saved by a *newer* version than we know about are
+/// rejected — silently downgrading would lose fields the user's data depends
+/// on.
+fn migrate_state(mut value: serde_json::Value, from_version: u32) -> Result<serde_json::Value> {
+    if from_version > STATE_SCHEMA_VERSION {
+        return Err(anyhow!(
+            "state.json was written by a newer workbench (schema v{from_version}); \
+             refusing to load to avoid data loss"
+        ));
+    }
+
+    // Future migrations slot in here, e.g.:
+    //   if from_version < 2 { value = migrate_v1_to_v2(value)?; }
+
+    // Stamp the current version so the in-memory value is consistent.
+    if let serde_json::Value::Object(ref mut map) = value {
+        map.insert(
+            "version".to_string(),
+            serde_json::Value::from(STATE_SCHEMA_VERSION),
+        );
+    }
+    Ok(value)
 }
 
 fn config_path() -> Result<PathBuf> {
@@ -107,8 +146,43 @@ pub fn load() -> Result<PersistedState> {
         return Ok(PersistedState::new());
     }
 
-    let contents = fs::read_to_string(&path)?;
-    let mut state: PersistedState = serde_json::from_str(&contents)?;
+    match load_inner(&path) {
+        Ok(state) => Ok(state),
+        Err(err) => {
+            // Preserve the unreadable file instead of letting the next save
+            // overwrite it. This protects users from silent data loss when a
+            // schema bump or disk corruption breaks `load`.
+            let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+            let backup = path.with_file_name(format!("state.json.corrupt-{stamp}"));
+            if let Err(rename_err) = fs::rename(&path, &backup) {
+                crate::logger::warn(format!(
+                    "could not back up corrupt state.json to {}: {rename_err}",
+                    backup.display()
+                ));
+            } else {
+                crate::logger::warn(format!(
+                    "state.json failed to load ({err}); preserved at {}",
+                    backup.display()
+                ));
+            }
+            Err(err)
+        }
+    }
+}
+
+fn load_inner(path: &PathBuf) -> Result<PersistedState> {
+    let contents = fs::read_to_string(path)?;
+
+    // Peek at the version field before fully deserializing so we can refuse
+    // forward-version files explicitly and run migrations for backward ones.
+    let raw: serde_json::Value = serde_json::from_str(&contents)?;
+    let from_version = raw
+        .get("version")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u32)
+        .unwrap_or(1);
+    let migrated = migrate_state(raw, from_version)?;
+    let mut state: PersistedState = serde_json::from_value(migrated)?;
 
     // Mark all sessions as stopped (PTYs don't survive restart)
     for sessions in state.sessions.values_mut() {
@@ -140,6 +214,7 @@ pub fn load() -> Result<PersistedState> {
 /// Borrowing view of state for serialization (avoids cloning all data on save)
 #[derive(Serialize)]
 struct PersistedStateRef<'a> {
+    version: u32,
     workspaces: &'a [Workspace],
     sessions: &'a HashMap<Uuid, Vec<Session>>,
     notepad_content: &'a HashMap<Uuid, String>,
@@ -159,6 +234,7 @@ pub fn save_with_notepad(
     let path = config_path()?;
 
     let state = PersistedStateRef {
+        version: STATE_SCHEMA_VERSION,
         workspaces,
         sessions,
         notepad_content,

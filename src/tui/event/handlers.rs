@@ -1,247 +1,15 @@
-use crate::app::{Action, AppState, ConfigTab, FocusPanel, InputMode, PendingDelete, TodosTab};
-use crate::models::AgentType;
+use crate::app::{Action, AppState, FocusPanel, PendingDelete, TodosTab};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use super::key_modes::handle_input_mode_key;
+use super::shortcuts::{agent_shortcut, check_global_keys};
 use super::EventHandler;
 
 impl EventHandler {
-    /// Check for global keybindings that work in any panel (driven by UserConfig)
-    fn check_global_keys(
-        key: &KeyEvent,
-        user_config: &crate::config::user_config::UserConfig,
-    ) -> Option<Action> {
-        use crate::config::keybindings::KeyCombo;
-
-        let pressed = KeyCombo::new(key.code, key.modifiers);
-        let pressed_str = pressed.display();
-
-        for action_name in crate::config::user_config::global_hotkey_actions() {
-            if let Some(key_str) = user_config.global_hotkeys.get(*action_name) {
-                if !key_str.is_empty() && key_str.eq_ignore_ascii_case(&pressed_str) {
-                    return match *action_name {
-                        "CycleNextWorkspace" => Some(Action::CycleNextWorkspace),
-                        "CyclePrevWorkspace" => Some(Action::CyclePrevWorkspace),
-                        "CycleNextSession" => Some(Action::CycleNextSession),
-                        "CyclePrevSession" => Some(Action::CyclePrevSession),
-                        "InitiateQuit" => Some(Action::InitiateQuit),
-                        "EnterHelpMode" => Some(Action::EnterConfigWindow),
-                        "ToggleDebugOverlay" => Some(Action::ToggleDebugOverlay),
-                        "EnterConfigWindow" => Some(Action::EnterConfigWindow),
-                        "TestToast" => Some(Action::TestToast),
-                        _ => None,
-                    };
-                }
-            }
-        }
-        None
-    }
-
     pub(super) fn handle_key_event(&self, key: KeyEvent, state: &AppState) -> Action {
         // Handle input mode first
-        match state.ui.input_mode {
-            InputMode::SelectWorkspaceAction => {
-                return match key.code {
-                    KeyCode::Esc => Action::ExitMode,
-                    KeyCode::Char('j') | KeyCode::Down => Action::NextWorkspaceChoice,
-                    KeyCode::Char('k') | KeyCode::Up => Action::PrevWorkspaceChoice,
-                    KeyCode::Enter => Action::ConfirmWorkspaceChoice,
-                    _ => Action::Tick,
-                };
-            }
-            InputMode::EnterWorkspaceName => {
-                return match key.code {
-                    KeyCode::Esc => Action::ExitMode,
-                    KeyCode::Enter => {
-                        let name = state.ui.input_buffer.clone();
-                        if name.is_empty() {
-                            Action::Tick
-                        } else {
-                            Action::CreateNewWorkspace(name)
-                        }
-                    }
-                    KeyCode::Backspace => Action::InputBackspace,
-                    KeyCode::Char(c) => Action::InputChar(c),
-                    _ => Action::Tick,
-                };
-            }
-            InputMode::CreateWorkspace => {
-                if state.ui.workspace_create_mode {
-                    return match key.code {
-                        KeyCode::Esc => Action::ExitMode,
-                        KeyCode::Char('j') | KeyCode::Down => Action::FileBrowserDown,
-                        KeyCode::Char('k') | KeyCode::Up => Action::FileBrowserUp,
-                        KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter => {
-                            Action::FileBrowserEnter
-                        }
-                        KeyCode::Char('h') | KeyCode::Left | KeyCode::Backspace => {
-                            Action::FileBrowserBack
-                        }
-                        KeyCode::Char(' ') | KeyCode::Tab => Action::EnterWorkspaceNameMode,
-                        _ => Action::Tick,
-                    };
-                }
-
-                return match key.code {
-                    KeyCode::Esc => Action::ExitMode,
-                    KeyCode::Down => Action::FileBrowserDown,
-                    KeyCode::Up => Action::FileBrowserUp,
-                    KeyCode::Right | KeyCode::Enter => Action::FileBrowserEnter,
-                    KeyCode::Left => Action::FileBrowserBack,
-                    KeyCode::Char(' ') | KeyCode::Tab => Action::FileBrowserSelect,
-                    KeyCode::Backspace => {
-                        if state.ui.file_browser_query.is_empty() {
-                            Action::FileBrowserBack
-                        } else {
-                            Action::InputBackspace
-                        }
-                    }
-                    KeyCode::Char(c)
-                        if !key.modifiers.contains(KeyModifiers::CONTROL)
-                            && !key.modifiers.contains(KeyModifiers::ALT) =>
-                    {
-                        Action::InputChar(c)
-                    }
-                    _ => Action::Tick,
-                };
-            }
-            InputMode::CreateSession => {
-                if let Some((agent_type, dangerously_skip_permissions, with_worktree)) =
-                    Self::agent_shortcut(&key, &state.system.user_config.agents)
-                {
-                    return Action::CreateSession(
-                        agent_type,
-                        dangerously_skip_permissions,
-                        with_worktree,
-                    );
-                }
-                return match key.code {
-                    KeyCode::Esc => Action::ExitMode,
-                    KeyCode::Char('t') => Action::CreateTerminal,
-                    _ => Action::Tick,
-                };
-            }
-            InputMode::SetStartCommand => {
-                return match key.code {
-                    KeyCode::Esc => Action::ExitMode,
-                    KeyCode::Enter => {
-                        if let Some(session_id) = state.ui.editing_session_id {
-                            let cmd = state.ui.input_buffer.clone();
-                            Action::SetStartCommand(session_id, cmd)
-                        } else {
-                            Action::ExitMode
-                        }
-                    }
-                    KeyCode::Backspace => Action::InputBackspace,
-                    KeyCode::Char(c) => Action::InputChar(c),
-                    _ => Action::Tick,
-                };
-            }
-            InputMode::CreateTodo => {
-                return match key.code {
-                    KeyCode::Esc => Action::ExitMode,
-                    KeyCode::Enter => {
-                        let desc = state.ui.input_buffer.clone();
-                        if desc.is_empty() {
-                            Action::ExitMode
-                        } else {
-                            Action::CreateTodo(desc)
-                        }
-                    }
-                    KeyCode::Backspace => Action::InputBackspace,
-                    KeyCode::Char(c) => Action::InputChar(c),
-                    _ => Action::Tick,
-                };
-            }
-            InputMode::CreateParallelTask => {
-                return match key.code {
-                    KeyCode::Esc => Action::ExitMode,
-                    KeyCode::Tab => Action::NextParallelAgent,
-                    KeyCode::BackTab => Action::PrevParallelAgent,
-                    KeyCode::Char('x') => {
-                        Action::ToggleParallelAgent(state.ui.parallel_task_agent_idx)
-                    }
-                    KeyCode::Enter => Action::StartParallelTask,
-                    KeyCode::Backspace => Action::InputBackspace,
-                    KeyCode::Char(c) => Action::InputChar(c),
-                    _ => Action::Tick,
-                };
-            }
-            InputMode::ConfirmMergeWorktree => {
-                return match key.code {
-                    KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => Action::CancelMerge,
-                    KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
-                        Action::ConfirmMergeWithCommit
-                    }
-                    _ => Action::Tick,
-                };
-            }
-            InputMode::ConfirmParallelMerge => {
-                return match key.code {
-                    KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
-                        Action::CancelParallelMerge
-                    }
-                    KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
-                        Action::ConfirmParallelMerge
-                    }
-                    _ => Action::Tick,
-                };
-            }
-            InputMode::CommandPalette => {
-                return match key.code {
-                    KeyCode::Esc => Action::ExitCommandPalette,
-                    KeyCode::Enter => Action::CommandPaletteExecute,
-                    KeyCode::Down => Action::CommandPaletteDown,
-                    KeyCode::Up => Action::CommandPaletteUp,
-                    KeyCode::Backspace => Action::CommandPaletteBackspace,
-                    KeyCode::Char(c) => Action::CommandPaletteInput(c),
-                    _ => Action::Tick,
-                };
-            }
-            InputMode::ConfigWindow => {
-                // If rebinding a hotkey, capture any key as the new binding
-                if state.ui.config_rebinding {
-                    return Action::ConfigRebindKey(key);
-                }
-                // If editing a field, handle text input
-                if state.ui.config_editing {
-                    return match key.code {
-                        KeyCode::Esc => Action::ConfigCancelEdit,
-                        KeyCode::Enter => Action::ConfigFinishEdit,
-                        KeyCode::Backspace => Action::ConfigInputBackspace,
-                        KeyCode::Char(c) => Action::ConfigInputChar(c),
-                        _ => Action::Tick,
-                    };
-                }
-                // Normal config navigation
-                return match key.code {
-                    KeyCode::Esc => Action::ExitConfigWindow,
-                    KeyCode::Char('1') => Action::ConfigSwitchTab(ConfigTab::QuickRef),
-                    KeyCode::Char('2') => Action::ConfigSwitchTab(ConfigTab::Agents),
-                    KeyCode::Char('3') => Action::ConfigSwitchTab(ConfigTab::Hotkeys),
-                    KeyCode::Char('4') => Action::ConfigSwitchTab(ConfigTab::Scrollback),
-                    KeyCode::Tab => {
-                        let next = match state.ui.config_tab {
-                            ConfigTab::QuickRef => ConfigTab::Agents,
-                            ConfigTab::Agents => ConfigTab::Hotkeys,
-                            ConfigTab::Hotkeys => ConfigTab::Scrollback,
-                            ConfigTab::Scrollback => ConfigTab::QuickRef,
-                        };
-                        Action::ConfigSwitchTab(next)
-                    }
-                    KeyCode::Char('j') | KeyCode::Down => Action::ConfigMoveDown,
-                    KeyCode::Char('k') | KeyCode::Up => Action::ConfigMoveUp,
-                    KeyCode::Char('h') | KeyCode::Left => Action::ConfigMoveLeft,
-                    KeyCode::Char('l') | KeyCode::Right => Action::ConfigMoveRight,
-                    KeyCode::Enter => Action::ConfigStartEdit,
-                    KeyCode::Char('a') => Action::ConfigAddAgent,
-                    KeyCode::Char('d') => Action::ConfigDeleteAgent,
-                    KeyCode::Char('J') => Action::ConfigReorderDown,
-                    KeyCode::Char('K') => Action::ConfigReorderUp,
-                    KeyCode::Char('r') => Action::ConfigResetDefault,
-                    _ => Action::Tick,
-                };
-            }
-            InputMode::Normal => {}
+        if let Some(action) = handle_input_mode_key(&key, state) {
+            return action;
         }
 
         // Handle pending delete confirmation
@@ -296,7 +64,7 @@ impl EventHandler {
     }
 
     fn handle_workspace_list_keys(&self, key: KeyEvent, state: &AppState) -> Action {
-        if let Some(action) = Self::check_global_keys(&key, &state.system.user_config) {
+        if let Some(action) = check_global_keys(&key, &state.system.user_config) {
             return action;
         }
 
@@ -322,12 +90,12 @@ impl EventHandler {
     }
 
     fn handle_session_list_keys(&self, key: KeyEvent, state: &AppState) -> Action {
-        if let Some(action) = Self::check_global_keys(&key, &state.system.user_config) {
+        if let Some(action) = check_global_keys(&key, &state.system.user_config) {
             return action;
         }
 
         if let Some((agent_type, dangerously_skip_permissions, with_worktree)) =
-            Self::agent_shortcut(&key, &state.system.user_config.agents)
+            agent_shortcut(&key, &state.system.user_config.agents)
         {
             return Action::CreateSession(agent_type, dangerously_skip_permissions, with_worktree);
         }
@@ -480,7 +248,7 @@ impl EventHandler {
     }
 
     fn handle_todos_pane_keys(&self, key: KeyEvent, state: &AppState) -> Action {
-        if let Some(action) = Self::check_global_keys(&key, &state.system.user_config) {
+        if let Some(action) = check_global_keys(&key, &state.system.user_config) {
             return action;
         }
 
@@ -592,7 +360,7 @@ impl EventHandler {
     fn handle_utilities_pane_keys(&self, key: KeyEvent, state: &AppState) -> Action {
         use crate::app::{UtilityItem, UtilitySection};
 
-        if let Some(action) = Self::check_global_keys(&key, &state.system.user_config) {
+        if let Some(action) = check_global_keys(&key, &state.system.user_config) {
             return action;
         }
 
@@ -631,17 +399,20 @@ impl EventHandler {
     }
 
     fn handle_output_pane_keys(&self, key: KeyEvent, state: &AppState) -> Action {
-        if let Some(action) = Self::check_global_keys(&key, &state.system.user_config) {
+        if let Some(action) = check_global_keys(&key, &state.system.user_config) {
             return action;
         }
 
         if state.ui.text_selection.start.is_some() {
             match key.code {
-                KeyCode::Char('y') => return Action::CopySelection,
+                // Ctrl+C copies when a selection is active. Without a selection
+                // it falls through and is sent to the PTY as SIGINT (0x03).
+                // Cmd+C and Ctrl+Shift+C also work on terminals that report
+                // those modifiers (Ghostty intercepts Cmd+C itself, so Ctrl+C
+                // is the dependable shortcut on macOS).
                 KeyCode::Char('c') | KeyCode::Char('C')
                     if key.modifiers.contains(KeyModifiers::SUPER)
-                        || (key.modifiers.contains(KeyModifiers::CONTROL)
-                            && key.modifiers.contains(KeyModifiers::SHIFT)) =>
+                        || key.modifiers.contains(KeyModifiers::CONTROL) =>
                 {
                     return Action::CopySelection;
                 }
@@ -768,7 +539,7 @@ impl EventHandler {
         state: &AppState,
         pane_idx: usize,
     ) -> Action {
-        if let Some(action) = Self::check_global_keys(&key, &state.system.user_config) {
+        if let Some(action) = check_global_keys(&key, &state.system.user_config) {
             return action;
         }
 
@@ -780,11 +551,11 @@ impl EventHandler {
             .unwrap_or(false)
         {
             match key.code {
-                KeyCode::Char('y') => return Action::CopySelection,
+                // Ctrl+C copies when a selection is active; without a selection
+                // it falls through and is sent to the PTY as SIGINT.
                 KeyCode::Char('c') | KeyCode::Char('C')
                     if key.modifiers.contains(KeyModifiers::SUPER)
-                        || (key.modifiers.contains(KeyModifiers::CONTROL)
-                            && key.modifiers.contains(KeyModifiers::SHIFT)) =>
+                        || key.modifiers.contains(KeyModifiers::CONTROL) =>
                 {
                     return Action::CopySelection;
                 }
@@ -910,67 +681,5 @@ impl EventHandler {
                 _ => Action::Tick,
             }
         }
-    }
-
-    pub(super) fn agent_shortcut(
-        key: &KeyEvent,
-        agents: &[crate::config::user_config::AgentConfig],
-    ) -> Option<(AgentType, bool, bool)> {
-        if key.modifiers.contains(KeyModifiers::CONTROL)
-            || key.modifiers.contains(KeyModifiers::SUPER)
-            || key.modifiers.contains(KeyModifiers::META)
-        {
-            return None;
-        }
-
-        let shifted = key.modifiers.contains(KeyModifiers::SHIFT);
-        let with_worktree = key.modifiers.contains(KeyModifiers::ALT);
-
-        let key_char = match key.code {
-            KeyCode::Char(c) => c.to_string(),
-            _ => return None,
-        };
-
-        // Map shift+number to the number (e.g. '!' -> "1", '@' -> "2")
-        let unshifted = match key_char.as_str() {
-            "!" => Some("1"),
-            "@" => Some("2"),
-            "#" => Some("3"),
-            "$" => Some("4"),
-            "%" => Some("5"),
-            "^" => Some("6"),
-            "&" => Some("7"),
-            "*" => Some("8"),
-            "(" => Some("9"),
-            _ => None,
-        };
-
-        for agent in agents {
-            if !agent.enabled {
-                continue;
-            }
-            let matches =
-                agent.hotkey == key_char || unshifted.map(|s| s == agent.hotkey).unwrap_or(false);
-            if matches {
-                let agent_type = config_to_agent_type(agent);
-                let skip_perms = shifted || unshifted.is_some();
-                return Some((agent_type, skip_perms, with_worktree));
-            }
-        }
-        None
-    }
-}
-
-fn config_to_agent_type(agent: &crate::config::user_config::AgentConfig) -> AgentType {
-    match agent.command.as_str() {
-        "claude" => AgentType::Claude,
-        "gemini" => AgentType::Gemini,
-        "codex" => AgentType::Codex,
-        "grok" => AgentType::Grok,
-        _ => AgentType::Custom {
-            command: agent.command.clone(),
-            display_name: agent.display_name.clone(),
-            badge: agent.badge.clone(),
-        },
     }
 }

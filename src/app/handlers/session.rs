@@ -2,13 +2,15 @@ use crate::app::pty_ops::resize_ptys_to_panes;
 use crate::app::{Action, AppState, FocusPanel, InputMode, PendingDelete, Toast, ToastLevel};
 use crate::git;
 use crate::models::{AgentType, AttemptStatus, Session};
-use crate::persistence;
 use crate::pty::{PtyHandle, PtyManager, SessionSpawnConfig};
-use crate::tui::utils::{convert_vt100_to_lines_visible, get_cursor_info};
 use anyhow::Result;
-use ratatui::text::{Line, Span};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::sync::mpsc;
+
+use super::session_worktree::{
+    handle_confirm_merge_with_commit, handle_merge_session_worktree, handle_switch_to_worktree,
+};
+use super::{report_background_error, report_runtime_error, save_state};
 
 fn show_toast(state: &mut AppState, msg: impl Into<String>, level: ToastLevel) {
     let duration = match level {
@@ -25,124 +27,15 @@ fn show_toast(state: &mut AppState, msg: impl Into<String>, level: ToastLevel) {
 }
 
 const SHELL_KILL_TIMEOUT: Duration = Duration::from_millis(500);
-
-/// Check if raw PTY data contains signals that a TUI is about to redraw.
-/// Ink-based apps (like Codex) redraw by: ESC[nA (cursor up) + ESC[J (erase below).
-/// Other TUI apps may use ESC[H (cursor home) + ESC[2J (clear screen).
-/// Any of these signals that the current screen content is about to be overwritten.
-fn has_tui_redraw_signal(data: &[u8]) -> bool {
-    let len = data.len();
-    let mut i = 0;
-    while i + 2 < len {
-        if data[i] == 0x1b && data[i + 1] == b'[' {
-            let rest = &data[i + 2..];
-            // ESC[H — cursor home (no params)
-            if rest[0] == b'H' {
-                return true;
-            }
-            // Parse CSI parameters + final byte
-            let mut j = 0;
-            while j < rest.len() && (rest[j].is_ascii_digit() || rest[j] == b';' || rest[j] == b'?')
-            {
-                j += 1;
-            }
-            if j < rest.len() {
-                match rest[j] {
-                    // ESC[nA — cursor up (Ink's primary redraw pattern)
-                    b'A' => return true,
-                    // ESC[J / ESC[0J / ESC[2J — erase in display
-                    b'J' => return true,
-                    // ESC[row;colH with row=1 — cursor home with params
-                    b'H' | b'f' => {
-                        let params = &rest[..j];
-                        let row_end = params
-                            .iter()
-                            .position(|&b| b == b';')
-                            .unwrap_or(params.len());
-                        let row_num: u16 = std::str::from_utf8(&params[..row_end])
-                            .ok()
-                            .and_then(|s| s.parse().ok())
-                            .unwrap_or(1);
-                        if row_num <= 1 {
-                            return true;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-        i += 1;
-    }
-    false
-}
-
-/// Check if a character is a box-drawing or block element
-fn is_box_drawing(c: char) -> bool {
-    let cp = c as u32;
-    (0x2500..=0x257F).contains(&cp) || (0x2580..=0x259F).contains(&cp)
-}
-
-/// Clean styled lines from a TUI screen snapshot: strip box-drawing characters
-/// and trim trailing whitespace while preserving line structure and indentation.
-fn clean_styled_lines(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
-    let cleaned: Vec<Line<'static>> = lines
-        .into_iter()
-        .map(|line| {
-            let spans: Vec<Span<'static>> = line
-                .spans
-                .into_iter()
-                .map(|span| {
-                    let text: String = span
-                        .content
-                        .chars()
-                        .map(|c| if is_box_drawing(c) { ' ' } else { c })
-                        .collect();
-                    Span::styled(text, span.style)
-                })
-                .collect();
-            trim_styled_line_end(Line::from(spans))
-        })
-        .collect();
-
-    // Remove trailing empty lines
-    let mut result = cleaned;
-    while result
-        .last()
-        .map(|l| l.spans.is_empty() || l.width() == 0)
-        .unwrap_or(false)
-    {
-        result.pop();
-    }
-    result
-}
-
-/// Trim only trailing whitespace from a styled Line, preserving leading indentation.
-fn trim_styled_line_end(line: Line<'static>) -> Line<'static> {
-    if line.spans.is_empty() {
-        return line;
-    }
-    let mut spans = line.spans;
-
-    // Trim trailing whitespace from last span
-    if let Some(last) = spans.last_mut() {
-        let trimmed = last.content.trim_end().to_string();
-        *last = Span::styled(trimmed, last.style);
-    }
-    // Remove empty trailing spans
-    while spans.last().map(|s| s.content.is_empty()).unwrap_or(false) {
-        spans.pop();
-    }
-
-    Line::from(spans)
-}
-
 pub(crate) fn terminate_session_handle(mut handle: PtyHandle, is_terminal: bool) {
     if is_terminal {
         std::thread::spawn(move || {
-            let _ = handle.interrupt_then_kill(SHELL_KILL_TIMEOUT);
+            if let Err(err) = handle.interrupt_then_kill(SHELL_KILL_TIMEOUT) {
+                report_background_error("failed to terminate terminal session", err);
+            }
         });
-    } else {
-        let _ = handle.kill();
+    } else if let Err(err) = handle.kill() {
+        report_background_error("failed to kill session", err);
     }
 }
 
@@ -223,11 +116,7 @@ pub fn handle_session_action(
 
                 let pty_rows = state.pane_rows();
                 let cols = state.output_pane_cols();
-                state.system.create_session_buffers(
-                    session_id,
-                    cols,
-                    matches!(agent_type, AgentType::Codex),
-                );
+                state.system.create_session_buffers(session_id, cols);
 
                 match pty_manager.spawn_session(SessionSpawnConfig {
                     session_id,
@@ -238,6 +127,7 @@ pub fn handle_session_action(
                     pty_tx: pty_tx.clone(),
                     resume: false,
                     dangerously_skip_permissions,
+                    use_alternate_screen: state.system.use_alternate_screen,
                 }) {
                     Ok(handle) => {
                         state.system.pty_handles.insert(session_id, handle);
@@ -248,7 +138,7 @@ pub fn handle_session_action(
                         if session_count > 0 {
                             state.ui.selected_session_idx = session_count - 1;
                         }
-                        let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
+                        save_state(state, "failed to save created session");
                     }
                     Err(_e) => {
                         show_toast(state, "Failed to spawn session", ToastLevel::Error);
@@ -279,7 +169,7 @@ pub fn handle_session_action(
 
                 let pty_rows = state.pane_rows();
                 let cols = state.output_pane_cols();
-                state.system.create_session_buffers(session_id, cols, false);
+                state.system.create_session_buffers(session_id, cols);
 
                 match pty_manager.spawn_session(SessionSpawnConfig {
                     session_id,
@@ -290,6 +180,7 @@ pub fn handle_session_action(
                     pty_tx: pty_tx.clone(),
                     resume: false,
                     dangerously_skip_permissions: false,
+                    use_alternate_screen: state.system.use_alternate_screen,
                 }) {
                     Ok(handle) => {
                         state.system.pty_handles.insert(session_id, handle);
@@ -300,7 +191,7 @@ pub fn handle_session_action(
                         if session_count > 0 {
                             state.ui.selected_session_idx = session_count - 1;
                         }
-                        let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
+                        save_state(state, "failed to save created terminal");
                     }
                     Err(_e) => {
                         show_toast(state, "Failed to spawn terminal", ToastLevel::Error);
@@ -310,6 +201,9 @@ pub fn handle_session_action(
             }
         }
         Action::ActivateSession(session_id) => {
+            if state.ui.active_session_id != Some(session_id) {
+                crate::app::selection::clear_active_text_selection(state);
+            }
             state.ui.active_session_id = Some(session_id);
             state.ui.output_scroll_offset = 0;
             state.ui.output_content_length = 0;
@@ -361,11 +255,7 @@ pub fn handle_session_action(
 
                     let pty_rows = state.pane_rows();
                     let cols = state.output_pane_cols();
-                    state.system.create_session_buffers(
-                        session_id,
-                        cols,
-                        matches!(agent_type, AgentType::Codex),
-                    );
+                    state.system.create_session_buffers(session_id, cols);
 
                     let resume = agent_type.is_agent();
 
@@ -378,6 +268,7 @@ pub fn handle_session_action(
                         pty_tx: pty_tx.clone(),
                         resume,
                         dangerously_skip_permissions,
+                        use_alternate_screen: state.system.use_alternate_screen,
                     }) {
                         Ok(handle) => {
                             state.system.pty_handles.insert(session_id, handle);
@@ -399,12 +290,18 @@ pub fn handle_session_action(
                                             .await;
                                             let mut input = cmd.into_bytes();
                                             input.push(b'\n');
-                                            let _ = tx.send(Action::SendInput(sid, input));
+                                            if let Err(err) = tx.send(Action::SendInput(sid, input))
+                                            {
+                                                report_background_error(
+                                                    "failed to queue terminal start command",
+                                                    err,
+                                                );
+                                            }
                                         });
                                     }
                                 }
                             }
-                            let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
+                            save_state(state, "failed to save restarted session");
                         }
                         Err(_e) => {
                             show_toast(state, "Failed to restart session", ToastLevel::Error);
@@ -418,8 +315,18 @@ pub fn handle_session_action(
             }
         }
         Action::StopSession(session_id) => {
-            if let Some(handle) = state.system.pty_handles.get_mut(&session_id) {
-                let _ = handle.send_input(&[0x03]); // Ctrl+C
+            let send_error = state
+                .system
+                .pty_handles
+                .get_mut(&session_id)
+                .and_then(|handle| handle.send_input(&[0x03]).err());
+            if let Some(err) = send_error {
+                report_runtime_error(
+                    state,
+                    "failed to send stop signal to PTY",
+                    err,
+                    "Failed to stop session",
+                );
             }
         }
         Action::KillSession(session_id) => {
@@ -442,7 +349,7 @@ pub fn handle_session_action(
             if state.ui.active_session_id == Some(session_id) {
                 state.ui.active_session_id = None;
             }
-            let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
+            save_state(state, "failed to save killed session");
         }
         Action::InitiateDeleteSession(id, name) => {
             state.ui.pending_delete = Some(PendingDelete::Session(id, name));
@@ -506,7 +413,14 @@ pub fn handle_session_action(
                 // Clean up worktree - either from parallel task or regular session
                 if let Some((workspace_path, worktree_path, task_id)) = parallel_cleanup_info {
                     // Remove the parallel task worktree
-                    let _ = git::remove_worktree(&workspace_path, &worktree_path, true);
+                    if let Err(err) = git::remove_worktree(&workspace_path, &worktree_path, true) {
+                        report_runtime_error(
+                            state,
+                            "failed to remove parallel session worktree",
+                            err,
+                            "Failed to remove worktree",
+                        );
+                    }
 
                     // Mark the attempt as failed and potentially clean up the task
                     if let Some(ws) = state.selected_workspace_mut() {
@@ -539,7 +453,14 @@ pub fn handle_session_action(
                     (session_worktree_path, workspace_path)
                 {
                     // Clean up regular session worktree
-                    let _ = git::remove_worktree(&workspace_path, &worktree_path, true);
+                    if let Err(err) = git::remove_worktree(&workspace_path, &worktree_path, true) {
+                        report_runtime_error(
+                            state,
+                            "failed to remove session worktree",
+                            err,
+                            "Failed to remove worktree",
+                        );
+                    }
                 }
 
                 state.delete_session(session_id);
@@ -550,289 +471,24 @@ pub fn handle_session_action(
                 if state.ui.selected_session_idx >= session_count && session_count > 0 {
                     state.ui.selected_session_idx = session_count - 1;
                 }
-                let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
+                save_state(state, "failed to save deleted session");
             }
         }
         Action::CancelPendingDelete => {
             state.ui.pending_delete = None;
         }
         Action::MergeSessionWorktree(session_id) => {
-            // Find session info
-            let merge_info: Option<(std::path::PathBuf, std::path::PathBuf, String)> = {
-                let session = state
-                    .data
-                    .sessions
-                    .values()
-                    .flatten()
-                    .find(|s| s.id == session_id);
-
-                if let Some(s) = session {
-                    if let (Some(worktree_path), Some(branch)) =
-                        (&s.worktree_path, &s.worktree_branch)
-                    {
-                        // Get workspace path
-                        let workspace_path = state
-                            .data
-                            .workspaces
-                            .iter()
-                            .find(|w| w.id == s.workspace_id)
-                            .map(|w| w.path.clone());
-
-                        workspace_path.map(|wp| (wp, worktree_path.clone(), branch.clone()))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            };
-
-            if let Some((workspace_path, worktree_path, branch_name)) = merge_info {
-                // Check if worktree has uncommitted changes
-                if git::worktree_has_changes(&worktree_path) {
-                    // Show confirmation modal instead of erroring
-                    state.ui.merging_session_id = Some(session_id);
-                    state.ui.input_mode = InputMode::ConfirmMergeWorktree;
-                    return Ok(());
-                }
-
-                // Check if main workspace is clean before merging
-                if !git::is_clean(&workspace_path).unwrap_or(false) {
-                    show_toast(
-                        state,
-                        "Merge blocked: workspace has uncommitted changes",
-                        ToastLevel::Warning,
-                    );
-                    return Ok(());
-                }
-
-                // No uncommitted changes - proceed with merge directly
-                // Perform the merge
-                match git::merge_branch(&workspace_path, &branch_name) {
-                    Ok(()) => {
-                        // Merge successful - clean up the worktree
-                        let _ = git::remove_worktree(&workspace_path, &worktree_path, true);
-
-                        // Clear worktree info from session
-                        if let Some(session) = state.get_session_mut(session_id) {
-                            session.worktree_path = None;
-                            session.worktree_branch = None;
-                        }
-
-                        let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
-                        show_toast(state, "Worktree merged successfully", ToastLevel::Success);
-                    }
-                    Err(_e) => {
-                        show_toast(
-                            state,
-                            "Merge failed — resolve conflicts manually",
-                            ToastLevel::Error,
-                        );
-                    }
-                }
-            }
+            handle_merge_session_worktree(state, session_id);
         }
         Action::ConfirmMergeWithCommit => {
-            if let Some(session_id) = state.ui.merging_session_id.take() {
-                // Find session info
-                let merge_info: Option<(std::path::PathBuf, std::path::PathBuf, String, String)> = {
-                    let session = state
-                        .data
-                        .sessions
-                        .values()
-                        .flatten()
-                        .find(|s| s.id == session_id);
-
-                    if let Some(s) = session {
-                        if let (Some(worktree_path), Some(branch)) =
-                            (&s.worktree_path, &s.worktree_branch)
-                        {
-                            let workspace_path = state
-                                .data
-                                .workspaces
-                                .iter()
-                                .find(|w| w.id == s.workspace_id)
-                                .map(|w| w.path.clone());
-
-                            workspace_path.map(|wp| {
-                                let agent_name = s.agent_type.display_name().to_string();
-                                (wp, worktree_path.clone(), branch.clone(), agent_name)
-                            })
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                };
-
-                if let Some((workspace_path, worktree_path, branch_name, agent_name)) = merge_info {
-                    // Check if main workspace is clean before merging
-                    if !git::is_clean(&workspace_path).unwrap_or(false) {
-                        show_toast(
-                            state,
-                            "Merge blocked: workspace has uncommitted changes",
-                            ToastLevel::Warning,
-                        );
-                        state.ui.input_mode = InputMode::Normal;
-                        return Ok(());
-                    }
-
-                    // Commit all changes first
-                    let commit_msg =
-                        format!("Agent {} work - auto-committed for merge", agent_name);
-                    if let Err(_e) = git::commit_all_changes(&worktree_path, &commit_msg) {
-                        show_toast(
-                            state,
-                            "Failed to commit worktree changes",
-                            ToastLevel::Error,
-                        );
-                        state.ui.input_mode = InputMode::Normal;
-                        return Ok(());
-                    }
-
-                    // Perform the merge
-                    match git::merge_branch(&workspace_path, &branch_name) {
-                        Ok(()) => {
-                            // Merge successful - clean up the worktree
-                            let _ = git::remove_worktree(&workspace_path, &worktree_path, true);
-
-                            // Clear worktree info from session
-                            if let Some(session) = state.get_session_mut(session_id) {
-                                session.worktree_path = None;
-                                session.worktree_branch = None;
-                            }
-
-                            let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
-                            show_toast(
-                                state,
-                                "Worktree committed and merged successfully",
-                                ToastLevel::Success,
-                            );
-                        }
-                        Err(_e) => {
-                            show_toast(
-                                state,
-                                "Merge failed — resolve conflicts manually",
-                                ToastLevel::Error,
-                            );
-                        }
-                    }
-                }
-            }
-            state.ui.input_mode = InputMode::Normal;
+            handle_confirm_merge_with_commit(state);
         }
         Action::CancelMerge => {
             state.ui.merging_session_id = None;
             state.ui.input_mode = InputMode::Normal;
         }
         Action::SwitchToWorktree(session_id_opt) => {
-            // Switch the workspace's active worktree view
-            if let Some(session_id) = session_id_opt {
-                // Switching TO a worktree - need to create or reuse a viewer terminal
-
-                // First, get info about the agent session's worktree
-                let worktree_info: Option<(uuid::Uuid, std::path::PathBuf, String)> = state
-                    .data
-                    .sessions
-                    .values()
-                    .flatten()
-                    .find(|s| s.id == session_id)
-                    .and_then(|s| {
-                        s.worktree_path.as_ref().map(|path| {
-                            (
-                                s.workspace_id,
-                                path.clone(),
-                                s.agent_type.display_name().to_string(),
-                            )
-                        })
-                    });
-
-                if let Some((workspace_id, worktree_path, agent_name)) = worktree_info {
-                    // Check if a viewer terminal already exists for this session
-                    let existing_viewer_id: Option<uuid::Uuid> = state
-                        .data
-                        .sessions
-                        .values()
-                        .flatten()
-                        .find(|s| {
-                            s.worktree_viewer_for == Some(session_id)
-                                && s.status == crate::models::SessionStatus::Running
-                        })
-                        .map(|s| s.id);
-
-                    if let Some(viewer_id) = existing_viewer_id {
-                        // Reuse existing viewer terminal
-                        state.ui.active_session_id = Some(viewer_id);
-                        state.ui.output_scroll_offset = 0;
-                        state.ui.focus = FocusPanel::OutputPane;
-
-                        // Update workspace active worktree
-                        if let Some(workspace) = state.selected_workspace_mut() {
-                            workspace.active_worktree_session_id = Some(session_id);
-                        }
-                        let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
-                    } else {
-                        // Create a new viewer terminal
-                        let short_id = &session_id.to_string()[..8];
-                        let terminal_name = format!("⎇ {}-{}", agent_name, short_id);
-                        let session =
-                            Session::new_worktree_viewer(workspace_id, terminal_name, session_id);
-                        let new_session_id = session.id;
-
-                        let ws_idx = state.ui.selected_workspace_idx;
-                        if let Some(ws) = state.data.workspaces.get_mut(ws_idx) {
-                            ws.touch();
-                        }
-
-                        let pty_rows = state.pane_rows();
-                        let cols = state.output_pane_cols();
-                        state
-                            .system
-                            .create_session_buffers(new_session_id, cols, false);
-
-                        match pty_manager.spawn_session(SessionSpawnConfig {
-                            session_id: new_session_id,
-                            agent_type: AgentType::Terminal(format!("worktree-{}", short_id)),
-                            working_dir: &worktree_path,
-                            rows: pty_rows,
-                            cols,
-                            pty_tx: pty_tx.clone(),
-                            resume: false,
-                            dangerously_skip_permissions: false,
-                        }) {
-                            Ok(handle) => {
-                                state.system.pty_handles.insert(new_session_id, handle);
-                                state.add_session(session);
-                                state.ui.active_session_id = Some(new_session_id);
-                                state.ui.focus = FocusPanel::OutputPane;
-
-                                // Update workspace active worktree
-                                if let Some(workspace) = state.selected_workspace_mut() {
-                                    workspace.active_worktree_session_id = Some(session_id);
-                                }
-
-                                let _ =
-                                    persistence::save(&state.data.workspaces, &state.data.sessions);
-                            }
-                            Err(_e) => {
-                                show_toast(
-                                    state,
-                                    "Failed to open worktree terminal",
-                                    ToastLevel::Error,
-                                );
-                                state.system.remove_session_buffers(&new_session_id);
-                            }
-                        }
-                    }
-                }
-            } else {
-                // Switching back to main - just clear the active worktree
-                if let Some(workspace) = state.selected_workspace_mut() {
-                    workspace.active_worktree_session_id = None;
-                    let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
-                }
-            }
+            handle_switch_to_worktree(state, pty_manager, pty_tx, session_id_opt);
         }
         Action::EnterCreateSessionMode => {
             if state.selected_workspace().is_some() {
@@ -862,61 +518,66 @@ pub fn handle_session_action(
             state.ui.input_mode = InputMode::Normal;
             state.ui.input_buffer.clear();
             state.ui.editing_session_id = None;
-            let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
+            save_state(state, "failed to save start command");
         }
         Action::PinSession(session_id) => {
-            let ws_idx = state.ui.selected_workspace_idx;
-            if ws_idx < state.data.workspaces.len() {
-                let pinned = state.data.workspaces[ws_idx].pin_terminal(session_id);
-                if pinned {
-                    state.ui.split_view_enabled = true;
-                    let new_idx = state.data.workspaces[ws_idx]
-                        .pinned_terminal_ids
-                        .len()
-                        .saturating_sub(1);
-                    state.ui.focused_pinned_pane = new_idx;
-                    state.ui.pinned_content_lengths[new_idx] = 0; // Reset length for stabilization
-                    resize_ptys_to_panes(state);
-                    let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
+            if state.pin_terminal_for_selected(session_id) {
+                state.ui.split_view_enabled = true;
+                let new_idx = state
+                    .selected_workspace()
+                    .map(|ws| ws.pinned_terminal_ids.len().saturating_sub(1))
+                    .unwrap_or(0);
+                if let Some(ws_ui) = state.ws_ui_mut() {
+                    ws_ui.focused_pinned_pane = new_idx;
                 }
+                // Reset every live per-pane field at the new slot. Otherwise
+                // a workspace-switch snapshot would lock in stale data from
+                // a previously-unpinned terminal at the same slot.
+                state.ui.focused_pinned_pane = new_idx;
+                if new_idx < state.ui.pinned_scroll_offsets.len() {
+                    state.ui.pinned_scroll_offsets[new_idx] = 0;
+                    state.ui.pinned_text_selections[new_idx] = crate::app::TextSelection::default();
+                    state.ui.pinned_on_replay[new_idx] = false;
+                    state.ui.pinned_content_lengths[new_idx] = 0;
+                }
+                resize_ptys_to_panes(state);
+                save_state(state, "failed to save pinned session");
             }
         }
         Action::UnpinSession(session_id) => {
-            if let Some(ws) = state
-                .data
-                .workspaces
-                .get_mut(state.ui.selected_workspace_idx)
-            {
-                ws.unpin_terminal(session_id);
-                let count = ws.pinned_terminal_ids.len();
-                if state.ui.focused_pinned_pane >= count && count > 0 {
-                    state.ui.focused_pinned_pane = count - 1;
-                }
-                state.ui.pinned_content_lengths = [0; crate::models::MAX_PINNED_TERMINALS]; // Reset all lengths on shift
-                resize_ptys_to_panes(state);
-                let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
+            state.unpin_terminal_anywhere(session_id);
+            // Mirror to legacy fields.
+            let count = state
+                .selected_workspace()
+                .map(|ws| ws.pinned_terminal_ids.len())
+                .unwrap_or(0);
+            if state.ui.focused_pinned_pane >= count && count > 0 {
+                state.ui.focused_pinned_pane = count - 1;
             }
+            state.ui.pinned_content_lengths = [0; crate::models::MAX_PINNED_TERMINALS];
+            resize_ptys_to_panes(state);
+            save_state(state, "failed to save unpinned session");
         }
         Action::UnpinFocusedSession => {
-            let session_id = state.pinned_terminal_id_at(state.ui.focused_pinned_pane);
-            if let (Some(ws), Some(sid)) = (
-                state
-                    .data
-                    .workspaces
-                    .get_mut(state.ui.selected_workspace_idx),
-                session_id,
-            ) {
-                ws.unpin_terminal(sid);
-                let count = ws.pinned_terminal_ids.len();
+            let focused = state
+                .ws_ui()
+                .map(|u| u.focused_pinned_pane)
+                .unwrap_or(state.ui.focused_pinned_pane);
+            if let Some(sid) = state.pinned_terminal_id_at(focused) {
+                state.unpin_terminal_anywhere(sid);
+                let count = state
+                    .selected_workspace()
+                    .map(|ws| ws.pinned_terminal_ids.len())
+                    .unwrap_or(0);
                 if state.ui.focused_pinned_pane >= count && count > 0 {
                     state.ui.focused_pinned_pane = count - 1;
                 }
                 if count == 0 {
                     state.ui.focus = FocusPanel::SessionList;
                 }
-                state.ui.pinned_content_lengths = [0; crate::models::MAX_PINNED_TERMINALS]; // Reset all lengths on shift
+                state.ui.pinned_content_lengths = [0; crate::models::MAX_PINNED_TERMINALS];
                 resize_ptys_to_panes(state);
-                let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
+                save_state(state, "failed to save focused unpin");
             }
         }
         Action::ToggleSplitView => {
@@ -932,86 +593,19 @@ pub fn handle_session_action(
                     session.mark_errored();
                 }
             }
-            let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
+            save_state(state, "failed to save exited session");
         }
         Action::PtyOutput(session_id, data) => {
-            let is_inline = state.system.inline_mode_sessions.contains(&session_id);
-
-            // For inline-mode sessions (Codex): snapshot the rendered screen BEFORE
-            // the live parser processes new data. Throttled to at most once per 500ms
-            // and deduplicated (skip if screen content unchanged) to avoid capturing
-            // dozens of partial mid-redraw frames. Captures styled lines (with colors)
-            // for faithful scrollback display.
-            if is_inline && has_tui_redraw_signal(&data) {
-                let now = Instant::now();
-                let enough_time = state
-                    .system
-                    .inline_last_snapshot
-                    .get(&session_id)
-                    .map(|(t, _prev)| now.duration_since(*t) >= Duration::from_millis(500))
-                    .unwrap_or(true);
-
-                if enough_time {
-                    // Capture both plain text (for dedup) and styled lines (for display)
-                    let snapshot: Option<(String, Vec<Line<'static>>)> =
-                        state.system.output_buffers.get(&session_id).map(|p| {
-                            let screen = p.screen();
-                            let text = screen.contents();
-                            let cursor = get_cursor_info(screen);
-                            let styled = convert_vt100_to_lines_visible(
-                                screen, None, cursor.row, None, None, None,
-                            );
-                            (text, styled)
-                        });
-                    if let Some((text, styled_lines)) = snapshot {
-                        if !text.trim().is_empty() {
-                            let is_new = state
-                                .system
-                                .inline_last_snapshot
-                                .get(&session_id)
-                                .map(|(_t, prev)| prev != &text)
-                                .unwrap_or(true);
-                            if is_new {
-                                // Clean styled lines (strip box-drawing, trim) but keep line structure
-                                let cleaned = clean_styled_lines(styled_lines);
-                                if !cleaned.is_empty() {
-                                    // Append to styled history
-                                    let history = state
-                                        .system
-                                        .inline_styled_history
-                                        .entry(session_id)
-                                        .or_default();
-                                    history.extend(cleaned);
-                                    history.push(Line::from("")); // separator between snapshots
-
-                                    // Also put a marker in raw buffer so needs_replay triggers
-                                    if let Some(raw_buf) =
-                                        state.system.raw_output_buffers.get_mut(&session_id)
-                                    {
-                                        raw_buf.append(b".");
-                                    }
-                                }
-                                state
-                                    .system
-                                    .inline_last_snapshot
-                                    .insert(session_id, (now, text));
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Process through live parser (all sessions)
+            // Process through live parser
             if let Some(parser) = state.system.output_buffers.get_mut(&session_id) {
                 parser.process(&data);
             }
 
-            // For non-inline sessions: append raw bytes for replay scrollback
-            if !is_inline {
-                if let Some(raw_buf) = state.system.raw_output_buffers.get_mut(&session_id) {
-                    raw_buf.append(&data);
-                }
+            // Append raw bytes for all sessions — replay scrollback uses this for deep history
+            if let Some(raw_buf) = state.system.raw_output_buffers.get_mut(&session_id) {
+                raw_buf.append(&data);
             }
+
             // Invalidate replay cache only if one exists (user is scrolled back)
             if state.system.replay_caches.contains_key(&session_id) {
                 state.system.replay_caches.remove(&session_id);
@@ -1043,8 +637,18 @@ pub fn handle_session_action(
                 .data
                 .last_send_input
                 .insert(session_id, std::time::Instant::now());
-            if let Some(handle) = state.system.pty_handles.get_mut(&session_id) {
-                let _ = handle.send_input(&data);
+            let send_error = state
+                .system
+                .pty_handles
+                .get_mut(&session_id)
+                .and_then(|handle| handle.send_input(&data).err());
+            if let Some(err) = send_error {
+                report_runtime_error(
+                    state,
+                    "failed to send input to PTY",
+                    err,
+                    "Failed to send input",
+                );
             }
             if let Some(workspace_id) = state.workspace_id_for_session(session_id) {
                 if let Some(ws) = state

@@ -3,11 +3,12 @@ use crate::app::{
     Action, AppState, InputMode, PendingDelete, PendingSessionStart, WorkspaceAction,
 };
 use crate::models::{SessionStatus, Workspace, WorkspaceStatus};
-use crate::persistence;
 use crate::pty::PtyManager;
 use anyhow::Result;
 use std::path::PathBuf;
 use tokio::sync::mpsc;
+
+use super::save_state;
 
 pub fn handle_workspace_action(
     state: &mut AppState,
@@ -138,7 +139,7 @@ pub fn handle_workspace_action(
                     }
                 }
 
-                let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
+                save_state(state, "failed to save workspace status");
             }
         }
         Action::InitiateDeleteWorkspace(id, name) => {
@@ -155,6 +156,9 @@ pub fn handle_workspace_action(
                         state.system.remove_session_buffers(&session.id);
                     }
                 }
+                // Drop the per-workspace UI state so we don't accumulate
+                // entries for deleted workspaces over the process lifetime.
+                state.ws_ui.remove(&id);
                 // Remove the workspace
                 if let Some(idx) = state.data.workspaces.iter().position(|w| w.id == id) {
                     state.data.workspaces.remove(idx);
@@ -163,9 +167,12 @@ pub fn handle_workspace_action(
                     {
                         state.ui.selected_workspace_idx = state.data.workspaces.len() - 1;
                     }
-                    state.ui.selected_session_idx = 0;
+                    // Load the now-selected workspace's preserved UI state
+                    // into live fields. Pass `None` for prev — the previous
+                    // workspace was just deleted so there's nothing to snapshot.
+                    crate::app::selection::transition_workspace(state, None);
                 }
-                let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
+                save_state(state, "failed to save workspace deletion");
             }
         }
         Action::EnterWorkspaceActionMode => {
@@ -220,7 +227,7 @@ pub fn handle_workspace_action(
                 let workspace = Workspace::from_path(new_path);
                 state.add_workspace(workspace);
                 state.ui.input_mode = InputMode::Normal;
-                let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
+                save_state(state, "failed to save workspace creation");
             }
         }
         _ => {}

@@ -170,7 +170,6 @@
 "Esc" = "FocusLeftOrSendEsc"
 "?" = "EnterConfigWindow"
 "q" = "Quit"
-"y" = "CopySelection"
 "Ctrl-h" = "FocusLeft"
 "Shift-Up" = "ScrollOutputUp"
 "Shift-Down" = "ScrollOutputDown"
@@ -186,4 +185,3 @@
 "Shift-Down" = "ScrollOutputDown"
 "PageUp" = "ScrollOutputUp"
 "PageDown" = "ScrollOutputDown"
-"y" = "CopySelection"

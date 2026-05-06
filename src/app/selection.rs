@@ -1,4 +1,47 @@
-use crate::app::{AppState, TextSelection};
+use crate::app::{AppState, PinnedPaneState, TextSelection, WorkspaceUiState};
+use crate::models::MAX_PINNED_TERMINALS;
+use std::sync::{Mutex, OnceLock};
+use uuid::Uuid;
+
+pub fn pane_text_position(
+    area: (u16, u16, u16, u16),
+    x: u16,
+    y: u16,
+    content_length: usize,
+    scroll_from_bottom: u16,
+) -> Option<(usize, usize)> {
+    let (area_x, area_y, area_w, area_h) = area;
+    let inner_w = area_w.saturating_sub(2);
+    let inner_h = area_h.saturating_sub(2);
+
+    if inner_w == 0 || inner_h == 0 || content_length == 0 {
+        return None;
+    }
+
+    let right_edge = area_x.saturating_add(area_w).saturating_sub(1);
+    let bottom_edge = area_y.saturating_add(area_h).saturating_sub(1);
+    if x <= area_x || x >= right_edge || y <= area_y || y >= bottom_edge {
+        return None;
+    }
+
+    let col_in_view = x.saturating_sub(area_x).saturating_sub(1) as usize;
+    let row_in_view = y.saturating_sub(area_y).saturating_sub(1) as usize;
+
+    if col_in_view >= inner_w as usize || row_in_view >= inner_h as usize {
+        return None;
+    }
+
+    let viewport_height = inner_h as usize;
+    let max_scroll = content_length.saturating_sub(viewport_height);
+    let scroll_from_bottom = (scroll_from_bottom as usize).min(max_scroll);
+    let scroll_offset = max_scroll.saturating_sub(scroll_from_bottom);
+
+    let row = scroll_offset
+        .saturating_add(row_in_view)
+        .min(content_length.saturating_sub(1));
+
+    Some((row, col_in_view))
+}
 
 /// Extract selected text from vt100 screen based on selection start and end positions
 pub fn extract_selected_text(
@@ -7,6 +50,12 @@ pub fn extract_selected_text(
     end: (usize, usize),
 ) -> String {
     let (rows, cols) = screen.size();
+    let rows = rows as usize;
+    let cols = cols as usize;
+
+    if rows == 0 || cols == 0 {
+        return String::new();
+    }
 
     // Order the selection (start should be before end)
     let (start_row, start_col, end_row, end_col) =
@@ -16,18 +65,29 @@ pub fn extract_selected_text(
             (end.0, end.1, start.0, start.1)
         };
 
-    let mut result = String::new();
+    // Bail if the selection no longer overlaps the current screen.
+    // This protects against stale coords from a screen that has since shrunk.
+    if start_row >= rows {
+        return String::new();
+    }
 
-    for row in start_row..=end_row.min(rows as usize - 1) {
-        let row_start = if row == start_row { start_col } else { 0 };
-        let row_end = if row == end_row {
-            end_col.min(cols as usize)
+    let mut result = String::new();
+    let last_row = end_row.min(rows - 1);
+
+    for row in start_row..=last_row {
+        let row_start = if row == start_row {
+            start_col.min(cols)
         } else {
-            cols as usize
+            0
+        };
+        let col_end = if row == end_row {
+            end_col.min(cols)
+        } else {
+            cols
         };
 
         let mut line = String::new();
-        for col in row_start..=row_end {
+        for col in row_start..=col_end {
             if let Some(cell) = screen.cell(row as u16, col as u16) {
                 let contents = cell.contents();
                 if contents.is_empty() {
@@ -43,12 +103,74 @@ pub fn extract_selected_text(
         result.push_str(trimmed);
 
         // Add newline between rows (but not at the very end)
-        if row < end_row && row < rows as usize - 1 {
+        if row < last_row {
             result.push('\n');
         }
     }
 
     result
+}
+
+pub fn copy_active_selection(state: &mut AppState) -> bool {
+    use crate::tui::replay::create_replay_parser;
+
+    // Selection coordinates from `pane_text_position` are in CONTENT space
+    // (scrollback + viewport). The live vt100 parser only holds the viewport,
+    // so for any session with scrollback, content-row indices fall outside the
+    // live parser's screen and extraction returns nothing — even though the
+    // user can see and visually highlight the text. The replay parser, in
+    // contrast, holds the full content and matches the coordinate system.
+    // Always prefer replay when raw bytes exist; fall back to the live parser
+    // only for sessions that have no raw history yet.
+    fn extract_for_session(
+        state: &AppState,
+        session_id: uuid::Uuid,
+        start: (usize, usize),
+        end: (usize, usize),
+    ) -> Option<String> {
+        let parser = state.system.output_buffers.get(&session_id)?;
+        let cols = parser.screen().size().1;
+
+        if let Some(raw_buf) = state.system.raw_output_buffers.get(&session_id) {
+            if !raw_buf.bytes.is_empty() {
+                let replay = create_replay_parser(
+                    raw_buf,
+                    cols,
+                    state.system.user_config.replay_parser_rows,
+                );
+                return Some(extract_selected_text(replay.screen(), start, end));
+            }
+        }
+
+        Some(extract_selected_text(parser.screen(), start, end))
+    }
+
+    if let (Some(start), Some(end)) = (state.ui.text_selection.start, state.ui.text_selection.end) {
+        if start != end {
+            if let Some(session_id) = state.ui.active_session_id {
+                if let Some(text) = extract_for_session(state, session_id, start, end) {
+                    copy_to_clipboard(&text);
+                    return true;
+                }
+            }
+        }
+    }
+
+    for idx in 0..state.pinned_count() {
+        let sel = &state.ui.pinned_text_selections[idx];
+        if let (Some(start), Some(end)) = (sel.start, sel.end) {
+            if start != end {
+                if let Some(session_id) = state.pinned_terminal_id_at(idx) {
+                    if let Some(text) = extract_for_session(state, session_id, start, end) {
+                        copy_to_clipboard(&text);
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
+    false
 }
 
 /// Clear all pinned pane text selections
@@ -58,12 +180,184 @@ pub fn clear_all_pinned_selections(state: &mut AppState) {
     }
 }
 
+/// Clear the active output-pane selection and any in-flight drag tracking.
+/// Called when the active session changes so stale coords don't get used to
+/// extract text from a different session's screen.
+pub fn clear_active_text_selection(state: &mut AppState) {
+    state.ui.text_selection = TextSelection::default();
+    state.ui.drag_mouse_pos = None;
+}
+
+/// Snapshot the live `state.ui` per-workspace fields into `state.ws_ui` for
+/// the workspace identified by `prev_ws_id`. Only stores as many pinned
+/// panes as that workspace actually has pinned terminals — extra slots in
+/// the fixed-size live arrays are trimmed.
+fn snapshot_into_ws_ui(state: &mut AppState, prev_ws_id: Uuid) {
+    let pinned_count = state
+        .data
+        .workspaces
+        .iter()
+        .find(|w| w.id == prev_ws_id)
+        .map(|w| w.pinned_terminal_ids.len())
+        .unwrap_or(0);
+
+    let pinned_panes: Vec<PinnedPaneState> = (0..pinned_count)
+        .map(|i| PinnedPaneState {
+            scroll_offset: state.ui.pinned_scroll_offsets[i],
+            text_selection: state.ui.pinned_text_selections[i],
+            on_replay: state.ui.pinned_on_replay[i],
+            content_length: state.ui.pinned_content_lengths[i],
+        })
+        .collect();
+
+    let snapshot = WorkspaceUiState {
+        selected_session_idx: state.ui.selected_session_idx,
+        active_session_id: state.ui.active_session_id,
+        focused_pinned_pane: state.ui.focused_pinned_pane,
+        output_scroll_offset: state.ui.output_scroll_offset,
+        output_on_replay: state.ui.output_on_replay,
+        output_content_length: state.ui.output_content_length,
+        text_selection: state.ui.text_selection,
+        drag_mouse_pos: state.ui.drag_mouse_pos,
+        pinned_panes,
+    };
+
+    state.ws_ui.insert(prev_ws_id, snapshot);
+}
+
+/// Apply the stored `WorkspaceUiState` for the currently selected workspace
+/// onto the live `state.ui` per-workspace fields. If no entry exists yet,
+/// seeds one from `WorkspaceUiState::for_workspace` (which honors
+/// `Workspace.last_active_session_id`). Pads pinned arrays out to
+/// `MAX_PINNED_TERMINALS` with defaults.
+fn apply_ws_ui_to_live_state(state: &mut AppState) {
+    let Some(ws_id) = state.selected_workspace().map(|w| w.id) else {
+        return;
+    };
+
+    if !state.ws_ui.contains_key(&ws_id) {
+        if let Some(ws) = state.selected_workspace() {
+            state
+                .ws_ui
+                .insert(ws_id, WorkspaceUiState::for_workspace(ws));
+        }
+    }
+
+    let Some(stored) = state.ws_ui.get(&ws_id) else {
+        return;
+    };
+
+    state.ui.selected_session_idx = stored.selected_session_idx;
+    state.ui.active_session_id = stored.active_session_id;
+    state.ui.focused_pinned_pane = stored.focused_pinned_pane;
+    state.ui.output_scroll_offset = stored.output_scroll_offset;
+    state.ui.output_on_replay = stored.output_on_replay;
+    state.ui.output_content_length = stored.output_content_length;
+    state.ui.text_selection = stored.text_selection;
+    state.ui.drag_mouse_pos = stored.drag_mouse_pos;
+
+    let mut pinned_scroll_offsets = [0u16; MAX_PINNED_TERMINALS];
+    let mut pinned_text_selections = [TextSelection::default(); MAX_PINNED_TERMINALS];
+    let mut pinned_on_replay = [false; MAX_PINNED_TERMINALS];
+    let mut pinned_content_lengths = [0usize; MAX_PINNED_TERMINALS];
+
+    for (i, pane) in stored.pinned_panes.iter().enumerate() {
+        if i >= MAX_PINNED_TERMINALS {
+            break;
+        }
+        pinned_scroll_offsets[i] = pane.scroll_offset;
+        pinned_text_selections[i] = pane.text_selection;
+        pinned_on_replay[i] = pane.on_replay;
+        pinned_content_lengths[i] = pane.content_length;
+    }
+
+    state.ui.pinned_scroll_offsets = pinned_scroll_offsets;
+    state.ui.pinned_text_selections = pinned_text_selections;
+    state.ui.pinned_on_replay = pinned_on_replay;
+    state.ui.pinned_content_lengths = pinned_content_lengths;
+}
+
+/// Transition between workspaces: snapshot the previous workspace's UI state
+/// and load (or lazily seed) the new workspace's UI state. Call AFTER
+/// `state.ui.selected_workspace_idx` has been updated to the new workspace.
+///
+/// Replaces the prior `reset_workspace_local_state` "wipe" behavior — each
+/// workspace now keeps its own scroll positions, selections, focused pane,
+/// and active session across switches.
+pub fn transition_workspace(state: &mut AppState, prev_ws_id: Option<Uuid>) {
+    if let Some(prev_id) = prev_ws_id {
+        snapshot_into_ws_ui(state, prev_id);
+    }
+    apply_ws_ui_to_live_state(state);
+}
+
+/// Backwards-compat shim: callers that don't track a previous workspace id
+/// can use this. It still snapshots the *current* selected workspace's
+/// state into ws_ui (treating it as both prev and next), then re-applies —
+/// effectively a no-op but ensures ws_ui is seeded.
+#[allow(dead_code)]
+pub fn reset_workspace_local_state(state: &mut AppState) {
+    let current = state.selected_workspace().map(|w| w.id);
+    transition_workspace(state, current);
+}
+
+/// Long-lived clipboard handle. arboard on macOS requires the handle to remain
+/// alive for the data to actually publish to the system pasteboard, so we keep
+/// a single process-wide instance instead of constructing one per copy.
+fn clipboard() -> Option<&'static Mutex<arboard::Clipboard>> {
+    static CLIPBOARD: OnceLock<Option<Mutex<arboard::Clipboard>>> = OnceLock::new();
+    CLIPBOARD
+        .get_or_init(|| arboard::Clipboard::new().ok().map(Mutex::new))
+        .as_ref()
+}
+
 /// Copy text to clipboard (cross-platform via arboard)
 pub fn copy_to_clipboard(text: &str) {
     if text.is_empty() {
         return;
     }
-    if let Ok(mut clipboard) = arboard::Clipboard::new() {
-        let _ = clipboard.set_text(text);
+    let Some(cb) = clipboard() else {
+        crate::logger::warn("failed to initialize clipboard");
+        return;
+    };
+    let Ok(mut guard) = cb.lock() else {
+        crate::logger::warn("clipboard lock poisoned");
+        return;
+    };
+    if let Err(err) = guard.set_text(text.to_owned()) {
+        crate::logger::warn(format!("failed to copy selection to clipboard: {err}"));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pane_text_position;
+
+    #[test]
+    fn pane_text_position_rejects_border_and_empty_content() {
+        let area = (10, 5, 20, 8);
+
+        assert_eq!(pane_text_position(area, 11, 6, 0, 0), None);
+        assert_eq!(pane_text_position(area, 10, 6, 10, 0), None);
+        assert_eq!(pane_text_position(area, 11, 5, 10, 0), None);
+        assert_eq!(pane_text_position(area, 29, 6, 10, 0), None);
+        assert_eq!(pane_text_position(area, 11, 12, 10, 0), None);
+    }
+
+    #[test]
+    fn pane_text_position_maps_visible_cell_without_scroll() {
+        let area = (10, 5, 20, 8);
+
+        assert_eq!(pane_text_position(area, 11, 6, 4, 0), Some((0, 0)));
+        assert_eq!(pane_text_position(area, 14, 8, 4, 0), Some((2, 3)));
+    }
+
+    #[test]
+    fn pane_text_position_accounts_for_scroll_from_bottom() {
+        let area = (10, 5, 20, 8);
+
+        assert_eq!(pane_text_position(area, 11, 6, 20, 0), Some((14, 0)));
+        assert_eq!(pane_text_position(area, 11, 6, 20, 3), Some((11, 0)));
+        assert_eq!(pane_text_position(area, 11, 6, 20, 99), Some((0, 0)));
     }
 }

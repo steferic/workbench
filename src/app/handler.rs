@@ -11,6 +11,16 @@ use super::pty_ops::resize_ptys_to_panes;
 
 const AGENT_DONE_WAV: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/sounds/agent_done.wav");
 
+/// Send an action onto the dispatch channel, logging on failure instead of
+/// silently swallowing the error like a bare `let _ = tx.send(...)` did.
+/// A closed channel typically means the runtime is shutting down or has
+/// crashed; in either case the user benefits from a log entry over silence.
+fn dispatch_action(tx: &mpsc::UnboundedSender<Action>, action: Action) {
+    if let Err(err) = tx.send(action) {
+        crate::logger::warn(format!("action channel closed; dropped event: {err}"));
+    }
+}
+
 pub fn process_action(
     state: &mut AppState,
     action: Action,
@@ -40,7 +50,7 @@ pub fn process_action(
         Action::Tick => {
             // Check for pending palette action
             if let Some(palette_action) = state.ui.pending_palette_action.take() {
-                let _ = process_action(state, palette_action, pty_manager, action_tx, pty_tx);
+                process_action(state, palette_action, pty_manager, action_tx, pty_tx)?;
             }
 
             // Remove expired toasts
@@ -78,7 +88,10 @@ pub fn process_action(
                                 if !todo_text.is_empty() && todo_text.len() > 5 {
                                     let clean_text: String =
                                         todo_text.chars().filter(|c| !c.is_control()).collect();
-                                    let _ = action_tx.send(Action::AddSuggestedTodo(clean_text));
+                                    dispatch_action(
+                                        action_tx,
+                                        Action::AddSuggestedTodo(clean_text),
+                                    );
                                 }
                             }
                         }
@@ -99,7 +112,7 @@ pub fn process_action(
                     if has_in_progress {
                         if let Some(ws) = state.get_workspace_mut(workspace_id) {
                             if let Some(todo) = ws.todo_for_session_mut(*session_id) {
-                                let _ = action_tx.send(Action::MarkTodoReadyForReview(todo.id));
+                                dispatch_action(action_tx, Action::MarkTodoReadyForReview(todo.id));
                             }
                         }
                     }
@@ -123,8 +136,8 @@ pub fn process_action(
                         if !prompt_sent {
                             // Send the prompt to the agent
                             let text_bytes: Vec<u8> = full_prompt.bytes().collect();
-                            let _ = action_tx.send(Action::SendInput(*session_id, text_bytes));
-                            let _ = action_tx.send(Action::SendInput(*session_id, vec![b'\r']));
+                            dispatch_action(action_tx, Action::SendInput(*session_id, text_bytes));
+                            dispatch_action(action_tx, Action::SendInput(*session_id, vec![b'\r']));
 
                             // Mark the prompt as sent
                             if let Some(ws) = state.get_workspace_mut(workspace_id) {
@@ -140,7 +153,10 @@ pub fn process_action(
                             }
                         } else if attempt_status == AttemptStatus::Running {
                             // Agent already received prompt and is now idle again - it's done!
-                            let _ = action_tx.send(Action::ParallelAttemptCompleted(*session_id));
+                            dispatch_action(
+                                action_tx,
+                                Action::ParallelAttemptCompleted(*session_id),
+                            );
                         }
                     }
                 }
@@ -163,8 +179,10 @@ pub fn process_action(
                                 .map(|t| (t.id, t.description.clone()));
 
                             if let Some((id, desc)) = pending {
-                                let _ = action_tx
-                                    .send(Action::DispatchTodoToSession(session_id, id, desc));
+                                dispatch_action(
+                                    action_tx,
+                                    Action::DispatchTodoToSession(session_id, id, desc),
+                                );
                                 break;
                             }
                         }
@@ -216,7 +234,7 @@ pub fn process_action(
                                 stats.insert(path, stat);
                             }
                         }
-                        let _ = tx.send(Action::DiffStatsUpdated(stats));
+                        dispatch_action(&tx, Action::DiffStatsUpdated(stats));
                     });
                 }
             }
@@ -258,12 +276,11 @@ pub fn process_action(
                         pty_tx: pty_tx.clone(),
                         resume: false,
                         dangerously_skip_permissions: false,
+                        use_alternate_screen: state.system.use_alternate_screen,
                     }) {
                         Ok(handle) => {
                             state.system.pty_handles.insert(session_id, handle);
-                            state
-                                .system
-                                .create_session_buffers(session_id, pty_cols, false);
+                            state.system.create_session_buffers(session_id, pty_cols);
 
                             // Mark session as running
                             if let Some(s) = state.get_session_mut(session_id) {
@@ -280,8 +297,8 @@ pub fn process_action(
                             let sid = session_id;
                             tokio::spawn(async move {
                                 tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                                let _ = tx.send(Action::SendInput(sid, b"ls".to_vec()));
-                                let _ = tx.send(Action::SendInput(sid, vec![b'\r']));
+                                dispatch_action(&tx, Action::SendInput(sid, b"ls".to_vec()));
+                                dispatch_action(&tx, Action::SendInput(sid, vec![b'\r']));
                             });
                         }
                         Err(_) => {
@@ -353,7 +370,8 @@ pub fn process_action(
                 // Navigation actions
                 Action::MoveUp | Action::MoveDown | Action::FocusLeft | Action::FocusRight |
                 Action::NextPinnedPane | Action::PrevPinnedPane | Action::ScrollOutputUp |
-                Action::ScrollOutputDown | Action::CycleNextWorkspace | Action::CyclePrevWorkspace | Action::CycleNextSession | Action::CyclePrevSession |
+                Action::ScrollOutputDown | Action::MouseScrollUp(_, _) |
+                Action::MouseScrollDown(_, _) | Action::CycleNextWorkspace | Action::CyclePrevWorkspace | Action::CycleNextSession | Action::CyclePrevSession |
                 Action::MouseClick(_, _) |
                 Action::MouseDrag(_, _) | Action::MouseUp(_, _) | Action::CopySelection |
                 Action::Paste(_) | Action::ClearSelection | Action::SelectNextUtility |

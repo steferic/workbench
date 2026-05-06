@@ -3,6 +3,16 @@ use std::path::Path;
 use tokio::sync::mpsc;
 use tokio::task;
 
+fn queue_utility_content(
+    action_tx: &mpsc::UnboundedSender<Action>,
+    payload: UtilityContentPayload,
+    context: &str,
+) {
+    if let Err(err) = action_tx.send(Action::UtilityContentLoaded(payload)) {
+        crate::logger::warn(format!("{context}: {err}"));
+    }
+}
+
 /// Load utility content based on the selected utility
 pub fn load_utility_content(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) {
     let workspace_path = match state.selected_workspace() {
@@ -93,12 +103,16 @@ pub fn load_utility_content(state: &mut AppState, action_tx: &mpsc::UnboundedSen
             let action_tx = action_tx.clone();
             task::spawn_blocking(move || {
                 let (content, pie_chart_data) = build_top_files(&workspace_path);
-                let _ = action_tx.send(Action::UtilityContentLoaded(UtilityContentPayload {
-                    request_id,
-                    content,
-                    pie_chart_data,
-                    show_calendar: false,
-                }));
+                queue_utility_content(
+                    &action_tx,
+                    UtilityContentPayload {
+                        request_id,
+                        content,
+                        pie_chart_data,
+                        show_calendar: false,
+                    },
+                    "failed to load top files utility content",
+                );
             });
         }
         UtilityItem::Calendar => {
@@ -109,12 +123,16 @@ pub fn load_utility_content(state: &mut AppState, action_tx: &mpsc::UnboundedSen
             let action_tx = action_tx.clone();
             task::spawn_blocking(move || {
                 let content = build_git_history(&workspace_path);
-                let _ = action_tx.send(Action::UtilityContentLoaded(UtilityContentPayload {
-                    request_id,
-                    content,
-                    pie_chart_data: Vec::new(),
-                    show_calendar: false,
-                }));
+                queue_utility_content(
+                    &action_tx,
+                    UtilityContentPayload {
+                        request_id,
+                        content,
+                        pie_chart_data: Vec::new(),
+                        show_calendar: false,
+                    },
+                    "failed to load git history utility content",
+                );
             });
         }
         UtilityItem::FileTree => {
@@ -122,12 +140,16 @@ pub fn load_utility_content(state: &mut AppState, action_tx: &mpsc::UnboundedSen
             let action_tx = action_tx.clone();
             task::spawn_blocking(move || {
                 let content = build_file_tree(&workspace_path);
-                let _ = action_tx.send(Action::UtilityContentLoaded(UtilityContentPayload {
-                    request_id,
-                    content,
-                    pie_chart_data: Vec::new(),
-                    show_calendar: false,
-                }));
+                queue_utility_content(
+                    &action_tx,
+                    UtilityContentPayload {
+                        request_id,
+                        content,
+                        pie_chart_data: Vec::new(),
+                        show_calendar: false,
+                    },
+                    "failed to load file tree utility content",
+                );
             });
         }
         UtilityItem::SuggestTodos => {

@@ -11,7 +11,6 @@ pub mod parallel_task_modal;
 pub mod pinned_terminal_pane;
 pub mod session_list;
 pub mod status_bar;
-pub mod toast;
 pub mod todos_pane;
 pub mod utilities_pane;
 pub mod workspace_action_dialog;

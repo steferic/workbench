@@ -2,6 +2,7 @@ mod app;
 mod audio;
 mod config;
 mod git;
+mod logger;
 mod models;
 mod persistence;
 mod pty;
@@ -12,6 +13,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 use app::run_tui;
+use config::user_config::load_user_config;
 
 #[derive(Parser)]
 #[command(name = "workbench")]
@@ -25,6 +27,10 @@ struct Cli {
     /// Start with a specific workspace directory
     #[arg(short, long)]
     workspace: Option<PathBuf>,
+
+    /// Disable alternate screen mode (overrides config setting)
+    #[arg(long)]
+    no_alt_screen: bool,
 }
 
 #[derive(Subcommand)]
@@ -66,7 +72,14 @@ async fn main() -> Result<()> {
             println!("Workspaces: (in-memory only, no persistence)");
         }
         None => {
-            run_tui(cli.workspace).await?;
+            // Load config to get default, CLI flag overrides
+            let config = load_user_config();
+            let use_alt_screen = if cli.no_alt_screen {
+                false
+            } else {
+                config.use_alternate_screen
+            };
+            run_tui(cli.workspace, use_alt_screen).await?;
         }
     }
 

@@ -1,8 +1,9 @@
 use crate::app::{Action, AppState, InputMode};
-use crate::persistence;
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyModifiers};
 use tui_textarea::{Input, Key};
+
+use super::{save_state, save_state_with_notepad};
 
 pub fn handle_input_action(state: &mut AppState, action: Action) -> Result<()> {
     match action {
@@ -48,7 +49,7 @@ pub fn handle_input_action(state: &mut AppState, action: Action) -> Result<()> {
             state.ui.input_mode = InputMode::Normal;
             state.ui.input_buffer.clear();
             state.ui.editing_session_id = None;
-            let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
+            save_state(state, "failed to save start command");
         }
         Action::InputChar(c) => {
             // Handle input based on current mode
@@ -104,12 +105,7 @@ pub fn handle_input_action(state: &mut AppState, action: Action) -> Result<()> {
             if let Some(textarea) = state.current_notepad() {
                 textarea.input(input);
             }
-            let notepad_contents = state.notepad_content_for_persistence();
-            let _ = persistence::save_with_notepad(
-                &state.data.workspaces,
-                &state.data.sessions,
-                &notepad_contents,
-            );
+            save_state_with_notepad(state, "failed to save notepad input");
         }
         Action::FileBrowserUp => {
             if state.ui.file_browser_selected > 0 {
@@ -152,7 +148,7 @@ pub fn handle_input_action(state: &mut AppState, action: Action) -> Result<()> {
                 state.add_workspace(workspace);
                 state.ui.file_browser_query.clear();
                 state.ui.input_mode = InputMode::Normal;
-                let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
+                save_state(state, "failed to save workspace selection");
             }
         }
         Action::EnterCreateTodoMode => {

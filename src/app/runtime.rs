@@ -30,18 +30,29 @@ const STARTUP_WAV: &str = concat!(
     "/assets/sounds/startup_beep.wav"
 );
 
-pub async fn run_tui(initial_workspace: Option<PathBuf>) -> Result<()> {
+fn stop_radio_process(mut child: std::process::Child) {
+    if let Err(err) = child.kill() {
+        crate::logger::warn(format!("failed to stop radio process: {err}"));
+    }
+    if let Err(err) = child.wait() {
+        crate::logger::warn(format!("failed to wait for radio process: {err}"));
+    }
+}
+
+pub async fn run_tui(initial_workspace: Option<PathBuf>, use_alternate_screen: bool) -> Result<()> {
     // Initialize terminal
-    let mut terminal = tui::init()?;
+    let mut terminal = tui::init(use_alternate_screen)?;
 
     // Create app state and load persisted data
     let mut state = AppState::new();
+    state.system.use_alternate_screen = use_alternate_screen;
 
     // Load persisted state
     match persistence::load() {
         Ok(persisted) => {
             state.data.workspaces = persisted.workspaces;
             state.data.sessions = persisted.sessions;
+
             // Load notepad content into TextArea widgets
             for (ws_id, content) in persisted.notepad_content {
                 state.load_notepad_content(ws_id, content);
@@ -131,7 +142,7 @@ pub async fn run_tui(initial_workspace: Option<PathBuf>) -> Result<()> {
     .await;
 
     // Restore terminal
-    tui::restore()?;
+    tui::restore(use_alternate_screen)?;
 
     result
 }
@@ -265,9 +276,8 @@ async fn run_main_loop(
                 .spawn()
                 .ok();
         } else if !should_play_radio && is_playing_radio {
-            if let Some(mut child) = radio_process.take() {
-                let _ = child.kill();
-                let _ = child.wait();
+            if let Some(child) = radio_process.take() {
+                stop_radio_process(child);
             }
         }
 
@@ -277,9 +287,8 @@ async fn run_main_loop(
         rain.sync(state.system.rainforest_rain_playing);
 
         if state.system.should_quit {
-            if let Some(mut child) = radio_process.take() {
-                let _ = child.kill();
-                let _ = child.wait();
+            if let Some(child) = radio_process.take() {
+                stop_radio_process(child);
             }
             ocean.kill();
             chimes.kill();

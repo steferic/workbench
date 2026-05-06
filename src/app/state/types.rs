@@ -311,7 +311,9 @@ pub enum ToastLevel {
     Error,
 }
 
-/// A toast notification message
+/// A toast notification message. The renderer is currently disabled, but the
+/// type stays so call sites that push status messages don't need to change.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Toast {
     pub message: String,

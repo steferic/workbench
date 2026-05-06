@@ -3,9 +3,21 @@ use crate::app::{
     Action, AppState, FocusPanel, InputMode, PendingDelete, TodoPaneMode, TodosTab, UtilityItem,
 };
 use crate::models::SessionStatus;
-use crate::persistence;
 use anyhow::Result;
 use tokio::sync::mpsc;
+
+use super::{report_background_error, save_config, save_state};
+
+fn queue_session_input(
+    action_tx: &mpsc::UnboundedSender<Action>,
+    session_id: uuid::Uuid,
+    data: Vec<u8>,
+    context: &str,
+) {
+    if let Err(err) = action_tx.send(Action::SendInput(session_id, data)) {
+        report_background_error(context, err);
+    }
+}
 
 pub fn handle_todo_action(
     state: &mut AppState,
@@ -46,7 +58,7 @@ pub fn handle_todo_action(
                 .get_mut(state.ui.selected_workspace_idx)
             {
                 ws.add_todo(description);
-                let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
+                save_state(state, "failed to save todo creation");
             }
             state.ui.input_mode = InputMode::Normal;
             state.ui.input_buffer.clear();
@@ -68,7 +80,7 @@ pub fn handle_todo_action(
                 {
                     if let Some(todo) = ws.get_todo_mut(id) {
                         todo.mark_done();
-                        let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
+                        save_state(state, "failed to save todo completion");
                     }
                 }
             }
@@ -112,7 +124,7 @@ pub fn handle_todo_action(
                     if let Some(todo) = ws.get_todo_mut(todo_id) {
                         if todo.is_pending() {
                             todo.mark_queued();
-                            let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
+                            save_state(state, "failed to save queued todo");
                         }
                     }
                 }
@@ -160,9 +172,19 @@ pub fn handle_todo_action(
                 state.data.idle_queue.retain(|&id| id != session_id);
 
                 let text_bytes: Vec<u8> = description.bytes().collect();
-                let _ = action_tx.send(Action::SendInput(session_id, text_bytes));
-                let _ = action_tx.send(Action::SendInput(session_id, vec![b'\r']));
-                let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
+                queue_session_input(
+                    action_tx,
+                    session_id,
+                    text_bytes,
+                    "failed to queue dispatched todo",
+                );
+                queue_session_input(
+                    action_tx,
+                    session_id,
+                    vec![b'\r'],
+                    "failed to queue dispatched todo newline",
+                );
+                save_state(state, "failed to save dispatched todo");
 
                 if state.ui.selected_todo_idx + 1 < todo_count {
                     state.ui.selected_todo_idx += 1;
@@ -176,7 +198,7 @@ pub fn handle_todo_action(
                     if let Some(todo) = ws.get_todo_mut(todo_id) {
                         if todo.is_pending() {
                             todo.mark_queued();
-                            let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
+                            save_state(state, "failed to save queued todo");
                         }
                     }
                 }
@@ -212,7 +234,7 @@ pub fn handle_todo_action(
                     } else if filtered_count == 0 {
                         state.ui.selected_todo_idx = 0;
                     }
-                    let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
+                    save_state(state, "failed to save todo deletion");
                 }
             }
         }
@@ -225,16 +247,26 @@ pub fn handle_todo_action(
                 }
                 state.data.idle_queue.retain(|&id| id != session_id);
                 let text_bytes: Vec<u8> = description.bytes().collect();
-                let _ = action_tx.send(Action::SendInput(session_id, text_bytes));
-                let _ = action_tx.send(Action::SendInput(session_id, vec![b'\r']));
-                let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
+                queue_session_input(
+                    action_tx,
+                    session_id,
+                    text_bytes,
+                    "failed to queue dispatched todo",
+                );
+                queue_session_input(
+                    action_tx,
+                    session_id,
+                    vec![b'\r'],
+                    "failed to queue dispatched todo newline",
+                );
+                save_state(state, "failed to save dispatched todo");
             }
         }
         Action::MarkTodoReadyForReview(todo_id) => {
             for ws in state.data.workspaces.iter_mut() {
                 if let Some(todo) = ws.get_todo_mut(todo_id) {
                     todo.mark_ready_for_review();
-                    let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
+                    save_state(state, "failed to save todo review state");
                     break;
                 }
             }
@@ -246,7 +278,7 @@ pub fn handle_todo_action(
                 .get_mut(state.ui.selected_workspace_idx)
             {
                 ws.add_suggested_todo(description);
-                let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
+                save_state(state, "failed to save suggested todo");
             }
         }
         Action::ApproveSuggestedTodo(todo_id) => {
@@ -257,7 +289,7 @@ pub fn handle_todo_action(
             {
                 if let Some(todo) = ws.get_todo_mut(todo_id) {
                     todo.approve();
-                    let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
+                    save_state(state, "failed to save approved todo");
                 }
             }
         }
@@ -272,7 +304,7 @@ pub fn handle_todo_action(
                         todo.approve();
                     }
                 }
-                let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
+                save_state(state, "failed to save approved todos");
             }
         }
         Action::ArchiveTodo(todo_id) => {
@@ -283,7 +315,7 @@ pub fn handle_todo_action(
             {
                 if let Some(todo) = ws.get_todo_mut(todo_id) {
                     todo.archive();
-                    let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
+                    save_state(state, "failed to save archived todo");
                 }
             }
         }
@@ -306,7 +338,7 @@ pub fn handle_todo_action(
                     output_split_ratio: state.ui.output_split_ratio,
                     agent_done_sound_enabled: state.system.agent_done_sound_enabled,
                 };
-                let _ = crate::persistence::save_config(&config);
+                save_config(state, &config, "failed to save banner config");
             }
             // Handle AgentDoneSound - toggle and persist
             else if state.ui.selected_utility == UtilityItem::AgentDoneSound {
@@ -320,7 +352,7 @@ pub fn handle_todo_action(
                     output_split_ratio: state.ui.output_split_ratio,
                     agent_done_sound_enabled: state.system.agent_done_sound_enabled,
                 };
-                let _ = crate::persistence::save_config(&config);
+                save_config(state, &config, "failed to save agent-done sound config");
             }
             // Special handling for SuggestTodos - trigger analyzer
             else if state.ui.selected_utility == UtilityItem::SuggestTodos {
@@ -354,8 +386,18 @@ TODO: [HARD] [MED] Refactor database layer to use connection pooling
 Focus on practical, actionable items. Be specific about what needs to be done."##;
 
                     let text_bytes: Vec<u8> = prompt.bytes().collect();
-                    let _ = action_tx.send(Action::SendInput(session_id, text_bytes));
-                    let _ = action_tx.send(Action::SendInput(session_id, vec![b'\r']));
+                    queue_session_input(
+                        action_tx,
+                        session_id,
+                        text_bytes,
+                        "failed to queue analyzer prompt",
+                    );
+                    queue_session_input(
+                        action_tx,
+                        session_id,
+                        vec![b'\r'],
+                        "failed to queue analyzer prompt newline",
+                    );
 
                     state.data.idle_queue.retain(|&id| id != session_id);
                     state.ui.active_session_id = Some(session_id);

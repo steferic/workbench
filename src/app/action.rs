@@ -45,10 +45,12 @@ pub enum Action {
     FocusRight,
     ScrollOutputUp,
     ScrollOutputDown,
-    CycleNextWorkspace, // F7 - cycle forward through workspaces
-    CyclePrevWorkspace, // F6 - cycle backward through workspaces
-    CycleNextSession,   // F9 - cycle forward through sessions
-    CyclePrevSession,   // F8 - cycle backward through sessions
+    MouseScrollUp(u16, u16),   // (x, y) coordinates
+    MouseScrollDown(u16, u16), // (x, y) coordinates
+    CycleNextWorkspace,        // F7 - cycle forward through workspaces
+    CyclePrevWorkspace,        // F6 - cycle backward through workspaces
+    CycleNextSession,          // F9 - cycle forward through sessions
+    CyclePrevSession,          // F8 - cycle backward through sessions
 
     // Workspace operations
     ToggleWorkspaceStatus,

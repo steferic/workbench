@@ -7,7 +7,7 @@ mod ui;
 pub use data::DataState;
 pub use system::{PendingSessionStart, RawOutputBuffer, ReplayCache, SystemState};
 pub use types::*;
-pub use ui::UIState;
+pub use ui::{PinnedPaneState, UIState, WorkspaceUiState};
 
 use crate::models::{Session, SessionStatus, Workspace, WorkspaceStatus};
 use std::collections::HashMap;
@@ -18,6 +18,10 @@ pub struct AppState {
     pub data: DataState,
     pub system: SystemState,
     pub ui: UIState,
+    /// Per-workspace ephemeral UI state, keyed by workspace id. Lazily
+    /// populated on first access via `ws_ui_mut`. Removed when a workspace is
+    /// deleted (see `handlers/workspace.rs::ConfirmDeleteWorkspace`).
+    pub ws_ui: HashMap<Uuid, WorkspaceUiState>,
 }
 
 impl AppState {
@@ -26,6 +30,7 @@ impl AppState {
             data: DataState::new(),
             system: SystemState::new(),
             ui: UIState::new(),
+            ws_ui: HashMap::new(),
         }
     }
 
@@ -85,6 +90,133 @@ impl AppState {
 
     pub fn selected_workspace_mut(&mut self) -> Option<&mut Workspace> {
         self.data.workspaces.get_mut(self.ui.selected_workspace_idx)
+    }
+
+    /// Read the per-workspace UI state for the currently selected workspace.
+    /// `None` when no workspace is selected (e.g. on first launch with an
+    /// empty workspaces list).
+    pub fn ws_ui(&self) -> Option<&WorkspaceUiState> {
+        let id = self.selected_workspace()?.id;
+        self.ws_ui.get(&id)
+    }
+
+    /// Mutable per-workspace UI state for the currently selected workspace.
+    /// Lazily seeds an entry from `WorkspaceUiState::for_workspace` if one
+    /// doesn't exist yet, so `last_active_session_id` is honored on first
+    /// access after process start.
+    pub fn ws_ui_mut(&mut self) -> Option<&mut WorkspaceUiState> {
+        let ws = self.data.workspaces.get(self.ui.selected_workspace_idx)?;
+        let id = ws.id;
+        let seed = WorkspaceUiState::for_workspace(ws);
+        Some(self.ws_ui.entry(id).or_insert(seed))
+    }
+
+    /// Read pinned-pane state at `idx` for the selected workspace. Reserved
+    /// for the deeper refactor that moves all reads off the live UIState
+    /// arrays; currently unused but kept as the canonical API surface.
+    #[allow(dead_code)]
+    pub fn pinned_pane(&self, idx: usize) -> Option<&PinnedPaneState> {
+        self.ws_ui()?.pinned_panes.get(idx)
+    }
+
+    /// Mutable pinned-pane state at `idx` for the selected workspace.
+    #[allow(dead_code)]
+    pub fn pinned_pane_mut(&mut self, idx: usize) -> Option<&mut PinnedPaneState> {
+        self.ws_ui_mut()?.pinned_panes.get_mut(idx)
+    }
+
+    // ------------------------------------------------------------------
+    // Convenience read helpers for per-workspace UI state. Each falls back
+    // to `0`/`None`/`default()` when no workspace is selected so call sites
+    // don't have to thread `Option` through every render path.
+    // ------------------------------------------------------------------
+
+    // Each falls back to `0`/`None`/`false` when no workspace is selected.
+    // Reserved for the deeper refactor; currently unused.
+    #[allow(dead_code)]
+    pub fn output_scroll_offset(&self) -> u16 {
+        self.ws_ui().map(|u| u.output_scroll_offset).unwrap_or(0)
+    }
+    #[allow(dead_code)]
+    pub fn output_on_replay(&self) -> bool {
+        self.ws_ui().map(|u| u.output_on_replay).unwrap_or(false)
+    }
+    #[allow(dead_code)]
+    pub fn output_content_length(&self) -> usize {
+        self.ws_ui().map(|u| u.output_content_length).unwrap_or(0)
+    }
+    #[allow(dead_code)]
+    pub fn focused_pinned_pane(&self) -> usize {
+        self.ws_ui().map(|u| u.focused_pinned_pane).unwrap_or(0)
+    }
+    #[allow(dead_code)]
+    pub fn active_session_id(&self) -> Option<Uuid> {
+        self.ws_ui().and_then(|u| u.active_session_id)
+    }
+    #[allow(dead_code)]
+    pub fn selected_session_idx(&self) -> usize {
+        self.ws_ui().map(|u| u.selected_session_idx).unwrap_or(0)
+    }
+    #[allow(dead_code)]
+    pub fn drag_mouse_pos(&self) -> Option<(u16, u16)> {
+        self.ws_ui().and_then(|u| u.drag_mouse_pos)
+    }
+    #[allow(dead_code)]
+    pub fn pinned_scroll_offset(&self, idx: usize) -> u16 {
+        self.pinned_pane(idx).map(|p| p.scroll_offset).unwrap_or(0)
+    }
+    #[allow(dead_code)]
+    pub fn pinned_content_length(&self, idx: usize) -> usize {
+        self.pinned_pane(idx).map(|p| p.content_length).unwrap_or(0)
+    }
+    #[allow(dead_code)]
+    pub fn pinned_on_replay(&self, idx: usize) -> bool {
+        self.pinned_pane(idx).map(|p| p.on_replay).unwrap_or(false)
+    }
+
+    /// Pin a terminal session in the currently selected workspace, keeping
+    /// `Workspace.pinned_terminal_ids` and `WorkspaceUiState.pinned_panes`
+    /// length-aligned. Returns `true` if the pin was added.
+    pub fn pin_terminal_for_selected(&mut self, session_id: Uuid) -> bool {
+        let Some(ws) = self.selected_workspace_mut() else {
+            return false;
+        };
+        let added = ws.pin_terminal(session_id);
+        if added {
+            if let Some(ws_ui) = self.ws_ui_mut() {
+                ws_ui.pinned_panes.push(PinnedPaneState::default());
+            }
+        }
+        added
+    }
+
+    /// Unpin a terminal session from the workspace that owns it (not just the
+    /// selected one — sessions can belong to non-selected workspaces). Removes
+    /// the matching `PinnedPaneState` so the Vecs stay index-aligned.
+    pub fn unpin_terminal_anywhere(&mut self, session_id: Uuid) {
+        for ws in self.data.workspaces.iter_mut() {
+            if let Some(pos) = ws
+                .pinned_terminal_ids
+                .iter()
+                .position(|id| *id == session_id)
+            {
+                ws.pinned_terminal_ids.remove(pos);
+                if let Some(ws_ui) = self.ws_ui.get_mut(&ws.id) {
+                    if pos < ws_ui.pinned_panes.len() {
+                        ws_ui.pinned_panes.remove(pos);
+                    }
+                    // If the removed pane was below `focused_pinned_pane`,
+                    // shift focus left so it keeps pointing to a valid pane.
+                    if ws_ui.focused_pinned_pane >= ws_ui.pinned_panes.len()
+                        && !ws_ui.pinned_panes.is_empty()
+                    {
+                        ws_ui.focused_pinned_pane = ws_ui.pinned_panes.len() - 1;
+                    } else if ws_ui.pinned_panes.is_empty() {
+                        ws_ui.focused_pinned_pane = 0;
+                    }
+                }
+            }
+        }
     }
 
     /// Returns workspace indices in visual order (Working first, then Paused)
@@ -366,10 +498,10 @@ impl AppState {
         if self.ui.active_session_id == Some(session_id) {
             self.ui.active_session_id = None;
         }
-        // Unpin session if it was pinned
-        if let Some(ws) = self.selected_workspace_mut() {
-            ws.unpin_terminal(session_id);
-        }
+        // Unpin from whichever workspace owns the pin — sessions can belong
+        // to non-selected workspaces, so the previous "selected workspace
+        // only" code was wrong.
+        self.unpin_terminal_anywhere(session_id);
         // Remove output buffer + raw bytes + replay cache
         self.system.remove_session_buffers(&session_id);
         // Remove PTY handle if exists

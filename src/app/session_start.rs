@@ -1,9 +1,26 @@
+use crate::app::handlers::{report_background_error, save_state};
 use crate::app::{Action, AppState, PendingSessionStart, Toast, ToastLevel};
 use crate::models::{AgentType, SessionStatus, WorkspaceStatus};
-use crate::persistence;
 use crate::pty::{PtyManager, SessionSpawnConfig};
+use std::path::{Path, PathBuf};
 use tokio::sync::mpsc;
 use uuid::Uuid;
+
+struct SessionStartRequest<'a> {
+    session_id: Uuid,
+    workspace_path: &'a Path,
+    agent_type: AgentType,
+    dangerously_skip_permissions: bool,
+    worktree_path: Option<&'a Path>,
+}
+
+impl<'a> SessionStartRequest<'a> {
+    fn effective_dir(&self) -> &'a Path {
+        self.worktree_path
+            .filter(|path| path.exists())
+            .unwrap_or(self.workspace_path)
+    }
+}
 
 /// Spawn a single session's PTY and update state.
 /// Returns true if the session was started successfully.
@@ -11,39 +28,29 @@ fn spawn_single_session(
     state: &mut AppState,
     pty_manager: &PtyManager,
     pty_tx: &mpsc::Sender<Action>,
-    session_id: Uuid,
-    workspace_path: &std::path::Path,
-    agent_type: AgentType,
-    dangerously_skip_permissions: bool,
-    worktree_path: Option<&std::path::Path>,
+    request: SessionStartRequest<'_>,
 ) -> bool {
-    // Use worktree path if it exists on disk, otherwise fall back to workspace path
-    let effective_dir = worktree_path
-        .filter(|p| p.exists())
-        .unwrap_or(workspace_path);
-
     let pty_rows = state.pane_rows();
     let cols = state.output_pane_cols();
 
-    let inline_mode = matches!(agent_type, AgentType::Codex)
-        || matches!(agent_type, AgentType::Custom { ref command, .. } if command == "codex");
     state
         .system
-        .create_session_buffers(session_id, cols, inline_mode);
+        .create_session_buffers(request.session_id, cols);
 
     match pty_manager.spawn_session(SessionSpawnConfig {
-        session_id,
-        resume: agent_type.is_agent(),
-        agent_type,
-        working_dir: effective_dir,
+        session_id: request.session_id,
+        resume: request.agent_type.is_agent(),
+        agent_type: request.agent_type.clone(),
+        working_dir: request.effective_dir(),
         rows: pty_rows,
         cols,
         pty_tx: pty_tx.clone(),
-        dangerously_skip_permissions,
+        dangerously_skip_permissions: request.dangerously_skip_permissions,
+        use_alternate_screen: state.system.use_alternate_screen,
     }) {
         Ok(handle) => {
-            state.system.pty_handles.insert(session_id, handle);
-            if let Some(session) = state.get_session_mut(session_id) {
+            state.system.pty_handles.insert(request.session_id, handle);
+            if let Some(session) = state.get_session_mut(request.session_id) {
                 session.status = SessionStatus::Running;
             }
             true
@@ -58,8 +65,8 @@ fn spawn_single_session(
             while state.ui.toasts.len() > 5 {
                 state.ui.toasts.pop_front();
             }
-            state.system.remove_session_buffers(&session_id);
-            if let Some(session) = state.get_session_mut(session_id) {
+            state.system.remove_session_buffers(&request.session_id);
+            if let Some(session) = state.get_session_mut(request.session_id) {
                 session.mark_errored();
             }
             false
@@ -82,7 +89,7 @@ pub fn start_workspace_sessions(
     let workspace_path = workspace.path.clone();
 
     // Find all stopped sessions in this workspace
-    let stopped_sessions: Vec<(Uuid, AgentType, bool, Option<std::path::PathBuf>)> = state
+    let stopped_sessions: Vec<(Uuid, AgentType, bool, Option<PathBuf>)> = state
         .data
         .sessions
         .get(&workspace_id)
@@ -112,11 +119,13 @@ pub fn start_workspace_sessions(
             state,
             pty_manager,
             pty_tx,
-            session_id,
-            &workspace_path,
-            agent_type,
-            dangerously_skip_permissions,
-            worktree_path.as_deref(),
+            SessionStartRequest {
+                session_id,
+                workspace_path: &workspace_path,
+                agent_type,
+                dangerously_skip_permissions,
+                worktree_path: worktree_path.as_deref(),
+            },
         );
     }
 
@@ -129,7 +138,7 @@ pub fn start_workspace_sessions(
     {
         ws.touch();
     }
-    let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
+    save_state(state, "failed to save started workspace sessions");
 }
 
 /// Queue all sessions in "Working" workspaces for staggered startup
@@ -198,11 +207,13 @@ pub fn process_startup_queue(
         state,
         pty_manager,
         pty_tx,
-        pending.session_id,
-        &pending.workspace_path,
-        pending.agent_type.clone(),
-        pending.dangerously_skip_permissions,
-        pending.worktree_path.as_deref(),
+        SessionStartRequest {
+            session_id: pending.session_id,
+            workspace_path: &pending.workspace_path,
+            agent_type: pending.agent_type.clone(),
+            dangerously_skip_permissions: pending.dangerously_skip_permissions,
+            worktree_path: pending.worktree_path.as_deref(),
+        },
     ) {
         // Send start command for terminals after a short delay
         if pending.agent_type.is_terminal() {
@@ -214,7 +225,9 @@ pub fn process_startup_queue(
                         tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
                         let mut input = cmd.into_bytes();
                         input.push(b'\n');
-                        let _ = tx.send(Action::SendInput(sid, input));
+                        if let Err(err) = tx.send(Action::SendInput(sid, input)) {
+                            report_background_error("failed to send terminal start command", err);
+                        }
                     });
                 }
             }
@@ -233,8 +246,59 @@ pub fn process_startup_queue(
 
     // Save state after each session start
     if state.system.startup_queue.is_empty() {
-        let _ = persistence::save(&state.data.workspaces, &state.data.sessions);
+        save_state(state, "failed to save startup queue state");
     }
 
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SessionStartRequest;
+    use crate::models::AgentType;
+    use uuid::Uuid;
+
+    #[test]
+    fn effective_dir_uses_existing_worktree() {
+        let workspace_dir = tempfile::tempdir().unwrap();
+        let worktree_dir = tempfile::tempdir().unwrap();
+        let request = SessionStartRequest {
+            session_id: Uuid::new_v4(),
+            workspace_path: workspace_dir.path(),
+            agent_type: AgentType::Claude,
+            dangerously_skip_permissions: false,
+            worktree_path: Some(worktree_dir.path()),
+        };
+
+        assert_eq!(request.effective_dir(), worktree_dir.path());
+    }
+
+    #[test]
+    fn effective_dir_falls_back_when_worktree_is_missing() {
+        let workspace_dir = tempfile::tempdir().unwrap();
+        let missing_worktree = workspace_dir.path().join("missing-worktree");
+        let request = SessionStartRequest {
+            session_id: Uuid::new_v4(),
+            workspace_path: workspace_dir.path(),
+            agent_type: AgentType::Claude,
+            dangerously_skip_permissions: false,
+            worktree_path: Some(&missing_worktree),
+        };
+
+        assert_eq!(request.effective_dir(), workspace_dir.path());
+    }
+
+    #[test]
+    fn effective_dir_uses_workspace_without_worktree() {
+        let workspace_dir = tempfile::tempdir().unwrap();
+        let request = SessionStartRequest {
+            session_id: Uuid::new_v4(),
+            workspace_path: workspace_dir.path(),
+            agent_type: AgentType::Claude,
+            dangerously_skip_permissions: false,
+            worktree_path: None,
+        };
+
+        assert_eq!(request.effective_dir(), workspace_dir.path());
+    }
 }

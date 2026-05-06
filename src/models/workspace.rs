@@ -121,7 +121,10 @@ impl Workspace {
         true
     }
 
-    /// Remove a terminal from the pinned list
+    /// Remove a terminal from the pinned list. Use
+    /// `AppState::unpin_terminal_anywhere` instead so per-workspace UI state
+    /// stays index-aligned.
+    #[allow(dead_code)]
     pub fn unpin_terminal(&mut self, session_id: Uuid) {
         self.pinned_terminal_ids.retain(|id| *id != session_id);
     }

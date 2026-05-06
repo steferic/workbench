@@ -12,11 +12,10 @@ use ratatui::{
     widgets::{
         calendar::{CalendarEventStore, Monthly},
         Bar, BarChart, BarGroup, Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation,
-        ScrollbarState, Wrap,
+        ScrollbarState,
     },
     Frame,
 };
-use std::borrow::Cow;
 use time::{Date, Month, OffsetDateTime};
 use uuid::Uuid;
 
@@ -107,7 +106,21 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
     }
 }
 
-/// Render the terminal output for an active session (live, replay, or inline).
+fn needs_replay(
+    is_alternate: bool,
+    scroll_from_bottom: usize,
+    live_max_scroll: usize,
+    has_raw_data: bool,
+) -> bool {
+    has_raw_data
+        && if is_alternate {
+            scroll_from_bottom > 0
+        } else {
+            scroll_from_bottom > live_max_scroll
+        }
+}
+
+/// Render the terminal output for an active session (live or replay).
 fn render_session_output(
     frame: &mut Frame,
     area: Rect,
@@ -128,6 +141,7 @@ fn render_session_output(
     let screen_size = screen.size();
 
     // Get live parser content length
+    let scroll_from_bottom_raw = state.ui.output_scroll_offset as usize;
     let live_content_len = if is_alternate {
         viewport_height
     } else {
@@ -135,41 +149,20 @@ fn render_session_output(
     };
 
     // Check if we need replay (scrolled beyond what the live parser buffer can show)
-    let scroll_from_bottom_raw = state.ui.output_scroll_offset as usize;
     let live_max_scroll = live_content_len.saturating_sub(viewport_height);
-    let needs_replay = !is_alternate
-        && scroll_from_bottom_raw > live_max_scroll
-        && state
-            .system
-            .raw_output_buffers
-            .get(&session_id)
-            .map(|b| !b.bytes.is_empty())
-            .unwrap_or(false);
+    let has_raw_data = state
+        .system
+        .raw_output_buffers
+        .get(&session_id)
+        .map(|b| !b.bytes.is_empty())
+        .unwrap_or(false);
 
-    // Inline sessions (Codex): render styled snapshot history with word wrapping.
-    if needs_replay && state.system.inline_mode_sessions.contains(&session_id) {
-        if let Some(history) = state.system.inline_styled_history.get(&session_id) {
-            let session = state.active_session();
-            let display_name = session
-                .map(|s| s.agent_type.display_name())
-                .unwrap_or_else(|| "Session".to_string());
-            let short_id = session.map(|s| s.short_id()).unwrap_or_default();
-            let duration = session.map(|s| s.duration_string()).unwrap_or_default();
-            let visual_lines = render_inline_session(
-                frame,
-                area,
-                history,
-                border_style,
-                viewport_height,
-                scroll_from_bottom_raw,
-                &display_name,
-                &short_id,
-                &duration,
-            );
-            state.ui.output_content_length = visual_lines;
-            return;
-        }
-    }
+    let needs_replay = needs_replay(
+        is_alternate,
+        scroll_from_bottom_raw,
+        live_max_scroll,
+        has_raw_data,
+    );
 
     let (lines, stable_len, scroll_from_bottom, scroll_offset) = if needs_replay {
         // Replay path: use cached replay parser for deep scrollback.
@@ -347,6 +340,7 @@ fn render_session_output(
         .get(&session_id)
         .map(|c| c.content_length.max(stable_len))
         .unwrap_or(stable_len);
+
     if scrollbar_total > viewport_height {
         let scrollbar_max = scrollbar_total.saturating_sub(viewport_height);
         let scrollbar_sfb = (state.ui.output_scroll_offset as usize).min(scrollbar_max);
@@ -368,92 +362,6 @@ fn render_session_output(
             render_cursor(frame, inner_area, cursor_state, scroll_offset, true);
         }
     }
-}
-
-/// Render inline styled history (Codex sessions) with word wrapping.
-/// Uses Cow to avoid cloning the full history — only materializes the
-/// visible window of lines needed for the Paragraph.
-/// Returns the visual line count so the caller can update state.
-fn render_inline_session(
-    frame: &mut Frame,
-    area: Rect,
-    history: &[Line<'static>],
-    border_style: Style,
-    viewport_height: usize,
-    scroll_from_bottom_raw: usize,
-    display_name: &str,
-    short_id: &str,
-    duration: &str,
-) -> usize {
-    let block_for_inner = Block::default().borders(Borders::ALL);
-    let inner_area = block_for_inner.inner(area);
-    let pane_width = inner_area.width.max(1) as usize;
-
-    // Compute visual line count from borrowed reference (no clone)
-    let visual_lines: usize = history
-        .iter()
-        .map(|line| {
-            let w = line.width();
-            if w == 0 {
-                1
-            } else {
-                w.div_ceil(pane_width)
-            }
-        })
-        .sum();
-
-    let max_scroll = visual_lines.saturating_sub(viewport_height);
-    let sfb = scroll_from_bottom_raw.min(max_scroll);
-    let so = max_scroll.saturating_sub(sfb);
-
-    // Use Cow to avoid cloning the full history. When all content fits in the
-    // viewport we borrow directly. Otherwise, clone only up to the last raw
-    // line needed to cover the visible window (skipping potentially thousands
-    // of off-screen lines at the end).
-    let text_lines: Cow<'_, [Line<'static>]> = if visual_lines <= viewport_height {
-        Cow::Borrowed(history)
-    } else {
-        let mut cumulative = 0;
-        let mut end_raw = history.len();
-        for (i, line) in history.iter().enumerate() {
-            let w = line.width();
-            cumulative += if w == 0 { 1 } else { w.div_ceil(pane_width) };
-            if cumulative >= so + viewport_height + 5 {
-                end_raw = i + 1;
-                break;
-            }
-        }
-        Cow::Owned(history[..end_raw].to_vec())
-    };
-
-    let title = if sfb > 0 {
-        format!(
-            " {} - {} - {} [↑{}] ",
-            display_name, short_id, duration, sfb
-        )
-    } else {
-        format!(" {} - {} - {} ", display_name, short_id, duration)
-    };
-
-    let block = Block::default()
-        .title(title)
-        .borders(Borders::ALL)
-        .border_style(border_style);
-
-    let paragraph = Paragraph::new(text_lines.into_owned())
-        .block(block)
-        .wrap(Wrap { trim: false })
-        .scroll((so as u16, 0));
-
-    frame.render_widget(paragraph, area);
-
-    if visual_lines > viewport_height {
-        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight);
-        let mut scrollbar_state = ScrollbarState::new(max_scroll).position(so);
-        frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
-    }
-
-    visual_lines
 }
 
 /// Render hint text when no session is active
@@ -713,4 +621,28 @@ fn offset_month(year: i32, month: Month, offset: i32) -> (i32, Month) {
     };
 
     (new_year, new_month)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::needs_replay;
+
+    #[test]
+    fn normal_screen_uses_live_parser_with_raw_data_when_within_live_scrollback() {
+        assert!(!needs_replay(false, 0, 10, true));
+        assert!(!needs_replay(false, 10, 10, true));
+    }
+
+    #[test]
+    fn normal_screen_replays_only_beyond_live_scrollback() {
+        assert!(needs_replay(false, 11, 10, true));
+        assert!(!needs_replay(false, 11, 10, false));
+    }
+
+    #[test]
+    fn alternate_screen_replays_when_scrolled_and_raw_data_exists() {
+        assert!(!needs_replay(true, 0, 0, true));
+        assert!(needs_replay(true, 1, 0, true));
+        assert!(!needs_replay(true, 1, 0, false));
+    }
 }
