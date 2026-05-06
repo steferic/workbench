@@ -296,7 +296,6 @@ impl SystemState {
         self.output_buffers.remove(session_id);
         self.raw_output_buffers.remove(session_id);
         self.replay_caches.remove(session_id);
-        // Note: Do NOT remove inline_styled_history — preserve scrollback history across pause/resume
     }
 }
 

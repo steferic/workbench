@@ -217,6 +217,14 @@ impl PtyManager {
                 }
             }
             AgentType::Codex => {
+                // Codex resumes via a subcommand (`codex resume --last`), not a flag.
+                // Rebuild the command so `resume` is the first positional arg.
+                if resume {
+                    cmd = CommandBuilder::new("codex");
+                    cmd.cwd(working_dir);
+                    cmd.arg("resume");
+                    cmd.arg("--last");
+                }
                 if dangerously_skip_permissions {
                     cmd.arg("--dangerously-bypass-approvals-and-sandbox");
                 }

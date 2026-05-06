@@ -159,6 +159,7 @@ pub fn handle_workspace_action(
                 // Drop the per-workspace UI state so we don't accumulate
                 // entries for deleted workspaces over the process lifetime.
                 state.ws_ui.remove(&id);
+                state.data.notepads.remove(&id);
                 // Remove the workspace
                 if let Some(idx) = state.data.workspaces.iter().position(|w| w.id == id) {
                     state.data.workspaces.remove(idx);

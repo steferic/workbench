@@ -309,6 +309,7 @@ pub fn handle_session_action(
                             if let Some(session) = state.get_session_mut(session_id) {
                                 session.mark_errored();
                             }
+                            save_state(state, "failed to save errored session");
                         }
                     }
                 }
