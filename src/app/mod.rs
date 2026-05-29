@@ -20,7 +20,7 @@ pub use action::{Action, ParallelMergePlan, ParallelWorktreeSpec, UtilityContent
 pub use runtime::run_tui;
 pub use state::{
     AppState, ConfigTab, ConfigTreeNode, Divider, FocusPanel, InputMode, PendingDelete,
-    PendingSessionStart, PinnedPaneState, RawOutputBuffer, ReplayCache, TextSelection, Toast,
-    ToastLevel, TodoPaneMode, TodosTab, UtilityItem, UtilitySection, WorkspaceAction,
-    WorkspaceUiState,
+    PendingSessionStart, PinnedPaneState, RawOutputBuffer, ReplayCache, SystemState, TextSelection,
+    Toast, ToastLevel, TodoPaneMode, TodosTab, TranscriptBuffer, UtilityItem, UtilitySection,
+    WorkspaceAction, WorkspaceUiState,
 };

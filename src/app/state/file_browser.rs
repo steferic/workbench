@@ -4,12 +4,12 @@ use super::AppState;
 
 impl AppState {
     pub fn refresh_file_browser(&mut self) {
-        self.ui.file_browser_all_entries.clear();
-        self.ui.file_browser_entries.clear();
-        self.ui.file_browser_selected = 0;
-        self.ui.file_browser_scroll = 0;
+        self.ui.file_browser.all_entries.clear();
+        self.ui.file_browser.entries.clear();
+        self.ui.file_browser.selected = 0;
+        self.ui.file_browser.scroll = 0;
 
-        if let Ok(entries) = std::fs::read_dir(&self.ui.file_browser_path) {
+        if let Ok(entries) = std::fs::read_dir(&self.ui.file_browser.path) {
             let mut dirs: Vec<PathBuf> = entries
                 .filter_map(|e| e.ok())
                 .map(|e| e.path())
@@ -37,7 +37,7 @@ impl AppState {
                     )
             });
 
-            self.ui.file_browser_all_entries = dirs;
+            self.ui.file_browser.all_entries = dirs;
         }
         self.apply_file_browser_filter();
     }
@@ -45,37 +45,37 @@ impl AppState {
     pub fn file_browser_enter_selected(&mut self) {
         if let Some(path) = self
             .ui
-            .file_browser_entries
-            .get(self.ui.file_browser_selected)
+            .file_browser.entries
+            .get(self.ui.file_browser.selected)
             .cloned()
         {
-            self.ui.file_browser_path = path;
-            self.ui.file_browser_query.clear();
+            self.ui.file_browser.path = path;
+            self.ui.file_browser.query.clear();
             self.refresh_file_browser();
         }
     }
 
     pub fn file_browser_go_up(&mut self) {
-        if let Some(parent) = self.ui.file_browser_path.parent() {
-            self.ui.file_browser_path = parent.to_path_buf();
-            self.ui.file_browser_query.clear();
+        if let Some(parent) = self.ui.file_browser.path.parent() {
+            self.ui.file_browser.path = parent.to_path_buf();
+            self.ui.file_browser.query.clear();
             self.refresh_file_browser();
         }
     }
 
     pub fn apply_file_browser_filter(&mut self) {
-        let query = self.ui.file_browser_query.trim();
+        let query = self.ui.file_browser.query.trim();
         if query.is_empty() {
-            self.ui.file_browser_entries = self.ui.file_browser_all_entries.clone();
-            self.ui.file_browser_selected = 0;
-            self.ui.file_browser_scroll = 0;
+            self.ui.file_browser.entries = self.ui.file_browser.all_entries.clone();
+            self.ui.file_browser.selected = 0;
+            self.ui.file_browser.scroll = 0;
             return;
         }
 
         let query_lower = query.to_ascii_lowercase();
-        if let Some(path) = resolve_query_path(&self.ui.file_browser_path, query) {
-            self.ui.file_browser_path = path;
-            self.ui.file_browser_query.clear();
+        if let Some(path) = resolve_query_path(&self.ui.file_browser.path, query) {
+            self.ui.file_browser.path = path;
+            self.ui.file_browser.query.clear();
             self.refresh_file_browser();
             return;
         }
@@ -83,7 +83,7 @@ impl AppState {
         let mut matches: Vec<(usize, String, PathBuf)> = Vec::new();
         let use_absolute = query.starts_with('/');
 
-        for path in &self.ui.file_browser_all_entries {
+        for path in &self.ui.file_browser.all_entries {
             let candidate = if use_absolute {
                 path.to_string_lossy().to_string()
             } else {
@@ -95,9 +95,9 @@ impl AppState {
         }
 
         matches.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
-        self.ui.file_browser_entries = matches.into_iter().map(|(_, _, path)| path).collect();
-        self.ui.file_browser_selected = 0;
-        self.ui.file_browser_scroll = 0;
+        self.ui.file_browser.entries = matches.into_iter().map(|(_, _, path)| path).collect();
+        self.ui.file_browser.selected = 0;
+        self.ui.file_browser.scroll = 0;
     }
 }
 

@@ -49,7 +49,7 @@ pub fn process_action(
         }
         Action::Tick => {
             // Check for pending palette action
-            if let Some(palette_action) = state.ui.pending_palette_action.take() {
+            if let Some(palette_action) = state.ui.palette.pending_action.take() {
                 process_action(state, palette_action, pty_manager, action_tx, pty_tx)?;
             }
 
@@ -451,16 +451,16 @@ pub fn process_action(
                 // Config window actions
                 Action::EnterConfigWindow => {
                     state.ui.input_mode = crate::app::InputMode::ConfigWindow;
-                    state.ui.config_tab = crate::app::ConfigTab::Agents;
-                    state.ui.config_selected_row = 0;
-                    state.ui.config_selected_col = 0;
-                    state.ui.config_editing = false;
-                    state.ui.config_rebinding = false;
+                    state.ui.config.tab = crate::app::ConfigTab::Agents;
+                    state.ui.config.selected_row = 0;
+                    state.ui.config.selected_col = 0;
+                    state.ui.config.editing = false;
+                    state.ui.config.rebinding = false;
                 }
                 Action::ExitConfigWindow => {
                     state.ui.input_mode = crate::app::InputMode::Normal;
-                    state.ui.config_editing = false;
-                    state.ui.config_rebinding = false;
+                    state.ui.config.editing = false;
+                    state.ui.config.rebinding = false;
                 }
                 Action::ConfigSwitchTab(_) | Action::ConfigMoveUp | Action::ConfigMoveDown |
                 Action::ConfigMoveLeft | Action::ConfigMoveRight | Action::ConfigStartEdit |

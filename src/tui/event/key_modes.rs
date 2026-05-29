@@ -50,7 +50,7 @@ pub(super) fn handle_input_mode_key(key: &KeyEvent, state: &AppState) -> Option<
                     KeyCode::Left => Action::FileBrowserBack,
                     KeyCode::Char(' ') | KeyCode::Tab => Action::FileBrowserSelect,
                     KeyCode::Backspace => {
-                        if state.ui.file_browser_query.is_empty() {
+                        if state.ui.file_browser.query.is_empty() {
                             Action::FileBrowserBack
                         } else {
                             Action::InputBackspace
@@ -111,7 +111,7 @@ pub(super) fn handle_input_mode_key(key: &KeyEvent, state: &AppState) -> Option<
             KeyCode::Esc => Action::ExitMode,
             KeyCode::Tab => Action::NextParallelAgent,
             KeyCode::BackTab => Action::PrevParallelAgent,
-            KeyCode::Char('x') => Action::ToggleParallelAgent(state.ui.parallel_task_agent_idx),
+            KeyCode::Char('x') => Action::ToggleParallelAgent(state.ui.parallel_task.agent_idx),
             KeyCode::Enter => Action::StartParallelTask,
             KeyCode::Backspace => Action::InputBackspace,
             KeyCode::Char(c) => Action::InputChar(c),
@@ -141,9 +141,9 @@ pub(super) fn handle_input_mode_key(key: &KeyEvent, state: &AppState) -> Option<
             _ => Action::Tick,
         },
         InputMode::ConfigWindow => {
-            if state.ui.config_rebinding {
+            if state.ui.config.rebinding {
                 Action::ConfigRebindKey(*key)
-            } else if state.ui.config_editing {
+            } else if state.ui.config.editing {
                 match key.code {
                     KeyCode::Esc => Action::ConfigCancelEdit,
                     KeyCode::Enter => Action::ConfigFinishEdit,
@@ -159,7 +159,7 @@ pub(super) fn handle_input_mode_key(key: &KeyEvent, state: &AppState) -> Option<
                     KeyCode::Char('3') => Action::ConfigSwitchTab(ConfigTab::Hotkeys),
                     KeyCode::Char('4') => Action::ConfigSwitchTab(ConfigTab::Scrollback),
                     KeyCode::Tab => {
-                        let next = match state.ui.config_tab {
+                        let next = match state.ui.config.tab {
                             ConfigTab::QuickRef => ConfigTab::Agents,
                             ConfigTab::Agents => ConfigTab::Hotkeys,
                             ConfigTab::Hotkeys => ConfigTab::Scrollback,

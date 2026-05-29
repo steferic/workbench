@@ -63,10 +63,10 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     )));
 
     // Show the input buffer with cursor
-    let prompt_display = if state.ui.parallel_task_prompt.is_empty() {
+    let prompt_display = if state.ui.parallel_task.prompt.is_empty() {
         "  │ _".to_string()
     } else {
-        format!("  │ {}_", state.ui.parallel_task_prompt)
+        format!("  │ {}_", state.ui.parallel_task.prompt)
     };
     content.push(Line::from(Span::styled(
         prompt_display,
@@ -82,9 +82,9 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     )));
 
     // Render agent selection
-    let agent_count = state.ui.parallel_task_agents.len();
-    for (idx, (agent_type, selected)) in state.ui.parallel_task_agents.iter().enumerate() {
-        let is_focused = idx == state.ui.parallel_task_agent_idx;
+    let agent_count = state.ui.parallel_task.agents.len();
+    for (idx, (agent_type, selected)) in state.ui.parallel_task.agents.iter().enumerate() {
+        let is_focused = idx == state.ui.parallel_task.agent_idx;
         let checkbox = if *selected { "[x]" } else { "[ ]" };
         let agent_name = agent_type.display_name();
         let agent_badge = agent_type.badge();
@@ -133,8 +133,8 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     content.push(Line::from(""));
 
     // Dangerous mode checkbox - index = agent_count
-    let danger_focused = state.ui.parallel_task_agent_idx == agent_count;
-    let danger_checkbox = if state.ui.parallel_task_dangerous_mode {
+    let danger_focused = state.ui.parallel_task.agent_idx == agent_count;
+    let danger_checkbox = if state.ui.parallel_task.dangerous_mode {
         "[x]"
     } else {
         "[ ]"
@@ -144,7 +144,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
             Span::styled("  > ", Style::default().fg(Color::Yellow)),
             Span::styled(
                 danger_checkbox,
-                Style::default().fg(if state.ui.parallel_task_dangerous_mode {
+                Style::default().fg(if state.ui.parallel_task.dangerous_mode {
                     Color::Green
                 } else {
                     Color::Gray
@@ -162,7 +162,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
             Span::raw("    "),
             Span::styled(
                 danger_checkbox,
-                Style::default().fg(if state.ui.parallel_task_dangerous_mode {
+                Style::default().fg(if state.ui.parallel_task.dangerous_mode {
                     Color::Green
                 } else {
                     Color::DarkGray
@@ -174,8 +174,8 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     content.push(danger_line);
 
     // Report checkbox - index = agent_count + 1
-    let report_focused = state.ui.parallel_task_agent_idx == agent_count + 1;
-    let report_checkbox = if state.ui.parallel_task_request_report {
+    let report_focused = state.ui.parallel_task.agent_idx == agent_count + 1;
+    let report_checkbox = if state.ui.parallel_task.request_report {
         "[x]"
     } else {
         "[ ]"
@@ -185,7 +185,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
             Span::styled("  > ", Style::default().fg(Color::Yellow)),
             Span::styled(
                 report_checkbox,
-                Style::default().fg(if state.ui.parallel_task_request_report {
+                Style::default().fg(if state.ui.parallel_task.request_report {
                     Color::Green
                 } else {
                     Color::Gray
@@ -203,7 +203,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
             Span::raw("    "),
             Span::styled(
                 report_checkbox,
-                Style::default().fg(if state.ui.parallel_task_request_report {
+                Style::default().fg(if state.ui.parallel_task.request_report {
                     Color::Green
                 } else {
                     Color::DarkGray

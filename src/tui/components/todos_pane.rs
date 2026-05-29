@@ -498,7 +498,7 @@ fn render_reports_tab(frame: &mut Frame, area: Rect, state: &AppState, is_focuse
         .iter()
         .enumerate()
         .map(|(i, attempt)| {
-            let is_selected = i == state.ui.selected_report_idx && is_focused;
+            let is_selected = i == state.ui.parallel_task.selected_report_idx && is_focused;
 
             let style = if is_selected {
                 Style::default()
@@ -579,7 +579,7 @@ fn render_reports_tab(frame: &mut Frame, area: Rect, state: &AppState, is_focuse
 
     let mut list_state = ListState::default();
     if !task.attempts.is_empty() {
-        list_state.select(Some(state.ui.selected_report_idx));
+        list_state.select(Some(state.ui.parallel_task.selected_report_idx));
     }
 
     frame.render_stateful_widget(list, list_area, &mut list_state);

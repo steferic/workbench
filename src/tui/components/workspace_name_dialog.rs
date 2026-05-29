@@ -41,7 +41,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     // Show parent path
     let path_display = state
         .ui
-        .file_browser_path
+        .file_browser.path
         .to_str()
         .map(|s| {
             if let Some(home) = dirs::home_dir() {
@@ -98,7 +98,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     } else {
         state
             .ui
-            .file_browser_path
+            .file_browser.path
             .join(&state.ui.input_buffer)
             .to_str()
             .map(|s| {

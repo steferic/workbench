@@ -248,7 +248,7 @@ impl PtyManager {
 
         // Set TERM for proper terminal emulation
         // Use simpler vt100 for Codex to reduce cursor positioning complexity
-        if matches!(agent_type, AgentType::Codex) {
+        if agent_type.is_codex_like() {
             cmd.env("TERM", "vt100");
         } else {
             cmd.env("TERM", "xterm-256color");
@@ -286,7 +286,7 @@ impl PtyManager {
         let pty_tx = pty_tx.clone();
         let sid = session_id;
         let pty_rows = rows;
-        let strip_alt_screen = matches!(agent_type, AgentType::Codex) || !use_alternate_screen;
+        let strip_alt_screen = agent_type.is_codex_like() || !use_alternate_screen;
         std::thread::spawn(move || {
             #[cfg(unix)]
             Self::read_pty_output_with_dsr(

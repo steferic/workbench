@@ -61,6 +61,14 @@ impl AgentType {
     pub fn is_agent(&self) -> bool {
         !self.is_terminal()
     }
+
+    pub fn is_codex_like(&self) -> bool {
+        match self {
+            AgentType::Codex => true,
+            AgentType::Custom { command, .. } => command == "codex",
+            _ => false,
+        }
+    }
 }
 
 impl std::fmt::Display for AgentType {

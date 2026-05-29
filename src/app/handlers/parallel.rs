@@ -74,7 +74,7 @@ pub fn handle_parallel_action(
             )?;
         }
         Action::ParallelWorktreesFailed { request_id, error } => {
-            if request_id == state.ui.parallel_task_request_id {
+            if request_id == state.ui.parallel_task.request_id {
                 let msg = format!("Parallel task failed: {}", error);
                 let duration = std::time::Duration::from_secs(5);
                 state
@@ -101,7 +101,7 @@ fn start_parallel_task(
     // Get selected agents
     let selected_agents: Vec<_> = state
         .ui
-        .parallel_task_agents
+        .parallel_task.agents
         .iter()
         .filter(|(_, selected)| *selected)
         .map(|(agent_type, _)| agent_type.clone())
@@ -114,7 +114,7 @@ fn start_parallel_task(
     }
 
     // Validate prompt is not empty
-    let prompt = state.ui.parallel_task_prompt.trim().to_string();
+    let prompt = state.ui.parallel_task.prompt.trim().to_string();
     if prompt.is_empty() {
         state.ui.input_mode = InputMode::Normal;
         return Ok(());
@@ -128,14 +128,14 @@ fn start_parallel_task(
     let workspace_path = workspace.path.clone();
 
     // Get settings from UI state
-    let request_report = state.ui.parallel_task_request_report;
-    let dangerously_skip_permissions = state.ui.parallel_task_dangerous_mode;
+    let request_report = state.ui.parallel_task.request_report;
+    let dangerously_skip_permissions = state.ui.parallel_task.dangerous_mode;
 
     let task_id = Uuid::new_v4();
     let task_short_id = task_id.to_string()[..8].to_string();
 
-    let request_id = state.ui.parallel_task_request_id.wrapping_add(1);
-    state.ui.parallel_task_request_id = request_id;
+    let request_id = state.ui.parallel_task.request_id.wrapping_add(1);
+    state.ui.parallel_task.request_id = request_id;
 
     // Cancel any existing active parallel tasks before creating a new one.
     if let Some(ws) = state
@@ -155,7 +155,7 @@ fn start_parallel_task(
 
     // Reset modal state and switch to normal mode
     state.ui.input_mode = InputMode::Normal;
-    state.ui.parallel_task_prompt.clear();
+    state.ui.parallel_task.prompt.clear();
     state.ui.focus = FocusPanel::SessionList;
 
     save_state(state, "failed to save parallel task start");
@@ -229,7 +229,7 @@ fn handle_parallel_worktrees_ready(
     source_commit: String,
     worktrees: Vec<ParallelWorktreeSpec>,
 ) -> Result<()> {
-    if request_id != state.ui.parallel_task_request_id {
+    if request_id != state.ui.parallel_task.request_id {
         return Ok(());
     }
 
@@ -361,6 +361,19 @@ fn handle_parallel_worktrees_ready(
     Ok(())
 }
 
+/// Kill the PTY handles for the given sessions and drop their buffers.
+/// `context` is used as the log message when a kill fails.
+fn kill_sessions(state: &mut AppState, session_ids: &[Uuid], context: &str) {
+    for session_id in session_ids {
+        if let Some(mut handle) = state.system.pty_handles.remove(session_id) {
+            if let Err(err) = handle.kill() {
+                report_runtime_error(state, context, err, "Failed to stop session");
+            }
+        }
+        state.system.remove_session_buffers(session_id);
+    }
+}
+
 fn cancel_parallel_task(
     state: &mut AppState,
     task_id: Uuid,
@@ -393,19 +406,7 @@ fn cancel_parallel_task(
     };
 
     // Kill all sessions and cleanup worktrees
-    for session_id in &session_ids {
-        if let Some(mut handle) = state.system.pty_handles.remove(session_id) {
-            if let Err(err) = handle.kill() {
-                report_runtime_error(
-                    state,
-                    "failed to kill parallel session",
-                    err,
-                    "Failed to stop session",
-                );
-            }
-        }
-        state.system.remove_session_buffers(session_id);
-    }
+    kill_sessions(state, &session_ids, "failed to kill parallel session");
 
     // Remove worktrees
     if let Some(ref ws_path) = workspace_path {
@@ -538,19 +539,11 @@ fn handle_parallel_merge_finished(
     }
 
     // Kill only the merged attempt's session
-    for session_id in &plan.session_ids {
-        if let Some(mut handle) = state.system.pty_handles.remove(session_id) {
-            if let Err(err) = handle.kill() {
-                report_runtime_error(
-                    state,
-                    "failed to kill merged parallel session",
-                    err,
-                    "Failed to stop session",
-                );
-            }
-        }
-        state.system.remove_session_buffers(session_id);
-    }
+    kill_sessions(
+        state,
+        &plan.session_ids,
+        "failed to kill merged parallel session",
+    );
 
     // Remove the merged attempt's worktree
     {
@@ -592,8 +585,8 @@ fn handle_parallel_merge_finished(
         .and_then(|ws| ws.active_parallel_task())
         .map(|t| t.attempts.len())
         .unwrap_or(0);
-    if state.ui.selected_report_idx >= report_count && report_count > 0 {
-        state.ui.selected_report_idx = report_count - 1;
+    if state.ui.parallel_task.selected_report_idx >= report_count && report_count > 0 {
+        state.ui.parallel_task.selected_report_idx = report_count - 1;
     }
 
     save_state(state, "failed to save parallel merge");
@@ -651,11 +644,11 @@ fn handle_report_navigation(state: &mut AppState, action: &Action) {
 
     match action {
         Action::SelectNextReport => {
-            state.ui.selected_report_idx = (state.ui.selected_report_idx + 1).min(report_count - 1);
+            state.ui.parallel_task.selected_report_idx = (state.ui.parallel_task.selected_report_idx + 1).min(report_count - 1);
         }
         Action::SelectPrevReport => {
-            if state.ui.selected_report_idx > 0 {
-                state.ui.selected_report_idx -= 1;
+            if state.ui.parallel_task.selected_report_idx > 0 {
+                state.ui.parallel_task.selected_report_idx -= 1;
             }
         }
         _ => {}
@@ -667,7 +660,7 @@ fn view_selected_report(state: &mut AppState) {
     let attempt = state
         .selected_workspace()
         .and_then(|ws| ws.active_parallel_task())
-        .and_then(|t| t.attempts.get(state.ui.selected_report_idx))
+        .and_then(|t| t.attempts.get(state.ui.parallel_task.selected_report_idx))
         .cloned();
 
     if let Some(attempt) = attempt {
@@ -682,7 +675,7 @@ fn merge_selected_report(state: &mut AppState) -> Result<()> {
     let attempt_id = state
         .selected_workspace()
         .and_then(|ws| ws.active_parallel_task())
-        .and_then(|t| t.attempts.get(state.ui.selected_report_idx))
+        .and_then(|t| t.attempts.get(state.ui.parallel_task.selected_report_idx))
         .map(|a| a.id);
 
     if let Some(attempt_id) = attempt_id {
@@ -764,7 +757,7 @@ mod tests {
         task.add_attempt(create_test_attempt(task.id, AgentType::Codex));
         state.data.workspaces[0].add_parallel_task(task);
 
-        assert_eq!(state.ui.selected_report_idx, 0);
+        assert_eq!(state.ui.parallel_task.selected_report_idx, 0);
 
         let report_count = state
             .selected_workspace()
@@ -772,14 +765,14 @@ mod tests {
             .map(|t| t.attempts.len())
             .unwrap_or(0);
 
-        state.ui.selected_report_idx = (state.ui.selected_report_idx + 1).min(report_count - 1);
-        assert_eq!(state.ui.selected_report_idx, 1);
+        state.ui.parallel_task.selected_report_idx = (state.ui.parallel_task.selected_report_idx + 1).min(report_count - 1);
+        assert_eq!(state.ui.parallel_task.selected_report_idx, 1);
 
-        state.ui.selected_report_idx = (state.ui.selected_report_idx + 1).min(report_count - 1);
-        assert_eq!(state.ui.selected_report_idx, 2);
+        state.ui.parallel_task.selected_report_idx = (state.ui.parallel_task.selected_report_idx + 1).min(report_count - 1);
+        assert_eq!(state.ui.parallel_task.selected_report_idx, 2);
 
-        state.ui.selected_report_idx = (state.ui.selected_report_idx + 1).min(report_count - 1);
-        assert_eq!(state.ui.selected_report_idx, 2);
+        state.ui.parallel_task.selected_report_idx = (state.ui.parallel_task.selected_report_idx + 1).min(report_count - 1);
+        assert_eq!(state.ui.parallel_task.selected_report_idx, 2);
     }
 
     #[test]
@@ -793,22 +786,22 @@ mod tests {
         task.add_attempt(create_test_attempt(task.id, AgentType::Codex));
         state.data.workspaces[0].add_parallel_task(task);
 
-        state.ui.selected_report_idx = 2;
+        state.ui.parallel_task.selected_report_idx = 2;
 
-        if state.ui.selected_report_idx > 0 {
-            state.ui.selected_report_idx -= 1;
+        if state.ui.parallel_task.selected_report_idx > 0 {
+            state.ui.parallel_task.selected_report_idx -= 1;
         }
-        assert_eq!(state.ui.selected_report_idx, 1);
+        assert_eq!(state.ui.parallel_task.selected_report_idx, 1);
 
-        if state.ui.selected_report_idx > 0 {
-            state.ui.selected_report_idx -= 1;
+        if state.ui.parallel_task.selected_report_idx > 0 {
+            state.ui.parallel_task.selected_report_idx -= 1;
         }
-        assert_eq!(state.ui.selected_report_idx, 0);
+        assert_eq!(state.ui.parallel_task.selected_report_idx, 0);
 
-        if state.ui.selected_report_idx > 0 {
-            state.ui.selected_report_idx -= 1;
+        if state.ui.parallel_task.selected_report_idx > 0 {
+            state.ui.parallel_task.selected_report_idx -= 1;
         }
-        assert_eq!(state.ui.selected_report_idx, 0);
+        assert_eq!(state.ui.parallel_task.selected_report_idx, 0);
     }
 
     #[test]
@@ -846,7 +839,7 @@ mod tests {
         let attempt = state
             .selected_workspace()
             .and_then(|ws| ws.active_parallel_task())
-            .and_then(|t| t.attempts.get(state.ui.selected_report_idx))
+            .and_then(|t| t.attempts.get(state.ui.parallel_task.selected_report_idx))
             .cloned();
 
         if let Some(attempt) = attempt {
@@ -872,22 +865,22 @@ mod tests {
         task.add_attempt(attempt2);
         state.data.workspaces[0].add_parallel_task(task);
 
-        state.ui.selected_report_idx = 0;
+        state.ui.parallel_task.selected_report_idx = 0;
         let attempt = state
             .selected_workspace()
             .and_then(|ws| ws.active_parallel_task())
-            .and_then(|t| t.attempts.get(state.ui.selected_report_idx))
+            .and_then(|t| t.attempts.get(state.ui.parallel_task.selected_report_idx))
             .cloned();
         if let Some(attempt) = attempt {
             state.ui.active_session_id = Some(attempt.session_id);
         }
         assert_eq!(state.ui.active_session_id, Some(session1));
 
-        state.ui.selected_report_idx = 1;
+        state.ui.parallel_task.selected_report_idx = 1;
         let attempt = state
             .selected_workspace()
             .and_then(|ws| ws.active_parallel_task())
-            .and_then(|t| t.attempts.get(state.ui.selected_report_idx))
+            .and_then(|t| t.attempts.get(state.ui.parallel_task.selected_report_idx))
             .cloned();
         if let Some(attempt) = attempt {
             state.ui.active_session_id = Some(attempt.session_id);
@@ -911,19 +904,19 @@ mod tests {
         task.add_attempt(attempt2);
         state.data.workspaces[0].add_parallel_task(task);
 
-        state.ui.selected_report_idx = 0;
+        state.ui.parallel_task.selected_report_idx = 0;
         let attempt_id = state
             .selected_workspace()
             .and_then(|ws| ws.active_parallel_task())
-            .and_then(|t| t.attempts.get(state.ui.selected_report_idx))
+            .and_then(|t| t.attempts.get(state.ui.parallel_task.selected_report_idx))
             .map(|a| a.id);
         assert_eq!(attempt_id, Some(attempt1_id));
 
-        state.ui.selected_report_idx = 1;
+        state.ui.parallel_task.selected_report_idx = 1;
         let attempt_id = state
             .selected_workspace()
             .and_then(|ws| ws.active_parallel_task())
-            .and_then(|t| t.attempts.get(state.ui.selected_report_idx))
+            .and_then(|t| t.attempts.get(state.ui.parallel_task.selected_report_idx))
             .map(|a| a.id);
         assert_eq!(attempt_id, Some(attempt2_id));
     }
@@ -1124,18 +1117,18 @@ mod tests {
         let mut state = create_test_state();
 
         state.ui.input_mode = InputMode::CreateParallelTask;
-        state.ui.parallel_task_prompt = "Fix the bug".to_string();
+        state.ui.parallel_task.prompt = "Fix the bug".to_string();
         state
             .ui
-            .parallel_task_agents
+            .parallel_task.agents
             .push((AgentType::Claude, true));
 
         state.ui.input_mode = InputMode::Normal;
-        state.ui.parallel_task_prompt.clear();
+        state.ui.parallel_task.prompt.clear();
         state.ui.focus = FocusPanel::SessionList;
 
         assert_eq!(state.ui.input_mode, InputMode::Normal);
-        assert!(state.ui.parallel_task_prompt.is_empty());
+        assert!(state.ui.parallel_task.prompt.is_empty());
         assert_eq!(state.ui.focus, FocusPanel::SessionList);
     }
 
@@ -1147,7 +1140,7 @@ mod tests {
         let task = create_test_task(ws_id, "Test task");
         state.data.workspaces[0].add_parallel_task(task);
 
-        state.ui.parallel_task_request_id = 2;
+        state.ui.parallel_task.request_id = 2;
 
         let action = Action::ParallelWorktreesReady {
             request_id: 1,
@@ -1181,7 +1174,7 @@ mod tests {
         let task = create_test_task(ws_id, "Test task");
         state.data.workspaces[0].add_parallel_task(task);
 
-        state.ui.parallel_task_request_id = 2;
+        state.ui.parallel_task.request_id = 2;
 
         let action = Action::ParallelWorktreesReady {
             request_id: 2,

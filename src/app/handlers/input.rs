@@ -23,7 +23,7 @@ pub fn handle_input_action(state: &mut AppState, action: Action) -> Result<()> {
         Action::ExitMode => {
             state.ui.input_mode = InputMode::Normal;
             state.ui.input_buffer.clear();
-            state.ui.file_browser_query.clear();
+            state.ui.file_browser.query.clear();
             state.ui.editing_session_id = None;
         }
         Action::EnterSetStartCommandMode => {
@@ -55,10 +55,10 @@ pub fn handle_input_action(state: &mut AppState, action: Action) -> Result<()> {
             // Handle input based on current mode
             if state.ui.input_mode == InputMode::CreateWorkspace && !state.ui.workspace_create_mode
             {
-                state.ui.file_browser_query.push(c);
+                state.ui.file_browser.query.push(c);
                 state.apply_file_browser_filter();
             } else if state.ui.input_mode == InputMode::CreateParallelTask {
-                state.ui.parallel_task_prompt.push(c);
+                state.ui.parallel_task.prompt.push(c);
             } else {
                 state.ui.input_buffer.push(c);
             }
@@ -67,10 +67,10 @@ pub fn handle_input_action(state: &mut AppState, action: Action) -> Result<()> {
             // Handle backspace based on current mode
             if state.ui.input_mode == InputMode::CreateWorkspace && !state.ui.workspace_create_mode
             {
-                state.ui.file_browser_query.pop();
+                state.ui.file_browser.query.pop();
                 state.apply_file_browser_filter();
             } else if state.ui.input_mode == InputMode::CreateParallelTask {
-                state.ui.parallel_task_prompt.pop();
+                state.ui.parallel_task.prompt.pop();
             } else {
                 state.ui.input_buffer.pop();
             }
@@ -108,22 +108,22 @@ pub fn handle_input_action(state: &mut AppState, action: Action) -> Result<()> {
             save_state_with_notepad(state, "failed to save notepad input");
         }
         Action::FileBrowserUp => {
-            if state.ui.file_browser_selected > 0 {
-                state.ui.file_browser_selected -= 1;
-                if state.ui.file_browser_selected < state.ui.file_browser_scroll {
-                    state.ui.file_browser_scroll = state.ui.file_browser_selected;
+            if state.ui.file_browser.selected > 0 {
+                state.ui.file_browser.selected -= 1;
+                if state.ui.file_browser.selected < state.ui.file_browser.scroll {
+                    state.ui.file_browser.scroll = state.ui.file_browser.selected;
                 }
             }
         }
         Action::FileBrowserDown => {
-            if state.ui.file_browser_selected
-                < state.ui.file_browser_entries.len().saturating_sub(1)
+            if state.ui.file_browser.selected
+                < state.ui.file_browser.entries.len().saturating_sub(1)
             {
-                state.ui.file_browser_selected += 1;
+                state.ui.file_browser.selected += 1;
                 let visible_height = 15;
-                if state.ui.file_browser_selected >= state.ui.file_browser_scroll + visible_height {
-                    state.ui.file_browser_scroll =
-                        state.ui.file_browser_selected - visible_height + 1;
+                if state.ui.file_browser.selected >= state.ui.file_browser.scroll + visible_height {
+                    state.ui.file_browser.scroll =
+                        state.ui.file_browser.selected - visible_height + 1;
                 }
             }
         }
@@ -136,17 +136,17 @@ pub fn handle_input_action(state: &mut AppState, action: Action) -> Result<()> {
         Action::FileBrowserSelect => {
             let path = if let Some(selected) = state
                 .ui
-                .file_browser_entries
-                .get(state.ui.file_browser_selected)
+                .file_browser.entries
+                .get(state.ui.file_browser.selected)
             {
                 selected.clone()
             } else {
-                state.ui.file_browser_path.clone()
+                state.ui.file_browser.path.clone()
             };
             if path.exists() && path.is_dir() {
                 let workspace = crate::models::Workspace::from_path(path);
                 state.add_workspace(workspace);
-                state.ui.file_browser_query.clear();
+                state.ui.file_browser.query.clear();
                 state.ui.input_mode = InputMode::Normal;
                 save_state(state, "failed to save workspace selection");
             }
@@ -159,8 +159,8 @@ pub fn handle_input_action(state: &mut AppState, action: Action) -> Result<()> {
             // Only enter if we have a workspace selected
             if state.selected_workspace().is_some() {
                 state.ui.input_mode = InputMode::CreateParallelTask;
-                state.ui.parallel_task_prompt.clear();
-                state.ui.parallel_task_agent_idx = 0;
+                state.ui.parallel_task.prompt.clear();
+                state.ui.parallel_task.agent_idx = 0;
                 // Pre-select agents that have running sessions in the workspace
                 let ws_id = state.selected_workspace().map(|w| w.id);
                 if let Some(workspace_id) = ws_id {
@@ -181,84 +181,84 @@ pub fn handle_input_action(state: &mut AppState, action: Action) -> Result<()> {
                         .unwrap_or_default();
 
                     // Update selection based on running agents
-                    for (agent_type, selected) in state.ui.parallel_task_agents.iter_mut() {
+                    for (agent_type, selected) in state.ui.parallel_task.agents.iter_mut() {
                         *selected = running_agents.contains(agent_type);
                     }
                 }
             }
         }
         Action::NextParallelAgent => {
-            let agent_count = state.ui.parallel_task_agents.len();
+            let agent_count = state.ui.parallel_task.agents.len();
             // Total items = agents + 2 (dangerous mode + report checkboxes)
             let total_items = agent_count + 2;
             if total_items > 0 {
-                state.ui.parallel_task_agent_idx =
-                    (state.ui.parallel_task_agent_idx + 1) % total_items;
+                state.ui.parallel_task.agent_idx =
+                    (state.ui.parallel_task.agent_idx + 1) % total_items;
             }
         }
         Action::PrevParallelAgent => {
-            let agent_count = state.ui.parallel_task_agents.len();
+            let agent_count = state.ui.parallel_task.agents.len();
             // Total items = agents + 2 (dangerous mode + report checkboxes)
             let total_items = agent_count + 2;
             if total_items > 0 {
-                if state.ui.parallel_task_agent_idx == 0 {
-                    state.ui.parallel_task_agent_idx = total_items - 1;
+                if state.ui.parallel_task.agent_idx == 0 {
+                    state.ui.parallel_task.agent_idx = total_items - 1;
                 } else {
-                    state.ui.parallel_task_agent_idx -= 1;
+                    state.ui.parallel_task.agent_idx -= 1;
                 }
             }
         }
         Action::ToggleParallelAgent(idx) => {
-            let agent_count = state.ui.parallel_task_agents.len();
+            let agent_count = state.ui.parallel_task.agents.len();
             if idx == agent_count {
                 // First extra checkbox: dangerous mode
-                state.ui.parallel_task_dangerous_mode = !state.ui.parallel_task_dangerous_mode;
+                state.ui.parallel_task.dangerous_mode = !state.ui.parallel_task.dangerous_mode;
             } else if idx == agent_count + 1 {
                 // Second extra checkbox: request report
-                state.ui.parallel_task_request_report = !state.ui.parallel_task_request_report;
-            } else if let Some((_, selected)) = state.ui.parallel_task_agents.get_mut(idx) {
+                state.ui.parallel_task.request_report = !state.ui.parallel_task.request_report;
+            } else if let Some((_, selected)) = state.ui.parallel_task.agents.get_mut(idx) {
                 *selected = !*selected;
             }
         }
         Action::EnterCommandPalette => {
             state.ui.input_mode = InputMode::CommandPalette;
-            state.ui.palette_query.clear();
-            state.ui.palette_selected = 0;
+            state.ui.palette.query.clear();
+            state.ui.palette.selected = 0;
         }
         Action::ExitCommandPalette => {
             state.ui.input_mode = InputMode::Normal;
-            state.ui.palette_query.clear();
-            state.ui.palette_selected = 0;
+            state.ui.palette.query.clear();
+            state.ui.palette.selected = 0;
         }
         Action::CommandPaletteInput(c) => {
-            state.ui.palette_query.push(c);
-            state.ui.palette_selected = 0;
+            state.ui.palette.query.push(c);
+            state.ui.palette.selected = 0;
         }
         Action::CommandPaletteBackspace => {
-            state.ui.palette_query.pop();
-            state.ui.palette_selected = 0;
+            state.ui.palette.query.pop();
+            state.ui.palette.selected = 0;
         }
         Action::CommandPaletteDown => {
             let count =
-                crate::tui::components::command_palette::filtered_entries(&state.ui.palette_query)
+                crate::tui::components::command_palette::filtered_entries(&state.ui.palette.query)
                     .len();
-            if count > 0 && state.ui.palette_selected + 1 < count {
-                state.ui.palette_selected += 1;
+            if count > 0 && state.ui.palette.selected + 1 < count {
+                state.ui.palette.selected += 1;
             }
         }
         Action::CommandPaletteUp => {
-            if state.ui.palette_selected > 0 {
-                state.ui.palette_selected -= 1;
+            if state.ui.palette.selected > 0 {
+                state.ui.palette.selected -= 1;
             }
         }
         Action::CommandPaletteExecute => {
             let entries =
-                crate::tui::components::command_palette::filtered_entries(&state.ui.palette_query);
-            if let Some(entry) = entries.into_iter().nth(state.ui.palette_selected) {
+                crate::tui::components::command_palette::filtered_entries(&state.ui.palette.query);
+            if let Some(entry) = entries.into_iter().nth(state.ui.palette.selected) {
                 state.ui.input_mode = InputMode::Normal;
-                state.ui.palette_query.clear();
-                state.ui.palette_selected = 0;
-                state.ui.pending_palette_action = Some(entry.action);
+                state.ui.palette.query.clear();
+                state.ui.palette.selected = 0;
+                state.ui.palette.pending_action = Some(entry.action);
             }
         }
         Action::InitiateQuit => {

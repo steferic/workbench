@@ -3,6 +3,16 @@ use crate::models::MAX_PINNED_TERMINALS;
 use std::sync::{Mutex, OnceLock};
 use uuid::Uuid;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SelectionSurface {
+    /// Coordinates came from the live vt100 screen currently being rendered.
+    Live,
+    /// Coordinates came from the replay parser used for deep scrollback.
+    Replay,
+    /// Coordinates came from reconstructed transcript scrollback.
+    Transcript,
+}
+
 pub fn pane_text_position(
     area: (u16, u16, u16, u16),
     x: u16,
@@ -111,46 +121,78 @@ pub fn extract_selected_text(
     result
 }
 
-pub fn copy_active_selection(state: &mut AppState) -> bool {
-    use crate::tui::replay::create_replay_parser;
+fn extract_for_surface(
+    parser: &vt100::Parser,
+    raw_buf: Option<&crate::app::RawOutputBuffer>,
+    transcript: Option<&crate::app::TranscriptBuffer>,
+    replay_rows: u16,
+    start: (usize, usize),
+    end: (usize, usize),
+    surface: SelectionSurface,
+) -> String {
+    if surface == SelectionSurface::Transcript {
+        if let Some(transcript) = transcript {
+            return transcript.extract_text(start, end);
+        }
+    }
 
-    // Selection coordinates from `pane_text_position` are in CONTENT space
-    // (scrollback + viewport). The live vt100 parser only holds the viewport,
-    // so for any session with scrollback, content-row indices fall outside the
-    // live parser's screen and extraction returns nothing — even though the
-    // user can see and visually highlight the text. The replay parser, in
-    // contrast, holds the full content and matches the coordinate system.
-    // Always prefer replay when raw bytes exist; fall back to the live parser
-    // only for sessions that have no raw history yet.
+    if surface == SelectionSurface::Replay {
+        if let Some(raw_buf) = raw_buf {
+            if !raw_buf.bytes.is_empty() {
+                let cols = parser.screen().size().1;
+                let replay = crate::tui::replay::create_replay_parser(raw_buf, cols, replay_rows);
+                return extract_selected_text(replay.screen(), start, end);
+            }
+        }
+    }
+
+    extract_selected_text(parser.screen(), start, end)
+}
+
+pub fn copy_active_selection(state: &mut AppState) -> bool {
+    fn copy_non_empty(text: String) -> bool {
+        if text.is_empty() {
+            return false;
+        }
+        copy_to_clipboard(&text);
+        true
+    }
+
     fn extract_for_session(
         state: &AppState,
         session_id: uuid::Uuid,
         start: (usize, usize),
         end: (usize, usize),
+        surface: SelectionSurface,
     ) -> Option<String> {
         let parser = state.system.output_buffers.get(&session_id)?;
-        let cols = parser.screen().size().1;
-
-        if let Some(raw_buf) = state.system.raw_output_buffers.get(&session_id) {
-            if !raw_buf.bytes.is_empty() {
-                let replay = create_replay_parser(
-                    raw_buf,
-                    cols,
-                    state.system.user_config.replay_parser_rows,
-                );
-                return Some(extract_selected_text(replay.screen(), start, end));
-            }
-        }
-
-        Some(extract_selected_text(parser.screen(), start, end))
+        Some(extract_for_surface(
+            parser,
+            state.system.raw_output_buffers.get(&session_id),
+            state.system.transcript_buffers.get(&session_id),
+            state.system.user_config.replay_parser_rows,
+            start,
+            end,
+            surface,
+        ))
     }
 
     if let (Some(start), Some(end)) = (state.ui.text_selection.start, state.ui.text_selection.end) {
         if start != end {
             if let Some(session_id) = state.ui.active_session_id {
-                if let Some(text) = extract_for_session(state, session_id, start, end) {
-                    copy_to_clipboard(&text);
-                    return true;
+                let surface = if state.ui.output_on_replay {
+                    if state.system.transcript_buffers.contains_key(&session_id) {
+                        SelectionSurface::Transcript
+                    } else {
+                        SelectionSurface::Replay
+                    }
+                } else {
+                    SelectionSurface::Live
+                };
+                if let Some(text) = extract_for_session(state, session_id, start, end, surface) {
+                    if copy_non_empty(text) {
+                        return true;
+                    }
                 }
             }
         }
@@ -161,9 +203,20 @@ pub fn copy_active_selection(state: &mut AppState) -> bool {
         if let (Some(start), Some(end)) = (sel.start, sel.end) {
             if start != end {
                 if let Some(session_id) = state.pinned_terminal_id_at(idx) {
-                    if let Some(text) = extract_for_session(state, session_id, start, end) {
-                        copy_to_clipboard(&text);
-                        return true;
+                    let surface = if state.ui.pinned_on_replay[idx] {
+                        if state.system.transcript_buffers.contains_key(&session_id) {
+                            SelectionSurface::Transcript
+                        } else {
+                            SelectionSurface::Replay
+                        }
+                    } else {
+                        SelectionSurface::Live
+                    };
+                    if let Some(text) = extract_for_session(state, session_id, start, end, surface)
+                    {
+                        if copy_non_empty(text) {
+                            return true;
+                        }
                     }
                 }
             }
@@ -331,7 +384,8 @@ pub fn copy_to_clipboard(text: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::pane_text_position;
+    use super::{extract_for_surface, pane_text_position, SelectionSurface};
+    use crate::app::RawOutputBuffer;
 
     #[test]
     fn pane_text_position_rejects_border_and_empty_content() {
@@ -359,5 +413,36 @@ mod tests {
         assert_eq!(pane_text_position(area, 11, 6, 20, 0), Some((14, 0)));
         assert_eq!(pane_text_position(area, 11, 6, 20, 3), Some((11, 0)));
         assert_eq!(pane_text_position(area, 11, 6, 20, 99), Some((0, 0)));
+    }
+
+    #[test]
+    fn live_surface_selection_does_not_read_from_replay_history() {
+        let mut live_parser = vt100::Parser::new(4, 40, 0);
+        live_parser.process(b"current short words");
+
+        let mut raw = RawOutputBuffer::new(1024);
+        raw.append(b"history alpha\r\nhistory beta\r\ncurrent short words");
+
+        let live_text = extract_for_surface(
+            &live_parser,
+            Some(&raw),
+            None,
+            4,
+            (0, 0),
+            (0, 6),
+            SelectionSurface::Live,
+        );
+        let replay_text = extract_for_surface(
+            &live_parser,
+            Some(&raw),
+            None,
+            4,
+            (0, 0),
+            (0, 6),
+            SelectionSurface::Replay,
+        );
+
+        assert_eq!(live_text, "current");
+        assert_eq!(replay_text, "history");
     }
 }

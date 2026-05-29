@@ -205,16 +205,16 @@ pub fn handle_workspace_action(
                 state.ui.workspace_create_mode = true;
                 state.ui.input_mode = InputMode::CreateWorkspace;
                 state.ui.input_buffer.clear();
-                state.ui.file_browser_query.clear();
-                state.ui.file_browser_path = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
+                state.ui.file_browser.query.clear();
+                state.ui.file_browser.path = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
                 state.refresh_file_browser();
             }
             WorkspaceAction::OpenExisting => {
                 state.ui.workspace_create_mode = false;
                 state.ui.input_mode = InputMode::CreateWorkspace;
                 state.ui.input_buffer.clear();
-                state.ui.file_browser_query.clear();
-                state.ui.file_browser_path = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
+                state.ui.file_browser.query.clear();
+                state.ui.file_browser.path = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
                 state.refresh_file_browser();
             }
         },
@@ -223,7 +223,7 @@ pub fn handle_workspace_action(
             state.ui.input_buffer.clear();
         }
         Action::CreateNewWorkspace(name) => {
-            let new_path = state.ui.file_browser_path.join(&name);
+            let new_path = state.ui.file_browser.path.join(&name);
             if !new_path.exists() && std::fs::create_dir_all(&new_path).is_ok() {
                 let workspace = Workspace::from_path(new_path);
                 state.add_workspace(workspace);

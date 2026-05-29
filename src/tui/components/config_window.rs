@@ -18,7 +18,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
 
     render_tab_bar(frame, chunks[0], state);
 
-    match state.ui.config_tab {
+    match state.ui.config.tab {
         ConfigTab::QuickRef => render_quickref_tab(frame, chunks[1], state),
         ConfigTab::Agents => render_agents_tab(frame, chunks[1], state),
         ConfigTab::Hotkeys => render_hotkeys_tab(frame, chunks[1], state),
@@ -27,7 +27,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
 }
 
 fn render_tab_bar(frame: &mut Frame, area: Rect, state: &AppState) {
-    let active = state.ui.config_tab;
+    let active = state.ui.config.tab;
 
     let tabs = [
         ("1", "Quick Ref", ConfigTab::QuickRef),
@@ -77,7 +77,7 @@ fn render_tab_bar(frame: &mut Frame, area: Rect, state: &AppState) {
 }
 
 fn render_quickref_tab(frame: &mut Frame, area: Rect, state: &AppState) {
-    let scroll_offset = state.ui.config_scroll_offset;
+    let scroll_offset = state.ui.config.scroll_offset;
 
     let mut lines: Vec<Line> = Vec::new();
 
@@ -323,10 +323,10 @@ fn render_quickref_tab(frame: &mut Frame, area: Rect, state: &AppState) {
 
 fn render_agents_tab(frame: &mut Frame, area: Rect, state: &AppState) {
     let agents = &state.system.user_config.agents;
-    let selected_row = state.ui.config_selected_row;
-    let selected_col = state.ui.config_selected_col;
-    let editing = state.ui.config_editing;
-    let edit_buffer = &state.ui.config_edit_buffer;
+    let selected_row = state.ui.config.selected_row;
+    let selected_col = state.ui.config.selected_col;
+    let editing = state.ui.config.editing;
+    let edit_buffer = &state.ui.config.edit_buffer;
 
     let mut lines: Vec<Line> = Vec::new();
 
@@ -454,8 +454,8 @@ fn format_action_name(action: &str) -> &str {
 
 fn render_hotkeys_tab(frame: &mut Frame, area: Rect, state: &AppState) {
     let hotkeys = &state.system.user_config.global_hotkeys;
-    let selected_row = state.ui.config_selected_row;
-    let rebinding = state.ui.config_rebinding;
+    let selected_row = state.ui.config.selected_row;
+    let rebinding = state.ui.config.rebinding;
 
     let ordered_actions = crate::config::user_config::ordered_global_hotkey_actions(hotkeys);
 
@@ -537,8 +537,8 @@ fn render_hotkeys_tab(frame: &mut Frame, area: Rect, state: &AppState) {
 
 fn render_scrollback_tab(frame: &mut Frame, area: Rect, state: &AppState) {
     let config = &state.system.user_config;
-    let editing = state.ui.config_editing;
-    let edit_buffer = &state.ui.config_edit_buffer;
+    let editing = state.ui.config.editing;
+    let edit_buffer = &state.ui.config.edit_buffer;
 
     let row_bg = Color::DarkGray;
 

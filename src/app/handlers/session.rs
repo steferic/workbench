@@ -48,157 +48,17 @@ pub fn handle_session_action(
 ) -> Result<()> {
     match action {
         Action::CreateSession(agent_type, dangerously_skip_permissions, with_worktree) => {
-            if let Some(workspace) = state.selected_workspace() {
-                let workspace_id = workspace.id;
-                let workspace_path = workspace.path.clone();
-                let ws_idx = state.ui.selected_workspace_idx;
-
-                // Create worktree only if requested (Alt key), is an agent, and workspace is a git repo
-                let (session, working_dir) = if with_worktree
-                    && agent_type.is_agent()
-                    && git::is_git_repo(&workspace_path)
-                {
-                    // Create a temporary session to get the ID for branch naming
-                    let temp_id = uuid::Uuid::new_v4();
-                    let short_id = &temp_id.to_string()[..8];
-                    let branch_name =
-                        git::session_branch_name(&agent_type.display_name(), short_id);
-                    let worktree_path = git::get_session_worktree_path(&workspace_path, short_id);
-
-                    // Create the worktree
-                    match git::create_worktree(&workspace_path, &branch_name, &worktree_path) {
-                        Ok(()) => {
-                            // Create session with worktree info
-                            let mut session = Session::new_with_worktree(
-                                workspace_id,
-                                agent_type.clone(),
-                                dangerously_skip_permissions,
-                                worktree_path.clone(),
-                                branch_name,
-                            );
-                            // Override the ID to match what we used for naming
-                            session.id = temp_id;
-                            (session, worktree_path)
-                        }
-                        Err(_e) => {
-                            show_toast(
-                                state,
-                                "Worktree creation failed, using workspace directly",
-                                ToastLevel::Warning,
-                            );
-                            (
-                                Session::new(
-                                    workspace_id,
-                                    agent_type.clone(),
-                                    dangerously_skip_permissions,
-                                ),
-                                workspace_path.clone(),
-                            )
-                        }
-                    }
-                } else {
-                    // Default: run in workspace directly (no worktree isolation)
-                    (
-                        Session::new(
-                            workspace_id,
-                            agent_type.clone(),
-                            dangerously_skip_permissions,
-                        ),
-                        workspace_path.clone(),
-                    )
-                };
-
-                let session_id = session.id;
-
-                if let Some(ws) = state.data.workspaces.get_mut(ws_idx) {
-                    ws.touch();
-                }
-
-                let pty_rows = state.pane_rows();
-                let cols = state.output_pane_cols();
-                state.system.create_session_buffers(session_id, cols);
-
-                match pty_manager.spawn_session(SessionSpawnConfig {
-                    session_id,
-                    agent_type,
-                    working_dir: &working_dir,
-                    rows: pty_rows,
-                    cols,
-                    pty_tx: pty_tx.clone(),
-                    resume: false,
-                    dangerously_skip_permissions,
-                    use_alternate_screen: state.system.use_alternate_screen,
-                }) {
-                    Ok(handle) => {
-                        state.system.pty_handles.insert(session_id, handle);
-                        state.add_session(session);
-                        state.ui.active_session_id = Some(session_id);
-                        state.ui.focus = FocusPanel::SessionList;
-                        let session_count = state.sessions_for_selected_workspace().len();
-                        if session_count > 0 {
-                            state.ui.selected_session_idx = session_count - 1;
-                        }
-                        save_state(state, "failed to save created session");
-                    }
-                    Err(_e) => {
-                        show_toast(state, "Failed to spawn session", ToastLevel::Error);
-                        state.system.remove_session_buffers(&session_id);
-                    }
-                }
-                state.ui.input_mode = InputMode::Normal;
-            }
+            create_session(
+                state,
+                agent_type,
+                dangerously_skip_permissions,
+                with_worktree,
+                pty_manager,
+                pty_tx,
+            );
         }
         Action::CreateTerminal => {
-            if let Some(workspace) = state.selected_workspace() {
-                let terminal_count = state
-                    .sessions_for_selected_workspace()
-                    .iter()
-                    .filter(|s| s.agent_type.is_terminal())
-                    .count();
-                let name = format!("{}", terminal_count + 1);
-
-                let agent_type = AgentType::Terminal(name);
-                let session = Session::new(workspace.id, agent_type.clone(), false);
-                let session_id = session.id;
-                let workspace_path = workspace.path.clone();
-                let ws_idx = state.ui.selected_workspace_idx;
-
-                if let Some(ws) = state.data.workspaces.get_mut(ws_idx) {
-                    ws.touch();
-                }
-
-                let pty_rows = state.pane_rows();
-                let cols = state.output_pane_cols();
-                state.system.create_session_buffers(session_id, cols);
-
-                match pty_manager.spawn_session(SessionSpawnConfig {
-                    session_id,
-                    agent_type,
-                    working_dir: &workspace_path,
-                    rows: pty_rows,
-                    cols,
-                    pty_tx: pty_tx.clone(),
-                    resume: false,
-                    dangerously_skip_permissions: false,
-                    use_alternate_screen: state.system.use_alternate_screen,
-                }) {
-                    Ok(handle) => {
-                        state.system.pty_handles.insert(session_id, handle);
-                        state.add_session(session);
-                        state.ui.active_session_id = Some(session_id);
-                        state.ui.focus = FocusPanel::SessionList;
-                        let session_count = state.sessions_for_selected_workspace().len();
-                        if session_count > 0 {
-                            state.ui.selected_session_idx = session_count - 1;
-                        }
-                        save_state(state, "failed to save created terminal");
-                    }
-                    Err(_e) => {
-                        show_toast(state, "Failed to spawn terminal", ToastLevel::Error);
-                        state.system.remove_session_buffers(&session_id);
-                    }
-                }
-            }
+            create_terminal(state, pty_manager, pty_tx);
         }
         Action::ActivateSession(session_id) => {
             if state.ui.active_session_id != Some(session_id) {
@@ -214,106 +74,7 @@ pub fn handle_session_action(
             }
         }
         Action::RestartSession(session_id) => {
-            let session_info = state
-                .data
-                .sessions
-                .values()
-                .flatten()
-                .find(|s| s.id == session_id)
-                .map(|s| {
-                    (
-                        s.agent_type.clone(),
-                        s.workspace_id,
-                        s.start_command.clone(),
-                        s.dangerously_skip_permissions,
-                        s.worktree_path.clone(),
-                    )
-                });
-
-            if let Some((
-                agent_type,
-                workspace_id,
-                start_command,
-                dangerously_skip_permissions,
-                worktree_path,
-            )) = session_info
-            {
-                let workspace_path = state
-                    .data
-                    .workspaces
-                    .iter()
-                    .find(|w| w.id == workspace_id)
-                    .map(|w| w.path.clone());
-
-                if let Some(workspace_path) = workspace_path {
-                    // Use worktree path if session has one, otherwise use workspace path
-                    let working_dir = worktree_path
-                        .as_ref()
-                        .filter(|p| p.exists())
-                        .cloned()
-                        .unwrap_or_else(|| workspace_path.clone());
-
-                    let pty_rows = state.pane_rows();
-                    let cols = state.output_pane_cols();
-                    state.system.create_session_buffers(session_id, cols);
-
-                    let resume = agent_type.is_agent();
-
-                    match pty_manager.spawn_session(SessionSpawnConfig {
-                        session_id,
-                        agent_type: agent_type.clone(),
-                        working_dir: &working_dir,
-                        rows: pty_rows,
-                        cols,
-                        pty_tx: pty_tx.clone(),
-                        resume,
-                        dangerously_skip_permissions,
-                        use_alternate_screen: state.system.use_alternate_screen,
-                    }) {
-                        Ok(handle) => {
-                            state.system.pty_handles.insert(session_id, handle);
-                            if let Some(session) = state.get_session_mut(session_id) {
-                                session.status = crate::models::SessionStatus::Running;
-                            }
-                            state.ui.active_session_id = Some(session_id);
-                            state.ui.focus = FocusPanel::OutputPane;
-
-                            if agent_type.is_terminal() {
-                                if let Some(cmd) = start_command {
-                                    if !cmd.is_empty() {
-                                        let tx = action_tx.clone();
-                                        let sid = session_id;
-                                        tokio::spawn(async move {
-                                            tokio::time::sleep(tokio::time::Duration::from_millis(
-                                                300,
-                                            ))
-                                            .await;
-                                            let mut input = cmd.into_bytes();
-                                            input.push(b'\n');
-                                            if let Err(err) = tx.send(Action::SendInput(sid, input))
-                                            {
-                                                report_background_error(
-                                                    "failed to queue terminal start command",
-                                                    err,
-                                                );
-                                            }
-                                        });
-                                    }
-                                }
-                            }
-                            save_state(state, "failed to save restarted session");
-                        }
-                        Err(_e) => {
-                            show_toast(state, "Failed to restart session", ToastLevel::Error);
-                            state.system.remove_session_buffers(&session_id);
-                            if let Some(session) = state.get_session_mut(session_id) {
-                                session.mark_errored();
-                            }
-                            save_state(state, "failed to save errored session");
-                        }
-                    }
-                }
-            }
+            restart_session(state, session_id, pty_manager, action_tx, pty_tx);
         }
         Action::StopSession(session_id) => {
             let send_error = state
@@ -356,124 +117,7 @@ pub fn handle_session_action(
             state.ui.pending_delete = Some(PendingDelete::Session(id, name));
         }
         Action::ConfirmDeleteSession => {
-            if let Some(PendingDelete::Session(session_id, _)) = state.ui.pending_delete.take() {
-                // Get session info before deleting
-                let session_info: Option<(bool, Option<std::path::PathBuf>, Option<uuid::Uuid>)> =
-                    state
-                        .data
-                        .sessions
-                        .values()
-                        .flatten()
-                        .find(|s| s.id == session_id)
-                        .map(|s| {
-                            (
-                                s.agent_type.is_terminal(),
-                                s.worktree_path.clone(),
-                                s.parallel_attempt_id,
-                            )
-                        });
-
-                let (is_terminal, session_worktree_path, parallel_attempt_id) =
-                    session_info.unwrap_or((false, None, None));
-
-                // Check if this session is part of a parallel task and get cleanup info
-                let parallel_cleanup_info: Option<(
-                    std::path::PathBuf,
-                    std::path::PathBuf,
-                    uuid::Uuid,
-                )> = {
-                    let workspace = state.selected_workspace();
-                    if let Some(ws) = workspace {
-                        if let Some(attempt_id) = parallel_attempt_id {
-                            // Find the parallel task and attempt
-                            ws.parallel_tasks.iter().find_map(|task| {
-                                task.attempts
-                                    .iter()
-                                    .find(|a| a.id == attempt_id)
-                                    .map(|attempt| {
-                                        (ws.path.clone(), attempt.worktree_path.clone(), task.id)
-                                    })
-                            })
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                };
-
-                // Get workspace path for regular session worktree cleanup
-                let workspace_path = state.selected_workspace().map(|ws| ws.path.clone());
-
-                // Kill PTY handle
-                if let Some(handle) = state.system.pty_handles.remove(&session_id) {
-                    terminate_session_handle(handle, is_terminal);
-                }
-                state.system.remove_session_buffers(&session_id);
-
-                // Clean up worktree - either from parallel task or regular session
-                if let Some((workspace_path, worktree_path, task_id)) = parallel_cleanup_info {
-                    // Remove the parallel task worktree
-                    if let Err(err) = git::remove_worktree(&workspace_path, &worktree_path, true) {
-                        report_runtime_error(
-                            state,
-                            "failed to remove parallel session worktree",
-                            err,
-                            "Failed to remove worktree",
-                        );
-                    }
-
-                    // Mark the attempt as failed and potentially clean up the task
-                    if let Some(ws) = state.selected_workspace_mut() {
-                        if let Some(task) = ws.get_parallel_task_mut(task_id) {
-                            // Find and mark the attempt as failed
-                            if let Some(attempt) = task
-                                .attempts
-                                .iter_mut()
-                                .find(|a| a.session_id == session_id)
-                            {
-                                attempt.status = AttemptStatus::Failed;
-                            }
-
-                            // If all attempts are now finished, mark task as awaiting selection
-                            if task.all_attempts_finished() {
-                                task.mark_awaiting_selection();
-                            }
-
-                            // If all attempts failed or were deleted, cancel the whole task
-                            let all_failed = task
-                                .attempts
-                                .iter()
-                                .all(|a| a.status == AttemptStatus::Failed);
-                            if all_failed && !task.attempts.is_empty() {
-                                task.mark_cancelled();
-                            }
-                        }
-                    }
-                } else if let (Some(worktree_path), Some(workspace_path)) =
-                    (session_worktree_path, workspace_path)
-                {
-                    // Clean up regular session worktree
-                    if let Err(err) = git::remove_worktree(&workspace_path, &worktree_path, true) {
-                        report_runtime_error(
-                            state,
-                            "failed to remove session worktree",
-                            err,
-                            "Failed to remove worktree",
-                        );
-                    }
-                }
-
-                state.delete_session(session_id);
-                if state.ui.active_session_id == Some(session_id) {
-                    state.ui.active_session_id = None;
-                }
-                let session_count = state.sessions_for_selected_workspace().len();
-                if state.ui.selected_session_idx >= session_count && session_count > 0 {
-                    state.ui.selected_session_idx = session_count - 1;
-                }
-                save_state(state, "failed to save deleted session");
-            }
+            confirm_delete_session(state);
         }
         Action::CancelPendingDelete => {
             state.ui.pending_delete = None;
@@ -523,7 +167,7 @@ pub fn handle_session_action(
         }
         Action::PinSession(session_id) => {
             if state.pin_terminal_for_selected(session_id) {
-                state.ui.split_view_enabled = true;
+                state.ui.layout.split_view_enabled = true;
                 let new_idx = state
                     .selected_workspace()
                     .map(|ws| ws.pinned_terminal_ids.len().saturating_sub(1))
@@ -582,7 +226,7 @@ pub fn handle_session_action(
             }
         }
         Action::ToggleSplitView => {
-            state.ui.split_view_enabled = !state.ui.split_view_enabled;
+            state.ui.layout.split_view_enabled = !state.ui.layout.split_view_enabled;
             resize_ptys_to_panes(state);
         }
         Action::SessionExited(session_id, exit_code) => {
@@ -597,14 +241,27 @@ pub fn handle_session_action(
             save_state(state, "failed to save exited session");
         }
         Action::PtyOutput(session_id, data) => {
+            let uses_transcript_scrollback = state
+                .data
+                .sessions
+                .values()
+                .flatten()
+                .find(|s| s.id == session_id)
+                .map(|s| s.agent_type.is_codex_like())
+                .unwrap_or(false);
+
             // Process through live parser
             if let Some(parser) = state.system.output_buffers.get_mut(&session_id) {
                 parser.process(&data);
             }
 
-            // Append raw bytes for all sessions — replay scrollback uses this for deep history
-            if let Some(raw_buf) = state.system.raw_output_buffers.get_mut(&session_id) {
-                raw_buf.append(&data);
+            if uses_transcript_scrollback {
+                state.system.update_transcript_from_screen(session_id);
+            } else {
+                // Append raw bytes for append-style sessions; replay scrollback uses this for deep history.
+                if let Some(raw_buf) = state.system.raw_output_buffers.get_mut(&session_id) {
+                    raw_buf.append(&data);
+                }
             }
 
             // Invalidate replay cache only if one exists (user is scrolled back)
@@ -665,4 +322,393 @@ pub fn handle_session_action(
         _ => {} // This is a catch-all for any other Action variants not explicitly handled.
     }
     Ok(())
+}
+
+/// Register a freshly spawned session: insert its PTY handle, add it to state,
+/// focus it, and persist. On spawn failure show a toast and drop its buffers.
+/// Shared by [`create_session`] and [`create_terminal`].
+fn finish_session_spawn(
+    state: &mut AppState,
+    session: Session,
+    spawn_result: Result<PtyHandle>,
+    failure_toast: &str,
+    save_msg: &str,
+) {
+    let session_id = session.id;
+    match spawn_result {
+        Ok(handle) => {
+            state.system.pty_handles.insert(session_id, handle);
+            state.add_session(session);
+            state.ui.active_session_id = Some(session_id);
+            state.ui.focus = FocusPanel::SessionList;
+            let session_count = state.sessions_for_selected_workspace().len();
+            if session_count > 0 {
+                state.ui.selected_session_idx = session_count - 1;
+            }
+            save_state(state, save_msg);
+        }
+        Err(_e) => {
+            show_toast(state, failure_toast, ToastLevel::Error);
+            state.system.remove_session_buffers(&session_id);
+        }
+    }
+}
+
+fn create_session(
+    state: &mut AppState,
+    agent_type: AgentType,
+    dangerously_skip_permissions: bool,
+    with_worktree: bool,
+    pty_manager: &PtyManager,
+    pty_tx: &mpsc::Sender<Action>,
+) {
+    let Some(workspace) = state.selected_workspace() else {
+        return;
+    };
+    let workspace_id = workspace.id;
+    let workspace_path = workspace.path.clone();
+    let ws_idx = state.ui.selected_workspace_idx;
+
+    // Create worktree only if requested (Alt key), is an agent, and workspace is a git repo
+    let (session, working_dir) =
+        if with_worktree && agent_type.is_agent() && git::is_git_repo(&workspace_path) {
+            // Create a temporary session to get the ID for branch naming
+            let temp_id = uuid::Uuid::new_v4();
+            let short_id = &temp_id.to_string()[..8];
+            let branch_name = git::session_branch_name(&agent_type.display_name(), short_id);
+            let worktree_path = git::get_session_worktree_path(&workspace_path, short_id);
+
+            // Create the worktree
+            match git::create_worktree(&workspace_path, &branch_name, &worktree_path) {
+                Ok(()) => {
+                    // Create session with worktree info
+                    let mut session = Session::new_with_worktree(
+                        workspace_id,
+                        agent_type.clone(),
+                        dangerously_skip_permissions,
+                        worktree_path.clone(),
+                        branch_name,
+                    );
+                    // Override the ID to match what we used for naming
+                    session.id = temp_id;
+                    (session, worktree_path)
+                }
+                Err(_e) => {
+                    show_toast(
+                        state,
+                        "Worktree creation failed, using workspace directly",
+                        ToastLevel::Warning,
+                    );
+                    (
+                        Session::new(workspace_id, agent_type.clone(), dangerously_skip_permissions),
+                        workspace_path.clone(),
+                    )
+                }
+            }
+        } else {
+            // Default: run in workspace directly (no worktree isolation)
+            (
+                Session::new(workspace_id, agent_type.clone(), dangerously_skip_permissions),
+                workspace_path.clone(),
+            )
+        };
+
+    let session_id = session.id;
+
+    if let Some(ws) = state.data.workspaces.get_mut(ws_idx) {
+        ws.touch();
+    }
+
+    let pty_rows = state.pane_rows();
+    let cols = state.output_pane_cols();
+    state.system.create_session_buffers(session_id, cols);
+
+    let spawn_result = pty_manager.spawn_session(SessionSpawnConfig {
+        session_id,
+        agent_type,
+        working_dir: &working_dir,
+        rows: pty_rows,
+        cols,
+        pty_tx: pty_tx.clone(),
+        resume: false,
+        dangerously_skip_permissions,
+        use_alternate_screen: state.system.use_alternate_screen,
+    });
+    finish_session_spawn(
+        state,
+        session,
+        spawn_result,
+        "Failed to spawn session",
+        "failed to save created session",
+    );
+    state.ui.input_mode = InputMode::Normal;
+}
+
+fn create_terminal(
+    state: &mut AppState,
+    pty_manager: &PtyManager,
+    pty_tx: &mpsc::Sender<Action>,
+) {
+    let Some(workspace) = state.selected_workspace() else {
+        return;
+    };
+    let terminal_count = state
+        .sessions_for_selected_workspace()
+        .iter()
+        .filter(|s| s.agent_type.is_terminal())
+        .count();
+    let name = format!("{}", terminal_count + 1);
+
+    let agent_type = AgentType::Terminal(name);
+    let session = Session::new(workspace.id, agent_type.clone(), false);
+    let session_id = session.id;
+    let workspace_path = workspace.path.clone();
+    let ws_idx = state.ui.selected_workspace_idx;
+
+    if let Some(ws) = state.data.workspaces.get_mut(ws_idx) {
+        ws.touch();
+    }
+
+    let pty_rows = state.pane_rows();
+    let cols = state.output_pane_cols();
+    state.system.create_session_buffers(session_id, cols);
+
+    let spawn_result = pty_manager.spawn_session(SessionSpawnConfig {
+        session_id,
+        agent_type,
+        working_dir: &workspace_path,
+        rows: pty_rows,
+        cols,
+        pty_tx: pty_tx.clone(),
+        resume: false,
+        dangerously_skip_permissions: false,
+        use_alternate_screen: state.system.use_alternate_screen,
+    });
+    finish_session_spawn(
+        state,
+        session,
+        spawn_result,
+        "Failed to spawn terminal",
+        "failed to save created terminal",
+    );
+}
+
+fn restart_session(
+    state: &mut AppState,
+    session_id: uuid::Uuid,
+    pty_manager: &PtyManager,
+    action_tx: &mpsc::UnboundedSender<Action>,
+    pty_tx: &mpsc::Sender<Action>,
+) {
+    let session_info = state
+        .data
+        .sessions
+        .values()
+        .flatten()
+        .find(|s| s.id == session_id)
+        .map(|s| {
+            (
+                s.agent_type.clone(),
+                s.workspace_id,
+                s.start_command.clone(),
+                s.dangerously_skip_permissions,
+                s.worktree_path.clone(),
+            )
+        });
+
+    let Some((agent_type, workspace_id, start_command, dangerously_skip_permissions, worktree_path)) =
+        session_info
+    else {
+        return;
+    };
+
+    let workspace_path = state
+        .data
+        .workspaces
+        .iter()
+        .find(|w| w.id == workspace_id)
+        .map(|w| w.path.clone());
+
+    let Some(workspace_path) = workspace_path else {
+        return;
+    };
+
+    // Use worktree path if session has one, otherwise use workspace path
+    let working_dir = worktree_path
+        .as_ref()
+        .filter(|p| p.exists())
+        .cloned()
+        .unwrap_or_else(|| workspace_path.clone());
+
+    let pty_rows = state.pane_rows();
+    let cols = state.output_pane_cols();
+    state.system.create_session_buffers(session_id, cols);
+
+    let resume = agent_type.is_agent();
+
+    match pty_manager.spawn_session(SessionSpawnConfig {
+        session_id,
+        agent_type: agent_type.clone(),
+        working_dir: &working_dir,
+        rows: pty_rows,
+        cols,
+        pty_tx: pty_tx.clone(),
+        resume,
+        dangerously_skip_permissions,
+        use_alternate_screen: state.system.use_alternate_screen,
+    }) {
+        Ok(handle) => {
+            state.system.pty_handles.insert(session_id, handle);
+            if let Some(session) = state.get_session_mut(session_id) {
+                session.status = crate::models::SessionStatus::Running;
+            }
+            state.ui.active_session_id = Some(session_id);
+            state.ui.focus = FocusPanel::OutputPane;
+
+            if agent_type.is_terminal() {
+                if let Some(cmd) = start_command {
+                    if !cmd.is_empty() {
+                        let tx = action_tx.clone();
+                        let sid = session_id;
+                        tokio::spawn(async move {
+                            tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+                            let mut input = cmd.into_bytes();
+                            input.push(b'\n');
+                            if let Err(err) = tx.send(Action::SendInput(sid, input)) {
+                                report_background_error(
+                                    "failed to queue terminal start command",
+                                    err,
+                                );
+                            }
+                        });
+                    }
+                }
+            }
+            save_state(state, "failed to save restarted session");
+        }
+        Err(_e) => {
+            show_toast(state, "Failed to restart session", ToastLevel::Error);
+            state.system.remove_session_buffers(&session_id);
+            if let Some(session) = state.get_session_mut(session_id) {
+                session.mark_errored();
+            }
+            save_state(state, "failed to save errored session");
+        }
+    }
+}
+
+fn confirm_delete_session(state: &mut AppState) {
+    let Some(PendingDelete::Session(session_id, _)) = state.ui.pending_delete.take() else {
+        return;
+    };
+
+    // Get session info before deleting
+    let session_info: Option<(bool, Option<std::path::PathBuf>, Option<uuid::Uuid>)> = state
+        .data
+        .sessions
+        .values()
+        .flatten()
+        .find(|s| s.id == session_id)
+        .map(|s| {
+            (
+                s.agent_type.is_terminal(),
+                s.worktree_path.clone(),
+                s.parallel_attempt_id,
+            )
+        });
+
+    let (is_terminal, session_worktree_path, parallel_attempt_id) =
+        session_info.unwrap_or((false, None, None));
+
+    // Check if this session is part of a parallel task and get cleanup info
+    let parallel_cleanup_info: Option<(std::path::PathBuf, std::path::PathBuf, uuid::Uuid)> = {
+        let workspace = state.selected_workspace();
+        if let Some(ws) = workspace {
+            if let Some(attempt_id) = parallel_attempt_id {
+                // Find the parallel task and attempt
+                ws.parallel_tasks.iter().find_map(|task| {
+                    task.attempts
+                        .iter()
+                        .find(|a| a.id == attempt_id)
+                        .map(|attempt| (ws.path.clone(), attempt.worktree_path.clone(), task.id))
+                })
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    };
+
+    // Get workspace path for regular session worktree cleanup
+    let workspace_path = state.selected_workspace().map(|ws| ws.path.clone());
+
+    // Kill PTY handle
+    if let Some(handle) = state.system.pty_handles.remove(&session_id) {
+        terminate_session_handle(handle, is_terminal);
+    }
+    state.system.remove_session_buffers(&session_id);
+
+    // Clean up worktree - either from parallel task or regular session
+    if let Some((workspace_path, worktree_path, task_id)) = parallel_cleanup_info {
+        // Remove the parallel task worktree
+        if let Err(err) = git::remove_worktree(&workspace_path, &worktree_path, true) {
+            report_runtime_error(
+                state,
+                "failed to remove parallel session worktree",
+                err,
+                "Failed to remove worktree",
+            );
+        }
+
+        // Mark the attempt as failed and potentially clean up the task
+        if let Some(ws) = state.selected_workspace_mut() {
+            if let Some(task) = ws.get_parallel_task_mut(task_id) {
+                // Find and mark the attempt as failed
+                if let Some(attempt) = task
+                    .attempts
+                    .iter_mut()
+                    .find(|a| a.session_id == session_id)
+                {
+                    attempt.status = AttemptStatus::Failed;
+                }
+
+                // If all attempts are now finished, mark task as awaiting selection
+                if task.all_attempts_finished() {
+                    task.mark_awaiting_selection();
+                }
+
+                // If all attempts failed or were deleted, cancel the whole task
+                let all_failed = task
+                    .attempts
+                    .iter()
+                    .all(|a| a.status == AttemptStatus::Failed);
+                if all_failed && !task.attempts.is_empty() {
+                    task.mark_cancelled();
+                }
+            }
+        }
+    } else if let (Some(worktree_path), Some(workspace_path)) =
+        (session_worktree_path, workspace_path)
+    {
+        // Clean up regular session worktree
+        if let Err(err) = git::remove_worktree(&workspace_path, &worktree_path, true) {
+            report_runtime_error(
+                state,
+                "failed to remove session worktree",
+                err,
+                "Failed to remove worktree",
+            );
+        }
+    }
+
+    state.delete_session(session_id);
+    if state.ui.active_session_id == Some(session_id) {
+        state.ui.active_session_id = None;
+    }
+    let session_count = state.sessions_for_selected_workspace().len();
+    if state.ui.selected_session_idx >= session_count && session_count > 0 {
+        state.ui.selected_session_idx = session_count - 1;
+    }
+    save_state(state, "failed to save deleted session");
 }

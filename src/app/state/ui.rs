@@ -55,6 +55,114 @@ impl WorkspaceUiState {
     }
 }
 
+/// Fuzzy file browser modal state (used when adding a workspace by path).
+#[derive(Debug)]
+pub struct FileBrowserState {
+    pub path: PathBuf,
+    pub all_entries: Vec<PathBuf>,
+    pub entries: Vec<PathBuf>,
+    pub selected: usize,
+    pub scroll: usize,
+    pub query: String,
+}
+
+impl Default for FileBrowserState {
+    fn default() -> Self {
+        Self {
+            path: dirs::home_dir().unwrap_or_else(|| PathBuf::from("/")),
+            all_entries: Vec::new(),
+            entries: Vec::new(),
+            selected: 0,
+            scroll: 0,
+            query: String::new(),
+        }
+    }
+}
+
+/// Config window (settings UI) navigation + editing state.
+#[derive(Default, Debug)]
+pub struct ConfigWindowState {
+    pub tab: ConfigTab,
+    pub selected_row: usize,
+    pub selected_col: usize,
+    pub editing: bool,
+    pub edit_buffer: String,
+    pub rebinding: bool,
+    pub scroll_offset: usize,
+}
+
+/// Command palette overlay state.
+#[derive(Default, Debug)]
+pub struct CommandPaletteState {
+    pub query: String,
+    pub selected: usize,
+    pub pending_action: Option<crate::app::Action>,
+}
+
+/// "Run parallel task" modal state: the prompt being composed, agent selection,
+/// and the report-tab selection that shares this feature.
+#[derive(Debug)]
+pub struct ParallelTaskModalState {
+    pub prompt: String,
+    pub agents: Vec<(AgentType, bool)>, // Agent type and whether selected
+    pub agent_idx: usize,               // Currently focused agent in selection
+    pub request_report: bool,           // Whether to request PARALLEL_REPORT.md
+    pub dangerous_mode: bool,           // Whether to skip permission prompts
+    pub selected_report_idx: usize,     // Selected report in Reports tab
+    pub request_id: u64,
+}
+
+impl Default for ParallelTaskModalState {
+    fn default() -> Self {
+        Self {
+            prompt: String::new(),
+            agents: vec![
+                (AgentType::Claude, true),
+                (AgentType::Codex, true),
+                (AgentType::Gemini, true),
+                (AgentType::Grok, false),
+            ],
+            agent_idx: 0,
+            request_report: true, // Default to requesting reports
+            dangerous_mode: true, // Default to dangerous mode for parallel tasks
+            selected_report_idx: 0,
+            request_id: 0,
+        }
+    }
+}
+
+/// Pane layout: split ratios and the active divider drag.
+#[derive(Debug)]
+pub struct LayoutState {
+    pub split_view_enabled: bool,
+    pub pinned_pane_ratios: [f32; MAX_PINNED_TERMINALS],
+    pub left_panel_ratio: f32,
+    pub output_split_ratio: f32,
+    pub workspace_ratio: f32,
+    pub sessions_ratio: f32,
+    pub todos_ratio: f32,
+    pub dragging_divider: Option<Divider>,
+    pub drag_start_pos: Option<(u16, u16)>,
+    pub drag_start_ratio: f32,
+}
+
+impl Default for LayoutState {
+    fn default() -> Self {
+        Self {
+            split_view_enabled: true,
+            pinned_pane_ratios: [0.25; MAX_PINNED_TERMINALS],
+            left_panel_ratio: 0.30,
+            output_split_ratio: 0.50,
+            workspace_ratio: 0.40,
+            sessions_ratio: 0.40,
+            todos_ratio: 0.50,
+            dragging_divider: None,
+            drag_start_pos: None,
+            drag_start_ratio: 0.0,
+        }
+    }
+}
+
 pub struct UIState {
     pub focus: FocusPanel,
     pub input_mode: InputMode,
@@ -72,13 +180,8 @@ pub struct UIState {
     pub pending_delete: Option<PendingDelete>,
     pub pending_quit: bool, // First Esc/q press - waiting for confirmation
 
-    // File browser state
-    pub file_browser_path: PathBuf,
-    pub file_browser_all_entries: Vec<PathBuf>,
-    pub file_browser_entries: Vec<PathBuf>,
-    pub file_browser_selected: usize,
-    pub file_browser_scroll: usize,
-    pub file_browser_query: String,
+    // File browser modal
+    pub file_browser: FileBrowserState,
 
     // Selection & Areas
     pub text_selection: TextSelection,
@@ -97,17 +200,8 @@ pub struct UIState {
     pub output_content_length: usize,
     pub pinned_content_lengths: [usize; MAX_PINNED_TERMINALS],
 
-    // Layout
-    pub split_view_enabled: bool,
-    pub pinned_pane_ratios: [f32; MAX_PINNED_TERMINALS],
-    pub left_panel_ratio: f32,
-    pub output_split_ratio: f32,
-    pub workspace_ratio: f32,
-    pub sessions_ratio: f32,
-    pub todos_ratio: f32,
-    pub dragging_divider: Option<Divider>,
-    pub drag_start_pos: Option<(u16, u16)>,
-    pub drag_start_ratio: f32,
+    // Pane layout
+    pub layout: LayoutState,
 
     // Utilities pane
     pub utility_section: UtilitySection,
@@ -143,31 +237,17 @@ pub struct UIState {
     pub selected_workspace_action: WorkspaceAction,
     pub workspace_create_mode: bool,
 
-    // Parallel task modal state
-    pub parallel_task_prompt: String,
-    pub parallel_task_agents: Vec<(AgentType, bool)>, // Agent type and whether selected
-    pub parallel_task_agent_idx: usize,               // Currently focused agent in selection
-    pub parallel_task_request_report: bool,           // Whether to request PARALLEL_REPORT.md
-    pub parallel_task_dangerous_mode: bool,           // Whether to skip permission prompts
-    pub selected_report_idx: usize,                   // Selected report in Reports tab
-    pub parallel_task_request_id: u64,
+    // Parallel task modal
+    pub parallel_task: ParallelTaskModalState,
 
     // Debug overlay (F11)
     pub show_debug_overlay: bool,
 
-    // Config window state
-    pub config_tab: ConfigTab,
-    pub config_selected_row: usize,
-    pub config_selected_col: usize,
-    pub config_editing: bool,
-    pub config_edit_buffer: String,
-    pub config_rebinding: bool,
-    pub config_scroll_offset: usize,
+    // Config window
+    pub config: ConfigWindowState,
 
-    // Command palette state
-    pub palette_query: String,
-    pub palette_selected: usize,
-    pub pending_palette_action: Option<crate::app::Action>,
+    // Command palette
+    pub palette: CommandPaletteState,
 
     // Toast notifications
     pub toasts: VecDeque<Toast>,
@@ -187,12 +267,7 @@ impl UIState {
             input_buffer: String::new(),
             pending_delete: None,
             pending_quit: false,
-            file_browser_path: dirs::home_dir().unwrap_or_else(|| PathBuf::from("/")),
-            file_browser_all_entries: Vec::new(),
-            file_browser_entries: Vec::new(),
-            file_browser_selected: 0,
-            file_browser_scroll: 0,
-            file_browser_query: String::new(),
+            file_browser: FileBrowserState::default(),
             text_selection: TextSelection::default(),
             pinned_text_selections: [TextSelection::default(); MAX_PINNED_TERMINALS],
             output_on_replay: false,
@@ -206,16 +281,7 @@ impl UIState {
             utilities_area: None,
             output_content_length: 0,
             pinned_content_lengths: [0; MAX_PINNED_TERMINALS],
-            split_view_enabled: true,
-            pinned_pane_ratios: [0.25; MAX_PINNED_TERMINALS],
-            left_panel_ratio: 0.30,
-            output_split_ratio: 0.50,
-            workspace_ratio: 0.40,
-            sessions_ratio: 0.40,
-            todos_ratio: 0.50,
-            dragging_divider: None,
-            drag_start_pos: None,
-            drag_start_ratio: 0.0,
+            layout: LayoutState::default(),
             utility_section: UtilitySection::default(),
             selected_utility: UtilityItem::default(),
             selected_sound: UtilityItem::BrownNoise,  // Default to first sound
@@ -239,29 +305,10 @@ impl UIState {
             selected_todos_tab: TodosTab::default(),
             selected_workspace_action: WorkspaceAction::default(),
             workspace_create_mode: false,
-            parallel_task_prompt: String::new(),
-            parallel_task_agents: vec![
-                (AgentType::Claude, true),
-                (AgentType::Codex, true),
-                (AgentType::Gemini, true),
-                (AgentType::Grok, false),
-            ],
-            parallel_task_agent_idx: 0,
-            parallel_task_request_report: true,  // Default to requesting reports
-            parallel_task_dangerous_mode: true,  // Default to dangerous mode for parallel tasks
-            selected_report_idx: 0,
-            parallel_task_request_id: 0,
+            parallel_task: ParallelTaskModalState::default(),
             show_debug_overlay: false,
-            config_tab: ConfigTab::default(),
-            config_selected_row: 0,
-            config_selected_col: 0,
-            config_editing: false,
-            config_edit_buffer: String::new(),
-            config_rebinding: false,
-            config_scroll_offset: 0,
-            palette_query: String::new(),
-            palette_selected: 0,
-            pending_palette_action: None,
+            config: ConfigWindowState::default(),
+            palette: CommandPaletteState::default(),
             toasts: VecDeque::new(),
         }
     }

@@ -331,11 +331,11 @@ pub fn handle_todo_action(
                 crate::app::pty_ops::resize_ptys_to_panes(state);
                 let config = crate::persistence::GlobalConfig {
                     banner_visible: state.ui.banner_visible,
-                    left_panel_ratio: state.ui.left_panel_ratio,
-                    workspace_ratio: state.ui.workspace_ratio,
-                    sessions_ratio: state.ui.sessions_ratio,
-                    todos_ratio: state.ui.todos_ratio,
-                    output_split_ratio: state.ui.output_split_ratio,
+                    left_panel_ratio: state.ui.layout.left_panel_ratio,
+                    workspace_ratio: state.ui.layout.workspace_ratio,
+                    sessions_ratio: state.ui.layout.sessions_ratio,
+                    todos_ratio: state.ui.layout.todos_ratio,
+                    output_split_ratio: state.ui.layout.output_split_ratio,
                     agent_done_sound_enabled: state.system.agent_done_sound_enabled,
                 };
                 save_config(state, &config, "failed to save banner config");
@@ -345,11 +345,11 @@ pub fn handle_todo_action(
                 state.system.agent_done_sound_enabled = !state.system.agent_done_sound_enabled;
                 let config = crate::persistence::GlobalConfig {
                     banner_visible: state.ui.banner_visible,
-                    left_panel_ratio: state.ui.left_panel_ratio,
-                    workspace_ratio: state.ui.workspace_ratio,
-                    sessions_ratio: state.ui.sessions_ratio,
-                    todos_ratio: state.ui.todos_ratio,
-                    output_split_ratio: state.ui.output_split_ratio,
+                    left_panel_ratio: state.ui.layout.left_panel_ratio,
+                    workspace_ratio: state.ui.layout.workspace_ratio,
+                    sessions_ratio: state.ui.layout.sessions_ratio,
+                    todos_ratio: state.ui.layout.todos_ratio,
+                    output_split_ratio: state.ui.layout.output_split_ratio,
                     agent_done_sound_enabled: state.system.agent_done_sound_enabled,
                 };
                 save_config(state, &config, "failed to save agent-done sound config");

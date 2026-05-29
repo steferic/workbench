@@ -39,6 +39,53 @@ fn is_in_area(x: u16, y: u16, area: (u16, u16, u16, u16)) -> bool {
     x >= ax && x < ax + aw && y >= ay && y < ay + ah
 }
 
+/// Handle a mouse scroll event over whichever pane the cursor sits in.
+/// `up` selects scroll direction (workspace selection direction / offset add vs sub).
+fn handle_mouse_scroll(
+    state: &mut AppState,
+    x: u16,
+    y: u16,
+    up: bool,
+    pty_manager: &PtyManager,
+    pty_tx: &mpsc::Sender<Action>,
+) {
+    let scroll = |offset: u16| {
+        if up {
+            offset.saturating_add(3)
+        } else {
+            offset.saturating_sub(3)
+        }
+    };
+
+    if let Some(area) = state.ui.workspace_area {
+        if is_in_area(x, y, area) {
+            state.ui.focus = FocusPanel::WorkspaceList;
+            move_workspace_selection(state, up, pty_manager, pty_tx);
+            return;
+        }
+    }
+
+    for (idx, area_opt) in state.ui.pinned_pane_areas.iter().enumerate() {
+        if let Some(area) = *area_opt {
+            if is_in_area(x, y, area) {
+                state.ui.focus = FocusPanel::PinnedTerminalPane(idx);
+                state.ui.focused_pinned_pane = idx;
+                if let Some(offset) = state.ui.pinned_scroll_offsets.get_mut(idx) {
+                    *offset = scroll(*offset);
+                }
+                return;
+            }
+        }
+    }
+
+    if let Some(area) = state.ui.output_pane_area {
+        if is_in_area(x, y, area) {
+            state.ui.focus = FocusPanel::OutputPane;
+            state.ui.output_scroll_offset = scroll(state.ui.output_scroll_offset);
+        }
+    }
+}
+
 pub fn handle_navigation_action(
     state: &mut AppState,
     action: Action,
@@ -151,63 +198,9 @@ pub fn handle_navigation_action(
                 state.ui.output_scroll_offset = state.ui.output_scroll_offset.saturating_sub(3);
             }
         }
-        Action::MouseScrollUp(x, y) => {
-            if let Some(area) = state.ui.workspace_area {
-                if is_in_area(x, y, area) {
-                    state.ui.focus = FocusPanel::WorkspaceList;
-                    move_workspace_selection(state, true, pty_manager, pty_tx);
-                    return Ok(());
-                }
-            }
-
-            for (idx, area_opt) in state.ui.pinned_pane_areas.iter().enumerate() {
-                if let Some(area) = *area_opt {
-                    if is_in_area(x, y, area) {
-                        state.ui.focus = FocusPanel::PinnedTerminalPane(idx);
-                        state.ui.focused_pinned_pane = idx;
-                        if let Some(offset) = state.ui.pinned_scroll_offsets.get_mut(idx) {
-                            *offset = offset.saturating_add(3);
-                        }
-                        return Ok(());
-                    }
-                }
-            }
-
-            if let Some(area) = state.ui.output_pane_area {
-                if is_in_area(x, y, area) {
-                    state.ui.focus = FocusPanel::OutputPane;
-                    state.ui.output_scroll_offset = state.ui.output_scroll_offset.saturating_add(3);
-                }
-            }
-        }
+        Action::MouseScrollUp(x, y) => handle_mouse_scroll(state, x, y, true, pty_manager, pty_tx),
         Action::MouseScrollDown(x, y) => {
-            if let Some(area) = state.ui.workspace_area {
-                if is_in_area(x, y, area) {
-                    state.ui.focus = FocusPanel::WorkspaceList;
-                    move_workspace_selection(state, false, pty_manager, pty_tx);
-                    return Ok(());
-                }
-            }
-
-            for (idx, area_opt) in state.ui.pinned_pane_areas.iter().enumerate() {
-                if let Some(area) = *area_opt {
-                    if is_in_area(x, y, area) {
-                        state.ui.focus = FocusPanel::PinnedTerminalPane(idx);
-                        state.ui.focused_pinned_pane = idx;
-                        if let Some(offset) = state.ui.pinned_scroll_offsets.get_mut(idx) {
-                            *offset = offset.saturating_sub(3);
-                        }
-                        return Ok(());
-                    }
-                }
-            }
-
-            if let Some(area) = state.ui.output_pane_area {
-                if is_in_area(x, y, area) {
-                    state.ui.focus = FocusPanel::OutputPane;
-                    state.ui.output_scroll_offset = state.ui.output_scroll_offset.saturating_sub(3);
-                }
-            }
+            handle_mouse_scroll(state, x, y, false, pty_manager, pty_tx)
         }
         Action::CycleNextWorkspace => {
             cycle_next_working_workspace(state);
@@ -215,484 +208,11 @@ pub fn handle_navigation_action(
         Action::CyclePrevWorkspace => {
             cycle_prev_working_workspace(state);
         }
-        Action::CycleNextSession => {
-            // Cycle through agents only (Agents -> Parallel), skip terminals
-            // Get parallel task session IDs first
-            let parallel_session_ids: Vec<Uuid> = state
-                .selected_workspace()
-                .map(|ws| {
-                    ws.parallel_tasks
-                        .iter()
-                        .flat_map(|t| t.attempts.iter().map(|a| a.session_id))
-                        .collect()
-                })
-                .unwrap_or_default();
-
-            // Build visual order indices (agents only)
-            let session_info: Option<(usize, Uuid)> = {
-                let sessions = state.sessions_for_selected_workspace();
-
-                // Agents: non-terminal, non-parallel
-                let agent_indices: Vec<usize> = sessions
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, s)| {
-                        !s.agent_type.is_terminal() && !parallel_session_ids.contains(&s.id)
-                    })
-                    .map(|(i, _)| i)
-                    .collect();
-
-                // Parallel sessions (these are also agents)
-                let parallel_indices: Vec<usize> = sessions
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, s)| parallel_session_ids.contains(&s.id))
-                    .map(|(i, _)| i)
-                    .collect();
-
-                // Combined visual order (agents only, no terminals)
-                let visual_order: Vec<usize> =
-                    agent_indices.into_iter().chain(parallel_indices).collect();
-
-                if !visual_order.is_empty() {
-                    // Find current position in visual order
-                    let current_pos = visual_order
-                        .iter()
-                        .position(|&idx| idx == state.ui.selected_session_idx);
-
-                    // Move to next in visual order (or first if not found)
-                    let next_visual_pos = match current_pos {
-                        Some(pos) => (pos + 1) % visual_order.len(),
-                        None => 0,
-                    };
-
-                    let next_idx = visual_order[next_visual_pos];
-                    sessions.get(next_idx).map(|s| (next_idx, s.id))
-                } else {
-                    None
-                }
-            };
-
-            if let Some((next_idx, session_id)) = session_info {
-                if state.ui.active_session_id != Some(session_id) {
-                    clear_active_text_selection(state);
-                }
-                state.ui.selected_session_idx = next_idx;
-                state.ui.active_session_id = Some(session_id);
-                state.ui.output_scroll_offset = 0;
-                state.ui.focus = FocusPanel::OutputPane;
-            }
-        }
-        Action::CyclePrevSession => {
-            let parallel_session_ids: Vec<Uuid> = state
-                .selected_workspace()
-                .map(|ws| {
-                    ws.parallel_tasks
-                        .iter()
-                        .flat_map(|t| t.attempts.iter().map(|a| a.session_id))
-                        .collect()
-                })
-                .unwrap_or_default();
-
-            let session_info: Option<(usize, Uuid)> = {
-                let sessions = state.sessions_for_selected_workspace();
-
-                let agent_indices: Vec<usize> = sessions
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, s)| {
-                        !s.agent_type.is_terminal() && !parallel_session_ids.contains(&s.id)
-                    })
-                    .map(|(i, _)| i)
-                    .collect();
-
-                let parallel_indices: Vec<usize> = sessions
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, s)| parallel_session_ids.contains(&s.id))
-                    .map(|(i, _)| i)
-                    .collect();
-
-                let visual_order: Vec<usize> =
-                    agent_indices.into_iter().chain(parallel_indices).collect();
-
-                if !visual_order.is_empty() {
-                    let current_pos = visual_order
-                        .iter()
-                        .position(|&idx| idx == state.ui.selected_session_idx);
-
-                    let prev_visual_pos = match current_pos {
-                        Some(pos) => (pos + visual_order.len() - 1) % visual_order.len(),
-                        None => visual_order.len() - 1,
-                    };
-
-                    let prev_idx = visual_order[prev_visual_pos];
-                    sessions.get(prev_idx).map(|s| (prev_idx, s.id))
-                } else {
-                    None
-                }
-            };
-
-            if let Some((prev_idx, session_id)) = session_info {
-                if state.ui.active_session_id != Some(session_id) {
-                    clear_active_text_selection(state);
-                }
-                state.ui.selected_session_idx = prev_idx;
-                state.ui.active_session_id = Some(session_id);
-                state.ui.output_scroll_offset = 0;
-                state.ui.focus = FocusPanel::OutputPane;
-            }
-        }
-        Action::MouseClick(x, y) => {
-            // Simplified MouseClick logic using stored areas
-            let (w, h) = state.system.terminal_size;
-            let main_height = h.saturating_sub(1);
-            let divider_tolerance = 1u16;
-
-            let left_width = (w as f32 * state.ui.left_panel_ratio) as u16;
-            if x >= left_width.saturating_sub(divider_tolerance)
-                && x <= left_width + divider_tolerance
-                && y < main_height
-            {
-                state.ui.dragging_divider = Some(Divider::LeftRight);
-                state.ui.drag_start_pos = Some((x, y));
-                state.ui.drag_start_ratio = state.ui.left_panel_ratio;
-                return Ok(());
-            }
-
-            let workspace_height = (main_height as f32 * state.ui.workspace_ratio) as u16;
-            if x < left_width
-                && y >= workspace_height.saturating_sub(divider_tolerance)
-                && y <= workspace_height + divider_tolerance
-            {
-                state.ui.dragging_divider = Some(Divider::WorkspaceSession);
-                state.ui.drag_start_pos = Some((x, y));
-                state.ui.drag_start_ratio = state.ui.workspace_ratio;
-                return Ok(());
-            }
-
-            let lower_left_height = main_height.saturating_sub(workspace_height);
-            let sessions_height = (lower_left_height as f32 * state.ui.sessions_ratio) as u16;
-            let sessions_todos_divider_y = workspace_height + sessions_height;
-
-            if x < left_width
-                && y >= sessions_todos_divider_y.saturating_sub(divider_tolerance)
-                && y <= sessions_todos_divider_y + divider_tolerance
-            {
-                state.ui.dragging_divider = Some(Divider::SessionsTodos);
-                state.ui.drag_start_pos = Some((x, y));
-                state.ui.drag_start_ratio = state.ui.sessions_ratio;
-                return Ok(());
-            }
-
-            let remaining_height = lower_left_height.saturating_sub(sessions_height);
-            let todos_height = (remaining_height as f32 * state.ui.todos_ratio) as u16;
-            let todos_utilities_divider_y = sessions_todos_divider_y + todos_height;
-
-            if x < left_width
-                && y >= todos_utilities_divider_y.saturating_sub(divider_tolerance)
-                && y <= todos_utilities_divider_y + divider_tolerance
-            {
-                state.ui.dragging_divider = Some(Divider::TodosUtilities);
-                state.ui.drag_start_pos = Some((x, y));
-                state.ui.drag_start_ratio = state.ui.todos_ratio;
-                return Ok(());
-            }
-
-            if state.should_show_split() {
-                if let Some((ox, _, ow, _)) = state.ui.output_pane_area {
-                    let divider_x = ox + ow;
-                    if x >= divider_x.saturating_sub(divider_tolerance)
-                        && x <= divider_x + divider_tolerance
-                        && y < main_height
-                    {
-                        state.ui.dragging_divider = Some(Divider::OutputPinned);
-                        state.ui.drag_start_pos = Some((x, y));
-                        state.ui.drag_start_ratio = state.ui.output_split_ratio;
-                        return Ok(());
-                    }
-                }
-
-                let pinned_count = state.pinned_count();
-                if pinned_count > 1 {
-                    for pane_idx in 0..(pinned_count - 1) {
-                        if let Some((_, py, _, ph)) = state.ui.pinned_pane_areas[pane_idx] {
-                            let divider_y = py + ph;
-                            if y >= divider_y.saturating_sub(divider_tolerance)
-                                && y <= divider_y + divider_tolerance
-                            {
-                                if let Some((px, _, pw, _)) = state.ui.pinned_pane_areas[0] {
-                                    if x >= px && x < px + pw {
-                                        state.ui.dragging_divider =
-                                            Some(Divider::PinnedPanes(pane_idx));
-                                        state.ui.drag_start_pos = Some((x, y));
-                                        state.ui.drag_start_ratio =
-                                            state.ui.pinned_pane_ratios[pane_idx];
-                                        return Ok(());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            state.ui.text_selection = TextSelection::default();
-            clear_all_pinned_selections(state);
-
-            if let Some(area) = state.ui.workspace_area {
-                if is_in_area(x, y, area) {
-                    state.ui.focus = FocusPanel::WorkspaceList;
-                    if let Some(workspace_idx) = workspace_index_at_position(state, x, y) {
-                        set_selected_workspace(state, workspace_idx, pty_manager, pty_tx);
-                    }
-                    return Ok(());
-                }
-            }
-
-            if let Some(area) = state.ui.session_area {
-                if is_in_area(x, y, area) {
-                    state.ui.focus = FocusPanel::SessionList;
-                    return Ok(());
-                }
-            }
-
-            if let Some(area) = state.ui.todos_area {
-                if is_in_area(x, y, area) {
-                    state.ui.focus = FocusPanel::TodosPane;
-                    return Ok(());
-                }
-            }
-
-            if let Some(area) = state.ui.utilities_area {
-                if is_in_area(x, y, area) {
-                    state.ui.focus = FocusPanel::UtilitiesPane;
-                    return Ok(());
-                }
-            }
-
-            for (idx, area_opt) in state.ui.pinned_pane_areas.iter().enumerate() {
-                if let Some(area) = *area_opt {
-                    if is_in_area(x, y, area) {
-                        state.ui.focus = FocusPanel::PinnedTerminalPane(idx);
-                        state.ui.focused_pinned_pane = idx;
-                        if state.pinned_terminal_output_at(idx).is_some() {
-                            if let Some((row, col)) = pane_text_position(
-                                area,
-                                x,
-                                y,
-                                state.ui.pinned_content_lengths[idx],
-                                state.ui.pinned_scroll_offsets[idx],
-                            ) {
-                                if let Some(sel) = state.ui.pinned_text_selections.get_mut(idx) {
-                                    *sel = TextSelection {
-                                        start: Some((row, col)),
-                                        end: Some((row, col)),
-                                        is_dragging: true,
-                                    };
-                                }
-                            }
-                        }
-                        return Ok(());
-                    }
-                }
-            }
-
-            if let Some(area) = state.ui.output_pane_area {
-                if is_in_area(x, y, area) {
-                    state.ui.focus = FocusPanel::OutputPane;
-                    if state.active_output().is_some() {
-                        if let Some((row, col)) = pane_text_position(
-                            area,
-                            x,
-                            y,
-                            state.ui.output_content_length,
-                            state.ui.output_scroll_offset,
-                        ) {
-                            state.ui.text_selection = TextSelection {
-                                start: Some((row, col)),
-                                end: Some((row, col)),
-                                is_dragging: true,
-                            };
-                        }
-                    }
-                    return Ok(());
-                }
-            }
-        }
-        Action::MouseDrag(x, y) => {
-            if let Some(divider) = state.ui.dragging_divider {
-                let (w, h) = state.system.terminal_size;
-                let main_height = h.saturating_sub(1);
-
-                match divider {
-                    Divider::LeftRight => {
-                        let new_ratio = (x as f32 / w as f32).clamp(0.15, 0.50);
-                        state.ui.left_panel_ratio = new_ratio;
-                    }
-                    Divider::WorkspaceSession => {
-                        let new_ratio = (y as f32 / main_height as f32).clamp(0.20, 0.80);
-                        state.ui.workspace_ratio = new_ratio;
-                    }
-                    Divider::SessionsTodos => {
-                        let workspace_height =
-                            (main_height as f32 * state.ui.workspace_ratio) as u16;
-                        let lower_left_height = main_height.saturating_sub(workspace_height);
-                        let y_in_lower_left = y.saturating_sub(workspace_height);
-                        let new_ratio =
-                            (y_in_lower_left as f32 / lower_left_height as f32).clamp(0.15, 0.70);
-                        state.ui.sessions_ratio = new_ratio;
-                    }
-                    Divider::TodosUtilities => {
-                        let workspace_height =
-                            (main_height as f32 * state.ui.workspace_ratio) as u16;
-                        let lower_left_height = main_height.saturating_sub(workspace_height);
-                        let sessions_height =
-                            (lower_left_height as f32 * state.ui.sessions_ratio) as u16;
-                        let remaining_height = lower_left_height.saturating_sub(sessions_height);
-                        let y_in_remaining = y
-                            .saturating_sub(workspace_height)
-                            .saturating_sub(sessions_height);
-                        let new_ratio =
-                            (y_in_remaining as f32 / remaining_height as f32).clamp(0.20, 0.80);
-                        state.ui.todos_ratio = new_ratio;
-                    }
-                    Divider::OutputPinned => {
-                        let left_width = (w as f32 * state.ui.left_panel_ratio) as u16;
-                        let right_panel_width = w.saturating_sub(left_width);
-                        let x_in_right = x.saturating_sub(left_width);
-                        let new_ratio =
-                            (x_in_right as f32 / right_panel_width as f32).clamp(0.20, 0.80);
-                        state.ui.output_split_ratio = new_ratio;
-                    }
-                    Divider::PinnedPanes(pane_idx) => {
-                        let count = state.pinned_count();
-                        if count > 1 && pane_idx < count - 1 {
-                            let mut ratios = state.ui.pinned_pane_ratios;
-                            let sum: f32 = ratios.iter().take(count).sum();
-
-                            if let Some((_, py, _, _)) = state.ui.pinned_pane_areas[0] {
-                                let pinned_total_height = state
-                                    .ui
-                                    .pinned_pane_areas
-                                    .iter()
-                                    .take(count)
-                                    .filter_map(|a| a.map(|(_, _, _, h)| h))
-                                    .sum::<u16>();
-
-                                let y_in_pinned = y.saturating_sub(py) as f32;
-                                let new_split = y_in_pinned / pinned_total_height as f32;
-
-                                let combined_ratio = ratios[pane_idx] + ratios[pane_idx + 1];
-                                let ratio_above: f32 = ratios.iter().take(pane_idx).sum();
-
-                                let new_upper_ratio = ((new_split - ratio_above / sum) * sum)
-                                    .clamp(0.1, combined_ratio - 0.1);
-                                ratios[pane_idx] = new_upper_ratio;
-                                ratios[pane_idx + 1] = combined_ratio - new_upper_ratio;
-
-                                state.ui.pinned_pane_ratios = ratios;
-                            }
-                        }
-                    }
-                }
-                return Ok(());
-            }
-
-            // Store mouse position for tick-based smooth scrolling
-            state.ui.drag_mouse_pos = Some((x, y));
-
-            // Update selection end position for main output pane
-            if state.ui.text_selection.is_dragging {
-                if let Some((ax, ay, aw, ah)) = state.ui.output_pane_area {
-                    if let Some((row, col)) = pane_text_position(
-                        (ax, ay, aw, ah),
-                        x,
-                        y,
-                        state.ui.output_content_length,
-                        state.ui.output_scroll_offset,
-                    ) {
-                        state.ui.text_selection.end = Some((row, col));
-                    }
-                }
-            }
-
-            // Update selection end position for pinned panes
-            for (idx, sel) in state.ui.pinned_text_selections.iter_mut().enumerate() {
-                if sel.is_dragging {
-                    if let Some((ax, ay, aw, ah)) = state.ui.pinned_pane_areas[idx] {
-                        if let Some((row, col)) = pane_text_position(
-                            (ax, ay, aw, ah),
-                            x,
-                            y,
-                            state.ui.pinned_content_lengths[idx],
-                            state.ui.pinned_scroll_offsets[idx],
-                        ) {
-                            sel.end = Some((row, col));
-                        }
-                    }
-                }
-            }
-        }
-        Action::MouseUp(x, y) => {
-            if state.ui.dragging_divider.is_some() {
-                state.ui.dragging_divider = None;
-                state.ui.drag_start_pos = None;
-                resize_ptys_to_panes(state);
-                let config = GlobalConfig {
-                    banner_visible: state.ui.banner_visible,
-                    left_panel_ratio: state.ui.left_panel_ratio,
-                    workspace_ratio: state.ui.workspace_ratio,
-                    sessions_ratio: state.ui.sessions_ratio,
-                    todos_ratio: state.ui.todos_ratio,
-                    output_split_ratio: state.ui.output_split_ratio,
-                    agent_done_sound_enabled: state.system.agent_done_sound_enabled,
-                };
-                save_config(state, &config, "failed to save pane layout config");
-                return Ok(());
-            }
-
-            if state.ui.text_selection.is_dragging {
-                if let Some(area) = state.ui.output_pane_area {
-                    if let Some((row, col)) = pane_text_position(
-                        area,
-                        x,
-                        y,
-                        state.ui.output_content_length,
-                        state.ui.output_scroll_offset,
-                    ) {
-                        state.ui.text_selection.end = Some((row, col));
-                    }
-                }
-                state.ui.text_selection.is_dragging = false;
-                if state.ui.text_selection.start == state.ui.text_selection.end {
-                    state.ui.text_selection = TextSelection::default();
-                }
-            }
-
-            for (idx, sel) in state.ui.pinned_text_selections.iter_mut().enumerate() {
-                if sel.is_dragging {
-                    if let Some(area) = state.ui.pinned_pane_areas[idx] {
-                        if let Some((row, col)) = pane_text_position(
-                            area,
-                            x,
-                            y,
-                            state.ui.pinned_content_lengths[idx],
-                            state.ui.pinned_scroll_offsets[idx],
-                        ) {
-                            sel.end = Some((row, col));
-                        }
-                    }
-                    sel.is_dragging = false;
-                    if sel.start == sel.end {
-                        *sel = TextSelection::default();
-                    }
-                }
-            }
-
-            // Clear drag position tracking
-            state.ui.drag_mouse_pos = None;
-        }
+        Action::CycleNextSession => cycle_session(state, true),
+        Action::CyclePrevSession => cycle_session(state, false),
+        Action::MouseClick(x, y) => handle_mouse_click(state, x, y, pty_manager, pty_tx),
+        Action::MouseDrag(x, y) => handle_mouse_drag(state, x, y),
+        Action::MouseUp(x, y) => handle_mouse_up(state, x, y),
         Action::CopySelection => {
             let _ = copy_active_selection(state);
             state.ui.text_selection = TextSelection::default();
@@ -842,6 +362,427 @@ pub fn handle_navigation_action(
         _ => {}
     }
     Ok(())
+}
+
+/// Cycle the active session through the visual order (agents first, then parallel
+/// attempts; terminals skipped). `forward` selects next vs previous.
+fn cycle_session(state: &mut AppState, forward: bool) {
+    let parallel_session_ids: Vec<Uuid> = state
+        .selected_workspace()
+        .map(|ws| {
+            ws.parallel_tasks
+                .iter()
+                .flat_map(|t| t.attempts.iter().map(|a| a.session_id))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let session_info: Option<(usize, Uuid)> = {
+        let sessions = state.sessions_for_selected_workspace();
+
+        // Agents: non-terminal, non-parallel
+        let agent_indices: Vec<usize> = sessions
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| !s.agent_type.is_terminal() && !parallel_session_ids.contains(&s.id))
+            .map(|(i, _)| i)
+            .collect();
+
+        // Parallel sessions (these are also agents)
+        let parallel_indices: Vec<usize> = sessions
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| parallel_session_ids.contains(&s.id))
+            .map(|(i, _)| i)
+            .collect();
+
+        // Combined visual order (agents only, no terminals)
+        let visual_order: Vec<usize> = agent_indices.into_iter().chain(parallel_indices).collect();
+
+        if visual_order.is_empty() {
+            None
+        } else {
+            let len = visual_order.len();
+            let current_pos = visual_order
+                .iter()
+                .position(|&idx| idx == state.ui.selected_session_idx);
+            let target_pos = match (current_pos, forward) {
+                (Some(pos), true) => (pos + 1) % len,
+                (Some(pos), false) => (pos + len - 1) % len,
+                (None, true) => 0,
+                (None, false) => len - 1,
+            };
+            let target_idx = visual_order[target_pos];
+            sessions.get(target_idx).map(|s| (target_idx, s.id))
+        }
+    };
+
+    if let Some((target_idx, session_id)) = session_info {
+        if state.ui.active_session_id != Some(session_id) {
+            clear_active_text_selection(state);
+        }
+        state.ui.selected_session_idx = target_idx;
+        state.ui.active_session_id = Some(session_id);
+        state.ui.output_scroll_offset = 0;
+        state.ui.focus = FocusPanel::OutputPane;
+    }
+}
+
+/// Handle a mouse-down: start dragging a layout divider if the click lands on one,
+/// otherwise focus the clicked pane and begin a text selection where applicable.
+fn handle_mouse_click(
+    state: &mut AppState,
+    x: u16,
+    y: u16,
+    pty_manager: &PtyManager,
+    pty_tx: &mpsc::Sender<Action>,
+) {
+    // Simplified MouseClick logic using stored areas
+    let (w, h) = state.system.terminal_size;
+    let main_height = h.saturating_sub(1);
+    let divider_tolerance = 1u16;
+
+    let left_width = (w as f32 * state.ui.layout.left_panel_ratio) as u16;
+    if x >= left_width.saturating_sub(divider_tolerance)
+        && x <= left_width + divider_tolerance
+        && y < main_height
+    {
+        state.ui.layout.dragging_divider = Some(Divider::LeftRight);
+        state.ui.layout.drag_start_pos = Some((x, y));
+        state.ui.layout.drag_start_ratio = state.ui.layout.left_panel_ratio;
+        return;
+    }
+
+    let workspace_height = (main_height as f32 * state.ui.layout.workspace_ratio) as u16;
+    if x < left_width
+        && y >= workspace_height.saturating_sub(divider_tolerance)
+        && y <= workspace_height + divider_tolerance
+    {
+        state.ui.layout.dragging_divider = Some(Divider::WorkspaceSession);
+        state.ui.layout.drag_start_pos = Some((x, y));
+        state.ui.layout.drag_start_ratio = state.ui.layout.workspace_ratio;
+        return;
+    }
+
+    let lower_left_height = main_height.saturating_sub(workspace_height);
+    let sessions_height = (lower_left_height as f32 * state.ui.layout.sessions_ratio) as u16;
+    let sessions_todos_divider_y = workspace_height + sessions_height;
+
+    if x < left_width
+        && y >= sessions_todos_divider_y.saturating_sub(divider_tolerance)
+        && y <= sessions_todos_divider_y + divider_tolerance
+    {
+        state.ui.layout.dragging_divider = Some(Divider::SessionsTodos);
+        state.ui.layout.drag_start_pos = Some((x, y));
+        state.ui.layout.drag_start_ratio = state.ui.layout.sessions_ratio;
+        return;
+    }
+
+    let remaining_height = lower_left_height.saturating_sub(sessions_height);
+    let todos_height = (remaining_height as f32 * state.ui.layout.todos_ratio) as u16;
+    let todos_utilities_divider_y = sessions_todos_divider_y + todos_height;
+
+    if x < left_width
+        && y >= todos_utilities_divider_y.saturating_sub(divider_tolerance)
+        && y <= todos_utilities_divider_y + divider_tolerance
+    {
+        state.ui.layout.dragging_divider = Some(Divider::TodosUtilities);
+        state.ui.layout.drag_start_pos = Some((x, y));
+        state.ui.layout.drag_start_ratio = state.ui.layout.todos_ratio;
+        return;
+    }
+
+    if state.should_show_split() {
+        if let Some((ox, _, ow, _)) = state.ui.output_pane_area {
+            let divider_x = ox + ow;
+            if x >= divider_x.saturating_sub(divider_tolerance)
+                && x <= divider_x + divider_tolerance
+                && y < main_height
+            {
+                state.ui.layout.dragging_divider = Some(Divider::OutputPinned);
+                state.ui.layout.drag_start_pos = Some((x, y));
+                state.ui.layout.drag_start_ratio = state.ui.layout.output_split_ratio;
+                return;
+            }
+        }
+
+        let pinned_count = state.pinned_count();
+        if pinned_count > 1 {
+            for pane_idx in 0..(pinned_count - 1) {
+                if let Some((_, py, _, ph)) = state.ui.pinned_pane_areas[pane_idx] {
+                    let divider_y = py + ph;
+                    if y >= divider_y.saturating_sub(divider_tolerance)
+                        && y <= divider_y + divider_tolerance
+                    {
+                        if let Some((px, _, pw, _)) = state.ui.pinned_pane_areas[0] {
+                            if x >= px && x < px + pw {
+                                state.ui.layout.dragging_divider = Some(Divider::PinnedPanes(pane_idx));
+                                state.ui.layout.drag_start_pos = Some((x, y));
+                                state.ui.layout.drag_start_ratio = state.ui.layout.pinned_pane_ratios[pane_idx];
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    state.ui.text_selection = TextSelection::default();
+    clear_all_pinned_selections(state);
+
+    if let Some(area) = state.ui.workspace_area {
+        if is_in_area(x, y, area) {
+            state.ui.focus = FocusPanel::WorkspaceList;
+            if let Some(workspace_idx) = workspace_index_at_position(state, x, y) {
+                set_selected_workspace(state, workspace_idx, pty_manager, pty_tx);
+            }
+            return;
+        }
+    }
+
+    if let Some(area) = state.ui.session_area {
+        if is_in_area(x, y, area) {
+            state.ui.focus = FocusPanel::SessionList;
+            return;
+        }
+    }
+
+    if let Some(area) = state.ui.todos_area {
+        if is_in_area(x, y, area) {
+            state.ui.focus = FocusPanel::TodosPane;
+            return;
+        }
+    }
+
+    if let Some(area) = state.ui.utilities_area {
+        if is_in_area(x, y, area) {
+            state.ui.focus = FocusPanel::UtilitiesPane;
+            return;
+        }
+    }
+
+    for (idx, area_opt) in state.ui.pinned_pane_areas.iter().enumerate() {
+        if let Some(area) = *area_opt {
+            if is_in_area(x, y, area) {
+                state.ui.focus = FocusPanel::PinnedTerminalPane(idx);
+                state.ui.focused_pinned_pane = idx;
+                if state.pinned_terminal_output_at(idx).is_some() {
+                    if let Some((row, col)) = pane_text_position(
+                        area,
+                        x,
+                        y,
+                        state.ui.pinned_content_lengths[idx],
+                        state.ui.pinned_scroll_offsets[idx],
+                    ) {
+                        if let Some(sel) = state.ui.pinned_text_selections.get_mut(idx) {
+                            *sel = TextSelection {
+                                start: Some((row, col)),
+                                end: Some((row, col)),
+                                is_dragging: true,
+                            };
+                        }
+                    }
+                }
+                return;
+            }
+        }
+    }
+
+    if let Some(area) = state.ui.output_pane_area {
+        if is_in_area(x, y, area) {
+            state.ui.focus = FocusPanel::OutputPane;
+            if state.active_output().is_some() {
+                if let Some((row, col)) = pane_text_position(
+                    area,
+                    x,
+                    y,
+                    state.ui.output_content_length,
+                    state.ui.output_scroll_offset,
+                ) {
+                    state.ui.text_selection = TextSelection {
+                        start: Some((row, col)),
+                        end: Some((row, col)),
+                        is_dragging: true,
+                    };
+                }
+            }
+        }
+    }
+}
+
+/// Handle a mouse-move: resize the divider being dragged, or extend the active
+/// text selection in whichever pane is being dragged.
+fn handle_mouse_drag(state: &mut AppState, x: u16, y: u16) {
+    if let Some(divider) = state.ui.layout.dragging_divider {
+        let (w, h) = state.system.terminal_size;
+        let main_height = h.saturating_sub(1);
+
+        match divider {
+            Divider::LeftRight => {
+                let new_ratio = (x as f32 / w as f32).clamp(0.15, 0.50);
+                state.ui.layout.left_panel_ratio = new_ratio;
+            }
+            Divider::WorkspaceSession => {
+                let new_ratio = (y as f32 / main_height as f32).clamp(0.20, 0.80);
+                state.ui.layout.workspace_ratio = new_ratio;
+            }
+            Divider::SessionsTodos => {
+                let workspace_height = (main_height as f32 * state.ui.layout.workspace_ratio) as u16;
+                let lower_left_height = main_height.saturating_sub(workspace_height);
+                let y_in_lower_left = y.saturating_sub(workspace_height);
+                let new_ratio =
+                    (y_in_lower_left as f32 / lower_left_height as f32).clamp(0.15, 0.70);
+                state.ui.layout.sessions_ratio = new_ratio;
+            }
+            Divider::TodosUtilities => {
+                let workspace_height = (main_height as f32 * state.ui.layout.workspace_ratio) as u16;
+                let lower_left_height = main_height.saturating_sub(workspace_height);
+                let sessions_height = (lower_left_height as f32 * state.ui.layout.sessions_ratio) as u16;
+                let remaining_height = lower_left_height.saturating_sub(sessions_height);
+                let y_in_remaining = y
+                    .saturating_sub(workspace_height)
+                    .saturating_sub(sessions_height);
+                let new_ratio = (y_in_remaining as f32 / remaining_height as f32).clamp(0.20, 0.80);
+                state.ui.layout.todos_ratio = new_ratio;
+            }
+            Divider::OutputPinned => {
+                let left_width = (w as f32 * state.ui.layout.left_panel_ratio) as u16;
+                let right_panel_width = w.saturating_sub(left_width);
+                let x_in_right = x.saturating_sub(left_width);
+                let new_ratio = (x_in_right as f32 / right_panel_width as f32).clamp(0.20, 0.80);
+                state.ui.layout.output_split_ratio = new_ratio;
+            }
+            Divider::PinnedPanes(pane_idx) => {
+                let count = state.pinned_count();
+                if count > 1 && pane_idx < count - 1 {
+                    let mut ratios = state.ui.layout.pinned_pane_ratios;
+                    let sum: f32 = ratios.iter().take(count).sum();
+
+                    if let Some((_, py, _, _)) = state.ui.pinned_pane_areas[0] {
+                        let pinned_total_height = state
+                            .ui
+                            .pinned_pane_areas
+                            .iter()
+                            .take(count)
+                            .filter_map(|a| a.map(|(_, _, _, h)| h))
+                            .sum::<u16>();
+
+                        let y_in_pinned = y.saturating_sub(py) as f32;
+                        let new_split = y_in_pinned / pinned_total_height as f32;
+
+                        let combined_ratio = ratios[pane_idx] + ratios[pane_idx + 1];
+                        let ratio_above: f32 = ratios.iter().take(pane_idx).sum();
+
+                        let new_upper_ratio =
+                            ((new_split - ratio_above / sum) * sum).clamp(0.1, combined_ratio - 0.1);
+                        ratios[pane_idx] = new_upper_ratio;
+                        ratios[pane_idx + 1] = combined_ratio - new_upper_ratio;
+
+                        state.ui.layout.pinned_pane_ratios = ratios;
+                    }
+                }
+            }
+        }
+        return;
+    }
+
+    // Store mouse position for tick-based smooth scrolling
+    state.ui.drag_mouse_pos = Some((x, y));
+
+    // Update selection end position for main output pane
+    if state.ui.text_selection.is_dragging {
+        if let Some((ax, ay, aw, ah)) = state.ui.output_pane_area {
+            if let Some((row, col)) = pane_text_position(
+                (ax, ay, aw, ah),
+                x,
+                y,
+                state.ui.output_content_length,
+                state.ui.output_scroll_offset,
+            ) {
+                state.ui.text_selection.end = Some((row, col));
+            }
+        }
+    }
+
+    // Update selection end position for pinned panes
+    for (idx, sel) in state.ui.pinned_text_selections.iter_mut().enumerate() {
+        if sel.is_dragging {
+            if let Some((ax, ay, aw, ah)) = state.ui.pinned_pane_areas[idx] {
+                if let Some((row, col)) = pane_text_position(
+                    (ax, ay, aw, ah),
+                    x,
+                    y,
+                    state.ui.pinned_content_lengths[idx],
+                    state.ui.pinned_scroll_offsets[idx],
+                ) {
+                    sel.end = Some((row, col));
+                }
+            }
+        }
+    }
+}
+
+/// Handle a mouse-up: finish a divider drag (persisting the new layout) or
+/// finalize the active text selection(s).
+fn handle_mouse_up(state: &mut AppState, x: u16, y: u16) {
+    if state.ui.layout.dragging_divider.is_some() {
+        state.ui.layout.dragging_divider = None;
+        state.ui.layout.drag_start_pos = None;
+        resize_ptys_to_panes(state);
+        let config = GlobalConfig {
+            banner_visible: state.ui.banner_visible,
+            left_panel_ratio: state.ui.layout.left_panel_ratio,
+            workspace_ratio: state.ui.layout.workspace_ratio,
+            sessions_ratio: state.ui.layout.sessions_ratio,
+            todos_ratio: state.ui.layout.todos_ratio,
+            output_split_ratio: state.ui.layout.output_split_ratio,
+            agent_done_sound_enabled: state.system.agent_done_sound_enabled,
+        };
+        save_config(state, &config, "failed to save pane layout config");
+        return;
+    }
+
+    if state.ui.text_selection.is_dragging {
+        if let Some(area) = state.ui.output_pane_area {
+            if let Some((row, col)) = pane_text_position(
+                area,
+                x,
+                y,
+                state.ui.output_content_length,
+                state.ui.output_scroll_offset,
+            ) {
+                state.ui.text_selection.end = Some((row, col));
+            }
+        }
+        state.ui.text_selection.is_dragging = false;
+        if state.ui.text_selection.start == state.ui.text_selection.end {
+            state.ui.text_selection = TextSelection::default();
+        }
+    }
+
+    for (idx, sel) in state.ui.pinned_text_selections.iter_mut().enumerate() {
+        if sel.is_dragging {
+            if let Some(area) = state.ui.pinned_pane_areas[idx] {
+                if let Some((row, col)) = pane_text_position(
+                    area,
+                    x,
+                    y,
+                    state.ui.pinned_content_lengths[idx],
+                    state.ui.pinned_scroll_offsets[idx],
+                ) {
+                    sel.end = Some((row, col));
+                }
+            }
+            sel.is_dragging = false;
+            if sel.start == sel.end {
+                *sel = TextSelection::default();
+            }
+        }
+    }
+
+    // Clear drag position tracking
+    state.ui.drag_mouse_pos = None;
 }
 
 /// Handle smooth auto-scrolling during text selection drag.

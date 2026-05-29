@@ -77,11 +77,11 @@ pub async fn run_tui(initial_workspace: Option<PathBuf>, use_alternate_screen: b
         Ok(config) => {
             state.ui.banner_visible = config.banner_visible;
             // Apply persisted pane ratios
-            state.ui.left_panel_ratio = config.left_panel_ratio;
-            state.ui.workspace_ratio = config.workspace_ratio;
-            state.ui.sessions_ratio = config.sessions_ratio;
-            state.ui.todos_ratio = config.todos_ratio;
-            state.ui.output_split_ratio = config.output_split_ratio;
+            state.ui.layout.left_panel_ratio = config.left_panel_ratio;
+            state.ui.layout.workspace_ratio = config.workspace_ratio;
+            state.ui.layout.sessions_ratio = config.sessions_ratio;
+            state.ui.layout.todos_ratio = config.todos_ratio;
+            state.ui.layout.output_split_ratio = config.output_split_ratio;
             state.system.agent_done_sound_enabled = config.agent_done_sound_enabled;
         }
         Err(_e) => {

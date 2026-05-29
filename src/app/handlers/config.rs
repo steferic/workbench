@@ -14,84 +14,84 @@ fn save_current_user_config(state: &mut AppState) {
 pub fn handle_config_action(state: &mut AppState, action: Action) {
     match action {
         Action::ConfigSwitchTab(tab) => {
-            state.ui.config_tab = tab;
-            state.ui.config_selected_row = 0;
-            state.ui.config_selected_col = 0;
-            state.ui.config_editing = false;
-            state.ui.config_rebinding = false;
-            state.ui.config_scroll_offset = 0;
+            state.ui.config.tab = tab;
+            state.ui.config.selected_row = 0;
+            state.ui.config.selected_col = 0;
+            state.ui.config.editing = false;
+            state.ui.config.rebinding = false;
+            state.ui.config.scroll_offset = 0;
         }
         Action::ConfigMoveDown => {
-            if state.ui.config_tab == ConfigTab::QuickRef {
-                state.ui.config_scroll_offset += 1;
+            if state.ui.config.tab == ConfigTab::QuickRef {
+                state.ui.config.scroll_offset += 1;
             } else {
                 let max = max_rows(state);
-                if max > 0 && state.ui.config_selected_row + 1 < max {
-                    state.ui.config_selected_row += 1;
+                if max > 0 && state.ui.config.selected_row + 1 < max {
+                    state.ui.config.selected_row += 1;
                 }
             }
         }
         Action::ConfigMoveUp => {
-            if state.ui.config_tab == ConfigTab::QuickRef {
-                if state.ui.config_scroll_offset > 0 {
-                    state.ui.config_scroll_offset -= 1;
+            if state.ui.config.tab == ConfigTab::QuickRef {
+                if state.ui.config.scroll_offset > 0 {
+                    state.ui.config.scroll_offset -= 1;
                 }
-            } else if state.ui.config_selected_row > 0 {
-                state.ui.config_selected_row -= 1;
+            } else if state.ui.config.selected_row > 0 {
+                state.ui.config.selected_row -= 1;
             }
         }
         Action::ConfigMoveRight => {
-            if state.ui.config_tab == ConfigTab::Agents && state.ui.config_selected_col < 3 {
-                state.ui.config_selected_col += 1;
+            if state.ui.config.tab == ConfigTab::Agents && state.ui.config.selected_col < 3 {
+                state.ui.config.selected_col += 1;
             }
         }
         Action::ConfigMoveLeft => {
-            if state.ui.config_selected_col > 0 {
-                state.ui.config_selected_col -= 1;
+            if state.ui.config.selected_col > 0 {
+                state.ui.config.selected_col -= 1;
             }
         }
         Action::ConfigStartEdit => {
-            match state.ui.config_tab {
+            match state.ui.config.tab {
                 ConfigTab::QuickRef => {}
                 ConfigTab::Agents => {
                     if let Some(agent) = state
                         .system
                         .user_config
                         .agents
-                        .get(state.ui.config_selected_row)
+                        .get(state.ui.config.selected_row)
                     {
-                        state.ui.config_edit_buffer = match state.ui.config_selected_col {
+                        state.ui.config.edit_buffer = match state.ui.config.selected_col {
                             0 => agent.hotkey.clone(),
                             1 => agent.display_name.clone(),
                             2 => agent.command.clone(),
                             3 => agent.badge.clone(),
                             _ => String::new(),
                         };
-                        state.ui.config_editing = true;
+                        state.ui.config.editing = true;
                     }
                 }
                 ConfigTab::Hotkeys => {
                     // Start listening for key rebind
-                    state.ui.config_rebinding = true;
+                    state.ui.config.rebinding = true;
                 }
                 ConfigTab::Scrollback => {
-                    state.ui.config_edit_buffer =
+                    state.ui.config.edit_buffer =
                         state.system.user_config.scrollback_mb.to_string();
-                    state.ui.config_editing = true;
+                    state.ui.config.editing = true;
                 }
             }
         }
         Action::ConfigFinishEdit => {
-            let buf = state.ui.config_edit_buffer.clone();
-            match state.ui.config_tab {
+            let buf = state.ui.config.edit_buffer.clone();
+            match state.ui.config.tab {
                 ConfigTab::Agents => {
                     if let Some(agent) = state
                         .system
                         .user_config
                         .agents
-                        .get_mut(state.ui.config_selected_row)
+                        .get_mut(state.ui.config.selected_row)
                     {
-                        match state.ui.config_selected_col {
+                        match state.ui.config.selected_col {
                             0 => agent.hotkey = buf,
                             1 => agent.display_name = buf,
                             2 => agent.command = buf,
@@ -112,23 +112,23 @@ pub fn handle_config_action(state: &mut AppState, action: Action) {
                 }
                 _ => {}
             }
-            state.ui.config_editing = false;
-            state.ui.config_edit_buffer.clear();
+            state.ui.config.editing = false;
+            state.ui.config.edit_buffer.clear();
             save_current_user_config(state);
         }
         Action::ConfigCancelEdit => {
-            state.ui.config_editing = false;
-            state.ui.config_rebinding = false;
-            state.ui.config_edit_buffer.clear();
+            state.ui.config.editing = false;
+            state.ui.config.rebinding = false;
+            state.ui.config.edit_buffer.clear();
         }
         Action::ConfigInputChar(c) => {
-            state.ui.config_edit_buffer.push(c);
+            state.ui.config.edit_buffer.push(c);
         }
         Action::ConfigInputBackspace => {
-            state.ui.config_edit_buffer.pop();
+            state.ui.config.edit_buffer.pop();
         }
         Action::ConfigAddAgent => {
-            if state.ui.config_tab == ConfigTab::Agents {
+            if state.ui.config.tab == ConfigTab::Agents {
                 let next_key = (state.system.user_config.agents.len() + 1).to_string();
                 state.system.user_config.agents.push(AgentConfig {
                     command: "agent".into(),
@@ -137,41 +137,41 @@ pub fn handle_config_action(state: &mut AppState, action: Action) {
                     hotkey: next_key,
                     enabled: true,
                 });
-                state.ui.config_selected_row = state.system.user_config.agents.len() - 1;
+                state.ui.config.selected_row = state.system.user_config.agents.len() - 1;
                 save_current_user_config(state);
             }
         }
         Action::ConfigDeleteAgent => {
-            if state.ui.config_tab == ConfigTab::Agents
+            if state.ui.config.tab == ConfigTab::Agents
                 && !state.system.user_config.agents.is_empty()
             {
                 let row = state
                     .ui
-                    .config_selected_row
+                    .config.selected_row
                     .min(state.system.user_config.agents.len() - 1);
                 state.system.user_config.agents.remove(row);
-                if state.ui.config_selected_row >= state.system.user_config.agents.len()
-                    && state.ui.config_selected_row > 0
+                if state.ui.config.selected_row >= state.system.user_config.agents.len()
+                    && state.ui.config.selected_row > 0
                 {
-                    state.ui.config_selected_row -= 1;
+                    state.ui.config.selected_row -= 1;
                 }
                 save_current_user_config(state);
             }
         }
         Action::ConfigReorderUp => {
-            if state.ui.config_tab == ConfigTab::Agents && state.ui.config_selected_row > 0 {
-                let row = state.ui.config_selected_row;
+            if state.ui.config.tab == ConfigTab::Agents && state.ui.config.selected_row > 0 {
+                let row = state.ui.config.selected_row;
                 state.system.user_config.agents.swap(row, row - 1);
-                state.ui.config_selected_row -= 1;
+                state.ui.config.selected_row -= 1;
                 save_current_user_config(state);
             }
         }
         Action::ConfigReorderDown => {
-            if state.ui.config_tab == ConfigTab::Agents {
-                let row = state.ui.config_selected_row;
+            if state.ui.config.tab == ConfigTab::Agents {
+                let row = state.ui.config.selected_row;
                 if row + 1 < state.system.user_config.agents.len() {
                     state.system.user_config.agents.swap(row, row + 1);
-                    state.ui.config_selected_row += 1;
+                    state.ui.config.selected_row += 1;
                     save_current_user_config(state);
                 }
             }
@@ -181,11 +181,11 @@ pub fn handle_config_action(state: &mut AppState, action: Action) {
         }
         Action::ConfigResetDefault => {
             let defaults = UserConfig::default();
-            match state.ui.config_tab {
+            match state.ui.config.tab {
                 ConfigTab::QuickRef => {}
                 ConfigTab::Agents => {
                     state.system.user_config.agents = defaults.agents;
-                    state.ui.config_selected_row = 0;
+                    state.ui.config.selected_row = 0;
                 }
                 ConfigTab::Hotkeys => {
                     state.system.user_config.global_hotkeys = defaults.global_hotkeys;
@@ -202,7 +202,7 @@ pub fn handle_config_action(state: &mut AppState, action: Action) {
 }
 
 fn max_rows(state: &AppState) -> usize {
-    match state.ui.config_tab {
+    match state.ui.config.tab {
         ConfigTab::QuickRef => 0,
         ConfigTab::Agents => state.system.user_config.agents.len(),
         ConfigTab::Hotkeys => state.system.user_config.global_hotkeys.len(),
@@ -220,7 +220,7 @@ fn handle_rebind(state: &mut AppState, key: KeyEvent) {
         &state.system.user_config.global_hotkeys,
     );
 
-    if let Some(action) = actions.get(state.ui.config_selected_row) {
+    if let Some(action) = actions.get(state.ui.config.selected_row) {
         for other_action in &actions {
             if other_action != action
                 && state
@@ -246,5 +246,5 @@ fn handle_rebind(state: &mut AppState, key: KeyEvent) {
         save_current_user_config(state);
     }
 
-    state.ui.config_rebinding = false;
+    state.ui.config.rebinding = false;
 }

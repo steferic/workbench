@@ -5,7 +5,9 @@ mod types;
 mod ui;
 
 pub use data::DataState;
-pub use system::{PendingSessionStart, RawOutputBuffer, ReplayCache, SystemState};
+pub use system::{
+    PendingSessionStart, RawOutputBuffer, ReplayCache, SystemState, TranscriptBuffer,
+};
 pub use types::*;
 pub use ui::{PinnedPaneState, UIState, WorkspaceUiState};
 
@@ -44,11 +46,11 @@ impl AppState {
 
         // Fallback to calculated value
         let (w, _) = self.system.terminal_size;
-        let right_panel_width = (w as f32 * (1.0 - self.ui.left_panel_ratio)) as u16;
+        let right_panel_width = (w as f32 * (1.0 - self.ui.layout.left_panel_ratio)) as u16;
 
         if self.should_show_split() {
             // Split between output and pinned - output gets the left portion
-            let output_width = (right_panel_width as f32 * self.ui.output_split_ratio) as u16;
+            let output_width = (right_panel_width as f32 * self.ui.layout.output_split_ratio) as u16;
             output_width.saturating_sub(2) // Account for borders
         } else {
             right_panel_width.saturating_sub(2)
@@ -58,11 +60,11 @@ impl AppState {
     /// Calculate the inner width for the pinned terminal pane
     pub fn pinned_pane_cols(&self) -> u16 {
         let (w, _) = self.system.terminal_size;
-        let right_panel_width = (w as f32 * (1.0 - self.ui.left_panel_ratio)) as u16;
+        let right_panel_width = (w as f32 * (1.0 - self.ui.layout.left_panel_ratio)) as u16;
 
         if self.should_show_split() {
             let pinned_width =
-                (right_panel_width as f32 * (1.0 - self.ui.output_split_ratio)) as u16;
+                (right_panel_width as f32 * (1.0 - self.ui.layout.output_split_ratio)) as u16;
             pinned_width.saturating_sub(2)
         } else {
             0
@@ -417,7 +419,7 @@ impl AppState {
 
     /// Check if we should show split view (has at least one pinned terminal and split is enabled)
     pub fn should_show_split(&self) -> bool {
-        self.ui.split_view_enabled && self.pinned_count() > 0
+        self.ui.layout.split_view_enabled && self.pinned_count() > 0
     }
 
     /// Calculate normalized ratios for the current number of pinned panes
@@ -430,6 +432,7 @@ impl AppState {
 
         let ratios: Vec<f32> = self
             .ui
+            .layout
             .pinned_pane_ratios
             .iter()
             .take(count)

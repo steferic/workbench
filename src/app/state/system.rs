@@ -202,6 +202,170 @@ pub struct ReplayCache {
     pub content_length: usize,
 }
 
+/// Append-style scrollback reconstructed from screen snapshots.
+///
+/// Codex redraws a fixed viewport with clear-screen/cursor-position escape
+/// sequences, so replaying its raw PTY bytes erases old content instead of
+/// producing scrollback. This buffer keeps a conservative text transcript by
+/// appending only the non-overlapping suffix of each visible screen snapshot.
+pub struct TranscriptBuffer {
+    lines: VecDeque<String>,
+    last_snapshot: Vec<String>,
+    max_lines: usize,
+    pub generation: u64,
+}
+
+impl TranscriptBuffer {
+    pub fn new(max_lines: usize) -> Self {
+        Self {
+            lines: VecDeque::new(),
+            last_snapshot: Vec::new(),
+            max_lines: max_lines.max(1),
+            generation: 0,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.lines.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.lines.is_empty()
+    }
+
+    pub fn line(&self, index: usize) -> Option<&str> {
+        self.lines.get(index).map(String::as_str)
+    }
+
+    pub fn extract_text(&self, start: (usize, usize), end: (usize, usize)) -> String {
+        if self.lines.is_empty() {
+            return String::new();
+        }
+
+        let (start_row, start_col, end_row, end_col) =
+            if start.0 < end.0 || (start.0 == end.0 && start.1 <= end.1) {
+                (start.0, start.1, end.0, end.1)
+            } else {
+                (end.0, end.1, start.0, start.1)
+            };
+
+        if start_row >= self.lines.len() {
+            return String::new();
+        }
+
+        let last_row = end_row.min(self.lines.len() - 1);
+        let mut result = String::new();
+
+        for row in start_row..=last_row {
+            let Some(line) = self.line(row) else {
+                continue;
+            };
+            let char_count = line.chars().count();
+            let row_start = if row == start_row {
+                start_col.min(char_count)
+            } else {
+                0
+            };
+            let row_end = if row == end_row {
+                end_col.min(char_count.saturating_sub(1))
+            } else {
+                char_count.saturating_sub(1)
+            };
+
+            if row_start < char_count && row_start <= row_end {
+                result.push_str(&line_slice(line, row_start, row_end + 1));
+            }
+
+            if row < last_row {
+                result.push('\n');
+            }
+        }
+
+        result
+    }
+
+    fn append_snapshot(&mut self, snapshot: Vec<String>) -> bool {
+        if snapshot.is_empty() {
+            self.last_snapshot = snapshot;
+            return false;
+        }
+        if snapshot == self.last_snapshot {
+            return false;
+        }
+
+        let overlap = longest_overlap(&self.lines, &snapshot);
+        let mut first_new = overlap;
+        let mut changed = false;
+
+        if first_new < snapshot.len() {
+            if let Some(last) = self.lines.back_mut() {
+                let candidate = &snapshot[first_new];
+                if !last.is_empty() && candidate.starts_with(last.as_str()) {
+                    if candidate.len() > last.len() {
+                        *last = candidate.clone();
+                        changed = true;
+                    }
+                    first_new += 1;
+                } else if !candidate.is_empty() && last.starts_with(candidate.as_str()) {
+                    first_new += 1;
+                }
+            }
+        }
+
+        for line in snapshot.iter().skip(first_new) {
+            self.lines.push_back(line.clone());
+            changed = true;
+        }
+
+        while self.lines.len() > self.max_lines {
+            self.lines.pop_front();
+        }
+
+        self.last_snapshot = snapshot;
+        if changed {
+            self.generation = self.generation.wrapping_add(1);
+        }
+        changed
+    }
+
+    fn snapshot_from_screen(screen: &vt100::Screen) -> Vec<String> {
+        let (_, cols) = screen.size();
+        let mut lines: Vec<String> = screen
+            .rows(0, cols)
+            .map(|line| line.trim_end().to_string())
+            .collect();
+
+        while lines.first().map(|line| line.is_empty()).unwrap_or(false) {
+            lines.remove(0);
+        }
+        while lines.last().map(|line| line.is_empty()).unwrap_or(false) {
+            lines.pop();
+        }
+
+        lines
+    }
+}
+
+fn line_slice(line: &str, start: usize, end: usize) -> String {
+    line.chars().skip(start).take(end - start).collect()
+}
+
+fn longest_overlap(lines: &VecDeque<String>, snapshot: &[String]) -> usize {
+    let max = lines.len().min(snapshot.len());
+    for len in (1..=max).rev() {
+        let start = lines.len() - len;
+        if lines
+            .iter()
+            .skip(start)
+            .zip(snapshot.iter())
+            .all(|(a, b)| a == b)
+        {
+            return len;
+        }
+    }
+    0
+}
+
 pub struct SystemState {
     /// PTY handles (not serializable)
     pub pty_handles: HashMap<Uuid, PtyHandle>,
@@ -233,6 +397,9 @@ pub struct SystemState {
     pub perf: PerformanceMetrics,
     /// Raw PTY output bytes for replay-based scrollback
     pub raw_output_buffers: HashMap<Uuid, RawOutputBuffer>,
+    /// Text transcript buffers for agents that redraw the screen instead of
+    /// emitting append-only terminal output.
+    pub transcript_buffers: HashMap<Uuid, TranscriptBuffer>,
     /// Cached replay lines (invalidated on new output or scroll change)
     pub replay_caches: HashMap<Uuid, ReplayCache>,
     /// Git diff stats keyed by working directory path
@@ -267,6 +434,7 @@ impl SystemState {
             pending_config_terminal: None,
             perf: PerformanceMetrics::new(),
             raw_output_buffers: HashMap::new(),
+            transcript_buffers: HashMap::new(),
             replay_caches: HashMap::new(),
             diff_stats: HashMap::new(),
             last_diff_refresh: Instant::now(),
@@ -289,18 +457,76 @@ impl SystemState {
             session_id,
             RawOutputBuffer::new(self.user_config.scrollback_buffer_kb * 1024),
         );
+        self.transcript_buffers.remove(&session_id);
     }
 
     /// Remove parser + raw output buffer + replay cache for a session
     pub fn remove_session_buffers(&mut self, session_id: &Uuid) {
         self.output_buffers.remove(session_id);
         self.raw_output_buffers.remove(session_id);
+        self.transcript_buffers.remove(session_id);
         self.replay_caches.remove(session_id);
+    }
+
+    pub fn update_transcript_from_screen(&mut self, session_id: Uuid) -> bool {
+        let Some(snapshot) = self
+            .output_buffers
+            .get(&session_id)
+            .map(|parser| TranscriptBuffer::snapshot_from_screen(parser.screen()))
+        else {
+            return false;
+        };
+
+        let max_lines = self.user_config.replay_parser_rows as usize;
+        self.transcript_buffers
+            .entry(session_id)
+            .or_insert_with(|| TranscriptBuffer::new(max_lines))
+            .append_snapshot(snapshot)
     }
 }
 
 impl Default for SystemState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TranscriptBuffer;
+
+    #[test]
+    fn transcript_appends_only_non_overlapping_snapshot_suffix() {
+        let mut transcript = TranscriptBuffer::new(10);
+
+        assert!(transcript.append_snapshot(vec!["one".into(), "two".into()]));
+        assert!(transcript.append_snapshot(vec!["one".into(), "two".into(), "three".into()]));
+
+        assert_eq!(transcript.len(), 3);
+        assert_eq!(transcript.line(0), Some("one"));
+        assert_eq!(transcript.line(1), Some("two"));
+        assert_eq!(transcript.line(2), Some("three"));
+    }
+
+    #[test]
+    fn transcript_handles_viewport_shift() {
+        let mut transcript = TranscriptBuffer::new(10);
+
+        transcript.append_snapshot(vec!["one".into(), "two".into(), "three".into()]);
+        transcript.append_snapshot(vec!["two".into(), "three".into(), "four".into()]);
+
+        assert_eq!(transcript.len(), 4);
+        assert_eq!(transcript.line(3), Some("four"));
+    }
+
+    #[test]
+    fn transcript_updates_streaming_tail_line() {
+        let mut transcript = TranscriptBuffer::new(10);
+
+        transcript.append_snapshot(vec!["answer: hel".into()]);
+        transcript.append_snapshot(vec!["answer: hello".into()]);
+
+        assert_eq!(transcript.len(), 1);
+        assert_eq!(transcript.line(0), Some("answer: hello"));
     }
 }

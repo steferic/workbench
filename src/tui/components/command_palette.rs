@@ -117,7 +117,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         .border_style(Style::default().fg(Color::Cyan))
         .style(Style::default().bg(Color::Black));
 
-    let input_text = format!("> {}_", state.ui.palette_query);
+    let input_text = format!("> {}_", state.ui.palette.query);
     let input_paragraph = Paragraph::new(Line::from(vec![Span::styled(
         input_text,
         Style::default().fg(Color::White),
@@ -127,13 +127,13 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     frame.render_widget(input_paragraph, chunks[0]);
 
     // Results list
-    let entries = filtered_entries(&state.ui.palette_query);
+    let entries = filtered_entries(&state.ui.palette.query);
 
     let items: Vec<ListItem> = entries
         .iter()
         .enumerate()
         .map(|(i, entry)| {
-            let is_selected = i == state.ui.palette_selected;
+            let is_selected = i == state.ui.palette.selected;
             let name_style = if is_selected {
                 Style::default()
                     .fg(Color::Cyan)
@@ -175,7 +175,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         list_state.select(Some(
             state
                 .ui
-                .palette_selected
+                .palette.selected
                 .min(entries.len().saturating_sub(1)),
         ));
     }

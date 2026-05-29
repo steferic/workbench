@@ -62,20 +62,20 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     };
 
     // Render current path and workspace name preview
-    let path_display = shorten_home_path(&state.ui.file_browser_path);
+    let path_display = shorten_home_path(&state.ui.file_browser.path);
 
     // Show the highlighted entry's name (what will actually be selected)
     let workspace_name = state
         .ui
-        .file_browser_entries
-        .get(state.ui.file_browser_selected)
+        .file_browser.entries
+        .get(state.ui.file_browser.selected)
         .and_then(|p| p.file_name())
         .and_then(|n| n.to_str())
         .unwrap_or_else(|| {
             // Fallback to current directory name if no entry highlighted
             state
                 .ui
-                .file_browser_path
+                .file_browser.path
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("unknown")
@@ -123,7 +123,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         let search_inner = search_block.inner(search_area);
         frame.render_widget(search_block, search_area);
 
-        let query = state.ui.file_browser_query.as_str();
+        let query = state.ui.file_browser.query.as_str();
         let placeholder = if query.is_empty() {
             "Type path or filter"
         } else {
@@ -151,12 +151,12 @@ pub fn render(frame: &mut Frame, state: &AppState) {
 
     // Render directory list
     let visible_height = list_area.height.saturating_sub(2) as usize;
-    let total_entries = state.ui.file_browser_entries.len();
+    let total_entries = state.ui.file_browser.entries.len();
 
     let max_width = list_area.width.saturating_sub(2) as usize;
-    let items: Vec<ListItem> = if state.ui.file_browser_entries.is_empty() {
+    let items: Vec<ListItem> = if state.ui.file_browser.entries.is_empty() {
         vec![ListItem::new(Line::from(Span::styled(
-            if state.ui.file_browser_query.is_empty() {
+            if state.ui.file_browser.query.is_empty() {
                 "  No directories found"
             } else {
                 "  No matches"
@@ -166,10 +166,10 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     } else {
         state
             .ui
-            .file_browser_entries
+            .file_browser.entries
             .iter()
             .enumerate()
-            .skip(state.ui.file_browser_scroll)
+            .skip(state.ui.file_browser.scroll)
             .take(visible_height)
             .map(|(i, path)| {
                 let name = path
@@ -178,7 +178,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
                     .unwrap_or("?")
                     .to_string();
 
-                let is_selected = i == state.ui.file_browser_selected;
+                let is_selected = i == state.ui.file_browser.selected;
 
                 // Check if it looks like a code repo (has .git, package.json, Cargo.toml, etc.)
                 let is_repo = path.join(".git").exists()
@@ -246,13 +246,13 @@ pub fn render(frame: &mut Frame, state: &AppState) {
 
     let list_title = if total_entries == 0 {
         " (empty) ".to_string()
-    } else if state.ui.file_browser_query.is_empty() {
+    } else if state.ui.file_browser.query.is_empty() {
         format!(" {} directories ", total_entries)
     } else {
         format!(
             " {} matches ({} total) ",
             total_entries,
-            state.ui.file_browser_all_entries.len()
+            state.ui.file_browser.all_entries.len()
         )
     };
 
@@ -264,9 +264,9 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     );
 
     let mut list_state = ListState::default();
-    if !state.ui.file_browser_entries.is_empty() {
+    if !state.ui.file_browser.entries.is_empty() {
         list_state.select(Some(
-            state.ui.file_browser_selected - state.ui.file_browser_scroll,
+            state.ui.file_browser.selected - state.ui.file_browser.scroll,
         ));
     }
 
