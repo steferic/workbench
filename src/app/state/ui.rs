@@ -187,9 +187,10 @@ pub struct UIState {
     // Selection & Areas
     pub text_selection: TextSelection,
     pub pinned_text_selections: [TextSelection; MAX_PINNED_TERMINALS],
-    /// Tracks whether the output pane was using the replay parser last frame.
-    /// Used to detect live→replay transitions and translate selection coordinates.
-    pub output_on_replay: bool,
+    /// NOTE: `output_on_replay` now lives per-workspace in `WorkspaceUiState`
+    /// (access via `AppState::output_on_replay` / `set_output_on_replay`). It
+    /// tracks whether the output pane used the replay parser last frame, to
+    /// detect live→replay transitions and translate selection coordinates.
     pub pinned_on_replay: [bool; MAX_PINNED_TERMINALS],
     pub drag_mouse_pos: Option<(u16, u16)>, // Track mouse position during text selection drag for smooth scrolling
     pub output_pane_area: Option<(u16, u16, u16, u16)>,
@@ -270,7 +271,6 @@ impl UIState {
             file_browser: FileBrowserState::default(),
             text_selection: TextSelection::default(),
             pinned_text_selections: [TextSelection::default(); MAX_PINNED_TERMINALS],
-            output_on_replay: false,
             pinned_on_replay: [false; MAX_PINNED_TERMINALS],
             drag_mouse_pos: None,
             output_pane_area: None,

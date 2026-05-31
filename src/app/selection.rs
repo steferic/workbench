@@ -180,7 +180,7 @@ pub fn copy_active_selection(state: &mut AppState) -> bool {
     if let (Some(start), Some(end)) = (state.ui.text_selection.start, state.ui.text_selection.end) {
         if start != end {
             if let Some(session_id) = state.ui.active_session_id {
-                let surface = if state.ui.output_on_replay {
+                let surface = if state.output_on_replay() {
                     if state.system.transcript_buffers.contains_key(&session_id) {
                         SelectionSurface::Transcript
                     } else {
@@ -268,7 +268,6 @@ fn snapshot_into_ws_ui(state: &mut AppState, prev_ws_id: Uuid) {
     let selected_session_idx = state.ui.selected_session_idx;
     let active_session_id = state.ui.active_session_id;
     let focused_pinned_pane = state.ui.focused_pinned_pane;
-    let output_on_replay = state.ui.output_on_replay;
     let output_content_length = state.ui.output_content_length;
     let text_selection = state.ui.text_selection;
     let drag_mouse_pos = state.ui.drag_mouse_pos;
@@ -280,7 +279,6 @@ fn snapshot_into_ws_ui(state: &mut AppState, prev_ws_id: Uuid) {
     entry.selected_session_idx = selected_session_idx;
     entry.active_session_id = active_session_id;
     entry.focused_pinned_pane = focused_pinned_pane;
-    entry.output_on_replay = output_on_replay;
     entry.output_content_length = output_content_length;
     entry.text_selection = text_selection;
     entry.drag_mouse_pos = drag_mouse_pos;
@@ -312,7 +310,6 @@ fn apply_ws_ui_to_live_state(state: &mut AppState) {
     state.ui.selected_session_idx = stored.selected_session_idx;
     state.ui.active_session_id = stored.active_session_id;
     state.ui.focused_pinned_pane = stored.focused_pinned_pane;
-    state.ui.output_on_replay = stored.output_on_replay;
     state.ui.output_content_length = stored.output_content_length;
     state.ui.text_selection = stored.text_selection;
     state.ui.drag_mouse_pos = stored.drag_mouse_pos;
@@ -428,6 +425,29 @@ mod tests {
         state.ui.selected_workspace_idx = 1;
         transition_workspace(&mut state, Some(id_a));
         assert_eq!(state.output_scroll_offset(), 9);
+    }
+
+    /// `output_on_replay` is also per-workspace; switching must preserve each
+    /// workspace's flag and not reset it on snapshot.
+    #[test]
+    fn output_on_replay_is_preserved_per_workspace_across_switches() {
+        let mut state = AppState::default();
+        let ws_a = Workspace::new("a".into(), PathBuf::from("/tmp/a"));
+        let ws_b = Workspace::new("b".into(), PathBuf::from("/tmp/b"));
+        let (id_a, id_b) = (ws_a.id, ws_b.id);
+        state.data.workspaces = vec![ws_a, ws_b];
+
+        state.ui.selected_workspace_idx = 0;
+        state.set_output_on_replay(true);
+        assert!(state.output_on_replay());
+
+        state.ui.selected_workspace_idx = 1;
+        transition_workspace(&mut state, Some(id_a));
+        assert!(!state.output_on_replay()); // B defaults to live
+
+        state.ui.selected_workspace_idx = 0;
+        transition_workspace(&mut state, Some(id_b));
+        assert!(state.output_on_replay()); // A's flag survived
     }
 
     #[test]

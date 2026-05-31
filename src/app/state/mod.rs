@@ -144,9 +144,15 @@ impl AppState {
             u.output_scroll_offset = value;
         }
     }
-    #[allow(dead_code)]
     pub fn output_on_replay(&self) -> bool {
         self.ws_ui().map(|u| u.output_on_replay).unwrap_or(false)
+    }
+    /// Set whether the output pane is showing the replay parser, for the
+    /// currently selected workspace. No-op when no workspace is selected.
+    pub fn set_output_on_replay(&mut self, value: bool) {
+        if let Some(u) = self.ws_ui_mut() {
+            u.output_on_replay = value;
+        }
     }
     #[allow(dead_code)]
     pub fn output_content_length(&self) -> usize {

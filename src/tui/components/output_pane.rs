@@ -116,6 +116,7 @@ fn render_session_output(
     let inner_area = block_for_inner.inner(area);
     let viewport_height = inner_area.height as usize;
     let scroll_from_bottom = state.output_scroll_offset() as usize;
+    let was_on_replay = state.output_on_replay();
 
     let Some(view) = build_terminal_view(
         &mut state.system,
@@ -124,7 +125,7 @@ fn render_session_output(
             viewport_height,
             scroll_from_bottom,
             prev_content_len: state.ui.output_content_length,
-            was_on_replay: state.ui.output_on_replay,
+            was_on_replay,
             selection: state.ui.text_selection,
             replay_policy: ReplayPolicy::NormalAndAlternate,
         },
@@ -133,7 +134,7 @@ fn render_session_output(
     };
 
     state.ui.output_content_length = view.content_len;
-    state.ui.output_on_replay = view.on_replay;
+    state.set_output_on_replay(view.on_replay);
     state.ui.text_selection = view.selection;
 
     // Show scroll indicator in title if scrolled
