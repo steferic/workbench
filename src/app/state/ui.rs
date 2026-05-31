@@ -171,7 +171,8 @@ pub struct UIState {
     pub active_session_id: Option<Uuid>,
 
     // Scroll state
-    pub output_scroll_offset: u16,
+    // NOTE: `output_scroll_offset` now lives per-workspace in `WorkspaceUiState`
+    // (access via `AppState::output_scroll_offset` / `set_output_scroll_offset`).
     pub pinned_scroll_offsets: [u16; MAX_PINNED_TERMINALS],
     pub focused_pinned_pane: usize,
 
@@ -261,7 +262,6 @@ impl UIState {
             selected_workspace_idx: 0,
             selected_session_idx: 0,
             active_session_id: None,
-            output_scroll_offset: 0,
             pinned_scroll_offsets: [0; MAX_PINNED_TERMINALS],
             focused_pinned_pane: 0,
             input_buffer: String::new(),

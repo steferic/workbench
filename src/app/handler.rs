@@ -289,7 +289,7 @@ pub fn process_action(
 
                             // Activate the session so it shows in the center pane
                             state.ui.active_session_id = Some(session_id);
-                            state.ui.output_scroll_offset = 0;
+                            state.set_output_scroll_offset(0);
                             state.ui.focus = crate::app::FocusPanel::OutputPane;
 
                             // Run ls after a short delay to show directory contents

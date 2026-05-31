@@ -81,7 +81,7 @@ fn handle_mouse_scroll(
     if let Some(area) = state.ui.output_pane_area {
         if is_in_area(x, y, area) {
             state.ui.focus = FocusPanel::OutputPane;
-            state.ui.output_scroll_offset = scroll(state.ui.output_scroll_offset);
+            state.set_output_scroll_offset(scroll(state.output_scroll_offset()));
         }
     }
 }
@@ -186,7 +186,7 @@ pub fn handle_navigation_action(
                     *offset = offset.saturating_add(3);
                 }
             } else {
-                state.ui.output_scroll_offset = state.ui.output_scroll_offset.saturating_add(3);
+                state.set_output_scroll_offset(state.output_scroll_offset().saturating_add(3));
             }
         }
         Action::ScrollOutputDown => {
@@ -195,7 +195,7 @@ pub fn handle_navigation_action(
                     *offset = offset.saturating_sub(3);
                 }
             } else {
-                state.ui.output_scroll_offset = state.ui.output_scroll_offset.saturating_sub(3);
+                state.set_output_scroll_offset(state.output_scroll_offset().saturating_sub(3));
             }
         }
         Action::MouseScrollUp(x, y) => handle_mouse_scroll(state, x, y, true, pty_manager, pty_tx),
@@ -423,7 +423,7 @@ fn cycle_session(state: &mut AppState, forward: bool) {
         }
         state.ui.selected_session_idx = target_idx;
         state.ui.active_session_id = Some(session_id);
-        state.ui.output_scroll_offset = 0;
+        state.set_output_scroll_offset(0);
         state.ui.focus = FocusPanel::OutputPane;
     }
 }
@@ -598,7 +598,7 @@ fn handle_mouse_click(
                     x,
                     y,
                     state.ui.output_content_length,
-                    state.ui.output_scroll_offset,
+                    state.output_scroll_offset(),
                 ) {
                     state.ui.text_selection = TextSelection {
                         start: Some((row, col)),
@@ -698,7 +698,7 @@ fn handle_mouse_drag(state: &mut AppState, x: u16, y: u16) {
                 x,
                 y,
                 state.ui.output_content_length,
-                state.ui.output_scroll_offset,
+                state.output_scroll_offset(),
             ) {
                 state.ui.text_selection.end = Some((row, col));
             }
@@ -750,7 +750,7 @@ fn handle_mouse_up(state: &mut AppState, x: u16, y: u16) {
                 x,
                 y,
                 state.ui.output_content_length,
-                state.ui.output_scroll_offset,
+                state.output_scroll_offset(),
             ) {
                 state.ui.text_selection.end = Some((row, col));
             }
@@ -844,24 +844,24 @@ pub fn handle_drag_auto_scroll(state: &mut AppState) {
             let (scroll_up, scroll_down, speed) = calc_scroll(mouse_y, pane_top, pane_bottom);
 
             if scroll_up {
-                state.ui.output_scroll_offset = state.ui.output_scroll_offset.saturating_add(speed);
+                state.set_output_scroll_offset(state.output_scroll_offset().saturating_add(speed));
                 if let Some((row, col)) = pane_text_position(
                     (ax, ay, aw, ah),
                     mouse_x,
                     mouse_y,
                     state.ui.output_content_length,
-                    state.ui.output_scroll_offset,
+                    state.output_scroll_offset(),
                 ) {
                     state.ui.text_selection.end = Some((row, col));
                 }
             } else if scroll_down {
-                state.ui.output_scroll_offset = state.ui.output_scroll_offset.saturating_sub(speed);
+                state.set_output_scroll_offset(state.output_scroll_offset().saturating_sub(speed));
                 if let Some((row, col)) = pane_text_position(
                     (ax, ay, aw, ah),
                     mouse_x,
                     mouse_y,
                     state.ui.output_content_length,
-                    state.ui.output_scroll_offset,
+                    state.output_scroll_offset(),
                 ) {
                     state.ui.text_selection.end = Some((row, col));
                 }

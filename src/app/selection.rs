@@ -263,19 +263,28 @@ fn snapshot_into_ws_ui(state: &mut AppState, prev_ws_id: Uuid) {
         })
         .collect();
 
-    let snapshot = WorkspaceUiState {
-        selected_session_idx: state.ui.selected_session_idx,
-        active_session_id: state.ui.active_session_id,
-        focused_pinned_pane: state.ui.focused_pinned_pane,
-        output_scroll_offset: state.ui.output_scroll_offset,
-        output_on_replay: state.ui.output_on_replay,
-        output_content_length: state.ui.output_content_length,
-        text_selection: state.ui.text_selection,
-        drag_mouse_pos: state.ui.drag_mouse_pos,
-        pinned_panes,
-    };
+    // Read the remaining live fields into locals before taking a mutable
+    // borrow of the ws_ui entry.
+    let selected_session_idx = state.ui.selected_session_idx;
+    let active_session_id = state.ui.active_session_id;
+    let focused_pinned_pane = state.ui.focused_pinned_pane;
+    let output_on_replay = state.ui.output_on_replay;
+    let output_content_length = state.ui.output_content_length;
+    let text_selection = state.ui.text_selection;
+    let drag_mouse_pos = state.ui.drag_mouse_pos;
 
-    state.ws_ui.insert(prev_ws_id, snapshot);
+    // Update in place rather than rebuilding: fields already migrated to live
+    // directly in `ws_ui` (e.g. `output_scroll_offset`) must be preserved, not
+    // reset to defaults by a wholesale overwrite.
+    let entry = state.ws_ui.entry(prev_ws_id).or_default();
+    entry.selected_session_idx = selected_session_idx;
+    entry.active_session_id = active_session_id;
+    entry.focused_pinned_pane = focused_pinned_pane;
+    entry.output_on_replay = output_on_replay;
+    entry.output_content_length = output_content_length;
+    entry.text_selection = text_selection;
+    entry.drag_mouse_pos = drag_mouse_pos;
+    entry.pinned_panes = pinned_panes;
 }
 
 /// Apply the stored `WorkspaceUiState` for the currently selected workspace
@@ -303,7 +312,6 @@ fn apply_ws_ui_to_live_state(state: &mut AppState) {
     state.ui.selected_session_idx = stored.selected_session_idx;
     state.ui.active_session_id = stored.active_session_id;
     state.ui.focused_pinned_pane = stored.focused_pinned_pane;
-    state.ui.output_scroll_offset = stored.output_scroll_offset;
     state.ui.output_on_replay = stored.output_on_replay;
     state.ui.output_content_length = stored.output_content_length;
     state.ui.text_selection = stored.text_selection;
@@ -384,8 +392,43 @@ pub fn copy_to_clipboard(text: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_for_surface, pane_text_position, SelectionSurface};
-    use crate::app::RawOutputBuffer;
+    use super::{extract_for_surface, pane_text_position, transition_workspace, SelectionSurface};
+    use crate::app::{AppState, RawOutputBuffer};
+    use crate::models::Workspace;
+    use std::path::PathBuf;
+
+    /// `output_scroll_offset` lives per-workspace in `ws_ui`. Switching
+    /// workspaces must preserve each workspace's own scroll position — and
+    /// crucially the snapshot on the way out must not reset it to the default.
+    #[test]
+    fn output_scroll_offset_is_preserved_per_workspace_across_switches() {
+        let mut state = AppState::default();
+        let ws_a = Workspace::new("a".into(), PathBuf::from("/tmp/a"));
+        let ws_b = Workspace::new("b".into(), PathBuf::from("/tmp/b"));
+        let (id_a, id_b) = (ws_a.id, ws_b.id);
+        state.data.workspaces = vec![ws_a, ws_b];
+
+        // Workspace A: scroll to 5.
+        state.ui.selected_workspace_idx = 0;
+        state.set_output_scroll_offset(5);
+        assert_eq!(state.output_scroll_offset(), 5);
+
+        // Switch to B — independent, starts at 0.
+        state.ui.selected_workspace_idx = 1;
+        transition_workspace(&mut state, Some(id_a));
+        assert_eq!(state.output_scroll_offset(), 0);
+        state.set_output_scroll_offset(9);
+
+        // Back to A — its 5 survived the round trip.
+        state.ui.selected_workspace_idx = 0;
+        transition_workspace(&mut state, Some(id_b));
+        assert_eq!(state.output_scroll_offset(), 5);
+
+        // And B still remembers 9.
+        state.ui.selected_workspace_idx = 1;
+        transition_workspace(&mut state, Some(id_a));
+        assert_eq!(state.output_scroll_offset(), 9);
+    }
 
     #[test]
     fn pane_text_position_rejects_border_and_empty_content() {

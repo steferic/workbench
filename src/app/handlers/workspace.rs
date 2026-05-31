@@ -126,7 +126,7 @@ pub fn handle_workspace_action(
                         {
                             if let Some(last_id) = ws.last_active_session_id {
                                 state.ui.active_session_id = Some(last_id);
-                                state.ui.output_scroll_offset = 0;
+                                state.set_output_scroll_offset(0);
                                 if let Some(sessions) = state.data.sessions.get(&workspace_id) {
                                     if let Some((idx, _)) =
                                         sessions.iter().enumerate().find(|(_, s)| s.id == last_id)

@@ -88,7 +88,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
     let viewport_height = inner_area.height as usize;
 
     let max_scroll = content_length.saturating_sub(viewport_height);
-    let scroll_offset = (state.ui.output_scroll_offset as usize).min(max_scroll);
+    let scroll_offset = (state.output_scroll_offset() as usize).min(max_scroll);
 
     let paragraph = Paragraph::new(lines)
         .block(block)
@@ -115,13 +115,14 @@ fn render_session_output(
     let block_for_inner = Block::default().borders(Borders::ALL);
     let inner_area = block_for_inner.inner(area);
     let viewport_height = inner_area.height as usize;
+    let scroll_from_bottom = state.output_scroll_offset() as usize;
 
     let Some(view) = build_terminal_view(
         &mut state.system,
         TerminalViewRequest {
             session_id,
             viewport_height,
-            scroll_from_bottom: state.ui.output_scroll_offset as usize,
+            scroll_from_bottom,
             prev_content_len: state.ui.output_content_length,
             was_on_replay: state.ui.output_on_replay,
             selection: state.ui.text_selection,
@@ -164,7 +165,7 @@ fn render_session_output(
 
     if view.scrollbar_content_len > viewport_height {
         let scrollbar_max = view.scrollbar_content_len.saturating_sub(viewport_height);
-        let scrollbar_sfb = (state.ui.output_scroll_offset as usize).min(scrollbar_max);
+        let scrollbar_sfb = (state.output_scroll_offset() as usize).min(scrollbar_max);
         let scrollbar_pos = scrollbar_max.saturating_sub(scrollbar_sfb);
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight);
         let mut scrollbar_state = ScrollbarState::new(scrollbar_max).position(scrollbar_pos);

@@ -206,7 +206,7 @@ fn restore_workspace_session(state: &mut AppState) {
         // Workspace has no session list at all.
         state.ui.selected_session_idx = 0;
         state.ui.active_session_id = None;
-        state.ui.output_scroll_offset = 0;
+        state.set_output_scroll_offset(0);
         return;
     };
 
@@ -229,13 +229,13 @@ fn restore_workspace_session(state: &mut AppState) {
         Some((idx, session)) => {
             state.ui.selected_session_idx = idx;
             state.ui.active_session_id = Some(session.id);
-            state.ui.output_scroll_offset = 0;
+            state.set_output_scroll_offset(0);
             state.ui.text_selection = TextSelection::default();
         }
         None => {
             state.ui.selected_session_idx = 0;
             state.ui.active_session_id = None;
-            state.ui.output_scroll_offset = 0;
+            state.set_output_scroll_offset(0);
             state.ui.text_selection = TextSelection::default();
         }
     }

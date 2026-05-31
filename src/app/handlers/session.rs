@@ -65,7 +65,7 @@ pub fn handle_session_action(
                 crate::app::selection::clear_active_text_selection(state);
             }
             state.ui.active_session_id = Some(session_id);
-            state.ui.output_scroll_offset = 0;
+            state.set_output_scroll_offset(0);
             state.ui.output_content_length = 0;
 
             // Save as last active session for the workspace

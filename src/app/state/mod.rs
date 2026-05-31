@@ -134,10 +134,15 @@ impl AppState {
     // ------------------------------------------------------------------
 
     // Each falls back to `0`/`None`/`false` when no workspace is selected.
-    // Reserved for the deeper refactor; currently unused.
-    #[allow(dead_code)]
     pub fn output_scroll_offset(&self) -> u16 {
         self.ws_ui().map(|u| u.output_scroll_offset).unwrap_or(0)
+    }
+    /// Set the output scroll offset for the currently selected workspace.
+    /// No-op when no workspace is selected.
+    pub fn set_output_scroll_offset(&mut self, value: u16) {
+        if let Some(u) = self.ws_ui_mut() {
+            u.output_scroll_offset = value;
+        }
     }
     #[allow(dead_code)]
     pub fn output_on_replay(&self) -> bool {
