@@ -35,7 +35,7 @@ fn spawn_single_session(
 
     state
         .system
-        .create_session_buffers(request.session_id, cols);
+        .create_session_buffers(request.session_id, pty_rows, cols, &request.agent_type);
 
     match pty_manager.spawn_session(SessionSpawnConfig {
         session_id: request.session_id,

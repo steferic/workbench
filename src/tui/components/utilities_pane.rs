@@ -1,18 +1,19 @@
 use crate::app::{AppState, FocusPanel, UtilityItem, UtilitySection};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
     Frame,
 };
 
 pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
+    let t = crate::theme::current();
     let is_focused = state.ui.focus == FocusPanel::UtilitiesPane;
     let border_style = if is_focused {
-        Style::default().fg(Color::Cyan)
+        Style::default().fg(t.border_focused)
     } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(t.border)
     };
 
     // Create outer block
@@ -46,23 +47,23 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
     let tab_style = |active: bool| {
         if active && is_focused {
             Style::default()
-                .fg(Color::Black)
-                .bg(Color::Cyan)
+                .fg(t.on_accent)
+                .bg(t.accent)
                 .add_modifier(Modifier::BOLD)
         } else if active {
-            Style::default().fg(Color::Black).bg(Color::White)
+            Style::default().fg(t.on_accent).bg(t.fg)
         } else {
-            Style::default().fg(Color::DarkGray)
+            Style::default().fg(t.fg_faint)
         }
     };
 
     let tabs = Paragraph::new(Line::from(vec![
         Span::styled(" Util ", tab_style(utils_active)),
-        Span::styled("|", Style::default().fg(Color::DarkGray)),
+        Span::styled("|", Style::default().fg(t.fg_faint)),
         Span::styled(" Sounds ", tab_style(sounds_active)),
-        Span::styled("|", Style::default().fg(Color::DarkGray)),
+        Span::styled("|", Style::default().fg(t.fg_faint)),
         Span::styled(" Cfg ", tab_style(config_active)),
-        Span::styled("|", Style::default().fg(Color::DarkGray)),
+        Span::styled("|", Style::default().fg(t.fg_faint)),
         Span::styled(" Notes ", tab_style(notepad_active)),
     ]));
     frame.render_widget(tabs, tabs_area);
@@ -85,14 +86,14 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
 
     // Render action bar (1 row, compact)
     let action_style = if is_focused {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(t.fg_faint)
     } else {
-        Style::default().fg(Color::Rgb(60, 60, 60))
+        Style::default().fg(t.inactive)
     };
     let key_style = if is_focused {
-        Style::default().fg(Color::Cyan)
+        Style::default().fg(t.accent)
     } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(t.fg_faint)
     };
 
     let action_bar = Paragraph::new(Line::from(vec![
@@ -104,6 +105,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
 }
 
 fn render_utilities_list(frame: &mut Frame, area: Rect, state: &AppState, is_focused: bool) {
+    let t = crate::theme::current();
     let tools = UtilityItem::tools();
 
     let items: Vec<ListItem> = tools
@@ -113,12 +115,12 @@ fn render_utilities_list(frame: &mut Frame, area: Rect, state: &AppState, is_foc
 
             let style = if is_selected && is_focused {
                 Style::default()
-                    .fg(Color::Cyan)
+                    .fg(t.accent)
                     .add_modifier(Modifier::BOLD)
             } else if is_selected {
-                Style::default().fg(Color::White)
+                Style::default().fg(t.fg)
             } else {
-                Style::default().fg(Color::Gray)
+                Style::default().fg(t.fg_dim)
             };
 
             let prefix = if is_selected { "> " } else { "  " };
@@ -127,18 +129,22 @@ fn render_utilities_list(frame: &mut Frame, area: Rect, state: &AppState, is_foc
             let toggle_indicator = match item {
                 UtilityItem::ToggleBanner => {
                     if state.ui.banner_visible {
-                        Span::styled(" [ON]", Style::default().fg(Color::Green))
+                        Span::styled(" [ON]", Style::default().fg(t.success))
                     } else {
-                        Span::styled(" [OFF]", Style::default().fg(Color::Red))
+                        Span::styled(" [OFF]", Style::default().fg(t.error))
                     }
                 }
                 UtilityItem::AgentDoneSound => {
                     if state.system.agent_done_sound_enabled {
-                        Span::styled(" [ON]", Style::default().fg(Color::Green))
+                        Span::styled(" [ON]", Style::default().fg(t.success))
                     } else {
-                        Span::styled(" [OFF]", Style::default().fg(Color::Red))
+                        Span::styled(" [OFF]", Style::default().fg(t.error))
                     }
                 }
+                UtilityItem::ToggleTheme => Span::styled(
+                    format!(" [{}]", state.ui.theme_mode.label()),
+                    Style::default().fg(t.accent),
+                ),
                 _ => Span::raw(""),
             };
 
@@ -154,7 +160,7 @@ fn render_utilities_list(frame: &mut Frame, area: Rect, state: &AppState, is_foc
     // Highlight style with full row background when focused
     let highlight_style = if is_focused {
         Style::default()
-            .bg(Color::Rgb(40, 50, 60))
+            .bg(t.selection_bg)
             .add_modifier(Modifier::BOLD)
     } else {
         Style::default()
@@ -170,6 +176,7 @@ fn render_utilities_list(frame: &mut Frame, area: Rect, state: &AppState, is_foc
 }
 
 fn render_sounds_list(frame: &mut Frame, area: Rect, state: &AppState, is_focused: bool) {
+    let t = crate::theme::current();
     let sounds = UtilityItem::sounds();
 
     let items: Vec<ListItem> = sounds
@@ -179,12 +186,12 @@ fn render_sounds_list(frame: &mut Frame, area: Rect, state: &AppState, is_focuse
 
             let style = if is_selected && is_focused {
                 Style::default()
-                    .fg(Color::Cyan)
+                    .fg(t.accent)
                     .add_modifier(Modifier::BOLD)
             } else if is_selected {
-                Style::default().fg(Color::White)
+                Style::default().fg(t.fg)
             } else {
-                Style::default().fg(Color::Gray)
+                Style::default().fg(t.fg_dim)
             };
 
             let prefix = if is_selected { "> " } else { "  " };
@@ -193,37 +200,37 @@ fn render_sounds_list(frame: &mut Frame, area: Rect, state: &AppState, is_focuse
             let toggle_indicator = match item {
                 UtilityItem::BrownNoise => {
                     if state.system.brown_noise_playing {
-                        Span::styled(" [ON]", Style::default().fg(Color::Green))
+                        Span::styled(" [ON]", Style::default().fg(t.success))
                     } else {
-                        Span::styled(" [OFF]", Style::default().fg(Color::Red))
+                        Span::styled(" [OFF]", Style::default().fg(t.error))
                     }
                 }
                 UtilityItem::ClassicalRadio => {
                     if state.system.classical_radio_playing {
-                        Span::styled(" [ON]", Style::default().fg(Color::Green))
+                        Span::styled(" [ON]", Style::default().fg(t.success))
                     } else {
-                        Span::styled(" [OFF]", Style::default().fg(Color::Red))
+                        Span::styled(" [OFF]", Style::default().fg(t.error))
                     }
                 }
                 UtilityItem::OceanWaves => {
                     if state.system.ocean_waves_playing {
-                        Span::styled(" [ON]", Style::default().fg(Color::Green))
+                        Span::styled(" [ON]", Style::default().fg(t.success))
                     } else {
-                        Span::styled(" [OFF]", Style::default().fg(Color::Red))
+                        Span::styled(" [OFF]", Style::default().fg(t.error))
                     }
                 }
                 UtilityItem::WindChimes => {
                     if state.system.wind_chimes_playing {
-                        Span::styled(" [ON]", Style::default().fg(Color::Green))
+                        Span::styled(" [ON]", Style::default().fg(t.success))
                     } else {
-                        Span::styled(" [OFF]", Style::default().fg(Color::Red))
+                        Span::styled(" [OFF]", Style::default().fg(t.error))
                     }
                 }
                 UtilityItem::RainforestRain => {
                     if state.system.rainforest_rain_playing {
-                        Span::styled(" [ON]", Style::default().fg(Color::Green))
+                        Span::styled(" [ON]", Style::default().fg(t.success))
                     } else {
-                        Span::styled(" [OFF]", Style::default().fg(Color::Red))
+                        Span::styled(" [OFF]", Style::default().fg(t.error))
                     }
                 }
                 _ => Span::raw(""),
@@ -241,7 +248,7 @@ fn render_sounds_list(frame: &mut Frame, area: Rect, state: &AppState, is_focuse
     // Highlight style with full row background when focused
     let highlight_style = if is_focused {
         Style::default()
-            .bg(Color::Rgb(40, 50, 60))
+            .bg(t.selection_bg)
             .add_modifier(Modifier::BOLD)
     } else {
         Style::default()
@@ -257,10 +264,11 @@ fn render_sounds_list(frame: &mut Frame, area: Rect, state: &AppState, is_focuse
 }
 
 fn render_config_list(frame: &mut Frame, area: Rect, state: &AppState, is_focused: bool) {
+    let t = crate::theme::current();
     // Render simple config directory list
     if state.ui.config_tree_nodes.is_empty() {
         let placeholder = Paragraph::new("No config directories found")
-            .style(Style::default().fg(Color::DarkGray));
+            .style(Style::default().fg(t.fg_faint));
         frame.render_widget(placeholder, area);
         return;
     }
@@ -275,12 +283,12 @@ fn render_config_list(frame: &mut Frame, area: Rect, state: &AppState, is_focuse
 
             let style = if is_selected && is_focused {
                 Style::default()
-                    .fg(Color::Cyan)
+                    .fg(t.accent)
                     .add_modifier(Modifier::BOLD)
             } else if is_selected {
-                Style::default().fg(Color::White)
+                Style::default().fg(t.fg)
             } else {
-                Style::default().fg(Color::Gray)
+                Style::default().fg(t.fg_dim)
             };
 
             let prefix = if is_selected { "> " } else { "  " };
@@ -290,7 +298,7 @@ fn render_config_list(frame: &mut Frame, area: Rect, state: &AppState, is_focuse
             // Show hint to open terminal
             let hint = Span::styled(
                 " [Enter: open terminal]",
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(t.fg_faint),
             );
 
             ListItem::new(Line::from(vec![
@@ -305,7 +313,7 @@ fn render_config_list(frame: &mut Frame, area: Rect, state: &AppState, is_focuse
     // Highlight style with full row background when focused
     let highlight_style = if is_focused {
         Style::default()
-            .bg(Color::Rgb(40, 50, 60))
+            .bg(t.selection_bg)
             .add_modifier(Modifier::BOLD)
     } else {
         Style::default()
@@ -320,26 +328,27 @@ fn render_config_list(frame: &mut Frame, area: Rect, state: &AppState, is_focuse
 }
 
 fn render_notepad(frame: &mut Frame, area: Rect, state: &mut AppState, is_focused: bool) {
+    let t = crate::theme::current();
     // Get or create the TextArea for current workspace
     if let Some(textarea) = state.current_notepad() {
         // Style the textarea based on focus
         let cursor_style = if is_focused {
-            Style::default().fg(Color::Black).bg(Color::Cyan)
+            Style::default().fg(t.on_accent).bg(t.accent)
         } else {
-            Style::default().fg(Color::DarkGray).bg(Color::DarkGray)
+            Style::default().fg(t.fg_faint).bg(t.fg_faint)
         };
 
         let cursor_line_style = if is_focused {
-            Style::default().bg(Color::Rgb(30, 30, 40))
+            Style::default().bg(t.selection_bg)
         } else {
             Style::default()
         };
 
         // Line number style - dimmer when not focused
         let line_number_style = if is_focused {
-            Style::default().fg(Color::DarkGray)
+            Style::default().fg(t.fg_faint)
         } else {
-            Style::default().fg(Color::Rgb(60, 60, 60))
+            Style::default().fg(t.inactive)
         };
 
         textarea.set_cursor_style(cursor_style);
@@ -351,7 +360,7 @@ fn render_notepad(frame: &mut Frame, area: Rect, state: &mut AppState, is_focuse
     } else {
         // No workspace selected - show placeholder
         let placeholder = Paragraph::new("Select a workspace to use notepad")
-            .style(Style::default().fg(Color::DarkGray));
+            .style(Style::default().fg(t.fg_faint));
         frame.render_widget(placeholder, area);
     }
 }

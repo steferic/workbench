@@ -3,7 +3,7 @@ use crate::app::{AppState, FocusPanel, InputMode};
 use crate::tui::utils::render_cursor;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     symbols,
     text::{Line, Span},
     widgets::{
@@ -17,12 +17,13 @@ use time::{Date, Month, OffsetDateTime};
 use uuid::Uuid;
 
 pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
+    let t = crate::theme::current();
     let is_focused = state.ui.focus == FocusPanel::OutputPane;
 
     let border_style = if is_focused {
-        Style::default().fg(Color::Cyan)
+        Style::default().fg(t.border_focused)
     } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(t.border)
     };
 
     let title = if let Some(session) = state.active_session() {
@@ -76,7 +77,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
             .ui
             .utility_content
             .iter()
-            .map(|line| Line::from(Span::styled(line.clone(), Style::default().fg(Color::Gray))))
+            .map(|line| Line::from(Span::styled(line.clone(), Style::default().fg(t.fg_dim))))
             .collect()
     } else {
         render_hints(state)
@@ -175,7 +176,7 @@ fn render_session_output(
 
     if is_focused && state.ui.input_mode == InputMode::Normal && view.scroll_from_bottom == 0 {
         let needs_terminal_cursor = session
-            .map(|s| s.agent_type.is_terminal() || s.agent_type.is_codex_like())
+            .map(|s| s.agent_type.is_terminal() || s.agent_type.is_redraw_style())
             .unwrap_or(false);
 
         if needs_terminal_cursor {
@@ -186,23 +187,24 @@ fn render_session_output(
 
 /// Render hint text when no session is active
 fn render_hints(state: &AppState) -> Vec<Line<'static>> {
+    let t = crate::theme::current();
     if state.data.workspaces.is_empty() {
         vec![
             Line::from(""),
             Line::from(Span::styled(
                 "  Welcome to Workbench!",
                 Style::default()
-                    .fg(Color::Cyan)
+                    .fg(t.accent)
                     .add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
             Line::from(Span::styled(
                 "  Press 'n' to create a new workspace",
-                Style::default().fg(Color::Gray),
+                Style::default().fg(t.fg_dim),
             )),
             Line::from(Span::styled(
                 "  Press '?' for help",
-                Style::default().fg(Color::Gray),
+                Style::default().fg(t.fg_dim),
             )),
         ]
     } else if state.sessions_for_selected_workspace().is_empty() {
@@ -210,16 +212,16 @@ fn render_hints(state: &AppState) -> Vec<Line<'static>> {
             Line::from(""),
             Line::from(Span::styled(
                 "  No sessions in this workspace",
-                Style::default().fg(Color::Gray),
+                Style::default().fg(t.fg_dim),
             )),
             Line::from(""),
             Line::from(Span::styled(
                 "  Press 1-4 to start a new session:",
-                Style::default().fg(Color::Gray),
+                Style::default().fg(t.fg_dim),
             )),
             Line::from(Span::styled(
                 "    1 = Claude, 2 = Gemini, 3 = Codex, 4 = Grok",
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(t.fg_faint),
             )),
         ]
     } else {
@@ -227,7 +229,7 @@ fn render_hints(state: &AppState) -> Vec<Line<'static>> {
             Line::from(""),
             Line::from(Span::styled(
                 "  Select a session and press Enter to view output",
-                Style::default().fg(Color::Gray),
+                Style::default().fg(t.fg_dim),
             )),
         ]
     }
@@ -235,6 +237,7 @@ fn render_hints(state: &AppState) -> Vec<Line<'static>> {
 
 /// Render a bar chart view with chart on top and legend below
 fn render_pie_chart_view(frame: &mut Frame, area: Rect, state: &AppState, block: Block) {
+    let t = crate::theme::current();
     let inner_area = block.inner(area);
     frame.render_widget(block, area);
 
@@ -305,12 +308,12 @@ fn render_pie_chart_view(frame: &mut Frame, area: Rect, state: &AppState, block:
                         Span::styled(line[..split_at].to_string(), Style::default().fg(*color)),
                         Span::styled(
                             line[split_at..].to_string(),
-                            Style::default().fg(Color::Gray),
+                            Style::default().fg(t.fg_dim),
                         ),
                     ]);
                 }
             }
-            Line::from(Span::styled(line.clone(), Style::default().fg(Color::Gray)))
+            Line::from(Span::styled(line.clone(), Style::default().fg(t.fg_dim)))
         })
         .collect();
 
@@ -321,6 +324,7 @@ fn render_pie_chart_view(frame: &mut Frame, area: Rect, state: &AppState, block:
 
 /// Render a calendar view with monthly calendars
 fn render_calendar_view(frame: &mut Frame, area: Rect, state: &AppState, block: Block) {
+    let t = crate::theme::current();
     let inner_area = block.inner(area);
     frame.render_widget(block, area);
 
@@ -340,8 +344,8 @@ fn render_calendar_view(frame: &mut Frame, area: Rect, state: &AppState, block: 
     let events = CalendarEventStore::today(
         Style::default()
             .add_modifier(Modifier::BOLD)
-            .bg(Color::Blue)
-            .fg(Color::White),
+            .bg(t.info)
+            .fg(t.fg),
     );
 
     let cols_available = (calendar_area.width / 24).max(1) as usize;
@@ -365,15 +369,15 @@ fn render_calendar_view(frame: &mut Frame, area: Rect, state: &AppState, block: 
 
     let default_style = Style::default()
         .add_modifier(Modifier::BOLD)
-        .bg(Color::Rgb(40, 40, 40));
+        .bg(t.selection_bg);
 
     let header_style = Style::default()
         .add_modifier(Modifier::BOLD)
-        .fg(Color::Cyan);
+        .fg(t.accent);
 
     let weekday_style = Style::default()
         .add_modifier(Modifier::DIM)
-        .fg(Color::DarkGray);
+        .fg(t.fg_faint);
 
     for row in rows.iter() {
         let cols = Layout::default()
@@ -393,7 +397,7 @@ fn render_calendar_view(frame: &mut Frame, area: Rect, state: &AppState, block: 
 
                 let cal = Monthly::new(first_day, &events)
                     .show_month_header(if is_current_month {
-                        header_style.fg(Color::Yellow)
+                        header_style.fg(t.active)
                     } else {
                         header_style
                     })
@@ -411,7 +415,7 @@ fn render_calendar_view(frame: &mut Frame, area: Rect, state: &AppState, block: 
         .ui
         .utility_content
         .iter()
-        .map(|line| Line::from(Span::styled(line.clone(), Style::default().fg(Color::Gray))))
+        .map(|line| Line::from(Span::styled(line.clone(), Style::default().fg(t.fg_dim))))
         .collect();
 
     let paragraph = Paragraph::new(lines).scroll((state.ui.utility_scroll_offset as u16, 0));

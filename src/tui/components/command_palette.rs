@@ -1,7 +1,7 @@
 use crate::app::{Action, AppState};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
     Frame,
@@ -102,6 +102,7 @@ pub fn filtered_entries(query: &str) -> Vec<PaletteEntry> {
 }
 
 pub fn render(frame: &mut Frame, state: &AppState) {
+    let t = crate::theme::current();
     let area = centered_rect(50, 60, frame.area());
     frame.render_widget(Clear, area);
 
@@ -114,13 +115,13 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     let input_block = Block::default()
         .title(" Command Palette ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan))
-        .style(Style::default().bg(Color::Black));
+        .border_style(Style::default().fg(t.accent))
+        .style(Style::default().bg(t.bg));
 
     let input_text = format!("> {}_", state.ui.palette.query);
     let input_paragraph = Paragraph::new(Line::from(vec![Span::styled(
         input_text,
-        Style::default().fg(Color::White),
+        Style::default().fg(t.fg),
     )]))
     .block(input_block);
 
@@ -136,12 +137,12 @@ pub fn render(frame: &mut Frame, state: &AppState) {
             let is_selected = i == state.ui.palette.selected;
             let name_style = if is_selected {
                 Style::default()
-                    .fg(Color::Cyan)
+                    .fg(t.accent)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::Gray)
+                Style::default().fg(t.fg_dim)
             };
-            let key_style = Style::default().fg(Color::DarkGray);
+            let key_style = Style::default().fg(t.fg_faint);
 
             let key_display = if entry.keybinding.is_empty() {
                 String::new()
@@ -165,8 +166,8 @@ pub fn render(frame: &mut Frame, state: &AppState) {
 
     let list_block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::DarkGray))
-        .style(Style::default().bg(Color::Black));
+        .border_style(Style::default().fg(t.border))
+        .style(Style::default().bg(t.bg));
 
     let list = List::new(items).block(list_block);
 

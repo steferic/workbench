@@ -1,4 +1,5 @@
 use crate::app::AppState;
+use std::collections::HashSet;
 use uuid::Uuid;
 
 /// Resize all PTYs and vt100 parsers to match their respective pane sizes.
@@ -9,8 +10,10 @@ use uuid::Uuid;
 /// width. If the parser has a different column count, it interprets that output
 /// incorrectly — lines wrap at the wrong boundary and fullscreen apps break.
 ///
-/// We only resize parser columns, not rows. The parser's row count
-/// (PARSER_BUFFER_ROWS) must be preserved. Deep scrollback uses raw byte replay.
+/// For append-style sessions, we only resize parser columns; their parser row
+/// count is preserved and deep scrollback uses raw byte replay. Redraw-style
+/// agents need parser rows to match the PTY rows because their cursor moves and
+/// clears are relative to the visible terminal grid.
 pub fn resize_ptys_to_panes(state: &mut AppState) {
     let output_cols = state.output_pane_cols();
     let pinned_cols = state.pinned_pane_cols();
@@ -18,6 +21,14 @@ pub fn resize_ptys_to_panes(state: &mut AppState) {
 
     // Copy pinned IDs since we need mutable state access below
     let pinned_ids: Vec<Uuid> = state.pinned_terminal_ids().to_vec();
+    let redraw_session_ids: HashSet<Uuid> = state
+        .data
+        .sessions
+        .values()
+        .flatten()
+        .filter(|session| session.agent_type.is_redraw_style())
+        .map(|session| session.id)
+        .collect();
 
     // Resize each PTY based on which pane it belongs to
     for (session_id, handle) in state.system.pty_handles.iter() {
@@ -33,9 +44,8 @@ pub fn resize_ptys_to_panes(state: &mut AppState) {
         }
     }
 
-    // Resize vt100 parsers to match new column widths.
-    // We keep the parser's existing row count (scrollback buffer) but update columns
-    // so the parser interprets output at the same width the subprocess is targeting.
+    // Resize vt100 parsers to match new column widths. For redraw-style agents,
+    // rows also need to match the visible PTY height.
     for (session_id, parser) in state.system.output_buffers.iter_mut() {
         let cols = if pinned_ids.contains(session_id) {
             pinned_cols
@@ -44,8 +54,13 @@ pub fn resize_ptys_to_panes(state: &mut AppState) {
         };
 
         let (parser_rows, parser_cols) = parser.screen().size();
-        if parser_cols != cols {
-            parser.set_size(parser_rows, cols);
+        let target_rows = if redraw_session_ids.contains(session_id) {
+            rows.max(1)
+        } else {
+            parser_rows
+        };
+        if parser_cols != cols || parser_rows != target_rows {
+            parser.set_size(target_rows, cols);
         }
     }
 

@@ -1,13 +1,14 @@
 use crate::app::AppState;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
     Frame,
 };
 
 pub fn render(frame: &mut Frame, state: &AppState) {
+    let t = crate::theme::current();
     let area = centered_rect(60, 30, frame.area());
 
     // Clear the background
@@ -16,8 +17,8 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     let block = Block::default()
         .title(" Create New Project ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow))
-        .style(Style::default().bg(Color::Black));
+        .border_style(Style::default().fg(t.active))
+        .style(Style::default().bg(t.bg));
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -56,8 +57,8 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         .unwrap_or_else(|| "?".to_string());
 
     let path_widget = Paragraph::new(Line::from(vec![
-        Span::styled(" Parent: ", Style::default().fg(Color::Gray)),
-        Span::styled(path_display, Style::default().fg(Color::Cyan)),
+        Span::styled(" Parent: ", Style::default().fg(t.fg_dim)),
+        Span::styled(path_display, Style::default().fg(t.accent)),
     ]));
     frame.render_widget(path_widget, path_area);
 
@@ -65,7 +66,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     let input_block = Block::default()
         .title(" Project Name ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow));
+        .border_style(Style::default().fg(t.active));
 
     let input_inner = input_block.inner(input_area);
     frame.render_widget(input_block, input_area);
@@ -80,13 +81,13 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         Span::styled(
             &state.ui.input_buffer,
             Style::default()
-                .fg(Color::White)
+                .fg(t.fg)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             cursor_char,
             Style::default()
-                .fg(Color::Yellow)
+                .fg(t.active)
                 .add_modifier(Modifier::SLOW_BLINK),
         ),
     ]));
@@ -115,13 +116,13 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     };
 
     let preview_style = if state.ui.input_buffer.is_empty() {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(t.fg_faint)
     } else {
-        Style::default().fg(Color::Green)
+        Style::default().fg(t.success)
     };
 
     let preview_widget = Paragraph::new(Line::from(vec![
-        Span::styled(" Creates: ", Style::default().fg(Color::Gray)),
+        Span::styled(" Creates: ", Style::default().fg(t.fg_dim)),
         Span::styled(preview_path, preview_style),
     ]));
     frame.render_widget(preview_widget, preview_area);
@@ -131,11 +132,11 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         Span::styled(
             "[Enter]",
             Style::default()
-                .fg(Color::Green)
+                .fg(t.success)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw(" Create  "),
-        Span::styled("[Esc]", Style::default().fg(Color::Yellow)),
+        Span::styled("[Esc]", Style::default().fg(t.active)),
         Span::raw(" Cancel"),
     ]));
     frame.render_widget(help, help_area);

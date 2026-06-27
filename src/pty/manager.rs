@@ -286,7 +286,7 @@ impl PtyManager {
         let pty_tx = pty_tx.clone();
         let sid = session_id;
         let pty_rows = rows;
-        let strip_alt_screen = agent_type.is_codex_like() || !use_alternate_screen;
+        let strip_alt_screen = agent_type.is_redraw_style() || !use_alternate_screen;
         std::thread::spawn(move || {
             #[cfg(unix)]
             Self::read_pty_output_with_dsr(

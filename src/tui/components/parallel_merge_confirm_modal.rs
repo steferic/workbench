@@ -1,13 +1,14 @@
 use crate::app::AppState;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
     Frame,
 };
 
 pub fn render(frame: &mut Frame, state: &AppState) {
+    let t = crate::theme::current();
     let area = centered_rect(50, 25, frame.area());
 
     // Clear the background
@@ -16,8 +17,8 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     let block = Block::default()
         .title(" Merge Parallel Task ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow))
-        .style(Style::default().bg(Color::Black));
+        .border_style(Style::default().fg(t.warning))
+        .style(Style::default().bg(t.bg));
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -55,15 +56,15 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     // Warning message
     let message = Paragraph::new(vec![
         Line::from(vec![
-            Span::styled("⚠ ", Style::default().fg(Color::Yellow)),
+            Span::styled("⚠ ", Style::default().fg(t.warning)),
             Span::styled(
                 "Uncommitted changes will be auto-committed",
-                Style::default().fg(Color::White),
+                Style::default().fg(t.fg),
             ),
         ]),
         Line::from(vec![Span::styled(
             "  Commit all changes and merge into source?",
-            Style::default().fg(Color::Gray),
+            Style::default().fg(t.fg_dim),
         )]),
     ]);
     frame.render_widget(message, message_area);
@@ -71,20 +72,20 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     // Branch info
     let branch_info = Paragraph::new(vec![
         Line::from(vec![
-            Span::styled("  From: ", Style::default().fg(Color::Gray)),
+            Span::styled("  From: ", Style::default().fg(t.fg_dim)),
             Span::styled(
                 &branch_name,
                 Style::default()
-                    .fg(Color::Cyan)
+                    .fg(t.accent)
                     .add_modifier(Modifier::BOLD),
             ),
         ]),
         Line::from(vec![
-            Span::styled("  Into: ", Style::default().fg(Color::Gray)),
+            Span::styled("  Into: ", Style::default().fg(t.fg_dim)),
             Span::styled(
                 &source_branch,
                 Style::default()
-                    .fg(Color::Green)
+                    .fg(t.success)
                     .add_modifier(Modifier::BOLD),
             ),
         ]),
@@ -96,11 +97,11 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         Span::styled(
             "[Y/Enter]",
             Style::default()
-                .fg(Color::Green)
+                .fg(t.success)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw(" Commit & Merge  "),
-        Span::styled("[N/Esc]", Style::default().fg(Color::Red)),
+        Span::styled("[N/Esc]", Style::default().fg(t.error)),
         Span::raw(" Cancel"),
     ]));
     frame.render_widget(help, help_area);

@@ -3,7 +3,7 @@ use crate::app::{AppState, FocusPanel, InputMode};
 use crate::tui::utils::render_cursor;
 use ratatui::{
     layout::Rect,
-    style::{Color, Style},
+    style::Style,
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
     Frame,
@@ -11,13 +11,14 @@ use ratatui::{
 
 /// Render a specific pinned terminal pane at the given index
 pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index: usize) {
+    let t = crate::theme::current();
     let is_focused =
         matches!(state.ui.focus, FocusPanel::PinnedTerminalPane(idx) if idx == pane_index);
 
     let border_style = if is_focused {
-        Style::default().fg(Color::Cyan)
+        Style::default().fg(t.border_focused)
     } else {
-        Style::default().fg(Color::Magenta)
+        Style::default().fg(t.special)
     };
 
     let title = state
@@ -85,7 +86,7 @@ pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index
     if is_focused && state.ui.input_mode == InputMode::Normal && view.scroll_from_bottom == 0 {
         let needs_terminal_cursor = state
             .pinned_terminal_session_at(pane_index)
-            .map(|s| s.agent_type.is_terminal() || s.agent_type.is_codex_like())
+            .map(|s| s.agent_type.is_terminal() || s.agent_type.is_redraw_style())
             .unwrap_or(false);
 
         if needs_terminal_cursor {
@@ -95,11 +96,12 @@ pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index
 }
 
 fn render_empty_slot(frame: &mut Frame, area: Rect, block: Block) {
+    let t = crate::theme::current();
     let lines = vec![
         Line::from(""),
         Line::from(Span::styled(
             "  No terminal in this slot",
-            Style::default().fg(Color::Gray),
+            Style::default().fg(t.fg_dim),
         )),
     ];
 

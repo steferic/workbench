@@ -1,13 +1,14 @@
 use crate::app::AppState;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
     Frame,
 };
 
 pub fn render(frame: &mut Frame, state: &AppState) {
+    let t = crate::theme::current();
     let agents = &state.system.user_config.agents;
     let enabled_count = agents.iter().filter(|a| a.enabled).count();
     // Calculate height: header (5 lines) + agents + footer (3 lines)
@@ -26,13 +27,13 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         Line::from(""),
         Line::from(Span::styled(
             format!("  Workspace: {}", workspace_name),
-            Style::default().fg(Color::Gray),
+            Style::default().fg(t.fg_dim),
         )),
         Line::from(""),
         Line::from(Span::styled(
             "  Select an agent:",
             Style::default()
-                .fg(Color::White)
+                .fg(t.fg)
                 .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
@@ -45,11 +46,11 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         content.push(Line::from(vec![
             Span::styled(
                 format!("  [{}] ", agent.hotkey),
-                Style::default().fg(Color::Cyan),
+                Style::default().fg(t.accent),
             ),
             Span::styled(
                 format!("[{}] ", agent.badge),
-                Style::default().fg(Color::Magenta),
+                Style::default().fg(t.special),
             ),
             Span::raw(agent.display_name.clone()),
         ]));
@@ -57,21 +58,21 @@ pub fn render(frame: &mut Frame, state: &AppState) {
 
     content.push(Line::from(""));
     content.push(Line::from(vec![
-        Span::styled("  [t] ", Style::default().fg(Color::Cyan)),
-        Span::styled("[T] ", Style::default().fg(Color::Magenta)),
+        Span::styled("  [t] ", Style::default().fg(t.accent)),
+        Span::styled("[T] ", Style::default().fg(t.special)),
         Span::raw("Terminal"),
     ]));
     content.push(Line::from(""));
     content.push(Line::from(Span::styled(
         "  Press Esc to cancel",
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(t.fg_faint),
     )));
 
     let block = Block::default()
         .title(" New Session ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Magenta))
-        .style(Style::default().bg(Color::Black));
+        .border_style(Style::default().fg(t.special))
+        .style(Style::default().bg(t.bg));
 
     let paragraph = Paragraph::new(content).block(block);
     frame.render_widget(paragraph, area);

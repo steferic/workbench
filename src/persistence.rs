@@ -45,6 +45,9 @@ pub struct GlobalConfig {
 
     #[serde(default = "default_agent_done_sound")]
     pub agent_done_sound_enabled: bool,
+
+    #[serde(default)]
+    pub theme_mode: crate::theme::ThemeMode,
 }
 
 fn default_banner_visible() -> bool {
@@ -85,6 +88,7 @@ impl Default for GlobalConfig {
             todos_ratio: default_todos_ratio(),
             output_split_ratio: default_output_split_ratio(),
             agent_done_sound_enabled: default_agent_done_sound(),
+            theme_mode: crate::theme::ThemeMode::default(),
         }
     }
 }

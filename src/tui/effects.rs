@@ -1,5 +1,4 @@
 use ratatui::layout::Rect;
-use ratatui::style::Color;
 use ratatui::Frame;
 use std::time::Instant;
 use tachyonfx::{fx, Effect, EffectRenderer, Interpolation, Motion};
@@ -9,9 +8,6 @@ const EFFECT_DURATION_MS: u32 = 400;
 
 /// Delay between each pane's animation in milliseconds
 const STAGGER_DELAY_MS: u32 = 80;
-
-/// Background color for slide animation
-const SLIDE_BG: Color = Color::from_u32(0x1D2021);
 
 /// Calculate inner area of a block (excluding 1-pixel border on all sides)
 fn inner_area(area: Rect) -> Rect {
@@ -58,8 +54,9 @@ impl EffectsManager {
 
     /// Create a slide-in effect for a pane with optional delay
     fn create_pane_effect(&self, area: Rect, delay_ms: u32) -> Effect {
+        let t = crate::theme::current();
         let timer = (EFFECT_DURATION_MS, Interpolation::Linear);
-        let slide = fx::slide_in(Motion::UpToDown, 10, 0, SLIDE_BG, timer).with_area(area);
+        let slide = fx::slide_in(Motion::UpToDown, 10, 0, t.selection_bg, timer).with_area(area);
 
         if delay_ms > 0 {
             fx::sequence(&[fx::sleep(delay_ms), slide])

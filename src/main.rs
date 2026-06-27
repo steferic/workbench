@@ -6,6 +6,7 @@ mod logger;
 mod models;
 mod persistence;
 mod pty;
+mod theme;
 mod tui;
 
 use anyhow::Result;

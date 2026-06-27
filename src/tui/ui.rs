@@ -12,6 +12,16 @@ use ratatui::{
 };
 
 pub fn draw(frame: &mut Frame, state: &mut AppState, effects: &mut EffectsManager) {
+    // Activate the chosen theme for this frame and fill the background so light
+    // mode doesn't show through to the terminal's (dark) default.
+    crate::theme::set_current(state.ui.theme_mode);
+    let theme = crate::theme::current();
+    let full_area = frame.area();
+    frame.buffer_mut().set_style(
+        full_area,
+        ratatui::style::Style::default().bg(theme.bg).fg(theme.fg),
+    );
+
     let (banner_area, main_area, status_area) = if state.ui.banner_visible {
         let chunks = Layout::default()
             .direction(Direction::Vertical)

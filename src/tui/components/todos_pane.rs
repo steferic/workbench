@@ -2,18 +2,19 @@ use crate::app::{AppState, FocusPanel, TodoPaneMode, TodosTab};
 use crate::models::{Difficulty, Importance, TodoStatus};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
     Frame,
 };
 
 pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
+    let t = crate::theme::current();
     let is_focused = state.ui.focus == FocusPanel::TodosPane;
     let border_style = if is_focused {
-        Style::default().fg(Color::Cyan)
+        Style::default().fg(t.border_focused)
     } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(t.border)
     };
 
     // Count todos for title
@@ -41,8 +42,8 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         TodoPaneMode::Autorun => "[A]",
     };
     let mode_color = match state.ui.todo_pane_mode {
-        TodoPaneMode::Write => Color::Blue,
-        TodoPaneMode::Autorun => Color::Green,
+        TodoPaneMode::Write => t.info,
+        TodoPaneMode::Autorun => t.success,
     };
 
     let count_str = if review_count > 0 {
@@ -55,7 +56,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
 
     let title_style = if review_count > 0 {
         Style::default()
-            .fg(Color::Yellow)
+            .fg(t.active)
             .add_modifier(Modifier::BOLD)
     } else {
         Style::default()
@@ -96,16 +97,16 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
 
     // Render tab bar
     let tab_style = if is_focused {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(t.fg_faint)
     } else {
-        Style::default().fg(Color::Rgb(60, 60, 60))
+        Style::default().fg(t.inactive)
     };
     let active_tab_style = if is_focused {
         Style::default()
-            .fg(Color::Cyan)
+            .fg(t.accent)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(Color::Gray)
+        Style::default().fg(t.fg_dim)
     };
     let inactive_tab_style = tab_style;
 
@@ -157,14 +158,14 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
 
     // Render action bar (1 row, compact) - different for each tab
     let action_style = if is_focused {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(t.fg_faint)
     } else {
-        Style::default().fg(Color::Rgb(60, 60, 60))
+        Style::default().fg(t.inactive)
     };
     let key_style = if is_focused {
-        Style::default().fg(Color::Cyan)
+        Style::default().fg(t.accent)
     } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(t.fg_faint)
     };
 
     let action_bar = Paragraph::new(Line::from(vec![
@@ -182,23 +183,23 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     if todos.is_empty() {
         let msg = match state.ui.selected_todos_tab {
             TodosTab::Active => Paragraph::new(Line::from(vec![
-                Span::styled("  No todos. Press ", Style::default().fg(Color::DarkGray)),
-                Span::styled("[n]", Style::default().fg(Color::Cyan)),
-                Span::styled(" to add.", Style::default().fg(Color::DarkGray)),
+                Span::styled("  No todos. Press ", Style::default().fg(t.fg_faint)),
+                Span::styled("[n]", Style::default().fg(t.accent)),
+                Span::styled(" to add.", Style::default().fg(t.fg_faint)),
             ])),
             TodosTab::Archived => Paragraph::new(Line::from(vec![Span::styled(
                 "  No archived todos.",
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(t.fg_faint),
             )])),
             TodosTab::Reports => Paragraph::new(Line::from(vec![
                 Span::styled(
                     "  No reports yet. Press ",
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(t.fg_faint),
                 ),
-                Span::styled("[P]", Style::default().fg(Color::Cyan)),
+                Span::styled("[P]", Style::default().fg(t.accent)),
                 Span::styled(
                     " in Sessions to start a parallel task.",
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(t.fg_faint),
                 ),
             ])),
         };
@@ -216,23 +217,23 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
             let is_selected = i == state.ui.selected_todo_idx && is_focused;
 
             let (status_icon, status_color) = match &todo.status {
-                TodoStatus::Suggested => ("?", Color::Cyan),
-                TodoStatus::Pending => ("○", Color::Gray),
-                TodoStatus::Queued => ("◎", Color::Magenta),
-                TodoStatus::InProgress { .. } => ("◐", Color::Yellow),
-                TodoStatus::ReadyForReview { .. } => ("◉", Color::Green),
-                TodoStatus::Done => ("✓", Color::DarkGray),
-                TodoStatus::Archived => ("📦", Color::DarkGray),
+                TodoStatus::Suggested => ("?", t.accent),
+                TodoStatus::Pending => ("○", t.fg_dim),
+                TodoStatus::Queued => ("◎", t.special),
+                TodoStatus::InProgress { .. } => ("◐", t.active),
+                TodoStatus::ReadyForReview { .. } => ("◉", t.success),
+                TodoStatus::Done => ("✓", t.fg_faint),
+                TodoStatus::Archived => ("📦", t.fg_faint),
             };
 
             let name_style = if is_selected {
                 Style::default()
-                    .fg(Color::Cyan)
+                    .fg(t.accent)
                     .add_modifier(Modifier::BOLD)
             } else if matches!(todo.status, TodoStatus::Done) {
-                Style::default().fg(Color::DarkGray)
+                Style::default().fg(t.fg_faint)
             } else {
-                Style::default().fg(Color::White)
+                Style::default().fg(t.fg)
             };
 
             let prefix = if is_selected { "> " } else { "  " };
@@ -240,13 +241,13 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
             // Build difficulty badge
             let diff_spans: Vec<Span> = if let Some(diff) = &todo.difficulty {
                 let (label, bg_color) = match diff {
-                    Difficulty::Easy => ("E", Color::Green),
-                    Difficulty::Med => ("M", Color::Yellow),
-                    Difficulty::Hard => ("H", Color::Red),
+                    Difficulty::Easy => ("E", t.success),
+                    Difficulty::Med => ("M", t.active),
+                    Difficulty::Hard => ("H", t.error),
                 };
                 vec![Span::styled(
                     label,
-                    Style::default().fg(Color::Black).bg(bg_color),
+                    Style::default().fg(t.on_accent).bg(bg_color),
                 )]
             } else {
                 vec![]
@@ -255,14 +256,14 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
             // Build importance badge
             let imp_spans: Vec<Span> = if let Some(imp) = &todo.importance {
                 let (label, bg_color) = match imp {
-                    Importance::Low => ("L", Color::DarkGray),
-                    Importance::Med => ("M", Color::Blue),
-                    Importance::High => ("H", Color::Magenta),
-                    Importance::Critical => ("!", Color::Red),
+                    Importance::Low => ("L", t.fg_faint),
+                    Importance::Med => ("M", t.info),
+                    Importance::High => ("H", t.special),
+                    Importance::Critical => ("!", t.error),
                 };
                 vec![Span::styled(
                     label,
-                    Style::default().fg(Color::White).bg(bg_color),
+                    Style::default().fg(t.fg).bg(bg_color),
                 )]
             } else {
                 vec![]
@@ -277,11 +278,11 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
                 _ => "",
             };
             let status_label_style = match &todo.status {
-                TodoStatus::Suggested => Style::default().fg(Color::Cyan),
-                TodoStatus::Queued => Style::default().fg(Color::Magenta),
-                TodoStatus::InProgress { .. } => Style::default().fg(Color::Yellow),
+                TodoStatus::Suggested => Style::default().fg(t.accent),
+                TodoStatus::Queued => Style::default().fg(t.special),
+                TodoStatus::InProgress { .. } => Style::default().fg(t.active),
                 TodoStatus::ReadyForReview { .. } => Style::default()
-                    .fg(Color::Green)
+                    .fg(t.success)
                     .add_modifier(Modifier::BOLD),
                 _ => Style::default(),
             };
@@ -385,7 +386,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     // Highlight style with full row background when focused
     let highlight_style = if is_focused {
         Style::default()
-            .bg(Color::Rgb(40, 50, 60))
+            .bg(t.selection_bg)
             .add_modifier(Modifier::BOLD)
     } else {
         Style::default()
@@ -406,6 +407,8 @@ fn render_reports_tab(frame: &mut Frame, area: Rect, state: &AppState, is_focuse
     use crate::models::AttemptStatus;
     use ratatui::layout::{Constraint, Direction, Layout};
 
+    let t = crate::theme::current();
+
     let parallel_task = state
         .selected_workspace()
         .and_then(|ws| ws.active_parallel_task());
@@ -414,12 +417,12 @@ fn render_reports_tab(frame: &mut Frame, area: Rect, state: &AppState, is_focuse
         let msg = Paragraph::new(Line::from(vec![
             Span::styled(
                 "  No active parallel task. Press ",
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(t.fg_faint),
             ),
-            Span::styled("[P]", Style::default().fg(Color::Cyan)),
+            Span::styled("[P]", Style::default().fg(t.accent)),
             Span::styled(
                 " in Sessions pane to start one.",
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(t.fg_faint),
             ),
         ]));
         frame.render_widget(msg, area);
@@ -465,30 +468,30 @@ fn render_reports_tab(frame: &mut Frame, area: Rect, state: &AppState, is_focuse
 
     let header = Paragraph::new(vec![
         Line::from(vec![
-            Span::styled("  Task: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(prompt_display, Style::default().fg(Color::White)),
+            Span::styled("  Task: ", Style::default().fg(t.fg_faint)),
+            Span::styled(prompt_display, Style::default().fg(t.fg)),
         ]),
         Line::from(vec![
-            Span::styled("  Status: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("  Status: ", Style::default().fg(t.fg_faint)),
             Span::styled(
                 status_text,
                 Style::default().fg(if running > 0 {
-                    Color::Yellow
+                    t.active
                 } else {
-                    Color::Green
+                    t.success
                 }),
             ),
         ]),
         Line::from(vec![
-            Span::styled("  Source: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(task.source_branch.clone(), Style::default().fg(Color::Cyan)),
+            Span::styled("  Source: ", Style::default().fg(t.fg_faint)),
+            Span::styled(task.source_branch.clone(), Style::default().fg(t.accent)),
         ]),
     ]);
     frame.render_widget(header, header_area);
 
     if task.attempts.is_empty() {
         let msg = Paragraph::new("  No attempts yet - agents spawning...")
-            .style(Style::default().fg(Color::Yellow));
+            .style(Style::default().fg(t.active));
         frame.render_widget(msg, list_area);
         return;
     }
@@ -502,18 +505,18 @@ fn render_reports_tab(frame: &mut Frame, area: Rect, state: &AppState, is_focuse
 
             let style = if is_selected {
                 Style::default()
-                    .fg(Color::Cyan)
+                    .fg(t.accent)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::Gray)
+                Style::default().fg(t.fg_dim)
             };
 
             let prefix = if is_selected { "> " } else { "  " };
 
             let (status_icon, status_color) = match attempt.status {
-                AttemptStatus::Running => (state.spinner_char(), Color::Yellow),
-                AttemptStatus::Completed => ("◆", Color::Green),
-                AttemptStatus::Failed => ("✗", Color::Red),
+                AttemptStatus::Running => (state.spinner_char(), t.active),
+                AttemptStatus::Completed => ("◆", t.success),
+                AttemptStatus::Failed => ("✗", t.error),
             };
 
             let agent_badge = attempt.agent_type.badge();
@@ -524,7 +527,7 @@ fn render_reports_tab(frame: &mut Frame, area: Rect, state: &AppState, is_focuse
                 Span::styled(prefix, style),
                 Span::styled(
                     format!("[{}] ", agent_badge),
-                    Style::default().fg(Color::Magenta),
+                    Style::default().fg(t.special),
                 ),
                 Span::styled(format!("{} ", agent_name), style),
                 Span::styled(status_icon, Style::default().fg(status_color)),
@@ -537,10 +540,10 @@ fn render_reports_tab(frame: &mut Frame, area: Rect, state: &AppState, is_focuse
             // Second line: branch name
             let line2 = Line::from(vec![
                 Span::raw("      "),
-                Span::styled("branch: ", Style::default().fg(Color::DarkGray)),
+                Span::styled("branch: ", Style::default().fg(t.fg_faint)),
                 Span::styled(
                     attempt.branch_name.clone(),
-                    Style::default().fg(Color::Cyan),
+                    Style::default().fg(t.accent),
                 ),
             ]);
 
@@ -557,8 +560,8 @@ fn render_reports_tab(frame: &mut Frame, area: Rect, state: &AppState, is_focuse
                 };
                 lines.push(Line::from(vec![
                     Span::raw("      "),
-                    Span::styled("report: ", Style::default().fg(Color::DarkGray)),
-                    Span::styled(display_preview, Style::default().fg(Color::Green)),
+                    Span::styled("report: ", Style::default().fg(t.fg_faint)),
+                    Span::styled(display_preview, Style::default().fg(t.success)),
                 ]));
             }
 
@@ -569,7 +572,7 @@ fn render_reports_tab(frame: &mut Frame, area: Rect, state: &AppState, is_focuse
     // Highlight style with full row background when focused
     let highlight_style = if is_focused {
         Style::default()
-            .bg(Color::Rgb(40, 50, 60))
+            .bg(t.selection_bg)
             .add_modifier(Modifier::BOLD)
     } else {
         Style::default()

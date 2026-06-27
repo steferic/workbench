@@ -1,13 +1,14 @@
 use crate::app::AppState;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
     Frame,
 };
 
 pub fn render(frame: &mut Frame, state: &AppState) {
+    let t = crate::theme::current();
     let area = centered_rect(70, 70, frame.area());
 
     // Clear the background
@@ -20,16 +21,16 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     };
 
     let border_color = if state.ui.workspace_create_mode {
-        Color::Yellow
+        t.active
     } else {
-        Color::Green
+        t.success
     };
 
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color))
-        .style(Style::default().bg(Color::Black));
+        .style(Style::default().bg(t.bg));
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -86,30 +87,30 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         // Create new mode: show parent path info
         Paragraph::new(vec![
             Line::from(vec![
-                Span::styled(" Parent: ", Style::default().fg(Color::Gray)),
-                Span::styled(path_display, Style::default().fg(Color::Yellow)),
+                Span::styled(" Parent: ", Style::default().fg(t.fg_dim)),
+                Span::styled(path_display, Style::default().fg(t.active)),
             ]),
             Line::from(vec![Span::styled(
                 " New project will be created in this folder",
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(t.fg_faint),
             )]),
         ])
     } else {
         // Open existing mode: show what will be selected
         Paragraph::new(vec![
             Line::from(vec![
-                Span::styled(" Path: ", Style::default().fg(Color::Gray)),
-                Span::styled(path_display, Style::default().fg(Color::Cyan)),
+                Span::styled(" Path: ", Style::default().fg(t.fg_dim)),
+                Span::styled(path_display, Style::default().fg(t.accent)),
             ]),
             Line::from(vec![
-                Span::styled(" Name: ", Style::default().fg(Color::Gray)),
+                Span::styled(" Name: ", Style::default().fg(t.fg_dim)),
                 Span::styled(
                     workspace_name,
                     Style::default()
-                        .fg(Color::Green)
+                        .fg(t.success)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(" (will be added)", Style::default().fg(Color::DarkGray)),
+                Span::styled(" (will be added)", Style::default().fg(t.fg_faint)),
             ]),
         ])
     };
@@ -119,7 +120,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         let search_block = Block::default()
             .title(" Find ")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::DarkGray));
+            .border_style(Style::default().fg(t.border));
         let search_inner = search_block.inner(search_area);
         frame.render_widget(search_block, search_area);
 
@@ -131,9 +132,9 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         };
 
         let search_line = Line::from(vec![
-            Span::styled(" Find: ", Style::default().fg(Color::Gray)),
-            Span::styled(query, Style::default().fg(Color::White)),
-            Span::styled(placeholder, Style::default().fg(Color::DarkGray)),
+            Span::styled(" Find: ", Style::default().fg(t.fg_dim)),
+            Span::styled(query, Style::default().fg(t.fg)),
+            Span::styled(placeholder, Style::default().fg(t.fg_faint)),
         ]);
 
         frame.render_widget(Paragraph::new(search_line), search_inner);
@@ -161,7 +162,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
             } else {
                 "  No matches"
             },
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(t.fg_faint),
         )))]
     } else {
         state
@@ -193,12 +194,12 @@ pub fn render(frame: &mut Frame, state: &AppState) {
 
                 let style = if is_selected {
                     Style::default()
-                        .fg(Color::Cyan)
+                        .fg(t.accent)
                         .add_modifier(Modifier::BOLD)
                 } else if is_repo {
-                    Style::default().fg(Color::Green)
+                    Style::default().fg(t.success)
                 } else {
-                    Style::default().fg(Color::White)
+                    Style::default().fg(t.fg)
                 };
 
                 let prefix = if is_selected { "> " } else { "  " };
@@ -211,7 +212,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
                 if is_repo {
                     spans.push(Span::styled(
                         " (repo)",
-                        Style::default().fg(Color::DarkGray),
+                        Style::default().fg(t.fg_faint),
                     ));
                 }
 
@@ -234,7 +235,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
                     if !truncated.is_empty() {
                         spans.push(Span::styled(
                             format!(" - {}", truncated),
-                            Style::default().fg(Color::DarkGray),
+                            Style::default().fg(t.fg_faint),
                         ));
                     }
                 }
@@ -260,7 +261,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         Block::default()
             .title(list_title)
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::DarkGray)),
+            .border_style(Style::default().fg(t.border)),
     );
 
     let mut list_state = ListState::default();
@@ -276,58 +277,58 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     let help = if state.ui.workspace_create_mode {
         Paragraph::new(vec![
             Line::from(vec![
-                Span::styled("[↑/k]", Style::default().fg(Color::Cyan)),
+                Span::styled("[↑/k]", Style::default().fg(t.accent)),
                 Span::raw(" Up  "),
-                Span::styled("[↓/j]", Style::default().fg(Color::Cyan)),
+                Span::styled("[↓/j]", Style::default().fg(t.accent)),
                 Span::raw(" Down  "),
-                Span::styled("[←/h]", Style::default().fg(Color::Cyan)),
+                Span::styled("[←/h]", Style::default().fg(t.accent)),
                 Span::raw(" Parent  "),
-                Span::styled("[→/Enter]", Style::default().fg(Color::Cyan)),
+                Span::styled("[→/Enter]", Style::default().fg(t.accent)),
                 Span::raw(" Open"),
             ]),
             Line::from(vec![
                 Span::styled(
                     "[Space/Tab]",
                     Style::default()
-                        .fg(Color::Yellow)
+                        .fg(t.active)
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
                     " Create here → Enter name  ",
-                    Style::default().fg(Color::White),
+                    Style::default().fg(t.fg),
                 ),
-                Span::styled("[Esc]", Style::default().fg(Color::Yellow)),
+                Span::styled("[Esc]", Style::default().fg(t.active)),
                 Span::raw(" Cancel"),
             ]),
         ])
     } else {
         Paragraph::new(vec![
             Line::from(vec![
-                Span::styled("[↑]", Style::default().fg(Color::Cyan)),
+                Span::styled("[↑]", Style::default().fg(t.accent)),
                 Span::raw(" Up  "),
-                Span::styled("[↓]", Style::default().fg(Color::Cyan)),
+                Span::styled("[↓]", Style::default().fg(t.accent)),
                 Span::raw(" Down  "),
-                Span::styled("[←]", Style::default().fg(Color::Cyan)),
+                Span::styled("[←]", Style::default().fg(t.accent)),
                 Span::raw(" Parent  "),
-                Span::styled("[→/Enter]", Style::default().fg(Color::Cyan)),
+                Span::styled("[→/Enter]", Style::default().fg(t.accent)),
                 Span::raw(" Open"),
             ]),
             Line::from(vec![
                 Span::styled(
                     "[Type]",
                     Style::default()
-                        .fg(Color::Green)
+                        .fg(t.success)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(" Path or filter  ", Style::default().fg(Color::White)),
+                Span::styled(" Path or filter  ", Style::default().fg(t.fg)),
                 Span::styled(
                     "[Space/Tab]",
                     Style::default()
-                        .fg(Color::Green)
+                        .fg(t.success)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(" Select as workspace  ", Style::default().fg(Color::White)),
-                Span::styled("[Esc]", Style::default().fg(Color::Yellow)),
+                Span::styled(" Select as workspace  ", Style::default().fg(t.fg)),
+                Span::styled("[Esc]", Style::default().fg(t.active)),
                 Span::raw(" Cancel"),
             ]),
         ])

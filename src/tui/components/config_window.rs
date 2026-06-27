@@ -1,7 +1,7 @@
 use crate::app::{AppState, ConfigTab};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
     Frame,
@@ -27,6 +27,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
 }
 
 fn render_tab_bar(frame: &mut Frame, area: Rect, state: &AppState) {
+    let t = crate::theme::current();
     let active = state.ui.config.tab;
 
     let tabs = [
@@ -44,22 +45,22 @@ fn render_tab_bar(frame: &mut Frame, area: Rect, state: &AppState) {
             spans.push(Span::styled(
                 format!(" {} {} ", num, label),
                 Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Cyan)
+                    .fg(t.on_accent)
+                    .bg(t.accent)
                     .add_modifier(Modifier::BOLD),
             ));
         } else {
             spans.push(Span::styled(
                 format!(" {} ", num),
-                Style::default().fg(Color::Cyan),
+                Style::default().fg(t.accent),
             ));
             spans.push(Span::styled(
                 format!("{} ", label),
-                Style::default().fg(Color::Gray),
+                Style::default().fg(t.fg_dim),
             ));
         }
         if i < tabs.len() - 1 {
-            spans.push(Span::styled(" | ", Style::default().fg(Color::DarkGray)));
+            spans.push(Span::styled(" | ", Style::default().fg(t.fg_faint)));
         }
     }
 
@@ -68,8 +69,8 @@ fn render_tab_bar(frame: &mut Frame, area: Rect, state: &AppState) {
     let block = Block::default()
         .title(" Help & Settings (F1) ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan))
-        .style(Style::default().bg(Color::Black));
+        .border_style(Style::default().fg(t.border_focused))
+        .style(Style::default().bg(t.bg));
 
     let paragraph = Paragraph::new(vec![Line::from(""), line]).block(block);
 
@@ -77,15 +78,16 @@ fn render_tab_bar(frame: &mut Frame, area: Rect, state: &AppState) {
 }
 
 fn render_quickref_tab(frame: &mut Frame, area: Rect, state: &AppState) {
+    let t = crate::theme::current();
     let scroll_offset = state.ui.config.scroll_offset;
 
     let mut lines: Vec<Line> = Vec::new();
 
     let section_style = Style::default()
-        .fg(Color::Yellow)
+        .fg(t.active)
         .add_modifier(Modifier::BOLD);
-    let key_style = Style::default().fg(Color::Cyan);
-    let sep_style = Style::default().fg(Color::DarkGray);
+    let key_style = Style::default().fg(t.accent);
+    let sep_style = Style::default().fg(t.fg_faint);
 
     let sep = || {
         Line::from(Span::styled(
@@ -306,14 +308,14 @@ fn render_quickref_tab(frame: &mut Frame, area: Rect, state: &AppState) {
         sep_style,
     )));
     lines.push(Line::from(vec![
-        Span::styled("  [j/k]", Style::default().fg(Color::Cyan)),
+        Span::styled("  [j/k]", Style::default().fg(t.accent)),
         Span::raw(" Scroll"),
     ]));
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::DarkGray))
-        .style(Style::default().bg(Color::Black));
+        .border_style(Style::default().fg(t.border))
+        .style(Style::default().bg(t.bg));
 
     let paragraph = Paragraph::new(lines)
         .block(block)
@@ -322,6 +324,7 @@ fn render_quickref_tab(frame: &mut Frame, area: Rect, state: &AppState) {
 }
 
 fn render_agents_tab(frame: &mut Frame, area: Rect, state: &AppState) {
+    let t = crate::theme::current();
     let agents = &state.system.user_config.agents;
     let selected_row = state.ui.config.selected_row;
     let selected_col = state.ui.config.selected_col;
@@ -333,28 +336,28 @@ fn render_agents_tab(frame: &mut Frame, area: Rect, state: &AppState) {
     // Header
     lines.push(Line::from(""));
     lines.push(Line::from(vec![
-        Span::styled("  #  ", Style::default().fg(Color::DarkGray)),
-        Span::styled("Key     ", Style::default().fg(Color::DarkGray)),
-        Span::styled("Name          ", Style::default().fg(Color::DarkGray)),
-        Span::styled("Command            ", Style::default().fg(Color::DarkGray)),
-        Span::styled("Badge", Style::default().fg(Color::DarkGray)),
+        Span::styled("  #  ", Style::default().fg(t.fg_faint)),
+        Span::styled("Key     ", Style::default().fg(t.fg_faint)),
+        Span::styled("Name          ", Style::default().fg(t.fg_faint)),
+        Span::styled("Command            ", Style::default().fg(t.fg_faint)),
+        Span::styled("Badge", Style::default().fg(t.fg_faint)),
     ]));
     lines.push(Line::from(Span::styled(
         "  ─────────────────────────────────────────────────────────",
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(t.fg_faint),
     )));
 
     for (idx, agent) in agents.iter().enumerate() {
         let is_selected = idx == selected_row;
         let row_bg = if is_selected {
-            Color::DarkGray
+            t.fg_faint
         } else {
-            Color::Black
+            t.bg
         };
         let row_fg = if is_selected {
-            Color::White
+            t.fg
         } else {
-            Color::Gray
+            t.fg_dim
         };
 
         let num_str = format!("  {}  ", idx + 1);
@@ -390,7 +393,7 @@ fn render_agents_tab(frame: &mut Frame, area: Rect, state: &AppState) {
         let cell_style = |col: usize| -> Style {
             if is_selected && selected_col == col {
                 Style::default()
-                    .fg(Color::Cyan)
+                    .fg(t.accent)
                     .bg(row_bg)
                     .add_modifier(Modifier::BOLD)
             } else {
@@ -399,7 +402,7 @@ fn render_agents_tab(frame: &mut Frame, area: Rect, state: &AppState) {
         };
 
         lines.push(Line::from(vec![
-            Span::styled(num_str, Style::default().fg(Color::DarkGray).bg(row_bg)),
+            Span::styled(num_str, Style::default().fg(t.fg_faint).bg(row_bg)),
             Span::styled(hotkey_display, cell_style(0)),
             Span::styled(name_display, cell_style(1)),
             Span::styled(cmd_display, cell_style(2)),
@@ -413,27 +416,27 @@ fn render_agents_tab(frame: &mut Frame, area: Rect, state: &AppState) {
     // Footer
     lines.push(Line::from(Span::styled(
         "  ─────────────────────────────────────────────────────────",
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(t.fg_faint),
     )));
     lines.push(Line::from(vec![
-        Span::styled("  [j/k]", Style::default().fg(Color::Cyan)),
+        Span::styled("  [j/k]", Style::default().fg(t.accent)),
         Span::raw(" Navigate  "),
-        Span::styled("[h/l]", Style::default().fg(Color::Cyan)),
+        Span::styled("[h/l]", Style::default().fg(t.accent)),
         Span::raw(" Field  "),
-        Span::styled("[Enter]", Style::default().fg(Color::Cyan)),
+        Span::styled("[Enter]", Style::default().fg(t.accent)),
         Span::raw(" Edit  "),
-        Span::styled("[a]", Style::default().fg(Color::Cyan)),
+        Span::styled("[a]", Style::default().fg(t.accent)),
         Span::raw(" Add  "),
-        Span::styled("[d]", Style::default().fg(Color::Cyan)),
+        Span::styled("[d]", Style::default().fg(t.accent)),
         Span::raw(" Delete  "),
-        Span::styled("[J/K]", Style::default().fg(Color::Cyan)),
+        Span::styled("[J/K]", Style::default().fg(t.accent)),
         Span::raw(" Reorder"),
     ]));
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::DarkGray))
-        .style(Style::default().bg(Color::Black));
+        .border_style(Style::default().fg(t.border))
+        .style(Style::default().bg(t.bg));
 
     let paragraph = Paragraph::new(lines).block(block);
     frame.render_widget(paragraph, area);
@@ -453,6 +456,7 @@ fn format_action_name(action: &str) -> &str {
 }
 
 fn render_hotkeys_tab(frame: &mut Frame, area: Rect, state: &AppState) {
+    let t = crate::theme::current();
     let hotkeys = &state.system.user_config.global_hotkeys;
     let selected_row = state.ui.config.selected_row;
     let rebinding = state.ui.config.rebinding;
@@ -466,26 +470,26 @@ fn render_hotkeys_tab(frame: &mut Frame, area: Rect, state: &AppState) {
     lines.push(Line::from(vec![
         Span::styled(
             "  Action                    ",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(t.fg_faint),
         ),
-        Span::styled("Key", Style::default().fg(Color::DarkGray)),
+        Span::styled("Key", Style::default().fg(t.fg_faint)),
     ]));
     lines.push(Line::from(Span::styled(
         "  ─────────────────────────────────────────────────────────",
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(t.fg_faint),
     )));
 
     for (idx, action) in ordered_actions.iter().enumerate() {
         let is_selected = idx == selected_row;
         let row_bg = if is_selected {
-            Color::DarkGray
+            t.fg_faint
         } else {
-            Color::Black
+            t.bg
         };
         let row_fg = if is_selected {
-            Color::White
+            t.fg
         } else {
-            Color::Gray
+            t.fg_dim
         };
 
         let display_name = format_action_name(action);
@@ -494,7 +498,7 @@ fn render_hotkeys_tab(frame: &mut Frame, area: Rect, state: &AppState) {
         let key_display = if rebinding && is_selected {
             Span::styled(
                 "Press a key...",
-                Style::default().fg(Color::Yellow).bg(row_bg),
+                Style::default().fg(t.active).bg(row_bg),
             )
         } else {
             Span::styled(key_val.to_string(), Style::default().fg(row_fg).bg(row_bg))
@@ -515,32 +519,33 @@ fn render_hotkeys_tab(frame: &mut Frame, area: Rect, state: &AppState) {
     // Footer
     lines.push(Line::from(Span::styled(
         "  ─────────────────────────────────────────────────────────",
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(t.fg_faint),
     )));
     lines.push(Line::from(vec![
-        Span::styled("  [j/k]", Style::default().fg(Color::Cyan)),
+        Span::styled("  [j/k]", Style::default().fg(t.accent)),
         Span::raw(" Navigate  "),
-        Span::styled("[Enter]", Style::default().fg(Color::Cyan)),
+        Span::styled("[Enter]", Style::default().fg(t.accent)),
         Span::raw(" Rebind  "),
-        Span::styled("[r]", Style::default().fg(Color::Cyan)),
+        Span::styled("[r]", Style::default().fg(t.accent)),
         Span::raw(" Reset all"),
     ]));
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::DarkGray))
-        .style(Style::default().bg(Color::Black));
+        .border_style(Style::default().fg(t.border))
+        .style(Style::default().bg(t.bg));
 
     let paragraph = Paragraph::new(lines).block(block);
     frame.render_widget(paragraph, area);
 }
 
 fn render_scrollback_tab(frame: &mut Frame, area: Rect, state: &AppState) {
+    let t = crate::theme::current();
     let config = &state.system.user_config;
     let editing = state.ui.config.editing;
     let edit_buffer = &state.ui.config.edit_buffer;
 
-    let row_bg = Color::DarkGray;
+    let row_bg = t.fg_faint;
 
     let val_display = if editing {
         format!("{}_", edit_buffer)
@@ -550,29 +555,29 @@ fn render_scrollback_tab(frame: &mut Frame, area: Rect, state: &AppState) {
 
     let val_style = if editing {
         Style::default()
-            .fg(Color::Cyan)
+            .fg(t.accent)
             .bg(row_bg)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(Color::Cyan).bg(row_bg)
+        Style::default().fg(t.accent).bg(row_bg)
     };
 
     let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::from(""));
 
     lines.push(Line::from(vec![
-        Span::styled("  > ", Style::default().fg(Color::Cyan).bg(row_bg)),
+        Span::styled("  > ", Style::default().fg(t.accent).bg(row_bg)),
         Span::styled(
             format!("{:<22}", "Scrollback (MB)"),
             Style::default()
-                .fg(Color::White)
+                .fg(t.fg)
                 .bg(row_bg)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(val_display, val_style),
         Span::styled(
             "  (range: 1-16)".to_string(),
-            Style::default().fg(Color::DarkGray).bg(row_bg),
+            Style::default().fg(t.fg_faint).bg(row_bg),
         ),
     ]));
 
@@ -580,7 +585,7 @@ fn render_scrollback_tab(frame: &mut Frame, area: Rect, state: &AppState) {
         Span::styled("    ", Style::default().bg(row_bg)),
         Span::styled(
             "Memory per session for terminal scrollback history.",
-            Style::default().fg(Color::DarkGray).bg(row_bg),
+            Style::default().fg(t.fg_faint).bg(row_bg),
         ),
     ]));
     lines.push(Line::from(""));
@@ -588,36 +593,36 @@ fn render_scrollback_tab(frame: &mut Frame, area: Rect, state: &AppState) {
     // Show derived values as read-only info
     lines.push(Line::from(vec![Span::styled(
         "    Current allocation per session:",
-        Style::default().fg(Color::Gray),
+        Style::default().fg(t.fg_dim),
     )]));
     lines.push(Line::from(vec![
         Span::styled(
             "      Raw buffer:       ",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(t.fg_faint),
         ),
         Span::styled(
             format!("{} KB", config.scrollback_buffer_kb),
-            Style::default().fg(Color::Gray),
+            Style::default().fg(t.fg_dim),
         ),
     ]));
     lines.push(Line::from(vec![
         Span::styled(
             "      Replay rows:      ",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(t.fg_faint),
         ),
         Span::styled(
             format!("{}", config.replay_parser_rows),
-            Style::default().fg(Color::Gray),
+            Style::default().fg(t.fg_dim),
         ),
     ]));
     lines.push(Line::from(vec![
         Span::styled(
             "      Live scrollback:  ",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(t.fg_faint),
         ),
         Span::styled(
             format!("{} rows", config.live_scrollback_rows),
-            Style::default().fg(Color::Gray),
+            Style::default().fg(t.fg_dim),
         ),
     ]));
 
@@ -626,23 +631,23 @@ fn render_scrollback_tab(frame: &mut Frame, area: Rect, state: &AppState) {
     // Footer
     lines.push(Line::from(Span::styled(
         "  ─────────────────────────────────────────────────────────",
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(t.fg_faint),
     )));
     lines.push(Line::from(vec![
-        Span::styled("  [Enter]", Style::default().fg(Color::Cyan)),
+        Span::styled("  [Enter]", Style::default().fg(t.accent)),
         Span::raw(" Edit  "),
-        Span::styled("[r]", Style::default().fg(Color::Cyan)),
+        Span::styled("[r]", Style::default().fg(t.accent)),
         Span::raw(" Reset default"),
     ]));
     lines.push(Line::from(Span::styled(
         "  Changes apply to new sessions only",
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(t.fg_faint),
     )));
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::DarkGray))
-        .style(Style::default().bg(Color::Black));
+        .border_style(Style::default().fg(t.border))
+        .style(Style::default().bg(t.bg));
 
     let paragraph = Paragraph::new(lines).block(block);
     frame.render_widget(paragraph, area);

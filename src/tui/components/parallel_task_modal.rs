@@ -2,13 +2,14 @@ use crate::app::AppState;
 use crate::git;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
     Frame,
 };
 
 pub fn render(frame: &mut Frame, state: &AppState) {
+    let t = crate::theme::current();
     let area = centered_rect(60, 50, frame.area());
 
     // Clear the background
@@ -35,13 +36,13 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         Line::from(""),
         Line::from(Span::styled(
             format!("  Workspace: {}", workspace_name),
-            Style::default().fg(Color::Gray),
+            Style::default().fg(t.fg_dim),
         )),
         Line::from(vec![
-            Span::styled("  Branch: ", Style::default().fg(Color::Gray)),
+            Span::styled("  Branch: ", Style::default().fg(t.fg_dim)),
             Span::styled(
                 format!("{} ({})", branch_name, commit_short),
-                Style::default().fg(Color::Cyan),
+                Style::default().fg(t.accent),
             ),
         ]),
     ];
@@ -50,7 +51,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     if !is_clean {
         content.push(Line::from(Span::styled(
             "  ⚠ Working directory has uncommitted changes!",
-            Style::default().fg(Color::Yellow),
+            Style::default().fg(t.warning),
         )));
     }
 
@@ -58,7 +59,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     content.push(Line::from(Span::styled(
         "  Task prompt:",
         Style::default()
-            .fg(Color::White)
+            .fg(t.fg)
             .add_modifier(Modifier::BOLD),
     )));
 
@@ -70,14 +71,14 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     };
     content.push(Line::from(Span::styled(
         prompt_display,
-        Style::default().fg(Color::White),
+        Style::default().fg(t.fg),
     )));
 
     content.push(Line::from(""));
     content.push(Line::from(Span::styled(
         "  Agents to use:",
         Style::default()
-            .fg(Color::White)
+            .fg(t.fg)
             .add_modifier(Modifier::BOLD),
     )));
 
@@ -91,20 +92,20 @@ pub fn render(frame: &mut Frame, state: &AppState) {
 
         let line = if is_focused {
             Line::from(vec![
-                Span::styled("  > ", Style::default().fg(Color::Yellow)),
+                Span::styled("  > ", Style::default().fg(t.active)),
                 Span::styled(
                     checkbox,
-                    Style::default().fg(if *selected { Color::Green } else { Color::Gray }),
+                    Style::default().fg(if *selected { t.success } else { t.fg_dim }),
                 ),
                 Span::raw(" "),
                 Span::styled(
                     format!("[{}] ", agent_badge),
-                    Style::default().fg(Color::Magenta),
+                    Style::default().fg(t.special),
                 ),
                 Span::styled(
                     agent_name,
                     Style::default()
-                        .fg(Color::White)
+                        .fg(t.fg)
                         .add_modifier(Modifier::BOLD),
                 ),
             ])
@@ -114,15 +115,15 @@ pub fn render(frame: &mut Frame, state: &AppState) {
                 Span::styled(
                     checkbox,
                     Style::default().fg(if *selected {
-                        Color::Green
+                        t.success
                     } else {
-                        Color::DarkGray
+                        t.fg_faint
                     }),
                 ),
                 Span::raw(" "),
                 Span::styled(
                     format!("[{}] ", agent_badge),
-                    Style::default().fg(Color::Magenta),
+                    Style::default().fg(t.special),
                 ),
                 Span::raw(agent_name),
             ])
@@ -141,19 +142,19 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     };
     let danger_line = if danger_focused {
         Line::from(vec![
-            Span::styled("  > ", Style::default().fg(Color::Yellow)),
+            Span::styled("  > ", Style::default().fg(t.active)),
             Span::styled(
                 danger_checkbox,
                 Style::default().fg(if state.ui.parallel_task.dangerous_mode {
-                    Color::Green
+                    t.success
                 } else {
-                    Color::Gray
+                    t.fg_dim
                 }),
             ),
             Span::styled(
                 " Dangerous mode (skip permission prompts)",
                 Style::default()
-                    .fg(Color::White)
+                    .fg(t.fg)
                     .add_modifier(Modifier::BOLD),
             ),
         ])
@@ -163,9 +164,9 @@ pub fn render(frame: &mut Frame, state: &AppState) {
             Span::styled(
                 danger_checkbox,
                 Style::default().fg(if state.ui.parallel_task.dangerous_mode {
-                    Color::Green
+                    t.success
                 } else {
-                    Color::DarkGray
+                    t.fg_faint
                 }),
             ),
             Span::raw(" Dangerous mode (skip permission prompts)"),
@@ -182,19 +183,19 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     };
     let report_line = if report_focused {
         Line::from(vec![
-            Span::styled("  > ", Style::default().fg(Color::Yellow)),
+            Span::styled("  > ", Style::default().fg(t.active)),
             Span::styled(
                 report_checkbox,
                 Style::default().fg(if state.ui.parallel_task.request_report {
-                    Color::Green
+                    t.success
                 } else {
-                    Color::Gray
+                    t.fg_dim
                 }),
             ),
             Span::styled(
                 " Request report (PARALLEL_REPORT.md)",
                 Style::default()
-                    .fg(Color::White)
+                    .fg(t.fg)
                     .add_modifier(Modifier::BOLD),
             ),
         ])
@@ -204,9 +205,9 @@ pub fn render(frame: &mut Frame, state: &AppState) {
             Span::styled(
                 report_checkbox,
                 Style::default().fg(if state.ui.parallel_task.request_report {
-                    Color::Green
+                    t.success
                 } else {
-                    Color::DarkGray
+                    t.fg_faint
                 }),
             ),
             Span::raw(" Request report (PARALLEL_REPORT.md)"),
@@ -217,21 +218,21 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     content.push(Line::from(""));
     content.push(Line::from("  ─────────────────────────────────────────"));
     content.push(Line::from(vec![
-        Span::styled("  Enter", Style::default().fg(Color::Cyan)),
+        Span::styled("  Enter", Style::default().fg(t.accent)),
         Span::raw(": Start   "),
-        Span::styled("Tab", Style::default().fg(Color::Cyan)),
+        Span::styled("Tab", Style::default().fg(t.accent)),
         Span::raw(": Next   "),
-        Span::styled("x", Style::default().fg(Color::Cyan)),
+        Span::styled("x", Style::default().fg(t.accent)),
         Span::raw(": Toggle   "),
-        Span::styled("Esc", Style::default().fg(Color::Cyan)),
+        Span::styled("Esc", Style::default().fg(t.accent)),
         Span::raw(": Cancel"),
     ]));
 
     let block = Block::default()
         .title(" Start Parallel Task ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Magenta))
-        .style(Style::default().bg(Color::Black));
+        .border_style(Style::default().fg(t.special))
+        .style(Style::default().bg(t.bg));
 
     let paragraph = Paragraph::new(content).block(block);
 

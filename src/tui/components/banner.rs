@@ -2,7 +2,7 @@ use crate::app::AppState;
 use chrono::Local;
 use ratatui::{
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::Paragraph,
     Frame,
@@ -14,12 +14,14 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         return;
     }
 
+    let t = crate::theme::current();
+
     let teal_style = Style::default()
-        .fg(Color::Cyan)
-        .bg(Color::Black)
+        .fg(t.accent)
+        .bg(t.bg)
         .add_modifier(Modifier::BOLD);
 
-    let dim_teal_style = Style::default().fg(Color::DarkGray).bg(Color::Black);
+    let dim_teal_style = Style::default().fg(t.fg_faint).bg(t.bg);
 
     // Get active workspace name
     let workspace_name = state
@@ -72,7 +74,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         Span::styled(right_text, teal_style),
     ];
 
-    let paragraph = Paragraph::new(Line::from(spans)).style(Style::default().bg(Color::Black));
+    let paragraph = Paragraph::new(Line::from(spans)).style(Style::default().bg(t.bg));
 
     frame.render_widget(paragraph, area);
 }

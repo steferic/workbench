@@ -1,11 +1,14 @@
 use crate::app::pty_ops::resize_ptys_to_panes;
-use crate::app::{Action, AppState, FocusPanel, InputMode, PendingDelete, Toast, ToastLevel};
+use crate::app::{
+    Action, AppState, FocusPanel, InputMode, PendingDelete, Toast, ToastLevel, TranscriptMode,
+};
 use crate::git;
 use crate::models::{AgentType, AttemptStatus, Session};
 use crate::pty::{PtyHandle, PtyManager, SessionSpawnConfig};
 use anyhow::Result;
 use std::time::Duration;
 use tokio::sync::mpsc;
+use uuid::Uuid;
 
 use super::session_worktree::{
     handle_confirm_merge_with_commit, handle_merge_session_worktree, handle_switch_to_worktree,
@@ -241,31 +244,51 @@ pub fn handle_session_action(
             save_state(state, "failed to save exited session");
         }
         Action::PtyOutput(session_id, data) => {
-            let uses_transcript_scrollback = state
+            // Redraw-style agents reconstruct scrollback from screen state. Claude
+            // (Ink) scrolls committed lines off the top, so we commit on scroll;
+            // codex repaints a fixed viewport with no scroll signal, so it falls
+            // back to snapshot merging. Append-style sessions use raw byte replay.
+            let transcript_mode = state
                 .data
                 .sessions
                 .values()
                 .flatten()
                 .find(|s| s.id == session_id)
-                .map(|s| s.agent_type.is_codex_like())
-                .unwrap_or(false);
+                .and_then(|s| {
+                    if s.agent_type.is_codex_like() {
+                        Some(TranscriptMode::FrameAlign)
+                    } else if s.agent_type.is_redraw_style() {
+                        Some(TranscriptMode::ScrollCommit)
+                    } else {
+                        None
+                    }
+                });
 
-            // Process through live parser
-            if let Some(parser) = state.system.output_buffers.get_mut(&session_id) {
-                parser.process(&data);
-            }
+            let output_chunks = state.system.synchronized_output_chunks(session_id, &data);
+            let has_processed_output = !output_chunks.is_empty();
 
-            if uses_transcript_scrollback {
-                state.system.update_transcript_from_screen(session_id);
-            } else {
-                // Append raw bytes for append-style sessions; replay scrollback uses this for deep history.
-                if let Some(raw_buf) = state.system.raw_output_buffers.get_mut(&session_id) {
-                    raw_buf.append(&data);
+            for chunk in output_chunks {
+                if chunk.is_empty() {
+                    continue;
+                }
+
+                // Process through live parser
+                if let Some(parser) = state.system.output_buffers.get_mut(&session_id) {
+                    parser.process(&chunk);
+                }
+
+                if let Some(mode) = transcript_mode {
+                    state.system.update_transcript_from_screen(session_id, mode);
+                } else {
+                    // Append raw bytes for append-style sessions; replay scrollback uses this for deep history.
+                    if let Some(raw_buf) = state.system.raw_output_buffers.get_mut(&session_id) {
+                        raw_buf.append(&chunk);
+                    }
                 }
             }
 
             // Invalidate replay cache only if one exists (user is scrolled back)
-            if state.system.replay_caches.contains_key(&session_id) {
+            if has_processed_output && state.system.replay_caches.contains_key(&session_id) {
                 state.system.replay_caches.remove(&session_id);
             }
             // Only count as agent activity if this isn't an echo of recent user input.
@@ -333,7 +356,7 @@ fn finish_session_spawn(
     spawn_result: Result<PtyHandle>,
     failure_toast: &str,
     save_msg: &str,
-) {
+) -> bool {
     let session_id = session.id;
     match spawn_result {
         Ok(handle) => {
@@ -346,10 +369,12 @@ fn finish_session_spawn(
                 state.ui.selected_session_idx = session_count - 1;
             }
             save_state(state, save_msg);
+            true
         }
         Err(_e) => {
             show_toast(state, failure_toast, ToastLevel::Error);
             state.system.remove_session_buffers(&session_id);
+            false
         }
     }
 }
@@ -361,9 +386,9 @@ fn create_session(
     with_worktree: bool,
     pty_manager: &PtyManager,
     pty_tx: &mpsc::Sender<Action>,
-) {
+) -> Option<Uuid> {
     let Some(workspace) = state.selected_workspace() else {
-        return;
+        return None;
     };
     let workspace_id = workspace.id;
     let workspace_path = workspace.path.clone();
@@ -421,7 +446,9 @@ fn create_session(
 
     let pty_rows = state.pane_rows();
     let cols = state.output_pane_cols();
-    state.system.create_session_buffers(session_id, cols);
+    state
+        .system
+        .create_session_buffers(session_id, pty_rows, cols, &agent_type);
 
     let spawn_result = pty_manager.spawn_session(SessionSpawnConfig {
         session_id,
@@ -434,7 +461,7 @@ fn create_session(
         dangerously_skip_permissions,
         use_alternate_screen: state.system.use_alternate_screen,
     });
-    finish_session_spawn(
+    let started = finish_session_spawn(
         state,
         session,
         spawn_result,
@@ -442,15 +469,16 @@ fn create_session(
         "failed to save created session",
     );
     state.ui.input_mode = InputMode::Normal;
+    started.then_some(session_id)
 }
 
 fn create_terminal(
     state: &mut AppState,
     pty_manager: &PtyManager,
     pty_tx: &mpsc::Sender<Action>,
-) {
+) -> Option<Uuid> {
     let Some(workspace) = state.selected_workspace() else {
-        return;
+        return None;
     };
     let terminal_count = state
         .sessions_for_selected_workspace()
@@ -471,7 +499,9 @@ fn create_terminal(
 
     let pty_rows = state.pane_rows();
     let cols = state.output_pane_cols();
-    state.system.create_session_buffers(session_id, cols);
+    state
+        .system
+        .create_session_buffers(session_id, pty_rows, cols, &agent_type);
 
     let spawn_result = pty_manager.spawn_session(SessionSpawnConfig {
         session_id,
@@ -484,13 +514,71 @@ fn create_terminal(
         dangerously_skip_permissions: false,
         use_alternate_screen: state.system.use_alternate_screen,
     });
-    finish_session_spawn(
+    let started = finish_session_spawn(
         state,
         session,
         spawn_result,
         "Failed to spawn terminal",
         "failed to save created terminal",
     );
+    started.then_some(session_id)
+}
+
+/// Bootstrap a freshly created/opened workspace with the default session layout:
+/// one Claude agent shown in the main pane plus two pinned terminals. Assumes the
+/// target workspace is already selected.
+pub fn start_default_workspace_sessions(
+    state: &mut AppState,
+    pty_manager: &PtyManager,
+    pty_tx: &mpsc::Sender<Action>,
+) {
+    // Claude agent (no worktree, permissions prompt on) in the main pane.
+    let claude_id = create_session(
+        state,
+        AgentType::Claude,
+        false,
+        false,
+        pty_manager,
+        pty_tx,
+    );
+
+    // Two terminals, pinned by default.
+    let mut pinned_any = false;
+    for _ in 0..2 {
+        if let Some(terminal_id) = create_terminal(state, pty_manager, pty_tx) {
+            if state.pin_terminal_for_selected(terminal_id) {
+                pinned_any = true;
+            }
+        }
+    }
+
+    if pinned_any {
+        state.ui.layout.split_view_enabled = true;
+        let focused = state
+            .selected_workspace()
+            .map(|ws| ws.pinned_terminal_ids.len().saturating_sub(1))
+            .unwrap_or(0);
+        if let Some(ws_ui) = state.ws_ui_mut() {
+            ws_ui.focused_pinned_pane = focused;
+        }
+        state.ui.focused_pinned_pane = focused;
+    }
+
+    // Show the Claude agent in the main output pane.
+    if let Some(claude_id) = claude_id {
+        state.ui.active_session_id = Some(claude_id);
+        if let Some(idx) = state
+            .sessions_for_selected_workspace()
+            .iter()
+            .position(|s| s.id == claude_id)
+        {
+            state.ui.selected_session_idx = idx;
+        }
+    }
+
+    // Re-layout PTYs/parsers for the new pinned-pane layout.
+    resize_ptys_to_panes(state);
+    save_state(state, "failed to save default workspace sessions");
 }
 
 fn restart_session(
@@ -542,7 +630,9 @@ fn restart_session(
 
     let pty_rows = state.pane_rows();
     let cols = state.output_pane_cols();
-    state.system.create_session_buffers(session_id, cols);
+    state
+        .system
+        .create_session_buffers(session_id, pty_rows, cols, &agent_type);
 
     let resume = agent_type.is_agent();
 

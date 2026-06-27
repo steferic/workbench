@@ -5,7 +5,7 @@ use crate::tui::utils::{
     CursorInfo,
 };
 use ratatui::{
-    style::{Modifier, Style},
+    style::Modifier,
     text::{Line, Span},
 };
 use uuid::Uuid;
@@ -339,8 +339,11 @@ fn transcript_lines(
         lines.push(Line::raw(""));
     }
     for row in visible_start..visible_end {
-        let text = transcript.line(row).unwrap_or_default();
-        lines.push(transcript_line(row, text, selection));
+        if let Some(line) = transcript.styled_line(row) {
+            lines.push(transcript_line(row, line, selection));
+        } else {
+            lines.push(Line::raw(""));
+        }
     }
 
     let min_visible_len = scroll_offset.saturating_add(viewport_height);
@@ -353,17 +356,27 @@ fn transcript_lines(
 
 fn transcript_line(
     row: usize,
-    text: &str,
+    line: &crate::app::TranscriptLine,
     selection: Option<crate::tui::utils::SelectionBounds>,
 ) -> Line<'static> {
     let Some(bounds) = selection else {
-        return Line::raw(text.to_string());
+        return Line::from(
+            line.spans()
+                .iter()
+                .map(|span| Span::styled(span.text.clone(), span.style))
+                .collect::<Vec<_>>(),
+        );
     };
     if row < bounds.start_row || row > bounds.end_row {
-        return Line::raw(text.to_string());
+        return Line::from(
+            line.spans()
+                .iter()
+                .map(|span| Span::styled(span.text.clone(), span.style))
+                .collect::<Vec<_>>(),
+        );
     }
 
-    let char_count = text.chars().count();
+    let char_count = line.text().chars().count();
     if char_count == 0 {
         return Line::raw("");
     }
@@ -380,18 +393,57 @@ fn transcript_line(
     };
 
     if start >= char_count || start > end {
-        return Line::raw(text.to_string());
+        return Line::from(
+            line.spans()
+                .iter()
+                .map(|span| Span::styled(span.text.clone(), span.style))
+                .collect::<Vec<_>>(),
+        );
     }
 
-    let before: String = text.chars().take(start).collect();
-    let selected: String = text.chars().skip(start).take(end - start + 1).collect();
-    let after: String = text.chars().skip(end + 1).collect();
+    let mut spans = Vec::new();
+    let mut col = 0usize;
+    for span in line.spans() {
+        let span_len = span.text.chars().count();
+        let span_start = col;
+        let span_end = col + span_len;
 
-    Line::from(vec![
-        Span::raw(before),
-        Span::styled(selected, Style::default().add_modifier(Modifier::REVERSED)),
-        Span::raw(after),
-    ])
+        if span_end <= start || span_start > end {
+            spans.push(Span::styled(span.text.clone(), span.style));
+            col = span_end;
+            continue;
+        }
+
+        let selected_start = start.saturating_sub(span_start);
+        let selected_end_exclusive = (end + 1).saturating_sub(span_start).min(span_len);
+
+        if selected_start > 0 {
+            spans.push(Span::styled(
+                line_slice(&span.text, 0, selected_start),
+                span.style,
+            ));
+        }
+        if selected_start < selected_end_exclusive {
+            spans.push(Span::styled(
+                line_slice(&span.text, selected_start, selected_end_exclusive),
+                span.style.add_modifier(Modifier::REVERSED),
+            ));
+        }
+        if selected_end_exclusive < span_len {
+            spans.push(Span::styled(
+                line_slice(&span.text, selected_end_exclusive, span_len),
+                span.style,
+            ));
+        }
+
+        col = span_end;
+    }
+
+    Line::from(spans)
+}
+
+fn line_slice(line: &str, start: usize, end: usize) -> String {
+    line.chars().skip(start).take(end - start).collect()
 }
 
 #[cfg(test)]
@@ -399,7 +451,8 @@ mod tests {
     use super::{
         build_terminal_view, should_replay, stable_live_len, ReplayPolicy, TerminalViewRequest,
     };
-    use crate::app::{SystemState, TextSelection};
+    use crate::app::{SystemState, TextSelection, TranscriptMode};
+    use crate::models::AgentType;
     use uuid::Uuid;
 
     #[test]
@@ -468,28 +521,32 @@ mod tests {
     fn scrolled_view_prefers_transcript_buffer_when_present() {
         let mut system = SystemState::new();
         let session_id = Uuid::new_v4();
-        system.create_session_buffers(session_id, 40);
+        // Codex-style: repaints a fixed 6-row viewport with the input box ("> p")
+        // and footer pinned at the bottom while content slides up. FrameAlign
+        // commits the line that scrolls off the top.
+        system.create_session_buffers(session_id, 6, 40, &AgentType::Codex);
 
         system
             .output_buffers
             .get_mut(&session_id)
             .unwrap()
-            .process(b"one\r\ntwo");
-        system.update_transcript_from_screen(session_id);
+            .process(b"\x1b[2J\x1b[Ha\r\nb\r\nc\r\nd\r\n> p\r\nftr");
+        system.update_transcript_from_screen(session_id, TranscriptMode::FrameAlign);
 
         system
             .output_buffers
             .get_mut(&session_id)
             .unwrap()
-            .process(b"\x1b[2J\x1b[1;1Htwo\r\nthree\r\nfour");
-        system.update_transcript_from_screen(session_id);
+            .process(b"\x1b[2J\x1b[Hb\r\nc\r\nd\r\ne\r\n> p\r\nftr");
+        system.update_transcript_from_screen(session_id, TranscriptMode::FrameAlign);
 
+        // History = committed ["a"] ++ visible 6-row frame = 7 lines.
         let view = build_terminal_view(
             &mut system,
             TerminalViewRequest {
                 session_id,
                 viewport_height: 2,
-                scroll_from_bottom: 3,
+                scroll_from_bottom: 6,
                 prev_content_len: 2,
                 was_on_replay: false,
                 selection: TextSelection::default(),
@@ -499,7 +556,7 @@ mod tests {
         .unwrap();
 
         assert!(view.on_replay);
-        assert_eq!(view.content_len, 4);
-        assert_eq!(view.scroll_from_bottom, 2);
+        assert_eq!(view.content_len, 7);
+        assert_eq!(view.scroll_from_bottom, 5);
     }
 }

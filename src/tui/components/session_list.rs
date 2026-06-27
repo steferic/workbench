@@ -3,7 +3,7 @@ use crate::git;
 use crate::models::{Session, SessionStatus};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
     Frame,
@@ -11,11 +11,12 @@ use ratatui::{
 use uuid::Uuid;
 
 pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
+    let t = crate::theme::current();
     let is_focused = state.ui.focus == FocusPanel::SessionList;
     let border_style = if is_focused {
-        Style::default().fg(Color::Cyan)
+        Style::default().fg(t.border_focused)
     } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(t.border)
     };
 
     let block = Block::default()
@@ -99,21 +100,21 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
 
         let branch_style = if is_worktree {
             Style::default()
-                .fg(Color::Yellow)
+                .fg(t.active)
                 .add_modifier(Modifier::BOLD)
         } else {
             Style::default()
-                .fg(Color::Cyan)
+                .fg(t.accent)
                 .add_modifier(Modifier::BOLD)
         };
         let icon_style = if is_worktree {
-            Style::default().fg(Color::Yellow)
+            Style::default().fg(t.active)
         } else {
-            Style::default().fg(Color::Green)
+            Style::default().fg(t.success)
         };
 
         let hint = if is_worktree {
-            Span::styled(" (w:back)", Style::default().fg(Color::DarkGray))
+            Span::styled(" (w:back)", Style::default().fg(t.fg_faint))
         } else {
             Span::raw("")
         };
@@ -130,7 +131,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
                 if stat.insertions > 0 {
                     branch_spans.push(Span::styled(
                         format!("+{}", stat.insertions),
-                        Style::default().fg(Color::Green),
+                        Style::default().fg(t.success),
                     ));
                 }
                 if stat.deletions > 0 {
@@ -139,7 +140,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
                     }
                     branch_spans.push(Span::styled(
                         format!("-{}", stat.deletions),
-                        Style::default().fg(Color::Red),
+                        Style::default().fg(t.error),
                     ));
                 }
             }
@@ -154,7 +155,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     // Agents section header
     if !agent_indices.is_empty() {
         let header_style = Style::default()
-            .fg(Color::Magenta)
+            .fg(t.special)
             .add_modifier(Modifier::BOLD);
         items.push(ListItem::new(Line::from(vec![Span::styled(
             "── Agents ──",
@@ -191,7 +192,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
             .unwrap_or_else(|| "Parallel Task".to_string());
 
         let header_style = Style::default()
-            .fg(Color::Yellow)
+            .fg(t.active)
             .add_modifier(Modifier::BOLD);
         items.push(ListItem::new(Line::from(vec![Span::styled(
             format!("── {} ──", task_preview),
@@ -215,7 +216,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     // Terminals section header
     if !terminal_indices.is_empty() {
         let header_style = Style::default()
-            .fg(Color::Green)
+            .fg(t.success)
             .add_modifier(Modifier::BOLD);
         items.push(ListItem::new(Line::from(vec![Span::styled(
             "── Terminals ──",
@@ -238,7 +239,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     // Highlight style with full row background when focused
     let highlight_style = if is_focused {
         Style::default()
-            .bg(Color::Rgb(40, 50, 60))
+            .bg(t.selection_bg)
             .add_modifier(Modifier::BOLD)
     } else {
         Style::default()
@@ -253,14 +254,14 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
 
     // Render action bars (2 rows)
     let action_style = if is_focused {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(t.fg_faint)
     } else {
-        Style::default().fg(Color::Rgb(60, 60, 60))
+        Style::default().fg(t.inactive)
     };
     let key_style = if is_focused {
-        Style::default().fg(Color::Cyan)
+        Style::default().fg(t.accent)
     } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(t.fg_faint)
     };
 
     let action_bar = Paragraph::new(Line::from(vec![
@@ -279,6 +280,7 @@ fn create_session_item<'a>(
     pinned_ids: &[Uuid],
     is_parallel: bool,
 ) -> ListItem<'a> {
+    let t = crate::theme::current();
     let is_selected = session_idx == state.ui.selected_session_idx && is_focused;
     let is_active = state.ui.active_session_id == Some(session.id);
     let is_working = state.is_session_working(session.id);
@@ -293,27 +295,28 @@ fn create_session_item<'a>(
     let (status_icon, status_color) = match session.status {
         SessionStatus::Running => {
             if session.agent_type.is_terminal() {
-                ("◆", Color::Green)
+                ("◆", t.success)
             } else if is_working {
-                (state.spinner_char(), Color::Yellow)
+                (state.spinner_char(), t.active)
             } else {
-                ("◆", Color::DarkGray)
+                ("◆", t.fg_faint)
             }
         }
-        SessionStatus::Stopped => ("○", Color::Gray),
-        SessionStatus::Errored => ("✗", Color::Red),
+        SessionStatus::Stopped => ("○", t.fg_dim),
+        SessionStatus::Errored => ("✗", t.error),
     };
 
-    let pin_indicator = if is_pinned {
-        Span::styled(" [pinned]", Style::default().fg(Color::Magenta))
+    // Pinned terminals are flagged by the diamond color rather than a label.
+    let status_color = if is_pinned {
+        t.special
     } else {
-        Span::raw("")
+        status_color
     };
 
     // Dangerous mode indicator (skip permissions)
     let dangerous_indicator =
         if session.dangerously_skip_permissions && session.agent_type.is_agent() {
-            Span::styled(" ⚡", Style::default().fg(Color::Rgb(255, 100, 50)))
+            Span::styled(" ⚡", Style::default().fg(t.danger))
         } else {
             Span::raw("")
         };
@@ -337,10 +340,10 @@ fn create_session_item<'a>(
             let short_id = branch_name.rsplit('-').next().unwrap_or(&branch_name);
             let style = if is_worktree_active {
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(t.active)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::Cyan)
+                Style::default().fg(t.accent)
             };
             let suffix = if is_worktree_active { " ◀" } else { "" };
             Span::styled(format!(" ⎇ {}{}", short_id, suffix), style)
@@ -352,10 +355,10 @@ fn create_session_item<'a>(
         let short_id = branch.rsplit('-').next().unwrap_or(branch);
         let style = if is_worktree_active {
             Style::default()
-                .fg(Color::Yellow)
+                .fg(t.active)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(Color::Cyan)
+            Style::default().fg(t.accent)
         };
         let suffix = if is_worktree_active { " ◀" } else { "" };
         Span::styled(format!(" ⎇ {}{}", short_id, suffix), style)
@@ -365,14 +368,14 @@ fn create_session_item<'a>(
 
     let name_style = if is_selected {
         Style::default()
-            .fg(Color::Cyan)
+            .fg(t.accent)
             .add_modifier(Modifier::BOLD)
     } else if is_active {
         Style::default()
-            .fg(Color::Yellow)
+            .fg(t.active)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(Color::White)
+        Style::default().fg(t.fg)
     };
 
     let prefix = if is_active {
@@ -390,7 +393,6 @@ fn create_session_item<'a>(
         Span::styled(session.agent_type.display_name().to_string(), name_style),
         dangerous_indicator,
         branch_indicator,
-        pin_indicator,
     ];
 
     let main_line = Line::from(main_spans);
@@ -404,8 +406,8 @@ fn create_session_item<'a>(
         };
         let cmd_line = Line::from(vec![
             Span::raw("      "),
-            Span::styled("$ ", Style::default().fg(Color::DarkGray)),
-            Span::styled(display_cmd, Style::default().fg(Color::Rgb(255, 165, 0))),
+            Span::styled("$ ", Style::default().fg(t.fg_faint)),
+            Span::styled(display_cmd, Style::default().fg(t.command)),
         ]);
         ListItem::new(Text::from(vec![main_line, cmd_line]))
     } else {

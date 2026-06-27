@@ -2,18 +2,19 @@ use crate::app::{AppState, FocusPanel};
 use crate::models::WorkspaceStatus;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
     Frame,
 };
 
 pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
+    let t = crate::theme::current();
     let is_focused = state.ui.focus == FocusPanel::WorkspaceList;
     let border_style = if is_focused {
-        Style::default().fg(Color::Cyan)
+        Style::default().fg(t.border_focused)
     } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(t.border)
     };
 
     let title = format!(" Workspaces ({}) ", state.data.workspaces.len());
@@ -61,7 +62,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     // Working section header
     if !working_indices.is_empty() || paused_indices.is_empty() {
         let header_style = Style::default()
-            .fg(Color::Green)
+            .fg(t.success)
             .add_modifier(Modifier::BOLD);
         items.push(ListItem::new(Line::from(vec![Span::styled(
             "── Working ──",
@@ -83,7 +84,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     // Paused section header
     if !paused_indices.is_empty() {
         let header_style = Style::default()
-            .fg(Color::Rgb(255, 165, 0))
+            .fg(t.command)
             .add_modifier(Modifier::BOLD);
         items.push(ListItem::new(Line::from(vec![Span::styled(
             "── Paused ──",
@@ -105,7 +106,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     // Highlight style with full row background when focused
     let highlight_style = if is_focused {
         Style::default()
-            .bg(Color::Rgb(40, 50, 60))
+            .bg(t.selection_bg)
             .add_modifier(Modifier::BOLD)
     } else {
         Style::default()
@@ -121,14 +122,14 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
 
     // Render action bar (1 row, inside the border)
     let action_style = if is_focused {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(t.fg_faint)
     } else {
-        Style::default().fg(Color::Rgb(60, 60, 60))
+        Style::default().fg(t.inactive)
     };
     let key_style = if is_focused {
-        Style::default().fg(Color::Cyan)
+        Style::default().fg(t.accent)
     } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(t.fg_faint)
     };
 
     let action_bar = Paragraph::new(Line::from(vec![
@@ -146,6 +147,7 @@ fn create_workspace_item<'a>(
     is_focused: bool,
     is_paused: bool,
 ) -> ListItem<'a> {
+    let t = crate::theme::current();
     let is_working = state.is_workspace_working(ws.id);
 
     let name = ws.name.clone();
@@ -159,25 +161,25 @@ fn create_workspace_item<'a>(
     // Different styling for selected/focused vs paused
     let style = if is_selected && is_focused {
         Style::default()
-            .fg(Color::Cyan)
+            .fg(t.accent)
             .add_modifier(Modifier::BOLD)
     } else if is_selected {
-        Style::default().fg(Color::White)
+        Style::default().fg(t.fg)
     } else if is_paused {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(t.fg_faint)
     } else {
-        Style::default().fg(Color::Gray)
+        Style::default().fg(t.fg_dim)
     };
 
     // Time style - slightly dimmer, different color for recency
     let time_style = if is_paused {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(t.fg_faint)
     } else if last_active == "just now" || last_active.ends_with("m ago") {
-        Style::default().fg(Color::Green)
+        Style::default().fg(t.success)
     } else if last_active.ends_with("h ago") {
-        Style::default().fg(Color::Yellow)
+        Style::default().fg(t.active)
     } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(t.fg_faint)
     };
 
     let prefix = if is_selected { "> " } else { "  " };
@@ -190,12 +192,12 @@ fn create_workspace_item<'a>(
     let working_indicator = if is_loading && !is_paused {
         Span::styled(
             format!("{} ", state.spinner_char()),
-            Style::default().fg(Color::Blue),
+            Style::default().fg(t.info),
         )
     } else if is_working && !is_paused {
         Span::styled(
             format!("{} ", state.spinner_char()),
-            Style::default().fg(Color::Yellow),
+            Style::default().fg(t.active),
         )
     } else {
         Span::raw("  ")

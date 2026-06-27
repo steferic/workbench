@@ -146,6 +146,7 @@ pub enum UtilityItem {
     Keybindings,
     ToggleBanner,
     AgentDoneSound,
+    ToggleTheme,
     // Sounds
     BrownNoise,
     ClassicalRadio,
@@ -166,6 +167,7 @@ impl UtilityItem {
             UtilityItem::Keybindings,
             UtilityItem::ToggleBanner,
             UtilityItem::AgentDoneSound,
+            UtilityItem::ToggleTheme,
         ]
     }
 
@@ -195,6 +197,7 @@ impl UtilityItem {
             UtilityItem::SuggestTodos => "Suggest Todos",
             UtilityItem::Keybindings => "Keybindings",
             UtilityItem::ToggleBanner => "Banner Bar",
+            UtilityItem::ToggleTheme => "Theme",
         }
     }
 
@@ -213,6 +216,7 @@ impl UtilityItem {
             UtilityItem::SuggestTodos => "\u{1F4A1}",
             UtilityItem::Keybindings => "\u{2328}",
             UtilityItem::ToggleBanner => "\u{1F4E2}",
+            UtilityItem::ToggleTheme => "\u{1F313}",
         }
     }
 }

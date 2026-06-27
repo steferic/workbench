@@ -69,6 +69,14 @@ impl AgentType {
             _ => false,
         }
     }
+
+    pub fn is_redraw_style(&self) -> bool {
+        match self {
+            AgentType::Claude | AgentType::Codex => true,
+            AgentType::Custom { command, .. } => command == "claude" || command == "codex",
+            _ => false,
+        }
+    }
 }
 
 impl std::fmt::Display for AgentType {

@@ -83,6 +83,7 @@ pub async fn run_tui(initial_workspace: Option<PathBuf>, use_alternate_screen: b
             state.ui.layout.todos_ratio = config.todos_ratio;
             state.ui.layout.output_split_ratio = config.output_split_ratio;
             state.system.agent_done_sound_enabled = config.agent_done_sound_enabled;
+            state.ui.theme_mode = config.theme_mode;
         }
         Err(_e) => {
             state.ui.toasts.push_back(Toast::new(

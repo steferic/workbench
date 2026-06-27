@@ -269,7 +269,7 @@ pub fn process_action(
 
                     match pty_manager.spawn_session(SessionSpawnConfig {
                         session_id,
-                        agent_type,
+                        agent_type: agent_type.clone(),
                         working_dir: &config_dir,
                         rows: pty_rows,
                         cols: pty_cols,
@@ -280,7 +280,12 @@ pub fn process_action(
                     }) {
                         Ok(handle) => {
                             state.system.pty_handles.insert(session_id, handle);
-                            state.system.create_session_buffers(session_id, pty_cols);
+                            state.system.create_session_buffers(
+                                session_id,
+                                pty_rows,
+                                pty_cols,
+                                &agent_type,
+                            );
 
                             // Mark session as running
                             if let Some(s) = state.get_session_mut(session_id) {
@@ -332,6 +337,14 @@ pub fn process_action(
             // The specialized handlers internally match on the actions they care about and ignore others.
             // So I should clone the action? No, Action might not be cloneable (it is derived Clone though).
             // Better: match here and call the right handler.
+
+            // Creating a new project or opening an existing one appends a workspace.
+            // Detect that below (after dispatch) to bootstrap its default sessions.
+            let workspaces_before = state.data.workspaces.len();
+            let opens_workspace = matches!(
+                action,
+                Action::CreateNewWorkspace(_) | Action::FileBrowserSelect
+            );
 
             match action {
                 // Workspace actions
@@ -474,6 +487,15 @@ pub fn process_action(
                 // Global already handled
                 Action::Quit | Action::ConfirmQuit | Action::Tick | Action::Resize(_, _) |
                 Action::UtilityContentLoaded(_) | Action::DiffStatsUpdated(_) => {}
+            }
+
+            // A new project was just created or opened: select it and start its
+            // default sessions (one Claude agent + two pinned terminals).
+            if opens_workspace && state.data.workspaces.len() > workspaces_before {
+                state.ui.selected_workspace_idx = state.data.workspaces.len() - 1;
+                state.ui.active_session_id = None;
+                state.ui.selected_session_idx = 0;
+                session::start_default_workspace_sessions(state, pty_manager, pty_tx);
             }
         }
     }

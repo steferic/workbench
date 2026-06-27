@@ -174,6 +174,18 @@ pub fn load_utility_content(state: &mut AppState, action_tx: &mpsc::UnboundedSen
                 },
             ];
         }
+        UtilityItem::ToggleTheme => {
+            // ToggleTheme is handled directly, not through content loading
+            state.ui.utility_content = vec![
+                "".to_string(),
+                "  Theme".to_string(),
+                "  =====".to_string(),
+                "".to_string(),
+                "  Press Enter to switch between dark and light mode.".to_string(),
+                "".to_string(),
+                format!("  Current: {}", state.ui.theme_mode.label()),
+            ];
+        }
     }
 }
 

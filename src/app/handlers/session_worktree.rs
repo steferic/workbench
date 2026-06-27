@@ -168,11 +168,14 @@ pub(super) fn handle_switch_to_worktree(
 
     let pty_rows = state.pane_rows();
     let cols = state.output_pane_cols();
-    state.system.create_session_buffers(new_session_id, cols);
+    let terminal_agent_type = AgentType::Terminal(format!("worktree-{}", short_id));
+    state
+        .system
+        .create_session_buffers(new_session_id, pty_rows, cols, &terminal_agent_type);
 
     match pty_manager.spawn_session(SessionSpawnConfig {
         session_id: new_session_id,
-        agent_type: AgentType::Terminal(format!("worktree-{}", short_id)),
+        agent_type: terminal_agent_type,
         working_dir: &worktree_path,
         rows: pty_rows,
         cols,

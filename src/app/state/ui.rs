@@ -224,6 +224,9 @@ pub struct UIState {
     pub banner_offset: usize,
     pub banner_visible: bool,
 
+    // Active UI theme (dark/light)
+    pub theme_mode: crate::theme::ThemeMode,
+
     // Contextual IDs
     pub editing_session_id: Option<Uuid>,
     pub analyzer_session_id: Option<Uuid>,
@@ -296,6 +299,7 @@ impl UIState {
             banner_text: "\u{2726} WORKBENCH \u{2726} Multi-Agent Development Environment \u{2726} Claude \u{2022} Gemini \u{2022} Codex \u{2022} Grok \u{2726} ".to_string(),
             banner_offset: 0,
             banner_visible: true,
+            theme_mode: crate::theme::ThemeMode::default(),
             editing_session_id: None,
             analyzer_session_id: None,
             merging_session_id: None,

@@ -1,13 +1,14 @@
 use crate::app::{AppState, WorkspaceAction};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
     Frame,
 };
 
 pub fn render(frame: &mut Frame, state: &AppState) {
+    let t = crate::theme::current();
     let area = centered_rect(50, 30, frame.area());
 
     // Clear the background
@@ -16,8 +17,8 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     let block = Block::default()
         .title(" Add Workspace ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan))
-        .style(Style::default().bg(Color::Black));
+        .border_style(Style::default().fg(t.border_focused))
+        .style(Style::default().bg(t.bg));
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -42,10 +43,10 @@ pub fn render(frame: &mut Frame, state: &AppState) {
 
             let style = if is_selected {
                 Style::default()
-                    .fg(Color::Cyan)
+                    .fg(t.accent)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::White)
+                Style::default().fg(t.fg)
             };
 
             let prefix = if is_selected { "> " } else { "  " };
@@ -53,13 +54,13 @@ pub fn render(frame: &mut Frame, state: &AppState) {
             ListItem::new(vec![
                 Line::from(vec![
                     Span::styled(prefix, style),
-                    Span::styled(action.icon(), Style::default().fg(Color::Yellow)),
+                    Span::styled(action.icon(), Style::default().fg(t.active)),
                     Span::raw(" "),
                     Span::styled(action.name(), style),
                 ]),
                 Line::from(vec![
                     Span::raw("    "),
-                    Span::styled(action.description(), Style::default().fg(Color::DarkGray)),
+                    Span::styled(action.description(), Style::default().fg(t.fg_faint)),
                 ]),
             ])
         })
@@ -71,18 +72,18 @@ pub fn render(frame: &mut Frame, state: &AppState) {
 
     // Render help
     let help = Paragraph::new(Line::from(vec![
-        Span::styled("[↑/k]", Style::default().fg(Color::Cyan)),
+        Span::styled("[↑/k]", Style::default().fg(t.accent)),
         Span::raw(" Up  "),
-        Span::styled("[↓/j]", Style::default().fg(Color::Cyan)),
+        Span::styled("[↓/j]", Style::default().fg(t.accent)),
         Span::raw(" Down  "),
         Span::styled(
             "[Enter]",
             Style::default()
-                .fg(Color::Green)
+                .fg(t.success)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw(" Select  "),
-        Span::styled("[Esc]", Style::default().fg(Color::Yellow)),
+        Span::styled("[Esc]", Style::default().fg(t.active)),
         Span::raw(" Cancel"),
     ]));
     frame.render_widget(help, help_area);

@@ -310,7 +310,9 @@ fn handle_parallel_worktrees_ready(
 
         let pty_rows = state.pane_rows();
         let cols = state.output_pane_cols();
-        state.system.create_session_buffers(session_id, cols);
+        state
+            .system
+            .create_session_buffers(session_id, pty_rows, cols, &spec.agent_type);
 
         match pty_manager.spawn_session(SessionSpawnConfig {
             session_id,
