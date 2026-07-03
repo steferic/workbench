@@ -403,7 +403,7 @@ impl EventHandler {
             return action;
         }
 
-        if state.ui.text_selection.start.is_some() {
+        if state.text_selection().start.is_some() {
             match key.code {
                 // Ctrl+C copies when a selection is active. Without a selection
                 // it falls through and is sent to the PTY as SIGINT (0x03).
@@ -421,7 +421,7 @@ impl EventHandler {
             }
         }
 
-        if let Some(session_id) = state.ui.active_session_id {
+        if let Some(session_id) = state.active_session_id() {
             match key.code {
                 KeyCode::Esc => Action::SendInput(session_id, vec![0x1b]),
                 KeyCode::Up if key.modifiers.contains(KeyModifiers::SHIFT) => {
@@ -543,12 +543,7 @@ impl EventHandler {
             return action;
         }
 
-        if state
-            .ui
-            .pinned_text_selections
-            .get(pane_idx)
-            .map(|s| s.start.is_some())
-            .unwrap_or(false)
+        if state.pinned_text_selection(pane_idx).start.is_some()
         {
             match key.code {
                 // Ctrl+C copies when a selection is active; without a selection

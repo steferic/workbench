@@ -30,7 +30,7 @@ fn bracketed_paste_payload(text: &str) -> Vec<u8> {
 fn paste_target_session_id(state: &AppState) -> Option<Uuid> {
     match state.ui.focus {
         FocusPanel::PinnedTerminalPane(idx) => state.pinned_terminal_id_at(idx),
-        _ => state.ui.active_session_id,
+        _ => state.active_session_id(),
     }
 }
 
@@ -65,14 +65,12 @@ fn handle_mouse_scroll(
         }
     }
 
-    for (idx, area_opt) in state.ui.pinned_pane_areas.iter().enumerate() {
-        if let Some(area) = *area_opt {
+    for idx in 0..state.ui.pinned_pane_areas.len() {
+        if let Some(area) = state.ui.pinned_pane_areas[idx] {
             if is_in_area(x, y, area) {
                 state.ui.focus = FocusPanel::PinnedTerminalPane(idx);
-                state.ui.focused_pinned_pane = idx;
-                if let Some(offset) = state.ui.pinned_scroll_offsets.get_mut(idx) {
-                    *offset = scroll(*offset);
-                }
+                state.set_focused_pinned_pane(idx);
+                state.set_pinned_scroll_offset(idx, scroll(state.pinned_scroll_offset(idx)));
                 return;
             }
         }
@@ -165,35 +163,30 @@ pub fn handle_navigation_action(
         Action::NextPinnedPane => {
             let count = state.pinned_count();
             if count > 0 {
-                state.ui.focused_pinned_pane = (state.ui.focused_pinned_pane + 1) % count;
-                state.ui.focus = FocusPanel::PinnedTerminalPane(state.ui.focused_pinned_pane);
+                let next = (state.focused_pinned_pane() + 1) % count;
+                state.set_focused_pinned_pane(next);
+                state.ui.focus = FocusPanel::PinnedTerminalPane(next);
             }
         }
         Action::PrevPinnedPane => {
             let count = state.pinned_count();
             if count > 0 {
-                state.ui.focused_pinned_pane = if state.ui.focused_pinned_pane == 0 {
-                    count - 1
-                } else {
-                    state.ui.focused_pinned_pane - 1
-                };
-                state.ui.focus = FocusPanel::PinnedTerminalPane(state.ui.focused_pinned_pane);
+                let focused = state.focused_pinned_pane();
+                let prev = if focused == 0 { count - 1 } else { focused - 1 };
+                state.set_focused_pinned_pane(prev);
+                state.ui.focus = FocusPanel::PinnedTerminalPane(prev);
             }
         }
         Action::ScrollOutputUp => {
             if let FocusPanel::PinnedTerminalPane(idx) = state.ui.focus {
-                if let Some(offset) = state.ui.pinned_scroll_offsets.get_mut(idx) {
-                    *offset = offset.saturating_add(3);
-                }
+                state.set_pinned_scroll_offset(idx, state.pinned_scroll_offset(idx).saturating_add(3));
             } else {
                 state.set_output_scroll_offset(state.output_scroll_offset().saturating_add(3));
             }
         }
         Action::ScrollOutputDown => {
             if let FocusPanel::PinnedTerminalPane(idx) = state.ui.focus {
-                if let Some(offset) = state.ui.pinned_scroll_offsets.get_mut(idx) {
-                    *offset = offset.saturating_sub(3);
-                }
+                state.set_pinned_scroll_offset(idx, state.pinned_scroll_offset(idx).saturating_sub(3));
             } else {
                 state.set_output_scroll_offset(state.output_scroll_offset().saturating_sub(3));
             }
@@ -215,7 +208,7 @@ pub fn handle_navigation_action(
         Action::MouseUp(x, y) => handle_mouse_up(state, x, y),
         Action::CopySelection => {
             let _ = copy_active_selection(state);
-            state.ui.text_selection = TextSelection::default();
+            state.set_text_selection(TextSelection::default());
             clear_all_pinned_selections(state);
         }
         Action::Paste(text) => {
@@ -253,7 +246,7 @@ pub fn handle_navigation_action(
             }
         }
         Action::ClearSelection => {
-            state.ui.text_selection = TextSelection::default();
+            state.set_text_selection(TextSelection::default());
             clear_all_pinned_selections(state);
         }
         Action::SelectNextUtility => {
@@ -405,7 +398,7 @@ fn cycle_session(state: &mut AppState, forward: bool) {
             let len = visual_order.len();
             let current_pos = visual_order
                 .iter()
-                .position(|&idx| idx == state.ui.selected_session_idx);
+                .position(|&idx| idx == state.selected_session_idx());
             let target_pos = match (current_pos, forward) {
                 (Some(pos), true) => (pos + 1) % len,
                 (Some(pos), false) => (pos + len - 1) % len,
@@ -418,11 +411,11 @@ fn cycle_session(state: &mut AppState, forward: bool) {
     };
 
     if let Some((target_idx, session_id)) = session_info {
-        if state.ui.active_session_id != Some(session_id) {
+        if state.active_session_id() != Some(session_id) {
             clear_active_text_selection(state);
         }
-        state.ui.selected_session_idx = target_idx;
-        state.ui.active_session_id = Some(session_id);
+        state.set_selected_session_idx(target_idx);
+        state.set_active_session_id(Some(session_id));
         state.set_output_scroll_offset(0);
         state.ui.focus = FocusPanel::OutputPane;
     }
@@ -528,7 +521,7 @@ fn handle_mouse_click(
         }
     }
 
-    state.ui.text_selection = TextSelection::default();
+    state.set_text_selection(TextSelection::default());
     clear_all_pinned_selections(state);
 
     if let Some(area) = state.ui.workspace_area {
@@ -562,26 +555,27 @@ fn handle_mouse_click(
         }
     }
 
-    for (idx, area_opt) in state.ui.pinned_pane_areas.iter().enumerate() {
-        if let Some(area) = *area_opt {
+    for idx in 0..state.ui.pinned_pane_areas.len() {
+        if let Some(area) = state.ui.pinned_pane_areas[idx] {
             if is_in_area(x, y, area) {
                 state.ui.focus = FocusPanel::PinnedTerminalPane(idx);
-                state.ui.focused_pinned_pane = idx;
+                state.set_focused_pinned_pane(idx);
                 if state.pinned_terminal_output_at(idx).is_some() {
                     if let Some((row, col)) = pane_text_position(
                         area,
                         x,
                         y,
-                        state.ui.pinned_content_lengths[idx],
-                        state.ui.pinned_scroll_offsets[idx],
+                        state.pinned_content_length(idx),
+                        state.pinned_scroll_offset(idx),
                     ) {
-                        if let Some(sel) = state.ui.pinned_text_selections.get_mut(idx) {
-                            *sel = TextSelection {
+                        state.set_pinned_text_selection(
+                            idx,
+                            TextSelection {
                                 start: Some((row, col)),
                                 end: Some((row, col)),
                                 is_dragging: true,
-                            };
-                        }
+                            },
+                        );
                     }
                 }
                 return;
@@ -597,14 +591,14 @@ fn handle_mouse_click(
                     area,
                     x,
                     y,
-                    state.ui.output_content_length,
+                    state.output_content_length(),
                     state.output_scroll_offset(),
                 ) {
-                    state.ui.text_selection = TextSelection {
+                    state.set_text_selection(TextSelection {
                         start: Some((row, col)),
                         end: Some((row, col)),
                         is_dragging: true,
-                    };
+                    });
                 }
             }
         }
@@ -688,35 +682,39 @@ fn handle_mouse_drag(state: &mut AppState, x: u16, y: u16) {
     }
 
     // Store mouse position for tick-based smooth scrolling
-    state.ui.drag_mouse_pos = Some((x, y));
+    state.set_drag_mouse_pos(Some((x, y)));
 
     // Update selection end position for main output pane
-    if state.ui.text_selection.is_dragging {
+    let mut output_sel = state.text_selection();
+    if output_sel.is_dragging {
         if let Some((ax, ay, aw, ah)) = state.ui.output_pane_area {
             if let Some((row, col)) = pane_text_position(
                 (ax, ay, aw, ah),
                 x,
                 y,
-                state.ui.output_content_length,
+                state.output_content_length(),
                 state.output_scroll_offset(),
             ) {
-                state.ui.text_selection.end = Some((row, col));
+                output_sel.end = Some((row, col));
+                state.set_text_selection(output_sel);
             }
         }
     }
 
     // Update selection end position for pinned panes
-    for (idx, sel) in state.ui.pinned_text_selections.iter_mut().enumerate() {
+    for idx in 0..state.pinned_count() {
+        let mut sel = state.pinned_text_selection(idx);
         if sel.is_dragging {
-            if let Some((ax, ay, aw, ah)) = state.ui.pinned_pane_areas[idx] {
+            if let Some(Some((ax, ay, aw, ah))) = state.ui.pinned_pane_areas.get(idx).copied() {
                 if let Some((row, col)) = pane_text_position(
                     (ax, ay, aw, ah),
                     x,
                     y,
-                    state.ui.pinned_content_lengths[idx],
-                    state.ui.pinned_scroll_offsets[idx],
+                    state.pinned_content_length(idx),
+                    state.pinned_scroll_offset(idx),
                 ) {
                     sel.end = Some((row, col));
+                    state.set_pinned_text_selection(idx, sel);
                 }
             }
         }
@@ -744,46 +742,50 @@ fn handle_mouse_up(state: &mut AppState, x: u16, y: u16) {
         return;
     }
 
-    if state.ui.text_selection.is_dragging {
+    let mut output_sel = state.text_selection();
+    if output_sel.is_dragging {
         if let Some(area) = state.ui.output_pane_area {
             if let Some((row, col)) = pane_text_position(
                 area,
                 x,
                 y,
-                state.ui.output_content_length,
+                state.output_content_length(),
                 state.output_scroll_offset(),
             ) {
-                state.ui.text_selection.end = Some((row, col));
+                output_sel.end = Some((row, col));
             }
         }
-        state.ui.text_selection.is_dragging = false;
-        if state.ui.text_selection.start == state.ui.text_selection.end {
-            state.ui.text_selection = TextSelection::default();
+        output_sel.is_dragging = false;
+        if output_sel.start == output_sel.end {
+            output_sel = TextSelection::default();
         }
+        state.set_text_selection(output_sel);
     }
 
-    for (idx, sel) in state.ui.pinned_text_selections.iter_mut().enumerate() {
+    for idx in 0..state.pinned_count() {
+        let mut sel = state.pinned_text_selection(idx);
         if sel.is_dragging {
-            if let Some(area) = state.ui.pinned_pane_areas[idx] {
+            if let Some(Some(area)) = state.ui.pinned_pane_areas.get(idx).copied() {
                 if let Some((row, col)) = pane_text_position(
                     area,
                     x,
                     y,
-                    state.ui.pinned_content_lengths[idx],
-                    state.ui.pinned_scroll_offsets[idx],
+                    state.pinned_content_length(idx),
+                    state.pinned_scroll_offset(idx),
                 ) {
                     sel.end = Some((row, col));
                 }
             }
             sel.is_dragging = false;
             if sel.start == sel.end {
-                *sel = TextSelection::default();
+                sel = TextSelection::default();
             }
+            state.set_pinned_text_selection(idx, sel);
         }
     }
 
     // Clear drag position tracking
-    state.ui.drag_mouse_pos = None;
+    state.set_drag_mouse_pos(None);
 }
 
 /// Handle smooth auto-scrolling during text selection drag.
@@ -797,7 +799,7 @@ pub fn handle_drag_auto_scroll(state: &mut AppState) {
     // Max scroll speed when at the very edge
     const MAX_SCROLL_SPEED: u16 = 8;
 
-    let Some((mouse_x, mouse_y)) = state.ui.drag_mouse_pos else {
+    let Some((mouse_x, mouse_y)) = state.drag_mouse_pos() else {
         return;
     };
 
@@ -838,69 +840,62 @@ pub fn handle_drag_auto_scroll(state: &mut AppState) {
     };
 
     // Handle main output pane auto-scroll
-    if state.ui.text_selection.is_dragging {
+    let mut output_sel = state.text_selection();
+    if output_sel.is_dragging {
         if let Some((ax, ay, aw, ah)) = state.ui.output_pane_area {
             let pane_top = ay;
             let pane_bottom = ay.saturating_add(ah);
             let (scroll_up, scroll_down, speed) = calc_scroll(mouse_y, pane_top, pane_bottom);
 
-            if scroll_up {
-                state.set_output_scroll_offset(state.output_scroll_offset().saturating_add(speed));
+            if scroll_up || scroll_down {
+                let offset = state.output_scroll_offset();
+                state.set_output_scroll_offset(if scroll_up {
+                    offset.saturating_add(speed)
+                } else {
+                    offset.saturating_sub(speed)
+                });
                 if let Some((row, col)) = pane_text_position(
                     (ax, ay, aw, ah),
                     mouse_x,
                     mouse_y,
-                    state.ui.output_content_length,
+                    state.output_content_length(),
                     state.output_scroll_offset(),
                 ) {
-                    state.ui.text_selection.end = Some((row, col));
-                }
-            } else if scroll_down {
-                state.set_output_scroll_offset(state.output_scroll_offset().saturating_sub(speed));
-                if let Some((row, col)) = pane_text_position(
-                    (ax, ay, aw, ah),
-                    mouse_x,
-                    mouse_y,
-                    state.ui.output_content_length,
-                    state.output_scroll_offset(),
-                ) {
-                    state.ui.text_selection.end = Some((row, col));
+                    output_sel.end = Some((row, col));
+                    state.set_text_selection(output_sel);
                 }
             }
         }
     }
 
     // Handle pinned panes auto-scroll
-    for idx in 0..state.ui.pinned_text_selections.len() {
-        if state.ui.pinned_text_selections[idx].is_dragging {
-            if let Some((ax, ay, aw, ah)) = state.ui.pinned_pane_areas[idx] {
+    for idx in 0..state.pinned_count() {
+        let mut sel = state.pinned_text_selection(idx);
+        if sel.is_dragging {
+            if let Some(Some((ax, ay, aw, ah))) = state.ui.pinned_pane_areas.get(idx).copied() {
                 let pane_top = ay;
                 let pane_bottom = ay.saturating_add(ah);
                 let (scroll_up, scroll_down, speed) = calc_scroll(mouse_y, pane_top, pane_bottom);
 
-                if scroll_up {
-                    state.ui.pinned_scroll_offsets[idx] =
-                        state.ui.pinned_scroll_offsets[idx].saturating_add(speed);
+                if scroll_up || scroll_down {
+                    let offset = state.pinned_scroll_offset(idx);
+                    state.set_pinned_scroll_offset(
+                        idx,
+                        if scroll_up {
+                            offset.saturating_add(speed)
+                        } else {
+                            offset.saturating_sub(speed)
+                        },
+                    );
                     if let Some((row, col)) = pane_text_position(
                         (ax, ay, aw, ah),
                         mouse_x,
                         mouse_y,
-                        state.ui.pinned_content_lengths[idx],
-                        state.ui.pinned_scroll_offsets[idx],
+                        state.pinned_content_length(idx),
+                        state.pinned_scroll_offset(idx),
                     ) {
-                        state.ui.pinned_text_selections[idx].end = Some((row, col));
-                    }
-                } else if scroll_down {
-                    state.ui.pinned_scroll_offsets[idx] =
-                        state.ui.pinned_scroll_offsets[idx].saturating_sub(speed);
-                    if let Some((row, col)) = pane_text_position(
-                        (ax, ay, aw, ah),
-                        mouse_x,
-                        mouse_y,
-                        state.ui.pinned_content_lengths[idx],
-                        state.ui.pinned_scroll_offsets[idx],
-                    ) {
-                        state.ui.pinned_text_selections[idx].end = Some((row, col));
+                        sel.end = Some((row, col));
+                        state.set_pinned_text_selection(idx, sel);
                     }
                 }
             }

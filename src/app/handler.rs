@@ -293,7 +293,7 @@ pub fn process_action(
                             }
 
                             // Activate the session so it shows in the center pane
-                            state.ui.active_session_id = Some(session_id);
+                            state.set_active_session_id(Some(session_id));
                             state.set_output_scroll_offset(0);
                             state.ui.focus = crate::app::FocusPanel::OutputPane;
 
@@ -496,8 +496,8 @@ pub fn process_action(
             // default sessions (one Claude agent + two pinned terminals).
             if opens_workspace && state.data.workspaces.len() > workspaces_before {
                 state.ui.selected_workspace_idx = state.data.workspaces.len() - 1;
-                state.ui.active_session_id = None;
-                state.ui.selected_session_idx = 0;
+                state.set_active_session_id(None);
+                state.set_selected_session_idx(0);
                 session::start_default_workspace_sessions(state, pty_manager, action_tx, pty_tx);
             }
         }

@@ -169,7 +169,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         let session = &sessions[session_idx];
         let item = create_session_item(state, session_idx, session, is_focused, pinned_ids, false);
         items.push(item);
-        if session_idx == state.ui.selected_session_idx {
+        if session_idx == state.selected_session_idx() {
             selected_visual_idx = Some(current_visual_idx);
         }
         current_visual_idx += 1;
@@ -206,7 +206,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
             let item =
                 create_session_item(state, session_idx, session, is_focused, pinned_ids, true);
             items.push(item);
-            if session_idx == state.ui.selected_session_idx {
+            if session_idx == state.selected_session_idx() {
                 selected_visual_idx = Some(current_visual_idx);
             }
             current_visual_idx += 1;
@@ -230,7 +230,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         let session = &sessions[session_idx];
         let item = create_session_item(state, session_idx, session, is_focused, pinned_ids, false);
         items.push(item);
-        if session_idx == state.ui.selected_session_idx {
+        if session_idx == state.selected_session_idx() {
             selected_visual_idx = Some(current_visual_idx);
         }
         current_visual_idx += 1;
@@ -281,8 +281,8 @@ fn create_session_item<'a>(
     is_parallel: bool,
 ) -> ListItem<'a> {
     let t = crate::theme::current();
-    let is_selected = session_idx == state.ui.selected_session_idx && is_focused;
-    let is_active = state.ui.active_session_id == Some(session.id);
+    let is_selected = session_idx == state.selected_session_idx() && is_focused;
+    let is_active = state.active_session_id() == Some(session.id);
     let is_working = state.is_session_working(session.id);
     let is_pinned = pinned_ids.contains(&session.id);
     let is_worktree_active = state
@@ -380,7 +380,7 @@ fn create_session_item<'a>(
 
     let prefix = if is_active {
         "* "
-    } else if session_idx == state.ui.selected_session_idx {
+    } else if session_idx == state.selected_session_idx() {
         "> "
     } else {
         "  "

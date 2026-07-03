@@ -114,32 +114,28 @@ impl AppState {
         Some(self.ws_ui.entry(id).or_insert(seed))
     }
 
-    /// Read pinned-pane state at `idx` for the selected workspace. Reserved
-    /// for the deeper refactor that moves all reads off the live UIState
-    /// arrays; currently unused but kept as the canonical API surface.
-    #[allow(dead_code)]
+    /// Read pinned-pane state at `idx` for the selected workspace. Bounds- and
+    /// selection-checked: out-of-range indices return `None` instead of
+    /// panicking like the old fixed-array indexing did.
     pub fn pinned_pane(&self, idx: usize) -> Option<&PinnedPaneState> {
         self.ws_ui()?.pinned_panes.get(idx)
     }
 
     /// Mutable pinned-pane state at `idx` for the selected workspace.
-    #[allow(dead_code)]
     pub fn pinned_pane_mut(&mut self, idx: usize) -> Option<&mut PinnedPaneState> {
         self.ws_ui_mut()?.pinned_panes.get_mut(idx)
     }
 
     // ------------------------------------------------------------------
-    // Convenience read helpers for per-workspace UI state. Each falls back
-    // to `0`/`None`/`default()` when no workspace is selected so call sites
-    // don't have to thread `Option` through every render path.
+    // Accessors for per-workspace UI state (the single source of truth is
+    // `ws_ui`). Reads fall back to `0`/`None`/`default()` when no workspace
+    // is selected so call sites don't thread `Option` through every render
+    // path; writes are no-ops in that case.
     // ------------------------------------------------------------------
 
-    // Each falls back to `0`/`None`/`false` when no workspace is selected.
     pub fn output_scroll_offset(&self) -> u16 {
         self.ws_ui().map(|u| u.output_scroll_offset).unwrap_or(0)
     }
-    /// Set the output scroll offset for the currently selected workspace.
-    /// No-op when no workspace is selected.
     pub fn set_output_scroll_offset(&mut self, value: u16) {
         if let Some(u) = self.ws_ui_mut() {
             u.output_scroll_offset = value;
@@ -148,44 +144,102 @@ impl AppState {
     pub fn output_on_replay(&self) -> bool {
         self.ws_ui().map(|u| u.output_on_replay).unwrap_or(false)
     }
-    /// Set whether the output pane is showing the replay parser, for the
-    /// currently selected workspace. No-op when no workspace is selected.
+    /// Whether the output pane rendered from the replay parser last frame
+    /// (used to detect live→replay transitions and translate selections).
     pub fn set_output_on_replay(&mut self, value: bool) {
         if let Some(u) = self.ws_ui_mut() {
             u.output_on_replay = value;
         }
     }
-    #[allow(dead_code)]
     pub fn output_content_length(&self) -> usize {
         self.ws_ui().map(|u| u.output_content_length).unwrap_or(0)
     }
-    #[allow(dead_code)]
+    pub fn set_output_content_length(&mut self, value: usize) {
+        if let Some(u) = self.ws_ui_mut() {
+            u.output_content_length = value;
+        }
+    }
     pub fn focused_pinned_pane(&self) -> usize {
         self.ws_ui().map(|u| u.focused_pinned_pane).unwrap_or(0)
     }
-    #[allow(dead_code)]
+    pub fn set_focused_pinned_pane(&mut self, value: usize) {
+        if let Some(u) = self.ws_ui_mut() {
+            u.focused_pinned_pane = value;
+        }
+    }
     pub fn active_session_id(&self) -> Option<Uuid> {
         self.ws_ui().and_then(|u| u.active_session_id)
     }
-    #[allow(dead_code)]
+    pub fn set_active_session_id(&mut self, value: Option<Uuid>) {
+        if let Some(u) = self.ws_ui_mut() {
+            u.active_session_id = value;
+        }
+    }
     pub fn selected_session_idx(&self) -> usize {
         self.ws_ui().map(|u| u.selected_session_idx).unwrap_or(0)
     }
-    #[allow(dead_code)]
+    pub fn set_selected_session_idx(&mut self, value: usize) {
+        if let Some(u) = self.ws_ui_mut() {
+            u.selected_session_idx = value;
+        }
+    }
     pub fn drag_mouse_pos(&self) -> Option<(u16, u16)> {
         self.ws_ui().and_then(|u| u.drag_mouse_pos)
     }
-    #[allow(dead_code)]
+    pub fn set_drag_mouse_pos(&mut self, value: Option<(u16, u16)>) {
+        if let Some(u) = self.ws_ui_mut() {
+            u.drag_mouse_pos = value;
+        }
+    }
+    /// Output-pane text selection. Pinned-pane selections live on the
+    /// per-pane `PinnedPaneState`.
+    pub fn text_selection(&self) -> TextSelection {
+        self.ws_ui().map(|u| u.text_selection).unwrap_or_default()
+    }
+    pub fn set_text_selection(&mut self, value: TextSelection) {
+        if let Some(u) = self.ws_ui_mut() {
+            u.text_selection = value;
+        }
+    }
     pub fn pinned_scroll_offset(&self, idx: usize) -> u16 {
         self.pinned_pane(idx).map(|p| p.scroll_offset).unwrap_or(0)
     }
-    #[allow(dead_code)]
+    pub fn set_pinned_scroll_offset(&mut self, idx: usize, value: u16) {
+        if let Some(p) = self.pinned_pane_mut(idx) {
+            p.scroll_offset = value;
+        }
+    }
     pub fn pinned_content_length(&self, idx: usize) -> usize {
         self.pinned_pane(idx).map(|p| p.content_length).unwrap_or(0)
     }
-    #[allow(dead_code)]
+    pub fn set_pinned_content_length(&mut self, idx: usize, value: usize) {
+        if let Some(p) = self.pinned_pane_mut(idx) {
+            p.content_length = value;
+        }
+    }
     pub fn pinned_on_replay(&self, idx: usize) -> bool {
         self.pinned_pane(idx).map(|p| p.on_replay).unwrap_or(false)
+    }
+    pub fn pinned_text_selection(&self, idx: usize) -> TextSelection {
+        self.pinned_pane(idx)
+            .map(|p| p.text_selection)
+            .unwrap_or_default()
+    }
+    pub fn set_pinned_text_selection(&mut self, idx: usize, value: TextSelection) {
+        if let Some(p) = self.pinned_pane_mut(idx) {
+            p.text_selection = value;
+        }
+    }
+
+    /// Clear `active_session_id` in every workspace's UI state that points at
+    /// `session_id`. Sessions can be deleted from non-selected workspaces, so
+    /// this must not be limited to the selected workspace's entry.
+    pub fn clear_active_session_everywhere(&mut self, session_id: Uuid) {
+        for ws_ui in self.ws_ui.values_mut() {
+            if ws_ui.active_session_id == Some(session_id) {
+                ws_ui.active_session_id = None;
+            }
+        }
     }
 
     /// Pin a terminal session in the currently selected workspace, keeping
@@ -271,7 +325,6 @@ impl AppState {
         {
             if pos > 0 {
                 self.ui.selected_workspace_idx = visual_order[pos - 1];
-                self.ui.selected_session_idx = 0;
             }
         }
     }
@@ -290,7 +343,6 @@ impl AppState {
         {
             if pos < visual_order.len() - 1 {
                 self.ui.selected_workspace_idx = visual_order[pos + 1];
-                self.ui.selected_session_idx = 0;
             }
         }
     }
@@ -327,10 +379,10 @@ impl AppState {
         // Find current position in visual order
         if let Some(pos) = visual_order
             .iter()
-            .position(|&idx| idx == self.ui.selected_session_idx)
+            .position(|&idx| idx == self.selected_session_idx())
         {
             if pos > 0 {
-                self.ui.selected_session_idx = visual_order[pos - 1];
+                self.set_selected_session_idx(visual_order[pos - 1]);
             }
         }
     }
@@ -345,10 +397,10 @@ impl AppState {
         // Find current position in visual order
         if let Some(pos) = visual_order
             .iter()
-            .position(|&idx| idx == self.ui.selected_session_idx)
+            .position(|&idx| idx == self.selected_session_idx())
         {
             if pos < visual_order.len() - 1 {
-                self.ui.selected_session_idx = visual_order[pos + 1];
+                self.set_selected_session_idx(visual_order[pos + 1]);
             }
         }
     }
@@ -362,12 +414,12 @@ impl AppState {
 
     pub fn selected_session(&self) -> Option<&Session> {
         self.sessions_for_selected_workspace()
-            .get(self.ui.selected_session_idx)
+            .get(self.selected_session_idx())
     }
 
     /// Check if the active session is one of the pinned terminals
     pub fn active_is_pinned(&self) -> bool {
-        if let Some(active) = self.ui.active_session_id {
+        if let Some(active) = self.active_session_id() {
             self.pinned_terminal_ids().contains(&active)
         } else {
             false
@@ -381,8 +433,7 @@ impl AppState {
         if self.should_show_split() && self.active_is_pinned() {
             return None;
         }
-        self.ui
-            .active_session_id
+        self.active_session_id()
             .and_then(|id| self.system.output_buffers.get(&id))
     }
 
@@ -392,8 +443,7 @@ impl AppState {
         if self.should_show_split() && self.active_is_pinned() {
             return None;
         }
-        self.ui
-            .active_session_id
+        self.active_session_id()
             .and_then(|id| self.data.sessions.values().flatten().find(|s| s.id == id))
     }
 
@@ -510,9 +560,7 @@ impl AppState {
             sessions.retain(|s| s.id != session_id);
         }
         // Clear active session if it was deleted
-        if self.ui.active_session_id == Some(session_id) {
-            self.ui.active_session_id = None;
-        }
+        self.clear_active_session_everywhere(session_id);
         // Unpin from whichever workspace owns the pin — sessions can belong
         // to non-selected workspaces, so the previous "selected workspace
         // only" code was wrong.

@@ -22,7 +22,7 @@ pub use action::{
 pub use runtime::run_tui;
 pub use state::{
     AppState, ConfigTab, ConfigTreeNode, Divider, FocusPanel, InputMode, PendingDelete,
-    PendingSessionStart, PinnedPaneState, RawOutputBuffer, ReplayCache, SystemState, TextSelection,
+    PendingSessionStart, RawOutputBuffer, ReplayCache, SystemState, TextSelection,
     Toast, ToastLevel, TodoPaneMode, TodosTab, TranscriptBuffer, TranscriptLine,
-    UtilityItem, UtilitySection, WorkspaceAction, WorkspaceUiState,
+    UtilityItem, UtilitySection, WorkspaceAction,
 };

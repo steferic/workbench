@@ -319,7 +319,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
                     Span::raw(" Del"),
                 ],
                 FocusPanel::OutputPane => {
-                    if state.ui.active_session_id.is_some() {
+                    if state.active_session_id().is_some() {
                         vec![
                             Span::styled("[Esc]", Style::default().fg(t.accent)),
                             Span::raw(" Back  "),

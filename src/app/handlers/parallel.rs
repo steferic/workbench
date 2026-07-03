@@ -667,7 +667,7 @@ fn view_selected_report(state: &mut AppState) {
 
     if let Some(attempt) = attempt {
         // Set the active session to view the output
-        state.ui.active_session_id = Some(attempt.session_id);
+        state.set_active_session_id(Some(attempt.session_id));
         state.ui.focus = FocusPanel::OutputPane;
     }
 }
@@ -836,7 +836,7 @@ mod tests {
         task.add_attempt(attempt);
         state.data.workspaces[0].add_parallel_task(task);
 
-        assert!(state.ui.active_session_id.is_none());
+        assert!(state.active_session_id().is_none());
 
         let attempt = state
             .selected_workspace()
@@ -845,11 +845,11 @@ mod tests {
             .cloned();
 
         if let Some(attempt) = attempt {
-            state.ui.active_session_id = Some(attempt.session_id);
+            state.set_active_session_id(Some(attempt.session_id));
             state.ui.focus = FocusPanel::OutputPane;
         }
 
-        assert_eq!(state.ui.active_session_id, Some(expected_session_id));
+        assert_eq!(state.active_session_id(), Some(expected_session_id));
         assert_eq!(state.ui.focus, FocusPanel::OutputPane);
     }
 
@@ -874,9 +874,9 @@ mod tests {
             .and_then(|t| t.attempts.get(state.ui.parallel_task.selected_report_idx))
             .cloned();
         if let Some(attempt) = attempt {
-            state.ui.active_session_id = Some(attempt.session_id);
+            state.set_active_session_id(Some(attempt.session_id));
         }
-        assert_eq!(state.ui.active_session_id, Some(session1));
+        assert_eq!(state.active_session_id(), Some(session1));
 
         state.ui.parallel_task.selected_report_idx = 1;
         let attempt = state
@@ -885,9 +885,9 @@ mod tests {
             .and_then(|t| t.attempts.get(state.ui.parallel_task.selected_report_idx))
             .cloned();
         if let Some(attempt) = attempt {
-            state.ui.active_session_id = Some(attempt.session_id);
+            state.set_active_session_id(Some(attempt.session_id));
         }
-        assert_eq!(state.ui.active_session_id, Some(session2));
+        assert_eq!(state.active_session_id(), Some(session2));
     }
 
     // ==================== Merge Report Tests ====================

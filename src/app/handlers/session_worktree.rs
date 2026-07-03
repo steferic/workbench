@@ -217,7 +217,7 @@ pub(super) fn handle_switch_to_worktree(
     };
 
     if let Some(viewer_id) = existing_worktree_viewer(state, session_id) {
-        state.ui.active_session_id = Some(viewer_id);
+        state.set_active_session_id(Some(viewer_id));
         state.set_output_scroll_offset(0);
         state.ui.focus = FocusPanel::OutputPane;
 
@@ -259,7 +259,7 @@ pub(super) fn handle_switch_to_worktree(
         Ok(handle) => {
             state.system.pty_handles.insert(new_session_id, handle);
             state.add_session(session);
-            state.ui.active_session_id = Some(new_session_id);
+            state.set_active_session_id(Some(new_session_id));
             state.ui.focus = FocusPanel::OutputPane;
 
             if let Some(workspace) = state.selected_workspace_mut() {

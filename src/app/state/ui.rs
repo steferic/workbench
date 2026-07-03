@@ -167,14 +167,12 @@ pub struct UIState {
     pub focus: FocusPanel,
     pub input_mode: InputMode,
     pub selected_workspace_idx: usize,
-    pub selected_session_idx: usize,
-    pub active_session_id: Option<Uuid>,
 
-    // Scroll state
-    // NOTE: `output_scroll_offset` now lives per-workspace in `WorkspaceUiState`
-    // (access via `AppState::output_scroll_offset` / `set_output_scroll_offset`).
-    pub pinned_scroll_offsets: [u16; MAX_PINNED_TERMINALS],
-    pub focused_pinned_pane: usize,
+    // NOTE: All per-workspace view state (active/selected session, scroll
+    // offsets, text selections, pinned-pane state, drag tracking) lives in
+    // `WorkspaceUiState` — access it via the `AppState` accessors
+    // (`active_session_id()`, `pinned_scroll_offset(idx)`, …). Only state
+    // that is genuinely global to the app belongs here.
 
     // Dialog & Input
     pub input_buffer: String,
@@ -184,23 +182,13 @@ pub struct UIState {
     // File browser modal
     pub file_browser: FileBrowserState,
 
-    // Selection & Areas
-    pub text_selection: TextSelection,
-    pub pinned_text_selections: [TextSelection; MAX_PINNED_TERMINALS],
-    /// NOTE: `output_on_replay` now lives per-workspace in `WorkspaceUiState`
-    /// (access via `AppState::output_on_replay` / `set_output_on_replay`). It
-    /// tracks whether the output pane used the replay parser last frame, to
-    /// detect live→replay transitions and translate selection coordinates.
-    pub pinned_on_replay: [bool; MAX_PINNED_TERMINALS],
-    pub drag_mouse_pos: Option<(u16, u16)>, // Track mouse position during text selection drag for smooth scrolling
+    // Rendered pane rectangles (layout, identical for every workspace)
     pub output_pane_area: Option<(u16, u16, u16, u16)>,
     pub pinned_pane_areas: [Option<(u16, u16, u16, u16)>; MAX_PINNED_TERMINALS],
     pub workspace_area: Option<(u16, u16, u16, u16)>,
     pub session_area: Option<(u16, u16, u16, u16)>,
     pub todos_area: Option<(u16, u16, u16, u16)>,
     pub utilities_area: Option<(u16, u16, u16, u16)>,
-    pub output_content_length: usize,
-    pub pinned_content_lengths: [usize; MAX_PINNED_TERMINALS],
 
     // Pane layout
     pub layout: LayoutState,
@@ -264,26 +252,16 @@ impl UIState {
             focus: FocusPanel::WorkspaceList,
             input_mode: InputMode::Normal,
             selected_workspace_idx: 0,
-            selected_session_idx: 0,
-            active_session_id: None,
-            pinned_scroll_offsets: [0; MAX_PINNED_TERMINALS],
-            focused_pinned_pane: 0,
             input_buffer: String::new(),
             pending_delete: None,
             pending_quit: false,
             file_browser: FileBrowserState::default(),
-            text_selection: TextSelection::default(),
-            pinned_text_selections: [TextSelection::default(); MAX_PINNED_TERMINALS],
-            pinned_on_replay: [false; MAX_PINNED_TERMINALS],
-            drag_mouse_pos: None,
             output_pane_area: None,
             pinned_pane_areas: [None; MAX_PINNED_TERMINALS],
             workspace_area: None,
             session_area: None,
             todos_area: None,
             utilities_area: None,
-            output_content_length: 0,
-            pinned_content_lengths: [0; MAX_PINNED_TERMINALS],
             layout: LayoutState::default(),
             utility_section: UtilitySection::default(),
             selected_utility: UtilityItem::default(),

@@ -85,8 +85,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
 
     // Active session's vt100 parser size
     if let Some(parser) = state
-        .ui
-        .active_session_id
+        .active_session_id()
         .and_then(|id| state.system.output_buffers.get(&id))
     {
         let screen = parser.screen();
@@ -133,7 +132,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         // Count actual rendered lines
         let content_len = get_content_length(screen, cursor_info.row);
         let selection =
-            get_selection_bounds(&state.ui.text_selection, content_len, screen.size().1);
+            get_selection_bounds(&state.text_selection(), content_len, screen.size().1);
         let rendered_lines = convert_vt100_to_lines(screen, selection, cursor_info.row);
         lines.push(Line::from(vec![
             Span::styled("Rendered Lines: ", Style::default().fg(t.fg_faint)),

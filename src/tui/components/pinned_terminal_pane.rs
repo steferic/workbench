@@ -41,31 +41,37 @@ pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index
     let viewport_height = inner_area.height as usize;
 
     let Some(session_id) = state.pinned_terminal_id_at(pane_index) else {
-        state.ui.pinned_content_lengths[pane_index] = 0;
+        state.set_pinned_content_length(pane_index, 0);
         render_empty_slot(frame, area, block);
         return;
     };
 
+    let scroll_from_bottom = state.pinned_scroll_offset(pane_index) as usize;
+    let prev_content_len = state.pinned_content_length(pane_index);
+    let was_on_replay = state.pinned_on_replay(pane_index);
+    let selection = state.pinned_text_selection(pane_index);
     let Some(view) = build_terminal_view(
         &mut state.system,
         TerminalViewRequest {
             session_id,
             viewport_height,
-            scroll_from_bottom: state.ui.pinned_scroll_offsets[pane_index] as usize,
-            prev_content_len: state.ui.pinned_content_lengths[pane_index],
-            was_on_replay: state.ui.pinned_on_replay[pane_index],
-            selection: state.ui.pinned_text_selections[pane_index],
+            scroll_from_bottom,
+            prev_content_len,
+            was_on_replay,
+            selection,
             replay_policy: ReplayPolicy::NormalOnly,
         },
     ) else {
-        state.ui.pinned_content_lengths[pane_index] = 0;
+        state.set_pinned_content_length(pane_index, 0);
         render_empty_slot(frame, area, block);
         return;
     };
 
-    state.ui.pinned_on_replay[pane_index] = view.on_replay;
-    state.ui.pinned_text_selections[pane_index] = view.selection;
-    state.ui.pinned_content_lengths[pane_index] = view.content_len;
+    if let Some(pane) = state.pinned_pane_mut(pane_index) {
+        pane.on_replay = view.on_replay;
+        pane.text_selection = view.selection;
+        pane.content_length = view.content_len;
+    }
 
     let paragraph = Paragraph::new(view.lines)
         .block(block)
@@ -76,7 +82,7 @@ pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index
     if view.scrollbar_content_len > viewport_height {
         let scrollbar_max = view.scrollbar_content_len.saturating_sub(viewport_height);
         let scrollbar_sfb =
-            (state.ui.pinned_scroll_offsets[pane_index] as usize).min(scrollbar_max);
+            (state.pinned_scroll_offset(pane_index) as usize).min(scrollbar_max);
         let scrollbar_pos = scrollbar_max.saturating_sub(scrollbar_sfb);
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight);
         let mut scrollbar_state = ScrollbarState::new(scrollbar_max).position(scrollbar_pos);

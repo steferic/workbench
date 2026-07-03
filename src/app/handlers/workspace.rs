@@ -75,7 +75,7 @@ pub fn handle_workspace_action(
                         }
 
                         // Save and clear active session if it belonged to this workspace
-                        if let Some(active_id) = state.ui.active_session_id {
+                        if let Some(active_id) = state.active_session_id() {
                             if ids.contains(&active_id) {
                                 if let Some(ws) = state
                                     .data
@@ -84,7 +84,7 @@ pub fn handle_workspace_action(
                                 {
                                     ws.last_active_session_id = Some(active_id);
                                 }
-                                state.ui.active_session_id = None;
+                                state.set_active_session_id(None);
                             }
                         }
                     }
@@ -122,18 +122,21 @@ pub fn handle_workspace_action(
                         }
 
                         // Restore the last active session for this workspace
-                        if let Some(ws) = state.data.workspaces.get(state.ui.selected_workspace_idx)
-                        {
-                            if let Some(last_id) = ws.last_active_session_id {
-                                state.ui.active_session_id = Some(last_id);
-                                state.set_output_scroll_offset(0);
-                                if let Some(sessions) = state.data.sessions.get(&workspace_id) {
-                                    if let Some((idx, _)) =
-                                        sessions.iter().enumerate().find(|(_, s)| s.id == last_id)
-                                    {
-                                        state.ui.selected_session_idx = idx;
-                                    }
-                                }
+                        let last_id = state
+                            .data
+                            .workspaces
+                            .get(state.ui.selected_workspace_idx)
+                            .and_then(|ws| ws.last_active_session_id);
+                        if let Some(last_id) = last_id {
+                            state.set_active_session_id(Some(last_id));
+                            state.set_output_scroll_offset(0);
+                            let idx = state
+                                .data
+                                .sessions
+                                .get(&workspace_id)
+                                .and_then(|sessions| sessions.iter().position(|s| s.id == last_id));
+                            if let Some(idx) = idx {
+                                state.set_selected_session_idx(idx);
                             }
                         }
                     }

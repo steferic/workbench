@@ -45,23 +45,23 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
         .border_style(border_style);
 
     // Check if we should render a pie chart (TopFiles utility)
-    let has_pie_chart = !state.ui.pie_chart_data.is_empty() && state.ui.active_session_id.is_none();
+    let has_pie_chart = !state.ui.pie_chart_data.is_empty() && state.active_session_id().is_none();
 
     if has_pie_chart {
-        state.ui.output_content_length = 0;
+        state.set_output_content_length(0);
         render_pie_chart_view(frame, area, state, block);
         return;
     }
 
     // Check if we should render a calendar (Calendar utility)
-    if state.ui.show_calendar && state.ui.active_session_id.is_none() {
-        state.ui.output_content_length = 0;
+    if state.ui.show_calendar && state.active_session_id().is_none() {
+        state.set_output_content_length(0);
         render_calendar_view(frame, area, state, block);
         return;
     }
 
     // Render terminal output with scrolling support
-    if let Some(session_id) = state.ui.active_session_id {
+    if let Some(session_id) = state.active_session_id() {
         // Don't show pinned terminal in output pane when split view is active
         if state.should_show_split() && state.active_is_pinned() {
             // Fall through to utility/hints rendering below
@@ -85,7 +85,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
 
     let inner_area = block.inner(area);
     let content_length = lines.len();
-    state.ui.output_content_length = 0;
+    state.set_output_content_length(0);
     let viewport_height = inner_area.height as usize;
 
     let max_scroll = content_length.saturating_sub(viewport_height);
@@ -118,6 +118,8 @@ fn render_session_output(
     let viewport_height = inner_area.height as usize;
     let scroll_from_bottom = state.output_scroll_offset() as usize;
     let was_on_replay = state.output_on_replay();
+    let prev_content_len = state.output_content_length();
+    let selection = state.text_selection();
 
     let Some(view) = build_terminal_view(
         &mut state.system,
@@ -125,18 +127,18 @@ fn render_session_output(
             session_id,
             viewport_height,
             scroll_from_bottom,
-            prev_content_len: state.ui.output_content_length,
+            prev_content_len,
             was_on_replay,
-            selection: state.ui.text_selection,
+            selection,
             replay_policy: ReplayPolicy::NormalAndAlternate,
         },
     ) else {
         return;
     };
 
-    state.ui.output_content_length = view.content_len;
+    state.set_output_content_length(view.content_len);
     state.set_output_on_replay(view.on_replay);
-    state.ui.text_selection = view.selection;
+    state.set_text_selection(view.selection);
 
     // Show scroll indicator in title if scrolled
     let session = state.active_session();

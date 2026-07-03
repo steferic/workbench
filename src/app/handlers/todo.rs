@@ -141,8 +141,7 @@ pub fn handle_todo_action(
                 .map(|ws| ws.id);
 
             let target_session_id = state
-                .ui
-                .active_session_id
+                .active_session_id()
                 .filter(|id| state.data.idle_queue.contains(id))
                 .or_else(|| {
                     current_workspace_id.and_then(|ws_id| {
@@ -417,15 +416,15 @@ Focus on practical, actionable items. Be specific about what needs to be done."#
                     );
 
                     state.data.idle_queue.retain(|&id| id != session_id);
-                    state.ui.active_session_id = Some(session_id);
+                    state.set_active_session_id(Some(session_id));
                     state.ui.focus = FocusPanel::OutputPane;
                 } else {
                     load_utility_content(state, action_tx);
-                    state.ui.active_session_id = None;
+                    state.set_active_session_id(None);
                 }
             } else {
                 load_utility_content(state, action_tx);
-                state.ui.active_session_id = None;
+                state.set_active_session_id(None);
             }
         }
         _ => {}

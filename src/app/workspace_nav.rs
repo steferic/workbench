@@ -4,6 +4,7 @@ use crate::app::{Action, AppState, TextSelection};
 use crate::models::WorkspaceStatus;
 use crate::pty::PtyManager;
 use tokio::sync::mpsc;
+use uuid::Uuid;
 
 fn is_in_area(x: u16, y: u16, area: (u16, u16, u16, u16)) -> bool {
     let (ax, ay, aw, ah) = area;
@@ -19,8 +20,9 @@ pub(crate) fn move_workspace_selection(
     let prev_idx = state.ui.selected_workspace_idx;
     let prev_ws_id = state.data.workspaces.get(prev_idx).map(|w| w.id);
 
+    let active = state.active_session_id();
     if let Some(current_ws) = state.data.workspaces.get_mut(prev_idx) {
-        current_ws.last_active_session_id = state.ui.active_session_id;
+        current_ws.last_active_session_id = active;
     }
 
     if move_prev {
@@ -53,12 +55,13 @@ pub(crate) fn set_selected_workspace(
         .get(state.ui.selected_workspace_idx)
         .map(|w| w.id);
 
+    let active = state.active_session_id();
     if let Some(current_ws) = state
         .data
         .workspaces
         .get_mut(state.ui.selected_workspace_idx)
     {
-        current_ws.last_active_session_id = state.ui.active_session_id;
+        current_ws.last_active_session_id = active;
     }
 
     state.ui.selected_workspace_idx = workspace_idx;
@@ -146,12 +149,13 @@ fn cycle_working_workspace(state: &mut AppState, direction: CycleDirection) {
         .get(state.ui.selected_workspace_idx)
         .map(|w| w.id);
 
+    let active = state.active_session_id();
     if let Some(current_ws) = state
         .data
         .workspaces
         .get_mut(state.ui.selected_workspace_idx)
     {
-        current_ws.last_active_session_id = state.ui.active_session_id;
+        current_ws.last_active_session_id = active;
     }
 
     let current_pos = working_indices
@@ -189,56 +193,52 @@ fn transition_workspace_after_index_change(state: &mut AppState, prev_ws_id: Opt
     restore_workspace_session(state);
 }
 
-/// Restore the last active session for the currently selected workspace.
-/// Falls back to the first agent session if no last active session is found.
+/// Validate/restore the active session for the currently selected workspace.
+/// The workspace's own `ws_ui` already remembers its active session; this
+/// re-resolves it against the live session list (it may have been deleted)
+/// and falls back to the first agent session if it's gone.
 fn restore_workspace_session(state: &mut AppState) {
     let next_idx = state.ui.selected_workspace_idx;
     let Some(ws) = state.data.workspaces.get(next_idx) else {
         return;
     };
     let ws_id = ws.id;
-    // Prefer whatever was already loaded by `transition_workspace` (the
-    // workspace's preserved active session). Fall back to the persisted
-    // `last_active_session_id`.
-    let candidate = state.ui.active_session_id.or(ws.last_active_session_id);
+    // Prefer the workspace's preserved active session (seeded from the
+    // persisted `last_active_session_id` on first access).
+    let candidate = state.active_session_id().or(ws.last_active_session_id);
 
-    let Some(sessions) = state.data.sessions.get(&ws_id) else {
-        // Workspace has no session list at all.
-        state.ui.selected_session_idx = 0;
-        state.ui.active_session_id = None;
-        state.set_output_scroll_offset(0);
-        return;
-    };
+    // Resolve to owned values before the ws_ui writes below take &mut state.
+    let sessions = state.data.sessions.get(&ws_id);
+    let resolved: Option<(usize, Uuid)> = sessions.zip(candidate).and_then(|(sessions, id)| {
+        sessions.iter().position(|s| s.id == id).map(|idx| (idx, id))
+    });
+    let fallback: Option<(usize, Uuid)> = sessions.and_then(|sessions| {
+        sessions
+            .iter()
+            .enumerate()
+            .find(|(_, s)| !s.agent_type.is_terminal())
+            .or_else(|| sessions.iter().enumerate().next())
+            .map(|(idx, s)| (idx, s.id))
+    });
 
-    let resolved = candidate.and_then(|id| sessions.iter().enumerate().find(|(_, s)| s.id == id));
-
-    if let Some((idx, session)) = resolved {
-        state.ui.selected_session_idx = idx;
-        state.ui.active_session_id = Some(session.id);
+    if let Some((idx, session_id)) = resolved {
+        state.set_selected_session_idx(idx);
+        state.set_active_session_id(Some(session_id));
         return;
     }
 
-    let first_agent = sessions
-        .iter()
-        .enumerate()
-        .find(|(_, s)| !s.agent_type.is_terminal());
-
-    let chosen = first_agent.or_else(|| sessions.iter().enumerate().next());
-
-    match chosen {
-        Some((idx, session)) => {
-            state.ui.selected_session_idx = idx;
-            state.ui.active_session_id = Some(session.id);
-            state.set_output_scroll_offset(0);
-            state.ui.text_selection = TextSelection::default();
+    match fallback {
+        Some((idx, session_id)) => {
+            state.set_selected_session_idx(idx);
+            state.set_active_session_id(Some(session_id));
         }
         None => {
-            state.ui.selected_session_idx = 0;
-            state.ui.active_session_id = None;
-            state.set_output_scroll_offset(0);
-            state.ui.text_selection = TextSelection::default();
+            state.set_selected_session_idx(0);
+            state.set_active_session_id(None);
         }
     }
+    state.set_output_scroll_offset(0);
+    state.set_text_selection(TextSelection::default());
 }
 
 #[cfg(test)]

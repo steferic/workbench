@@ -1,5 +1,4 @@
-use crate::app::{AppState, PinnedPaneState, TextSelection, WorkspaceUiState};
-use crate::models::MAX_PINNED_TERMINALS;
+use crate::app::{AppState, TextSelection};
 use std::sync::{Mutex, OnceLock};
 use uuid::Uuid;
 
@@ -177,9 +176,10 @@ pub fn copy_active_selection(state: &mut AppState) -> bool {
         ))
     }
 
-    if let (Some(start), Some(end)) = (state.ui.text_selection.start, state.ui.text_selection.end) {
+    let output_selection = state.text_selection();
+    if let (Some(start), Some(end)) = (output_selection.start, output_selection.end) {
         if start != end {
-            if let Some(session_id) = state.ui.active_session_id {
+            if let Some(session_id) = state.active_session_id() {
                 let surface = if state.output_on_replay() {
                     if state.system.transcript_buffers.contains_key(&session_id) {
                         SelectionSurface::Transcript
@@ -199,11 +199,11 @@ pub fn copy_active_selection(state: &mut AppState) -> bool {
     }
 
     for idx in 0..state.pinned_count() {
-        let sel = &state.ui.pinned_text_selections[idx];
+        let sel = state.pinned_text_selection(idx);
         if let (Some(start), Some(end)) = (sel.start, sel.end) {
             if start != end {
                 if let Some(session_id) = state.pinned_terminal_id_at(idx) {
-                    let surface = if state.ui.pinned_on_replay[idx] {
+                    let surface = if state.pinned_on_replay(idx) {
                         if state.system.transcript_buffers.contains_key(&session_id) {
                             SelectionSurface::Transcript
                         } else {
@@ -226,10 +226,12 @@ pub fn copy_active_selection(state: &mut AppState) -> bool {
     false
 }
 
-/// Clear all pinned pane text selections
+/// Clear all pinned pane text selections (selected workspace)
 pub fn clear_all_pinned_selections(state: &mut AppState) {
-    for sel in state.ui.pinned_text_selections.iter_mut() {
-        *sel = TextSelection::default();
+    if let Some(ws_ui) = state.ws_ui_mut() {
+        for pane in ws_ui.pinned_panes.iter_mut() {
+            pane.text_selection = TextSelection::default();
+        }
     }
 }
 
@@ -237,126 +239,19 @@ pub fn clear_all_pinned_selections(state: &mut AppState) {
 /// Called when the active session changes so stale coords don't get used to
 /// extract text from a different session's screen.
 pub fn clear_active_text_selection(state: &mut AppState) {
-    state.ui.text_selection = TextSelection::default();
-    state.ui.drag_mouse_pos = None;
+    state.set_text_selection(TextSelection::default());
+    state.set_drag_mouse_pos(None);
 }
 
-/// Snapshot the live `state.ui` per-workspace fields into `state.ws_ui` for
-/// the workspace identified by `prev_ws_id`. Only stores as many pinned
-/// panes as that workspace actually has pinned terminals — extra slots in
-/// the fixed-size live arrays are trimmed.
-fn snapshot_into_ws_ui(state: &mut AppState, prev_ws_id: Uuid) {
-    let pinned_count = state
-        .data
-        .workspaces
-        .iter()
-        .find(|w| w.id == prev_ws_id)
-        .map(|w| w.pinned_terminal_ids.len())
-        .unwrap_or(0);
-
-    let pinned_panes: Vec<PinnedPaneState> = (0..pinned_count)
-        .map(|i| PinnedPaneState {
-            scroll_offset: state.ui.pinned_scroll_offsets[i],
-            text_selection: state.ui.pinned_text_selections[i],
-            on_replay: state.ui.pinned_on_replay[i],
-            content_length: state.ui.pinned_content_lengths[i],
-        })
-        .collect();
-
-    // Read the remaining live fields into locals before taking a mutable
-    // borrow of the ws_ui entry.
-    let selected_session_idx = state.ui.selected_session_idx;
-    let active_session_id = state.ui.active_session_id;
-    let focused_pinned_pane = state.ui.focused_pinned_pane;
-    let output_content_length = state.ui.output_content_length;
-    let text_selection = state.ui.text_selection;
-    let drag_mouse_pos = state.ui.drag_mouse_pos;
-
-    // Update in place rather than rebuilding: fields already migrated to live
-    // directly in `ws_ui` (e.g. `output_scroll_offset`) must be preserved, not
-    // reset to defaults by a wholesale overwrite.
-    let entry = state.ws_ui.entry(prev_ws_id).or_default();
-    entry.selected_session_idx = selected_session_idx;
-    entry.active_session_id = active_session_id;
-    entry.focused_pinned_pane = focused_pinned_pane;
-    entry.output_content_length = output_content_length;
-    entry.text_selection = text_selection;
-    entry.drag_mouse_pos = drag_mouse_pos;
-    entry.pinned_panes = pinned_panes;
-}
-
-/// Apply the stored `WorkspaceUiState` for the currently selected workspace
-/// onto the live `state.ui` per-workspace fields. If no entry exists yet,
-/// seeds one from `WorkspaceUiState::for_workspace` (which honors
-/// `Workspace.last_active_session_id`). Pads pinned arrays out to
-/// `MAX_PINNED_TERMINALS` with defaults.
-fn apply_ws_ui_to_live_state(state: &mut AppState) {
-    let Some(ws_id) = state.selected_workspace().map(|w| w.id) else {
-        return;
-    };
-
-    if !state.ws_ui.contains_key(&ws_id) {
-        if let Some(ws) = state.selected_workspace() {
-            state
-                .ws_ui
-                .insert(ws_id, WorkspaceUiState::for_workspace(ws));
-        }
-    }
-
-    let Some(stored) = state.ws_ui.get(&ws_id) else {
-        return;
-    };
-
-    state.ui.selected_session_idx = stored.selected_session_idx;
-    state.ui.active_session_id = stored.active_session_id;
-    state.ui.focused_pinned_pane = stored.focused_pinned_pane;
-    state.ui.output_content_length = stored.output_content_length;
-    state.ui.text_selection = stored.text_selection;
-    state.ui.drag_mouse_pos = stored.drag_mouse_pos;
-
-    let mut pinned_scroll_offsets = [0u16; MAX_PINNED_TERMINALS];
-    let mut pinned_text_selections = [TextSelection::default(); MAX_PINNED_TERMINALS];
-    let mut pinned_on_replay = [false; MAX_PINNED_TERMINALS];
-    let mut pinned_content_lengths = [0usize; MAX_PINNED_TERMINALS];
-
-    for (i, pane) in stored.pinned_panes.iter().enumerate() {
-        if i >= MAX_PINNED_TERMINALS {
-            break;
-        }
-        pinned_scroll_offsets[i] = pane.scroll_offset;
-        pinned_text_selections[i] = pane.text_selection;
-        pinned_on_replay[i] = pane.on_replay;
-        pinned_content_lengths[i] = pane.content_length;
-    }
-
-    state.ui.pinned_scroll_offsets = pinned_scroll_offsets;
-    state.ui.pinned_text_selections = pinned_text_selections;
-    state.ui.pinned_on_replay = pinned_on_replay;
-    state.ui.pinned_content_lengths = pinned_content_lengths;
-}
-
-/// Transition between workspaces: snapshot the previous workspace's UI state
-/// and load (or lazily seed) the new workspace's UI state. Call AFTER
-/// `state.ui.selected_workspace_idx` has been updated to the new workspace.
+/// Transition between workspaces. Call AFTER `state.ui.selected_workspace_idx`
+/// has been updated to the new workspace.
 ///
-/// Replaces the prior `reset_workspace_local_state` "wipe" behavior — each
-/// workspace now keeps its own scroll positions, selections, focused pane,
-/// and active session across switches.
-pub fn transition_workspace(state: &mut AppState, prev_ws_id: Option<Uuid>) {
-    if let Some(prev_id) = prev_ws_id {
-        snapshot_into_ws_ui(state, prev_id);
-    }
-    apply_ws_ui_to_live_state(state);
-}
-
-/// Backwards-compat shim: callers that don't track a previous workspace id
-/// can use this. It still snapshots the *current* selected workspace's
-/// state into ws_ui (treating it as both prev and next), then re-applies —
-/// effectively a no-op but ensures ws_ui is seeded.
-#[allow(dead_code)]
-pub fn reset_workspace_local_state(state: &mut AppState) {
-    let current = state.selected_workspace().map(|w| w.id);
-    transition_workspace(state, current);
+/// All per-workspace UI state lives directly in `ws_ui`, so there is nothing
+/// to snapshot or restore anymore — this only seeds the new workspace's entry
+/// (honoring `Workspace.last_active_session_id`) so read accessors see it
+/// before the first write.
+pub fn transition_workspace(state: &mut AppState, _prev_ws_id: Option<Uuid>) {
+    state.ws_ui_mut();
 }
 
 /// Long-lived clipboard handle. arboard on macOS requires the handle to remain

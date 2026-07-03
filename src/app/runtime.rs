@@ -62,6 +62,9 @@ pub async fn run_tui(initial_workspace: Option<PathBuf>, use_alternate_screen: b
             if let Some(&first_idx) = visual_order.first() {
                 state.ui.selected_workspace_idx = first_idx;
             }
+            // Seed the selected workspace's per-workspace UI state so read
+            // accessors see `last_active_session_id` before any write occurs.
+            state.ws_ui_mut();
         }
         Err(_e) => {
             state.ui.toasts.push_back(Toast::new(
@@ -190,17 +193,14 @@ async fn run_main_loop(
             start_all_working_sessions(state, pty_manager, &pty_tx, &action_tx);
 
             // Auto-activate first agent session in currently selected workspace
-            if let Some(ws) = state.selected_workspace() {
-                if ws.status == crate::models::WorkspaceStatus::Working {
-                    let workspace_id = ws.id;
-                    if let Some(sessions) = state.data.sessions.get(&workspace_id) {
-                        if let Some(first_agent) =
-                            sessions.iter().find(|s| !s.agent_type.is_terminal())
-                        {
-                            state.ui.active_session_id = Some(first_agent.id);
-                        }
-                    }
-                }
+            let first_agent_id = state
+                .selected_workspace()
+                .filter(|ws| ws.status == crate::models::WorkspaceStatus::Working)
+                .and_then(|ws| state.data.sessions.get(&ws.id))
+                .and_then(|sessions| sessions.iter().find(|s| !s.agent_type.is_terminal()))
+                .map(|s| s.id);
+            if let Some(id) = first_agent_id {
+                state.set_active_session_id(Some(id));
             }
 
             initial_sessions_started = true;

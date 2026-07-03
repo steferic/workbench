@@ -66,12 +66,12 @@ pub fn handle_session_action(
             create_terminal(state, pty_manager, pty_tx);
         }
         Action::ActivateSession(session_id) => {
-            if state.ui.active_session_id != Some(session_id) {
+            if state.active_session_id() != Some(session_id) {
                 crate::app::selection::clear_active_text_selection(state);
             }
-            state.ui.active_session_id = Some(session_id);
+            state.set_active_session_id(Some(session_id));
             state.set_output_scroll_offset(0);
-            state.ui.output_content_length = 0;
+            state.set_output_content_length(0);
 
             // Save as last active session for the workspace
             if let Some(ws) = state.selected_workspace_mut() {
@@ -113,9 +113,7 @@ pub fn handle_session_action(
             if let Some(session) = state.get_session_mut(session_id) {
                 session.mark_stopped();
             }
-            if state.ui.active_session_id == Some(session_id) {
-                state.ui.active_session_id = None;
-            }
+            state.clear_active_session_everywhere(session_id);
             save_state(state, "failed to save killed session");
         }
         Action::InitiateDeleteSession(id, name) => {
@@ -207,59 +205,28 @@ pub fn handle_session_action(
         Action::PinSession(session_id) => {
             if state.pin_terminal_for_selected(session_id) {
                 state.ui.layout.split_view_enabled = true;
-                let new_idx = state
-                    .selected_workspace()
-                    .map(|ws| ws.pinned_terminal_ids.len().saturating_sub(1))
-                    .unwrap_or(0);
-                if let Some(ws_ui) = state.ws_ui_mut() {
-                    ws_ui.focused_pinned_pane = new_idx;
-                }
-                // Reset every live per-pane field at the new slot. Otherwise
-                // a workspace-switch snapshot would lock in stale data from
-                // a previously-unpinned terminal at the same slot.
-                state.ui.focused_pinned_pane = new_idx;
-                if new_idx < state.ui.pinned_scroll_offsets.len() {
-                    state.ui.pinned_scroll_offsets[new_idx] = 0;
-                    state.ui.pinned_text_selections[new_idx] = crate::app::TextSelection::default();
-                    state.ui.pinned_on_replay[new_idx] = false;
-                    state.ui.pinned_content_lengths[new_idx] = 0;
-                }
+                // Focus the new pane; its per-pane state starts zeroed because
+                // pin_terminal_for_selected pushes a fresh PinnedPaneState.
+                let new_idx = state.pinned_count().saturating_sub(1);
+                state.set_focused_pinned_pane(new_idx);
                 resize_ptys_to_panes(state);
                 save_state(state, "failed to save pinned session");
             }
         }
         Action::UnpinSession(session_id) => {
+            // unpin_terminal_anywhere removes the pane's state and clamps the
+            // focused index in the owning workspace's ws_ui.
             state.unpin_terminal_anywhere(session_id);
-            // Mirror to legacy fields.
-            let count = state
-                .selected_workspace()
-                .map(|ws| ws.pinned_terminal_ids.len())
-                .unwrap_or(0);
-            if state.ui.focused_pinned_pane >= count && count > 0 {
-                state.ui.focused_pinned_pane = count - 1;
-            }
-            state.ui.pinned_content_lengths = [0; crate::models::MAX_PINNED_TERMINALS];
             resize_ptys_to_panes(state);
             save_state(state, "failed to save unpinned session");
         }
         Action::UnpinFocusedSession => {
-            let focused = state
-                .ws_ui()
-                .map(|u| u.focused_pinned_pane)
-                .unwrap_or(state.ui.focused_pinned_pane);
+            let focused = state.focused_pinned_pane();
             if let Some(sid) = state.pinned_terminal_id_at(focused) {
                 state.unpin_terminal_anywhere(sid);
-                let count = state
-                    .selected_workspace()
-                    .map(|ws| ws.pinned_terminal_ids.len())
-                    .unwrap_or(0);
-                if state.ui.focused_pinned_pane >= count && count > 0 {
-                    state.ui.focused_pinned_pane = count - 1;
-                }
-                if count == 0 {
+                if state.pinned_count() == 0 {
                     state.ui.focus = FocusPanel::SessionList;
                 }
-                state.ui.pinned_content_lengths = [0; crate::models::MAX_PINNED_TERMINALS];
                 resize_ptys_to_panes(state);
                 save_state(state, "failed to save focused unpin");
             }
@@ -395,11 +362,11 @@ fn finish_session_spawn(
         Ok(handle) => {
             state.system.pty_handles.insert(session_id, handle);
             state.add_session(session);
-            state.ui.active_session_id = Some(session_id);
+            state.set_active_session_id(Some(session_id));
             state.ui.focus = FocusPanel::SessionList;
             let session_count = state.sessions_for_selected_workspace().len();
             if session_count > 0 {
-                state.ui.selected_session_idx = session_count - 1;
+                state.set_selected_session_idx(session_count - 1);
             }
             save_state(state, save_msg);
             true
@@ -661,25 +628,19 @@ pub fn start_default_workspace_sessions(
 
     if pinned_any {
         state.ui.layout.split_view_enabled = true;
-        let focused = state
-            .selected_workspace()
-            .map(|ws| ws.pinned_terminal_ids.len().saturating_sub(1))
-            .unwrap_or(0);
-        if let Some(ws_ui) = state.ws_ui_mut() {
-            ws_ui.focused_pinned_pane = focused;
-        }
-        state.ui.focused_pinned_pane = focused;
+        let focused = state.pinned_count().saturating_sub(1);
+        state.set_focused_pinned_pane(focused);
     }
 
     // Show the Claude agent in the main output pane.
     if let Some(claude_id) = claude_id {
-        state.ui.active_session_id = Some(claude_id);
+        state.set_active_session_id(Some(claude_id));
         if let Some(idx) = state
             .sessions_for_selected_workspace()
             .iter()
             .position(|s| s.id == claude_id)
         {
-            state.ui.selected_session_idx = idx;
+            state.set_selected_session_idx(idx);
         }
     }
 
@@ -759,7 +720,7 @@ fn restart_session(
             if let Some(session) = state.get_session_mut(session_id) {
                 session.status = crate::models::SessionStatus::Running;
             }
-            state.ui.active_session_id = Some(session_id);
+            state.set_active_session_id(Some(session_id));
             state.ui.focus = FocusPanel::OutputPane;
 
             if agent_type.is_terminal() {
@@ -915,13 +876,11 @@ fn confirm_delete_session(state: &mut AppState, action_tx: &mpsc::UnboundedSende
         );
     }
 
+    // delete_session clears active_session_id in every workspace's ws_ui.
     state.delete_session(session_id);
-    if state.ui.active_session_id == Some(session_id) {
-        state.ui.active_session_id = None;
-    }
     let session_count = state.sessions_for_selected_workspace().len();
-    if state.ui.selected_session_idx >= session_count && session_count > 0 {
-        state.ui.selected_session_idx = session_count - 1;
+    if state.selected_session_idx() >= session_count && session_count > 0 {
+        state.set_selected_session_idx(session_count - 1);
     }
     save_state(state, "failed to save deleted session");
 }
