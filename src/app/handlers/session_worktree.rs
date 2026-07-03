@@ -1,12 +1,13 @@
-use crate::app::{Action, AppState, FocusPanel, InputMode, Toast, ToastLevel};
+use crate::app::{Action, AppState, FocusPanel, InputMode, Toast, ToastLevel, WorktreeMergeOutcome};
 use crate::git;
 use crate::models::{AgentType, Session, SessionStatus};
 use crate::pty::{PtyManager, SessionSpawnConfig};
+use std::path::Path;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use super::{report_runtime_error, save_state};
+use super::{report_background_error, save_state};
 
 fn show_toast(state: &mut AppState, msg: impl Into<String>, level: ToastLevel) {
     let duration = match level {
@@ -22,20 +23,51 @@ fn show_toast(state: &mut AppState, msg: impl Into<String>, level: ToastLevel) {
     }
 }
 
-pub(super) fn handle_merge_session_worktree(state: &mut AppState, session_id: Uuid) {
-    let merge_info = merge_info_for_session(state, session_id);
+// The merge flow shells out to git (status/commit/merge/worktree remove),
+// which can block for seconds on large repos, so every git call runs on a
+// blocking thread. The flow is: MergeSessionWorktree kicks off a status
+// check → SessionWorktreeMergeChecked decides (confirm modal / blocked /
+// merge) → SessionWorktreeMergeFinished reports the outcome.
 
-    let Some((workspace_path, worktree_path, branch_name)) = merge_info else {
+pub(super) fn handle_merge_session_worktree(
+    state: &mut AppState,
+    action_tx: &mpsc::UnboundedSender<Action>,
+    session_id: Uuid,
+) {
+    let Some((workspace_path, worktree_path, _branch_name)) =
+        merge_info_for_session(state, session_id)
+    else {
         return;
     };
 
-    if git::worktree_has_changes(&worktree_path) {
+    let tx = action_tx.clone();
+    tokio::task::spawn_blocking(move || {
+        let has_changes = git::worktree_has_changes(&worktree_path);
+        let workspace_clean = git::is_clean(&workspace_path).unwrap_or(false);
+        if let Err(err) = tx.send(Action::SessionWorktreeMergeChecked {
+            session_id,
+            has_changes,
+            workspace_clean,
+        }) {
+            report_background_error("failed to report worktree merge check", err);
+        }
+    });
+}
+
+pub(super) fn handle_merge_checked(
+    state: &mut AppState,
+    action_tx: &mpsc::UnboundedSender<Action>,
+    session_id: Uuid,
+    has_changes: bool,
+    workspace_clean: bool,
+) {
+    if has_changes {
         state.ui.merging_session_id = Some(session_id);
         state.ui.input_mode = InputMode::ConfirmMergeWorktree;
         return;
     }
 
-    if !git::is_clean(&workspace_path).unwrap_or(false) {
+    if !workspace_clean {
         show_toast(
             state,
             "Merge blocked: workspace has uncommitted changes",
@@ -44,19 +76,117 @@ pub(super) fn handle_merge_session_worktree(state: &mut AppState, session_id: Uu
         return;
     }
 
-    match git::merge_branch(&workspace_path, &branch_name) {
-        Ok(()) => {
-            remove_merged_worktree(
-                state,
-                &workspace_path,
-                &worktree_path,
-                "failed to remove merged worktree",
-            );
+    start_worktree_merge(state, action_tx, session_id, false);
+}
+
+pub(super) fn handle_confirm_merge_with_commit(
+    state: &mut AppState,
+    action_tx: &mpsc::UnboundedSender<Action>,
+) {
+    if let Some(session_id) = state.ui.merging_session_id.take() {
+        start_worktree_merge(state, action_tx, session_id, true);
+    }
+    state.ui.input_mode = InputMode::Normal;
+}
+
+fn start_worktree_merge(
+    state: &mut AppState,
+    action_tx: &mpsc::UnboundedSender<Action>,
+    session_id: Uuid,
+    commit_first: bool,
+) {
+    let Some((workspace_path, worktree_path, branch_name, agent_name)) =
+        commit_merge_info_for_session(state, session_id)
+    else {
+        return;
+    };
+
+    show_toast(state, "Merging worktree…", ToastLevel::Info);
+
+    let tx = action_tx.clone();
+    tokio::task::spawn_blocking(move || {
+        let outcome = run_worktree_merge(
+            &workspace_path,
+            &worktree_path,
+            &branch_name,
+            &agent_name,
+            commit_first,
+        );
+        if let Err(err) = tx.send(Action::SessionWorktreeMergeFinished {
+            session_id,
+            committed: commit_first,
+            outcome,
+        }) {
+            report_background_error("failed to report worktree merge result", err);
+        }
+    });
+}
+
+fn run_worktree_merge(
+    workspace_path: &Path,
+    worktree_path: &Path,
+    branch_name: &str,
+    agent_name: &str,
+    commit_first: bool,
+) -> WorktreeMergeOutcome {
+    // Re-check cleanliness here: the earlier check ran before the user sat on
+    // the confirm modal (or before this task was queued), so it can be stale.
+    if !git::is_clean(workspace_path).unwrap_or(false) {
+        return WorktreeMergeOutcome::WorkspaceDirty;
+    }
+
+    if commit_first {
+        let commit_msg = format!("Agent {} work - auto-committed for merge", agent_name);
+        if git::commit_all_changes(worktree_path, &commit_msg).is_err() {
+            return WorktreeMergeOutcome::CommitFailed;
+        }
+    }
+
+    if git::merge_branch(workspace_path, branch_name).is_err() {
+        return WorktreeMergeOutcome::MergeFailed;
+    }
+
+    let worktree_removed = match git::remove_worktree(workspace_path, worktree_path, true) {
+        Ok(()) => true,
+        Err(err) => {
+            report_background_error("failed to remove merged worktree", err);
+            false
+        }
+    };
+    WorktreeMergeOutcome::Merged { worktree_removed }
+}
+
+pub(super) fn handle_merge_finished(
+    state: &mut AppState,
+    session_id: Uuid,
+    committed: bool,
+    outcome: WorktreeMergeOutcome,
+) {
+    match outcome {
+        WorktreeMergeOutcome::Merged { worktree_removed } => {
             clear_worktree_info(state, session_id);
             save_state(state, "failed to save merged worktree");
-            show_toast(state, "Worktree merged successfully", ToastLevel::Success);
+            let msg = if committed {
+                "Worktree committed and merged successfully"
+            } else {
+                "Worktree merged successfully"
+            };
+            show_toast(state, msg, ToastLevel::Success);
+            if !worktree_removed {
+                show_toast(state, "Merged, but failed to remove worktree", ToastLevel::Error);
+            }
         }
-        Err(_e) => {
+        WorktreeMergeOutcome::WorkspaceDirty => {
+            show_toast(
+                state,
+                "Merge blocked: workspace has uncommitted changes",
+                ToastLevel::Warning,
+            );
+        }
+        WorktreeMergeOutcome::CommitFailed => {
+            show_toast(state, "Failed to commit worktree changes", ToastLevel::Error);
+        }
+        WorktreeMergeOutcome::MergeFailed => {
             show_toast(
                 state,
                 "Merge failed — resolve conflicts manually",
@@ -64,64 +194,6 @@ pub(super) fn handle_merge_session_worktree(state: &mut AppState, session_id: Uu
             );
         }
     }
-}
-
-pub(super) fn handle_confirm_merge_with_commit(state: &mut AppState) {
-    if let Some(session_id) = state.ui.merging_session_id.take() {
-        let Some((workspace_path, worktree_path, branch_name, agent_name)) =
-            commit_merge_info_for_session(state, session_id)
-        else {
-            state.ui.input_mode = InputMode::Normal;
-            return;
-        };
-
-        if !git::is_clean(&workspace_path).unwrap_or(false) {
-            show_toast(
-                state,
-                "Merge blocked: workspace has uncommitted changes",
-                ToastLevel::Warning,
-            );
-            state.ui.input_mode = InputMode::Normal;
-            return;
-        }
-
-        let commit_msg = format!("Agent {} work - auto-committed for merge", agent_name);
-        if let Err(_e) = git::commit_all_changes(&worktree_path, &commit_msg) {
-            show_toast(
-                state,
-                "Failed to commit worktree changes",
-                ToastLevel::Error,
-            );
-            state.ui.input_mode = InputMode::Normal;
-            return;
-        }
-
-        match git::merge_branch(&workspace_path, &branch_name) {
-            Ok(()) => {
-                remove_merged_worktree(
-                    state,
-                    &workspace_path,
-                    &worktree_path,
-                    "failed to remove committed worktree",
-                );
-                clear_worktree_info(state, session_id);
-                save_state(state, "failed to save committed worktree merge");
-                show_toast(
-                    state,
-                    "Worktree committed and merged successfully",
-                    ToastLevel::Success,
-                );
-            }
-            Err(_e) => {
-                show_toast(
-                    state,
-                    "Merge failed — resolve conflicts manually",
-                    ToastLevel::Error,
-                );
-            }
-        }
-    }
-    state.ui.input_mode = InputMode::Normal;
 }
 
 pub(super) fn handle_switch_to_worktree(
@@ -296,17 +368,6 @@ fn clear_worktree_info(state: &mut AppState, session_id: Uuid) {
     if let Some(session) = state.get_session_mut(session_id) {
         session.worktree_path = None;
         session.worktree_branch = None;
-    }
-}
-
-fn remove_merged_worktree(
-    state: &mut AppState,
-    workspace_path: &std::path::Path,
-    worktree_path: &std::path::Path,
-    context: &str,
-) {
-    if let Err(err) = git::remove_worktree(workspace_path, worktree_path, true) {
-        report_runtime_error(state, context, err, "Merged, but failed to remove worktree");
     }
 }
 

@@ -29,6 +29,24 @@ pub struct PtyHandle {
     pub child_killer: Box<dyn ChildKiller + Send + Sync>,
     pub process_id: Option<u32>,
     pub writer: Box<dyn Write + Send>,
+    /// Set once the child is known dead (exit reported) or a kill was already
+    /// issued; Drop then skips its safety-net kill so a recycled pid can't be
+    /// signalled by mistake.
+    cleanup_done: bool,
+}
+
+/// Safety net: a handle dropped without an explicit kill (session deletion,
+/// handle-map churn) still takes its process group down, so agent processes
+/// can't outlive their session.
+impl Drop for PtyHandle {
+    fn drop(&mut self) {
+        if self.cleanup_done {
+            return;
+        }
+        if let Err(err) = self.kill_process_group() {
+            crate::logger::warn(format!("failed to kill PTY process group on drop: {err}"));
+        }
+    }
 }
 
 impl PtyHandle {
@@ -48,11 +66,19 @@ impl PtyHandle {
         Ok(())
     }
 
+    /// Record that the child already exited on its own, so Drop won't send a
+    /// kill to a process group that may no longer be ours.
+    pub fn mark_exited(&mut self) {
+        self.cleanup_done = true;
+    }
+
     pub fn kill(&mut self) -> Result<()> {
+        self.cleanup_done = true;
         self.kill_process_group()
     }
 
     pub fn interrupt_then_kill(&mut self, grace: Duration) -> Result<()> {
+        self.cleanup_done = true;
         #[cfg(unix)]
         {
             if let Some(pgid) = self.process_group_id() {
@@ -307,6 +333,7 @@ impl PtyManager {
             child_killer,
             process_id,
             writer,
+            cleanup_done: false,
         })
     }
 
@@ -831,6 +858,7 @@ mod tests {
             child_killer: Box::new(TestChildKiller { calls: counter }),
             process_id: None,
             writer: Box::new(io::sink()),
+            cleanup_done: false,
         }
     }
 

@@ -41,20 +41,68 @@ pub(crate) fn report_background_error(context: &str, err: impl Display) {
     crate::logger::warn(format!("{context}: {err}"));
 }
 
-pub(crate) fn save_state(state: &mut AppState, context: &str) {
-    if let Err(err) = persistence::save(&state.data.workspaces, &state.data.sessions) {
-        report_persistence_error(state, context, err);
-    }
+/// Mark state as needing a save. The actual write is debounced and performed
+/// off the event loop by [`flush_dirty_state`]; every flush includes notepad
+/// content, so the two save entry points below are equivalent.
+pub(crate) fn save_state(state: &mut AppState, _context: &str) {
+    state.system.state_dirty = true;
 }
 
 pub(crate) fn save_state_with_notepad(state: &mut AppState, context: &str) {
+    save_state(state, context);
+}
+
+const STATE_SAVE_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(400);
+
+/// Flush pending state changes to disk. Serialization happens inline (cheap,
+/// in-memory); the file write runs on a blocking thread so the event loop
+/// never waits on disk. `force` bypasses the debounce and writes
+/// synchronously — used on shutdown.
+pub(crate) fn flush_dirty_state(
+    state: &mut AppState,
+    action_tx: &tokio::sync::mpsc::UnboundedSender<crate::app::Action>,
+    force: bool,
+) {
+    if !state.system.state_dirty {
+        return;
+    }
+    if !force && state.system.last_state_save.elapsed() < STATE_SAVE_DEBOUNCE {
+        return;
+    }
+
     let notepad_contents = state.notepad_content_for_persistence();
-    if let Err(err) = persistence::save_with_notepad(
+    let json = match persistence::serialize_state(
         &state.data.workspaces,
         &state.data.sessions,
         &notepad_contents,
     ) {
-        report_persistence_error(state, context, err);
+        Ok(json) => json,
+        Err(err) => {
+            // Clear the flag so a persistent serialization failure doesn't
+            // re-toast every frame.
+            state.system.state_dirty = false;
+            report_persistence_error(state, "failed to serialize state", err);
+            return;
+        }
+    };
+    state.system.state_dirty = false;
+    state.system.last_state_save = std::time::Instant::now();
+
+    if force {
+        if let Err(err) = persistence::write_state_file(&json) {
+            crate::logger::warn(format!("failed to save state on shutdown: {err}"));
+        }
+    } else {
+        let tx = action_tx.clone();
+        tokio::task::spawn_blocking(move || {
+            if let Err(err) = persistence::write_state_file(&json) {
+                report_background_error("failed to save state", err);
+                let _ = tx.send(crate::app::Action::ShowToast(
+                    "Failed to save changes".to_string(),
+                    ToastLevel::Error,
+                ));
+            }
+        });
     }
 }
 

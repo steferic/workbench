@@ -23,6 +23,15 @@ pub struct ParallelWorktreeSpec {
     pub worktree_path: PathBuf,
 }
 
+/// Result of a background session-worktree merge (see `session_worktree.rs`).
+#[derive(Debug, Clone)]
+pub enum WorktreeMergeOutcome {
+    Merged { worktree_removed: bool },
+    WorkspaceDirty,
+    CommitFailed,
+    MergeFailed,
+}
+
 #[derive(Debug, Clone)]
 pub struct ParallelMergePlan {
     pub workspace_path: PathBuf,
@@ -69,6 +78,25 @@ pub enum Action {
     SwitchToWorktree(Option<Uuid>),      // Switch to session's worktree (None = back to main)
     ConfirmMergeWithCommit,              // Commit changes and merge to main
     CancelMerge,                         // Cancel the merge modal
+    // Background git results (work runs on blocking threads, never the event loop)
+    SessionWorktreeMergeChecked {
+        session_id: Uuid,
+        has_changes: bool,
+        workspace_clean: bool,
+    },
+    SessionWorktreeMergeFinished {
+        session_id: Uuid,
+        committed: bool,
+        outcome: WorktreeMergeOutcome,
+    },
+    SessionWorktreeCreated {
+        workspace_id: Uuid,
+        session_id: Uuid,
+        agent_type: AgentType,
+        dangerously_skip_permissions: bool,
+        worktree: Option<(PathBuf, String)>, // (worktree_path, branch); None = run in workspace
+        failed: bool,                        // worktree creation failed (warn) vs. skipped
+    },
 
     // PTY interaction
     SendInput(Uuid, Vec<u8>),

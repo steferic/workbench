@@ -16,11 +16,13 @@ pub const PARSER_BUFFER_ROWS: u16 = 80;
 // Note: TERMINAL_SCROLLBACK_LIMIT, REPLAY_PARSER_ROWS, and RAW_OUTPUT_BUFFER_CAPACITY
 // are now configurable via UserConfig (loaded from ~/.config/workbench/user_config.toml).
 
-pub use action::{Action, ParallelMergePlan, ParallelWorktreeSpec, UtilityContentPayload};
+pub use action::{
+    Action, ParallelMergePlan, ParallelWorktreeSpec, UtilityContentPayload, WorktreeMergeOutcome,
+};
 pub use runtime::run_tui;
 pub use state::{
     AppState, ConfigTab, ConfigTreeNode, Divider, FocusPanel, InputMode, PendingDelete,
     PendingSessionStart, PinnedPaneState, RawOutputBuffer, ReplayCache, SystemState, TextSelection,
-    Toast, ToastLevel, TodoPaneMode, TodosTab, TranscriptBuffer, TranscriptLine, TranscriptMode,
+    Toast, ToastLevel, TodoPaneMode, TodosTab, TranscriptBuffer, TranscriptLine,
     UtilityItem, UtilitySection, WorkspaceAction, WorkspaceUiState,
 };

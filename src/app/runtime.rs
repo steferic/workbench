@@ -245,6 +245,9 @@ async fn run_main_loop(
             process_startup_queue(state, pty_manager, &pty_tx, &action_tx);
         }
 
+        // Persist pending state changes (debounced; the write runs off-loop)
+        super::handlers::flush_dirty_state(state, &action_tx, false);
+
         // Sync audio player with state
         if state.system.brown_noise_playing != audio_was_playing {
             if state.system.brown_noise_playing {
@@ -288,6 +291,8 @@ async fn run_main_loop(
         rain.sync(state.system.rainforest_rain_playing);
 
         if state.system.should_quit {
+            // Final synchronous save so pending changes survive shutdown.
+            super::handlers::flush_dirty_state(state, &action_tx, true);
             if let Some(child) = radio_process.take() {
                 stop_radio_process(child);
             }

@@ -451,7 +451,7 @@ mod tests {
     use super::{
         build_terminal_view, should_replay, stable_live_len, ReplayPolicy, TerminalViewRequest,
     };
-    use crate::app::{SystemState, TextSelection, TranscriptMode};
+    use crate::app::{SystemState, TextSelection};
     use crate::models::AgentType;
     use uuid::Uuid;
 
@@ -531,14 +531,14 @@ mod tests {
             .get_mut(&session_id)
             .unwrap()
             .process(b"\x1b[2J\x1b[Ha\r\nb\r\nc\r\nd\r\n> p\r\nftr");
-        system.update_transcript_from_screen(session_id, TranscriptMode::FrameAlign);
+        system.update_transcript_from_screen(session_id);
 
         system
             .output_buffers
             .get_mut(&session_id)
             .unwrap()
             .process(b"\x1b[2J\x1b[Hb\r\nc\r\nd\r\ne\r\n> p\r\nftr");
-        system.update_transcript_from_screen(session_id, TranscriptMode::FrameAlign);
+        system.update_transcript_from_screen(session_id);
 
         // History = committed ["a"] ++ visible 6-row frame = 7 lines.
         let view = build_terminal_view(
@@ -558,5 +558,44 @@ mod tests {
         assert!(view.on_replay);
         assert_eq!(view.content_len, 7);
         assert_eq!(view.scroll_from_bottom, 5);
+    }
+
+    #[test]
+    fn claude_scrollback_shows_transcript_when_scrolled() {
+        let mut system = SystemState::new();
+        let session_id = Uuid::new_v4();
+        // Claude: a 10-row parser fed many lines scrolls one line per frame;
+        // FrameAlign detects the shift and accumulates history beyond the viewport.
+        system.create_session_buffers(session_id, 10, 40, &AgentType::Claude);
+
+        for i in 1..=40 {
+            system
+                .output_buffers
+                .get_mut(&session_id)
+                .unwrap()
+                .process(format!("line {i}\r\n").as_bytes());
+            system.update_transcript_from_screen(session_id);
+        }
+
+        let transcript_len = system.transcript_buffers.get(&session_id).unwrap().len();
+        assert!(transcript_len > 10, "history not accumulated: {transcript_len}");
+
+        // Scrolling up past the live screen must switch to the transcript.
+        let view = build_terminal_view(
+            &mut system,
+            TerminalViewRequest {
+                session_id,
+                viewport_height: 8,
+                scroll_from_bottom: transcript_len, // scroll all the way up
+                prev_content_len: 8,
+                was_on_replay: false,
+                selection: TextSelection::default(),
+                replay_policy: ReplayPolicy::NormalAndAlternate,
+            },
+        )
+        .unwrap();
+
+        assert!(view.on_replay, "expected transcript (history) view when scrolled");
+        assert!(view.content_len > 10, "history view too short: {}", view.content_len);
     }
 }

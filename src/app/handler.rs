@@ -365,7 +365,10 @@ pub fn process_action(
                 Action::UnpinSession(_) | Action::UnpinFocusedSession | Action::ToggleSplitView |
                 Action::SessionExited(_, _) | Action::PtyOutput(_, _) | Action::SendInput(_, _) |
                 Action::MergeSessionWorktree(_) | Action::SwitchToWorktree(_) |
-                Action::ConfirmMergeWithCommit | Action::CancelMerge => {
+                Action::ConfirmMergeWithCommit | Action::CancelMerge |
+                Action::SessionWorktreeMergeChecked { .. } |
+                Action::SessionWorktreeMergeFinished { .. } |
+                Action::SessionWorktreeCreated { .. } => {
                     session::handle_session_action(state, action, pty_manager, action_tx, pty_tx)?;
                 }
 
@@ -495,7 +498,7 @@ pub fn process_action(
                 state.ui.selected_workspace_idx = state.data.workspaces.len() - 1;
                 state.ui.active_session_id = None;
                 state.ui.selected_session_idx = 0;
-                session::start_default_workspace_sessions(state, pty_manager, pty_tx);
+                session::start_default_workspace_sessions(state, pty_manager, action_tx, pty_tx);
             }
         }
     }

@@ -1,6 +1,6 @@
 use crate::app::pty_ops::resize_ptys_to_panes;
 use crate::app::{
-    Action, AppState, FocusPanel, InputMode, PendingDelete, Toast, ToastLevel, TranscriptMode,
+    Action, AppState, FocusPanel, InputMode, PendingDelete, Toast, ToastLevel,
 };
 use crate::git;
 use crate::models::{AgentType, AttemptStatus, Session};
@@ -11,7 +11,8 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use super::session_worktree::{
-    handle_confirm_merge_with_commit, handle_merge_session_worktree, handle_switch_to_worktree,
+    handle_confirm_merge_with_commit, handle_merge_checked, handle_merge_finished,
+    handle_merge_session_worktree, handle_switch_to_worktree,
 };
 use super::{report_background_error, report_runtime_error, save_state};
 
@@ -57,6 +58,7 @@ pub fn handle_session_action(
                 dangerously_skip_permissions,
                 with_worktree,
                 pty_manager,
+                action_tx,
                 pty_tx,
             );
         }
@@ -120,16 +122,50 @@ pub fn handle_session_action(
             state.ui.pending_delete = Some(PendingDelete::Session(id, name));
         }
         Action::ConfirmDeleteSession => {
-            confirm_delete_session(state);
+            confirm_delete_session(state, action_tx);
         }
         Action::CancelPendingDelete => {
             state.ui.pending_delete = None;
         }
         Action::MergeSessionWorktree(session_id) => {
-            handle_merge_session_worktree(state, session_id);
+            handle_merge_session_worktree(state, action_tx, session_id);
+        }
+        Action::SessionWorktreeMergeChecked {
+            session_id,
+            has_changes,
+            workspace_clean,
+        } => {
+            handle_merge_checked(state, action_tx, session_id, has_changes, workspace_clean);
+        }
+        Action::SessionWorktreeMergeFinished {
+            session_id,
+            committed,
+            outcome,
+        } => {
+            handle_merge_finished(state, session_id, committed, outcome);
+        }
+        Action::SessionWorktreeCreated {
+            workspace_id,
+            session_id,
+            agent_type,
+            dangerously_skip_permissions,
+            worktree,
+            failed,
+        } => {
+            finish_worktree_session_spawn(
+                state,
+                pty_manager,
+                pty_tx,
+                workspace_id,
+                session_id,
+                agent_type,
+                dangerously_skip_permissions,
+                worktree,
+                failed,
+            );
         }
         Action::ConfirmMergeWithCommit => {
-            handle_confirm_merge_with_commit(state);
+            handle_confirm_merge_with_commit(state, action_tx);
         }
         Action::CancelMerge => {
             state.ui.merging_session_id = None;
@@ -233,7 +269,9 @@ pub fn handle_session_action(
             resize_ptys_to_panes(state);
         }
         Action::SessionExited(session_id, exit_code) => {
-            state.system.pty_handles.remove(&session_id);
+            if let Some(mut handle) = state.system.pty_handles.remove(&session_id) {
+                handle.mark_exited();
+            }
             if let Some(session) = state.get_session_mut(session_id) {
                 if exit_code == 0 {
                     session.mark_stopped();
@@ -244,25 +282,20 @@ pub fn handle_session_action(
             save_state(state, "failed to save exited session");
         }
         Action::PtyOutput(session_id, data) => {
-            // Redraw-style agents reconstruct scrollback from screen state. Claude
-            // (Ink) scrolls committed lines off the top, so we commit on scroll;
-            // codex repaints a fixed viewport with no scroll signal, so it falls
-            // back to snapshot merging. Append-style sessions use raw byte replay.
-            let transcript_mode = state
+            // Redraw-style agents (Claude, Codex) repaint a viewport rather than
+            // emitting append-only output, so their scrollback is reconstructed
+            // from screen snapshots via frame alignment. (Claude 2.1.185+ renders
+            // in the alternate screen / full-repaint mode, so the older
+            // scroll-based capture no longer applies.) Append-style sessions use
+            // raw byte replay.
+            let uses_transcript = state
                 .data
                 .sessions
                 .values()
                 .flatten()
                 .find(|s| s.id == session_id)
-                .and_then(|s| {
-                    if s.agent_type.is_codex_like() {
-                        Some(TranscriptMode::FrameAlign)
-                    } else if s.agent_type.is_redraw_style() {
-                        Some(TranscriptMode::ScrollCommit)
-                    } else {
-                        None
-                    }
-                });
+                .map(|s| s.agent_type.is_redraw_style())
+                .unwrap_or(false);
 
             let output_chunks = state.system.synchronized_output_chunks(session_id, &data);
             let has_processed_output = !output_chunks.is_empty();
@@ -277,8 +310,8 @@ pub fn handle_session_action(
                     parser.process(&chunk);
                 }
 
-                if let Some(mode) = transcript_mode {
-                    state.system.update_transcript_from_screen(session_id, mode);
+                if uses_transcript {
+                    state.system.update_transcript_from_screen(session_id);
                 } else {
                     // Append raw bytes for append-style sessions; replay scrollback uses this for deep history.
                     if let Some(raw_buf) = state.system.raw_output_buffers.get_mut(&session_id) {
@@ -385,6 +418,7 @@ fn create_session(
     dangerously_skip_permissions: bool,
     with_worktree: bool,
     pty_manager: &PtyManager,
+    action_tx: &mpsc::UnboundedSender<Action>,
     pty_tx: &mpsc::Sender<Action>,
 ) -> Option<Uuid> {
     let Some(workspace) = state.selected_workspace() else {
@@ -394,55 +428,128 @@ fn create_session(
     let workspace_path = workspace.path.clone();
     let ws_idx = state.ui.selected_workspace_idx;
 
-    // Create worktree only if requested (Alt key), is an agent, and workspace is a git repo
-    let (session, working_dir) =
-        if with_worktree && agent_type.is_agent() && git::is_git_repo(&workspace_path) {
-            // Create a temporary session to get the ID for branch naming
-            let temp_id = uuid::Uuid::new_v4();
-            let short_id = &temp_id.to_string()[..8];
-            let branch_name = git::session_branch_name(&agent_type.display_name(), short_id);
-            let worktree_path = git::get_session_worktree_path(&workspace_path, short_id);
-
-            // Create the worktree
-            match git::create_worktree(&workspace_path, &branch_name, &worktree_path) {
-                Ok(()) => {
-                    // Create session with worktree info
-                    let mut session = Session::new_with_worktree(
-                        workspace_id,
-                        agent_type.clone(),
-                        dangerously_skip_permissions,
-                        worktree_path.clone(),
-                        branch_name,
-                    );
-                    // Override the ID to match what we used for naming
-                    session.id = temp_id;
-                    (session, worktree_path)
-                }
-                Err(_e) => {
-                    show_toast(
-                        state,
-                        "Worktree creation failed, using workspace directly",
-                        ToastLevel::Warning,
-                    );
-                    (
-                        Session::new(workspace_id, agent_type.clone(), dangerously_skip_permissions),
-                        workspace_path.clone(),
-                    )
-                }
-            }
-        } else {
-            // Default: run in workspace directly (no worktree isolation)
-            (
-                Session::new(workspace_id, agent_type.clone(), dangerously_skip_permissions),
-                workspace_path.clone(),
-            )
-        };
-
-    let session_id = session.id;
-
     if let Some(ws) = state.data.workspaces.get_mut(ws_idx) {
         ws.touch();
     }
+    state.ui.input_mode = InputMode::Normal;
+
+    // Create worktree only if requested (Alt key), is an agent, and workspace is
+    // a git repo. `git worktree add` blocks for a noticeable moment on big
+    // repos, so it runs on a blocking thread; the session spawn completes when
+    // SessionWorktreeCreated arrives.
+    if with_worktree && agent_type.is_agent() && git::is_git_repo(&workspace_path) {
+        let session_id = uuid::Uuid::new_v4();
+        let short_id = session_id.to_string()[..8].to_string();
+        let branch_name = git::session_branch_name(&agent_type.display_name(), &short_id);
+        let worktree_path = git::get_session_worktree_path(&workspace_path, &short_id);
+
+        let tx = action_tx.clone();
+        tokio::task::spawn_blocking(move || {
+            let worktree = match git::create_worktree(&workspace_path, &branch_name, &worktree_path)
+            {
+                Ok(()) => Some((worktree_path, branch_name)),
+                Err(err) => {
+                    report_background_error("failed to create session worktree", err);
+                    None
+                }
+            };
+            let failed = worktree.is_none();
+            if let Err(err) = tx.send(Action::SessionWorktreeCreated {
+                workspace_id,
+                session_id,
+                agent_type,
+                dangerously_skip_permissions,
+                worktree,
+                failed,
+            }) {
+                report_background_error("failed to report created session worktree", err);
+            }
+        });
+        return Some(session_id);
+    }
+
+    // Default: run in workspace directly (no worktree isolation)
+    let session = Session::new(workspace_id, agent_type.clone(), dangerously_skip_permissions);
+    let session_id = session.id;
+
+    let pty_rows = state.pane_rows();
+    let cols = state.output_pane_cols();
+    state
+        .system
+        .create_session_buffers(session_id, pty_rows, cols, &agent_type);
+
+    let spawn_result = pty_manager.spawn_session(SessionSpawnConfig {
+        session_id,
+        agent_type,
+        working_dir: &workspace_path,
+        rows: pty_rows,
+        cols,
+        pty_tx: pty_tx.clone(),
+        resume: false,
+        dangerously_skip_permissions,
+        use_alternate_screen: state.system.use_alternate_screen,
+    });
+    let started = finish_session_spawn(
+        state,
+        session,
+        spawn_result,
+        "Failed to spawn session",
+        "failed to save created session",
+    );
+    started.then_some(session_id)
+}
+
+/// Completion of a worktree-backed session creation: the worktree was created
+/// (or failed) on a blocking thread; build the session and spawn its PTY.
+#[allow(clippy::too_many_arguments)]
+fn finish_worktree_session_spawn(
+    state: &mut AppState,
+    pty_manager: &PtyManager,
+    pty_tx: &mpsc::Sender<Action>,
+    workspace_id: Uuid,
+    session_id: Uuid,
+    agent_type: AgentType,
+    dangerously_skip_permissions: bool,
+    worktree: Option<(std::path::PathBuf, String)>,
+    failed: bool,
+) {
+    if failed {
+        show_toast(
+            state,
+            "Worktree creation failed, using workspace directly",
+            ToastLevel::Warning,
+        );
+    }
+
+    // The workspace may have been deleted while the worktree was being created.
+    let Some(workspace_path) = state
+        .data
+        .workspaces
+        .iter()
+        .find(|ws| ws.id == workspace_id)
+        .map(|ws| ws.path.clone())
+    else {
+        return;
+    };
+
+    let (mut session, working_dir) = match worktree {
+        Some((worktree_path, branch_name)) => {
+            let session = Session::new_with_worktree(
+                workspace_id,
+                agent_type.clone(),
+                dangerously_skip_permissions,
+                worktree_path.clone(),
+                branch_name,
+            );
+            (session, worktree_path)
+        }
+        None => (
+            Session::new(workspace_id, agent_type.clone(), dangerously_skip_permissions),
+            workspace_path,
+        ),
+    };
+    // Keep the ID used for branch/worktree naming.
+    session.id = session_id;
 
     let pty_rows = state.pane_rows();
     let cols = state.output_pane_cols();
@@ -461,15 +568,13 @@ fn create_session(
         dangerously_skip_permissions,
         use_alternate_screen: state.system.use_alternate_screen,
     });
-    let started = finish_session_spawn(
+    finish_session_spawn(
         state,
         session,
         spawn_result,
         "Failed to spawn session",
         "failed to save created session",
     );
-    state.ui.input_mode = InputMode::Normal;
-    started.then_some(session_id)
 }
 
 fn create_terminal(
@@ -530,6 +635,7 @@ fn create_terminal(
 pub fn start_default_workspace_sessions(
     state: &mut AppState,
     pty_manager: &PtyManager,
+    action_tx: &mpsc::UnboundedSender<Action>,
     pty_tx: &mpsc::Sender<Action>,
 ) {
     // Claude agent (no worktree, permissions prompt on) in the main pane.
@@ -539,6 +645,7 @@ pub fn start_default_workspace_sessions(
         false,
         false,
         pty_manager,
+        action_tx,
         pty_tx,
     );
 
@@ -687,7 +794,27 @@ fn restart_session(
     }
 }
 
-fn confirm_delete_session(state: &mut AppState) {
+/// Remove a worktree on a blocking thread (git can stall for seconds on big
+/// repos); failures surface as a toast via the action channel.
+fn remove_worktree_in_background(
+    action_tx: &mpsc::UnboundedSender<Action>,
+    workspace_path: std::path::PathBuf,
+    worktree_path: std::path::PathBuf,
+    context: &'static str,
+) {
+    let tx = action_tx.clone();
+    tokio::task::spawn_blocking(move || {
+        if let Err(err) = git::remove_worktree(&workspace_path, &worktree_path, true) {
+            report_background_error(context, err);
+            let _ = tx.send(Action::ShowToast(
+                "Failed to remove worktree".to_string(),
+                ToastLevel::Error,
+            ));
+        }
+    });
+}
+
+fn confirm_delete_session(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) {
     let Some(PendingDelete::Session(session_id, _)) = state.ui.pending_delete.take() else {
         return;
     };
@@ -742,14 +869,12 @@ fn confirm_delete_session(state: &mut AppState) {
     // Clean up worktree - either from parallel task or regular session
     if let Some((workspace_path, worktree_path, task_id)) = parallel_cleanup_info {
         // Remove the parallel task worktree
-        if let Err(err) = git::remove_worktree(&workspace_path, &worktree_path, true) {
-            report_runtime_error(
-                state,
-                "failed to remove parallel session worktree",
-                err,
-                "Failed to remove worktree",
-            );
-        }
+        remove_worktree_in_background(
+            action_tx,
+            workspace_path,
+            worktree_path,
+            "failed to remove parallel session worktree",
+        );
 
         // Mark the attempt as failed and potentially clean up the task
         if let Some(ws) = state.selected_workspace_mut() {
@@ -782,14 +907,12 @@ fn confirm_delete_session(state: &mut AppState) {
         (session_worktree_path, workspace_path)
     {
         // Clean up regular session worktree
-        if let Err(err) = git::remove_worktree(&workspace_path, &worktree_path, true) {
-            report_runtime_error(
-                state,
-                "failed to remove session worktree",
-                err,
-                "Failed to remove worktree",
-            );
-        }
+        remove_worktree_in_background(
+            action_tx,
+            workspace_path,
+            worktree_path,
+            "failed to remove session worktree",
+        );
     }
 
     state.delete_session(session_id);

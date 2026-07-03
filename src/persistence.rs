@@ -3,7 +3,7 @@ use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 /// Schema version of `state.json`. Bump this whenever the on-disk format
@@ -224,30 +224,41 @@ struct PersistedStateRef<'a> {
     notepad_content: &'a HashMap<Uuid, String>,
 }
 
-pub fn save(workspaces: &[Workspace], sessions: &HashMap<Uuid, Vec<Session>>) -> Result<()> {
-    static EMPTY: std::sync::LazyLock<HashMap<Uuid, String>> =
-        std::sync::LazyLock::new(HashMap::new);
-    save_with_notepad(workspaces, sessions, &EMPTY)
-}
-
-pub fn save_with_notepad(
+/// Serialize the full persisted state to a JSON string. Cheap and in-memory,
+/// so it can run on the event loop; hand the result to [`write_state_file`]
+/// (ideally on a blocking thread) to hit disk.
+pub fn serialize_state(
     workspaces: &[Workspace],
     sessions: &HashMap<Uuid, Vec<Session>>,
     notepad_content: &HashMap<Uuid, String>,
-) -> Result<()> {
-    let path = config_path()?;
-
+) -> Result<String> {
     let state = PersistedStateRef {
         version: STATE_SCHEMA_VERSION,
         workspaces,
         sessions,
         notepad_content,
     };
+    Ok(serde_json::to_string_pretty(&state)?)
+}
 
-    let file = fs::File::create(&path)?;
-    let writer = std::io::BufWriter::new(file);
-    serde_json::to_writer_pretty(writer, &state)?;
+/// Write pre-serialized state to `state.json` atomically.
+pub fn write_state_file(json: &str) -> Result<()> {
+    let path = config_path()?;
+    write_atomic(&path, json.as_bytes())
+}
 
+/// Write via temp file + rename so a crash mid-write can never leave a
+/// truncated file behind — the corrupt-file backup in `load` only helps
+/// against files that were already bad, not ones we mangle ourselves.
+fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    // Serialize concurrent background writers so temp-file writes and renames
+    // can't interleave.
+    static WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = WRITE_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, bytes)?;
+    fs::rename(&tmp, path)?;
     Ok(())
 }
 
@@ -278,6 +289,5 @@ pub fn load_config() -> Result<GlobalConfig> {
 pub fn save_config(config: &GlobalConfig) -> Result<()> {
     let path = global_config_path()?;
     let contents = serde_json::to_string_pretty(config)?;
-    fs::write(&path, contents)?;
-    Ok(())
+    write_atomic(&path, contents.as_bytes())
 }

@@ -270,31 +270,16 @@ impl TranscriptLine {
     }
 }
 
-/// How a redraw-style agent's history is reconstructed. Both modes commit lines
-/// as they leave the top of the viewport — they differ only in how the per-frame
-/// scroll amount is detected.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TranscriptMode {
-    /// Claude (Ink): committed `<Static>` lines scroll off the top exactly once
-    /// into the live vt100 parser's scrollback. The scroll amount is the exact
-    /// growth of that scrollback.
-    ScrollCommit,
-    /// Codex: repaints a fixed top viewport in place (absolute cursor moves, no
-    /// vt100 scroll) with the input box/footer pinned at the bottom. The scroll
-    /// amount is inferred by aligning the scrolling content region of successive
-    /// frames.
-    FrameAlign,
-}
-
-/// Append-only history reconstructed from a redraw-style agent.
+/// Append-only history reconstructed from a redraw-style agent (Claude, Codex).
 ///
-/// Both supported agents redraw rather than emit append-only text, so naive
-/// whole-screen snapshot merging re-appends near-full frames whenever a visible
-/// line changes in place — the "history repeats over and over" bug. Instead we
-/// commit a line to history exactly once, when it scrolls off the top of the
-/// viewport, and keep the current frame as a volatile visible tail. The two
-/// modes differ only in how the per-frame scroll amount is measured (see
-/// [`TranscriptMode`]). The displayed history is `committed` ++ visible frame.
+/// These agents repaint a viewport rather than emitting append-only text, so
+/// naive whole-screen snapshot merging re-appends near-full frames whenever a
+/// visible line changes in place — the "history repeats over and over" bug.
+/// Instead we commit a line to history exactly once, when it scrolls off the top
+/// of the viewport, and keep the current frame as a volatile visible tail. How
+/// far the content scrolled between frames is inferred by aligning the scrolling
+/// content region of successive frames (see [`align_shift`]). The displayed
+/// history is `committed` ++ visible frame.
 pub struct TranscriptBuffer {
     /// Lines that have scrolled off the top and are final.
     lines: VecDeque<TranscriptLine>,
@@ -302,21 +287,16 @@ pub struct TranscriptBuffer {
     visible: Vec<TranscriptLine>,
     /// Full-height previous frame; its top rows become committed on scroll.
     prev_frame: Vec<TranscriptLine>,
-    /// ScrollCommit only: vt100 scrollback length at the last ingest.
-    prev_committed: usize,
-    mode: TranscriptMode,
     max_lines: usize,
     pub generation: u64,
 }
 
 impl TranscriptBuffer {
-    pub fn new(max_lines: usize, mode: TranscriptMode) -> Self {
+    pub fn new(max_lines: usize) -> Self {
         Self {
             lines: VecDeque::new(),
             visible: Vec::new(),
             prev_frame: Vec::new(),
-            prev_committed: 0,
-            mode,
             max_lines: max_lines.max(1),
             generation: 0,
         }
@@ -395,28 +375,41 @@ impl TranscriptBuffer {
         result
     }
 
-    /// ScrollCommit (Claude): commit the lines that scrolled into the live vt100
-    /// parser's scrollback since the last ingest. `committed_total` is the
-    /// parser's current scrollback length — monotonic until the scrollback cap is
-    /// hit, at which point old lines drop from the parser too, so capping our own
-    /// history to `max_lines` stays consistent.
-    fn ingest_frame(&mut self, committed_total: usize, frame: Vec<TranscriptLine>) -> bool {
-        let delta = committed_total.saturating_sub(self.prev_committed);
-        self.prev_committed = committed_total;
-        self.commit_top_and_show(delta, frame)
-    }
-
-    /// FrameAlign (codex): codex repaints a fixed top viewport with the input box
-    /// pinned at the bottom, so there is no vt100 scroll signal. Infer how far the
-    /// scrolling content region moved up between the previous and current frame,
-    /// and commit the lines that left the top.
+    /// Ingest the current full-height frame. Redraw-style agents repaint a fixed
+    /// viewport (Claude in the alternate screen, Codex inline) with a status /
+    /// input region pinned at the bottom, so there is no byte-level scroll signal.
+    /// Infer how far the scrolling content region moved up between the previous
+    /// and current frame, and commit the lines that left the top.
     fn ingest_aligned_frame(&mut self, frame: Vec<TranscriptLine>) -> bool {
         // The pinned bottom (input box / footer / trailing blanks) is the longest
         // common suffix; the content region is everything above it.
         let pinned = pinned_bottom(&self.prev_frame, &frame);
         let limit = self.prev_frame.len().min(frame.len()).saturating_sub(pinned);
-        let shift = content_shift(&self.prev_frame, &frame, limit);
-        self.commit_top_and_show(shift, frame)
+
+        let commit_n = match align_shift(&self.prev_frame, &frame, limit) {
+            // Frames overlap: commit the `s` rows that scrolled off the top.
+            Some(s) => s,
+            // No overlap: the content jumped by more than a viewport (a fast
+            // burst), so the previous content region scrolled off entirely.
+            // Commit it (trailing blanks trimmed) rather than losing it — but
+            // only when the previous frame was substantially full of content, so
+            // we don't commit the sparse "thinking…" spinner phase.
+            None => {
+                let mut content_end = limit;
+                while content_end > 0 && self.prev_frame[content_end - 1].is_empty() {
+                    content_end -= 1;
+                }
+                let filled = (0..content_end)
+                    .filter(|&i| !self.prev_frame[i].is_empty())
+                    .count();
+                if content_end > 0 && filled * 2 >= limit {
+                    content_end
+                } else {
+                    0
+                }
+            }
+        };
+        self.commit_top_and_show(commit_n, frame)
     }
 
     /// Commit the top `commit_n` rows of the previous frame to history (they have
@@ -528,36 +521,34 @@ fn pinned_bottom(prev: &[TranscriptLine], cur: &[TranscriptLine]) -> usize {
     b
 }
 
-/// How many rows the scrolling content region `[0, limit)` moved up between the
-/// previous frame and the current one: the largest `s > 0` such that the content
-/// below `s` in the previous frame aligns (by text) with the top of the current
-/// frame. Requires a minimum matched run so transient/ambiguous frames (e.g. a
-/// few blank lines) don't produce a spurious shift.
-fn content_shift(prev: &[TranscriptLine], cur: &[TranscriptLine], limit: usize) -> usize {
-    const MIN_MATCH_RUN: usize = 3;
-    for s in 1..limit {
-        let compare_len = limit - s;
-        if compare_len < MIN_MATCH_RUN {
-            break;
-        }
-        let mut nonempty = 0usize;
-        let mut ok = true;
-        for i in 0..compare_len {
-            let a = &prev[s + i];
-            let b = &cur[i];
-            if !a.is_empty() || !b.is_empty() {
-                nonempty += 1;
-                if !a.same_text(b) {
-                    ok = false;
-                    break;
-                }
-            }
-        }
-        if ok && nonempty >= MIN_MATCH_RUN {
-            return s;
+/// How far the scrolling content region `[0, limit)` moved up between the
+/// previous and current frame.
+///
+/// `Some(s)` means the frames overlap: anchoring on the first run of real
+/// content in `cur`, that anchor is found `s` rows lower in `prev` (so `prev`
+/// scrolled up by `s`). Searching for the anchor *anywhere* in `prev` (rather
+/// than requiring a top-aligned match) makes this robust to large jumps and to
+/// the volatile status/spinner region below the content. `None` means no
+/// overlap at all — `cur`'s content does not appear in `prev`, i.e. the content
+/// advanced by more than a viewport (a fast burst) and everything in `prev`
+/// scrolled off.
+fn align_shift(prev: &[TranscriptLine], cur: &[TranscriptLine], limit: usize) -> Option<usize> {
+    const ANCHOR: usize = 3;
+    // First non-blank line of cur within the content region — the anchor start.
+    let a = (0..limit).find(|&i| !cur[i].is_empty())?;
+    let alen = (limit - a).min(ANCHOR);
+    // Need at least one real line to anchor on.
+    if (a..a + alen).all(|i| cur[i].is_empty()) {
+        return None;
+    }
+    // Find the anchor block `cur[a..a+alen]` at row `p >= a` in prev; the
+    // smallest such p gives the least (most recent) shift `s = p - a`.
+    for p in a..=prev.len().saturating_sub(alen) {
+        if (0..alen).all(|j| prev[p + j].same_text(&cur[a + j])) {
+            return Some(p - a);
         }
     }
-    0
+    None
 }
 
 pub struct SystemState {
@@ -610,6 +601,10 @@ pub struct SystemState {
     pub user_config: UserConfig,
     /// Whether to use alternate screen mode (from CLI or config)
     pub use_alternate_screen: bool,
+    /// State has unsaved changes; flushed to disk (debounced) by the main loop
+    pub state_dirty: bool,
+    /// Last time a state flush was started (for debouncing)
+    pub last_state_save: Instant,
 }
 
 impl SystemState {
@@ -639,6 +634,8 @@ impl SystemState {
             last_agent_done_sound: Instant::now(),
             user_config: crate::config::user_config::load_user_config(),
             use_alternate_screen: true,
+            state_dirty: false,
+            last_state_save: Instant::now(),
         }
     }
 
@@ -752,41 +749,17 @@ impl SystemState {
         chunks
     }
 
-    pub fn update_transcript_from_screen(
-        &mut self,
-        session_id: Uuid,
-        mode: TranscriptMode,
-    ) -> bool {
-        let Some(parser) = self.output_buffers.get_mut(&session_id) else {
+    pub fn update_transcript_from_screen(&mut self, session_id: Uuid) -> bool {
+        let Some(parser) = self.output_buffers.get(&session_id) else {
             return false;
         };
+        let frame = TranscriptBuffer::frame_from_screen(parser.screen());
 
         let max_lines = self.user_config.replay_parser_rows as usize;
-        let buffer = self
-            .transcript_buffers
+        self.transcript_buffers
             .entry(session_id)
-            .or_insert_with(|| TranscriptBuffer::new(max_lines, mode));
-
-        // The buffer's creation mode is authoritative (agent type is fixed per
-        // session); guard against a mismatched call.
-        match buffer.mode {
-            TranscriptMode::ScrollCommit => {
-                // How many rows have scrolled into the live parser's scrollback.
-                // Probing the max offset reads the count without reading rows
-                // (which would panic for offsets beyond the screen height in
-                // vt100 0.15).
-                parser.set_scrollback(usize::MAX);
-                let committed_total = parser.screen().scrollback();
-                parser.set_scrollback(0);
-
-                let frame = TranscriptBuffer::frame_from_screen(parser.screen());
-                buffer.ingest_frame(committed_total, frame)
-            }
-            TranscriptMode::FrameAlign => {
-                let frame = TranscriptBuffer::frame_from_screen(parser.screen());
-                buffer.ingest_aligned_frame(frame)
-            }
-        }
+            .or_insert_with(|| TranscriptBuffer::new(max_lines))
+            .ingest_aligned_frame(frame)
     }
 }
 
@@ -808,7 +781,7 @@ impl Default for SystemState {
 
 #[cfg(test)]
 mod tests {
-    use super::{SystemState, TranscriptBuffer, TranscriptLine, TranscriptMode};
+    use super::{SystemState, TranscriptBuffer, TranscriptLine};
     use crate::app::PARSER_BUFFER_ROWS;
     use crate::models::AgentType;
     use ratatui::style::Style;
@@ -896,66 +869,70 @@ mod tests {
     }
 
     #[test]
-    fn scroll_commit_shows_visible_frame_before_any_scroll() {
-        let mut transcript = TranscriptBuffer::new(10, TranscriptMode::ScrollCommit);
+    fn frame_align_does_not_repeat_when_only_the_status_line_changes() {
+        // Claude's alternate-screen layout: scrolling content, then a volatile
+        // status/spinner line that changes every frame, then a pinned input box.
+        // The content does NOT scroll here — only the spinner ticks — so nothing
+        // must be committed or duplicated (the regression that produced no/blank
+        // scrollback).
+        let mut transcript = TranscriptBuffer::new(50);
+        let frame = |spinner: &str| {
+            snapshot(&["line a", "line b", "line c", "", spinner, "", "> ", "footer"])
+        };
+        transcript.ingest_aligned_frame(frame("thinking 1s"));
+        let len1 = transcript.len();
+        transcript.ingest_aligned_frame(frame("thinking 2s"));
+        transcript.ingest_aligned_frame(frame("thinking 3s"));
 
-        // No lines have scrolled off yet: history is just the visible frame.
-        assert!(transcript.ingest_frame(0, snapshot(&["one", "two", "three"])));
-
-        assert_eq!(transcript.len(), 3);
-        assert_eq!(transcript.line(0), Some("one"));
-        assert_eq!(transcript.line(2), Some("three"));
+        assert_eq!(transcript.len(), len1, "status ticks must not grow history");
+        let a_count = (0..transcript.len())
+            .filter(|&i| transcript.line(i) == Some("line a"))
+            .count();
+        assert_eq!(a_count, 1, "content must not be duplicated by status ticks");
     }
 
     #[test]
-    fn scroll_commit_commits_lines_as_they_scroll_off() {
-        let mut transcript = TranscriptBuffer::new(10, TranscriptMode::ScrollCommit);
+    fn frame_align_commits_content_above_a_changing_status_line() {
+        // Content scrolls up by one while the spinner below it keeps changing.
+        // The shift must still be detected (top-anchored), committing the line
+        // that left the top exactly once.
+        let mut transcript = TranscriptBuffer::new(50);
+        transcript.ingest_aligned_frame(snapshot(&[
+            "1", "2", "3", "4", "5", "", "thinking 1s", "> ",
+        ]));
+        transcript.ingest_aligned_frame(snapshot(&[
+            "2", "3", "4", "5", "6", "", "thinking 2s", "> ",
+        ]));
 
-        // Frame holds [one, two, three]; nothing committed yet.
-        transcript.ingest_frame(0, snapshot(&["one", "two", "three"]));
-        // One line scrolled off (committed_total = 1): "one" becomes history,
-        // visible frame is now [two, three, four].
-        transcript.ingest_frame(1, snapshot(&["two", "three", "four"]));
-
-        // History = committed ["one"] ++ visible ["two","three","four"].
-        assert_eq!(transcript.len(), 4);
-        assert_eq!(transcript.line(0), Some("one"));
-        assert_eq!(transcript.line(1), Some("two"));
-        assert_eq!(transcript.line(3), Some("four"));
+        assert_eq!(transcript.line(0), Some("1"));
+        let ones = (0..transcript.len())
+            .filter(|&i| transcript.line(i) == Some("1"))
+            .count();
+        assert_eq!(ones, 1);
     }
 
     #[test]
-    fn scroll_commit_does_not_repeat_when_visible_lines_change_in_place() {
-        let mut transcript = TranscriptBuffer::new(20, TranscriptMode::ScrollCommit);
+    fn frame_align_captures_content_when_frames_do_not_overlap() {
+        // Fast burst: content jumps by more than a viewport between frames, so
+        // there is no overlap. The previous content region must still be
+        // committed (not dropped) so history captures it instead of going blank.
+        let mut transcript = TranscriptBuffer::new(50);
+        transcript.ingest_aligned_frame(snapshot(&["1", "2", "3", "4", "5", "6", "", "> "]));
+        // Jump to 20-25 — no overlap with 1-6.
+        transcript.ingest_aligned_frame(snapshot(&["20", "21", "22", "23", "24", "25", "", "> "]));
 
-        // A streaming line at the bottom changes in place across frames with no
-        // scroll: this must NOT duplicate already-shown lines (the old bug).
-        transcript.ingest_frame(0, snapshot(&["header", "answer", "typing he"]));
-        transcript.ingest_frame(0, snapshot(&["header", "answer", "typing hello"]));
-        transcript.ingest_frame(0, snapshot(&["header", "answer", "typing hello!"]));
-
-        assert_eq!(transcript.len(), 3);
-        assert_eq!(transcript.line(0), Some("header"));
-        assert_eq!(transcript.line(2), Some("typing hello!"));
-    }
-
-    #[test]
-    fn scroll_commit_commits_multiple_scrolled_lines_in_order() {
-        let mut transcript = TranscriptBuffer::new(10, TranscriptMode::ScrollCommit);
-
-        transcript.ingest_frame(0, snapshot(&["a", "b", "c"]));
-        // Two lines scroll off at once.
-        transcript.ingest_frame(2, snapshot(&["c", "d", "e"]));
-
-        assert_eq!(transcript.len(), 5);
-        assert_eq!(transcript.line(0), Some("a"));
-        assert_eq!(transcript.line(1), Some("b"));
-        assert_eq!(transcript.line(4), Some("e"));
+        assert_eq!(transcript.line(0), Some("1"));
+        assert!((0..transcript.len()).any(|i| transcript.line(i) == Some("6")));
+        assert!((0..transcript.len()).any(|i| transcript.line(i) == Some("20")));
+        let ones = (0..transcript.len())
+            .filter(|&i| transcript.line(i) == Some("1"))
+            .count();
+        assert_eq!(ones, 1, "no duplication across the jump");
     }
 
     #[test]
     fn frame_align_commits_content_scrolled_above_pinned_bottom() {
-        let mut transcript = TranscriptBuffer::new(50, TranscriptMode::FrameAlign);
+        let mut transcript = TranscriptBuffer::new(50);
 
         // Codex-style frames: content lines at the top, then a pinned bottom
         // ("", input box, footer) that never moves. Between frames the content
@@ -981,7 +958,7 @@ mod tests {
 
     #[test]
     fn frame_align_ignores_static_frames() {
-        let mut transcript = TranscriptBuffer::new(50, TranscriptMode::FrameAlign);
+        let mut transcript = TranscriptBuffer::new(50);
 
         // A repainted-but-unchanged frame (e.g. spinner tick with identical
         // content) must not commit or duplicate anything.

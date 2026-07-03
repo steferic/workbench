@@ -7,7 +7,7 @@ mod ui;
 pub use data::DataState;
 pub use system::{
     PendingSessionStart, RawOutputBuffer, ReplayCache, SystemState, TranscriptBuffer,
-    TranscriptLine, TranscriptMode,
+    TranscriptLine,
 };
 pub use types::*;
 pub use ui::{PinnedPaneState, UIState, WorkspaceUiState};
