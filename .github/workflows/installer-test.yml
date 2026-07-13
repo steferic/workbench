@@ -1,9 +1,12 @@
 name: Installer smoke test
 
-# Manually-dispatched end-to-end test of the published one-line installers,
-# exactly as a new user would run them. Run after cutting a release.
+# End-to-end test of the published one-line installers, exactly as a new
+# user would run them. Dispatch manually after cutting a release (also runs
+# when this file changes).
 on:
   workflow_dispatch:
+  push:
+    paths: ['.github/workflows/installer-test.yml']
 
 jobs:
   shell:
