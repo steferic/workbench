@@ -55,6 +55,10 @@ pub struct UserConfig {
     pub replay_parser_rows: u16,
     #[serde(skip)]
     pub live_scrollback_rows: usize,
+    /// Max committed transcript lines per redraw-style agent (Claude/Codex
+    /// scrollback). Derived from scrollback_mb like the raw buffer.
+    #[serde(skip)]
+    pub transcript_max_lines: usize,
 }
 
 fn default_agents() -> Vec<AgentConfig> {
@@ -197,6 +201,11 @@ impl UserConfig {
         self.replay_parser_rows = (mb as u16 * 500).clamp(500, 8000);
         // Live scrollback rows: scale proportionally (1 MB = 200 rows)
         self.live_scrollback_rows = (mb * 200).clamp(200, 4000);
+        // Transcript history: a styled line is ~100-300 bytes, so give it a
+        // budget in the same ballpark as the raw buffer instead of reusing
+        // the (much smaller) replay parser height — the old coupling capped
+        // Claude scrollback at 500/MB lines and silently ate early history.
+        self.transcript_max_lines = (mb * 4000).clamp(4000, 64_000);
     }
 }
 
@@ -210,6 +219,7 @@ impl Default for UserConfig {
             scrollback_buffer_kb: 0,
             replay_parser_rows: 0,
             live_scrollback_rows: 0,
+            transcript_max_lines: 0,
         };
         config.apply_scrollback_derived();
         config

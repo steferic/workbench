@@ -1,4 +1,4 @@
-use crate::app::pty_ops::resize_ptys_to_panes;
+use crate::app::pty_ops::request_pty_resize;
 use crate::app::selection::{
     clear_active_text_selection, clear_all_pinned_selections, copy_active_selection,
     pane_text_position,
@@ -727,7 +727,7 @@ fn handle_mouse_up(state: &mut AppState, x: u16, y: u16) {
     if state.ui.layout.dragging_divider.is_some() {
         state.ui.layout.dragging_divider = None;
         state.ui.layout.drag_start_pos = None;
-        resize_ptys_to_panes(state);
+        request_pty_resize(state);
         let config = GlobalConfig {
             banner_visible: state.ui.banner_visible,
             left_panel_ratio: state.ui.layout.left_panel_ratio,

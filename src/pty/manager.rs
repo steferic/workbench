@@ -280,11 +280,12 @@ impl PtyManager {
             cmd.env("TERM", "xterm-256color");
         }
 
-        // Set LINES and COLUMNS environment variables
-        // This provides explicit size info that nvim and other apps can use
-        // as a fallback, helping with apps that have startup resize issues
-        cmd.env("LINES", rows.to_string());
-        cmd.env("COLUMNS", cols.to_string());
+        // Do NOT export LINES/COLUMNS. Exported, they override the live
+        // TIOCGWINSZ size in Ink (Claude) and other TUI frameworks, freezing
+        // the child's layout at its spawn-time dimensions — the pane then
+        // renders clipped or mis-wrapped after any pane/window resize, and
+        // no amount of SIGWINCH fixes it. The PTY itself always carries the
+        // correct size (set at open, updated by resize()).
 
         // Spawn the process
         let child = pair

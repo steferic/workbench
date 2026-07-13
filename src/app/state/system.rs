@@ -392,8 +392,11 @@ impl TranscriptBuffer {
             // No overlap: the content jumped by more than a viewport (a fast
             // burst), so the previous content region scrolled off entirely.
             // Commit it (trailing blanks trimmed) rather than losing it — but
-            // only when the previous frame was substantially full of content, so
-            // we don't commit the sparse "thinking…" spinner phase.
+            // not during the sparse "thinking…" spinner phase (1-3 volatile
+            // lines), whose frames never align and would spam history. Real
+            // content with paragraph spacing can sit well under 50% fill, so
+            // gate on an absolute minimum of content lines rather than a
+            // fill ratio.
             None => {
                 let mut content_end = limit;
                 while content_end > 0 && self.prev_frame[content_end - 1].is_empty() {
@@ -402,7 +405,7 @@ impl TranscriptBuffer {
                 let filled = (0..content_end)
                     .filter(|&i| !self.prev_frame[i].is_empty())
                     .count();
-                if content_end > 0 && filled * 2 >= limit {
+                if content_end > 0 && (filled >= 4 || filled * 2 >= limit) {
                     content_end
                 } else {
                     0
@@ -605,6 +608,11 @@ pub struct SystemState {
     pub state_dirty: bool,
     /// Last time a state flush was started (for debouncing)
     pub last_state_save: Instant,
+    /// PTY sizes need syncing to pane sizes. Handled by the main loop AFTER
+    /// the next draw, because pane rects (`ui.*_area`) are only computed
+    /// during render — resizing immediately would use the previous layout's
+    /// dimensions and leave every PTY one resize behind.
+    pub pty_resize_pending: bool,
 }
 
 impl SystemState {
@@ -636,6 +644,7 @@ impl SystemState {
             use_alternate_screen: true,
             state_dirty: false,
             last_state_save: Instant::now(),
+            pty_resize_pending: false,
         }
     }
 
@@ -755,7 +764,7 @@ impl SystemState {
         };
         let frame = TranscriptBuffer::frame_from_screen(parser.screen());
 
-        let max_lines = self.user_config.replay_parser_rows as usize;
+        let max_lines = self.user_config.transcript_max_lines;
         self.transcript_buffers
             .entry(session_id)
             .or_insert_with(|| TranscriptBuffer::new(max_lines))
@@ -928,6 +937,44 @@ mod tests {
             .filter(|&i| transcript.line(i) == Some("1"))
             .count();
         assert_eq!(ones, 1, "no duplication across the jump");
+    }
+
+    #[test]
+    fn frame_align_commits_sparse_content_on_burst_jump() {
+        // Real Claude output has blank lines between paragraphs, so a content
+        // frame can sit well under 50% fill. A fast burst (no overlap) must
+        // still commit it — only the 1-3-line spinner phase may be dropped.
+        let mut transcript = TranscriptBuffer::new(50);
+        // 5 non-blank lines of 14 content rows (~36% fill).
+        transcript.ingest_aligned_frame(snapshot(&[
+            "para one", "", "para two", "", "para three", "", "para four", "", "para five", "",
+            "", "", "", "", "> ",
+        ]));
+        // Jump with no overlap.
+        transcript.ingest_aligned_frame(snapshot(&[
+            "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13",
+            "x14", "> ",
+        ]));
+
+        assert!((0..transcript.len()).any(|i| transcript.line(i) == Some("para one")));
+        assert!((0..transcript.len()).any(|i| transcript.line(i) == Some("para five")));
+    }
+
+    #[test]
+    fn frame_align_still_drops_spinner_phase_on_burst_jump() {
+        let mut transcript = TranscriptBuffer::new(50);
+        transcript.ingest_aligned_frame(snapshot(&[
+            "· thinking…", "", "", "", "", "", "", "", "", "", "", "", "", "", "> ",
+        ]));
+        transcript.ingest_aligned_frame(snapshot(&[
+            "y1", "y2", "y3", "y4", "y5", "y6", "y7", "y8", "y9", "y10", "y11", "y12", "y13",
+            "y14", "> ",
+        ]));
+
+        assert!(
+            !(0..transcript.len()).any(|i| transcript.line(i) == Some("· thinking…")),
+            "spinner frames must not be committed"
+        );
     }
 
     #[test]

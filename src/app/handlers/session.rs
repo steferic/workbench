@@ -1,4 +1,4 @@
-use crate::app::pty_ops::resize_ptys_to_panes;
+use crate::app::pty_ops::request_pty_resize;
 use crate::app::{
     Action, AppState, FocusPanel, InputMode, PendingDelete, Toast, ToastLevel,
 };
@@ -209,7 +209,7 @@ pub fn handle_session_action(
                 // pin_terminal_for_selected pushes a fresh PinnedPaneState.
                 let new_idx = state.pinned_count().saturating_sub(1);
                 state.set_focused_pinned_pane(new_idx);
-                resize_ptys_to_panes(state);
+                request_pty_resize(state);
                 save_state(state, "failed to save pinned session");
             }
         }
@@ -217,7 +217,7 @@ pub fn handle_session_action(
             // unpin_terminal_anywhere removes the pane's state and clamps the
             // focused index in the owning workspace's ws_ui.
             state.unpin_terminal_anywhere(session_id);
-            resize_ptys_to_panes(state);
+            request_pty_resize(state);
             save_state(state, "failed to save unpinned session");
         }
         Action::UnpinFocusedSession => {
@@ -227,13 +227,13 @@ pub fn handle_session_action(
                 if state.pinned_count() == 0 {
                     state.ui.focus = FocusPanel::SessionList;
                 }
-                resize_ptys_to_panes(state);
+                request_pty_resize(state);
                 save_state(state, "failed to save focused unpin");
             }
         }
         Action::ToggleSplitView => {
             state.ui.layout.split_view_enabled = !state.ui.layout.split_view_enabled;
-            resize_ptys_to_panes(state);
+            request_pty_resize(state);
         }
         Action::SessionExited(session_id, exit_code) => {
             if let Some(mut handle) = state.system.pty_handles.remove(&session_id) {
@@ -368,6 +368,9 @@ fn finish_session_spawn(
             if session_count > 0 {
                 state.set_selected_session_idx(session_count - 1);
             }
+            // Sync every PTY/parser to its pane so the new session starts
+            // pixel-consistent with the layout (no-op when sizes already match).
+            request_pty_resize(state);
             save_state(state, save_msg);
             true
         }
@@ -645,7 +648,7 @@ pub fn start_default_workspace_sessions(
     }
 
     // Re-layout PTYs/parsers for the new pinned-pane layout.
-    resize_ptys_to_panes(state);
+    request_pty_resize(state);
     save_state(state, "failed to save default workspace sessions");
 }
 

@@ -327,7 +327,7 @@ pub fn handle_todo_action(
             if state.ui.selected_utility == UtilityItem::ToggleBanner {
                 state.ui.banner_visible = !state.ui.banner_visible;
                 // Resize PTYs since pane height changed
-                crate::app::pty_ops::resize_ptys_to_panes(state);
+                crate::app::pty_ops::request_pty_resize(state);
                 let config = crate::persistence::GlobalConfig {
                     banner_visible: state.ui.banner_visible,
                     left_panel_ratio: state.ui.layout.left_panel_ratio,

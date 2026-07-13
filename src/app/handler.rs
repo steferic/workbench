@@ -7,7 +7,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 use super::handlers::{config, input, navigation, parallel, session, todo, workspace};
-use super::pty_ops::resize_ptys_to_panes;
+use super::pty_ops::request_pty_resize;
 
 const AGENT_DONE_WAV: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/sounds/agent_done.wav");
 
@@ -326,7 +326,7 @@ pub fn process_action(
         }
         Action::Resize(w, h) => {
             state.system.terminal_size = (w, h);
-            resize_ptys_to_panes(state);
+            request_pty_resize(state);
         }
         // Dispatch to specialized handlers
         _ => {

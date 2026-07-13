@@ -186,6 +186,14 @@ async fn run_main_loop(
         // End frame timing (measures render time)
         state.system.perf.frame_end();
 
+        // Sync PTY sizes to pane sizes now that this frame's layout rects are
+        // stored (see request_pty_resize — doing this from action handlers
+        // would use the previous layout and leave PTYs one resize behind).
+        if state.system.pty_resize_pending {
+            state.system.pty_resize_pending = false;
+            super::pty_ops::resize_ptys_to_panes(state);
+        }
+
         // After first render, start sessions with accurate pane dimensions
         // This is critical because nvim and other full-screen apps can't handle
         // resize events during startup - they lock to the first size they see

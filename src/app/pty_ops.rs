@@ -2,6 +2,15 @@ use crate::app::AppState;
 use std::collections::HashSet;
 use uuid::Uuid;
 
+/// Request a PTY-to-pane size sync. The actual resize runs in the main loop
+/// AFTER the next draw: pane rects (`ui.output_pane_area` etc.) are computed
+/// during render, so resizing inline from an action handler would use the
+/// previous layout's dimensions and leave every PTY one resize behind — the
+/// classic "view is garbled until I resize the window again" bug.
+pub fn request_pty_resize(state: &mut AppState) {
+    state.system.pty_resize_pending = true;
+}
+
 /// Resize all PTYs and vt100 parsers to match their respective pane sizes.
 /// This accounts for which pane each session is displayed in (output vs pinned).
 ///
