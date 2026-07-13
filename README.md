@@ -1,92 +1,80 @@
 # Workbench
 
-A TUI (Terminal User Interface) for managing AI agent workspaces and sessions.
+[![CI](https://github.com/steferic/workbench/actions/workflows/ci.yml/badge.svg)](https://github.com/steferic/workbench/actions/workflows/ci.yml)
+
+A TUI for managing AI agent workspaces and sessions. Run Claude, Codex, Gemini, and other coding agents side by side across multiple projects, with per-workspace sessions, pinned terminals, todos, and git worktree isolation.
 
 ## Features
 
-- Manage multiple workspaces and sessions
-- PTY support for running terminal sessions
-- ANSI color rendering
-- Audio playback support
-- Clipboard integration
+- Multiple workspaces, each with its own agents, terminals, and todos
+- Run agents in isolated git worktrees and merge their work back with one key
+- Parallel tasks: race several agents on the same prompt in separate worktrees
+- Pinned terminal panes alongside the agent output
+- Scrollback reconstruction for full-screen agents (Claude, Codex)
+- Dark/light themes, mouse support, clipboard integration
 
-## Prerequisites
+## Install
 
-### Required
-- [Rust](https://www.rust-lang.org/tools/install) (1.70 or later)
+### One-line install (macOS / Linux)
 
-### AI Agents (install the ones you want to use)
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) - `claude` CLI for Anthropic's Claude
-- [Gemini CLI](https://github.com/google-gemini/gemini-cli) - `gemini` CLI for Google's Gemini
-- [Codex CLI](https://github.com/openai/codex) - `codex` CLI for OpenAI's Codex
-- [Grok CLI](https://github.com/xai-org/grok) - `grok` CLI for xAI's Grok
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/steferic/workbench/releases/latest/download/workbench-installer.sh | sh
+```
 
-### Optional Dependencies (for full feature support)
+### One-line install (Windows PowerShell)
 
-#### Audio/Sounds
-- **VLC** - Required for classical radio streaming
-  ```bash
-  # macOS
-  brew install vlc
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/steferic/workbench/releases/latest/download/workbench-installer.ps1 | iex"
+```
 
-  # Ubuntu/Debian
-  sudo apt install vlc
-  ```
-
-- **FFmpeg** - Required for ambient sounds (ocean, chimes, rain, brown noise)
-  ```bash
-  # macOS
-  brew install ffmpeg
-
-  # Ubuntu/Debian
-  sudo apt install ffmpeg
-  ```
-
-## Installation
+Prebuilt binaries for macOS (Apple Silicon + Intel), Linux (x86_64 + arm64), and Windows (x86_64) are also on the [releases page](https://github.com/steferic/workbench/releases).
 
 ### From source
 
+Requires a recent stable [Rust](https://www.rust-lang.org/tools/install) toolchain.
+
 ```bash
-git clone https://github.com/stefanlenoach/workbench.git
+# Linux only: audio build deps
+sudo apt install pkg-config libasound2-dev     # Debian/Ubuntu
+# sudo dnf install pkgconf-pkg-config alsa-lib-devel   # Fedora
+
+cargo install --git https://github.com/steferic/workbench
+```
+
+Or clone and build:
+
+```bash
+git clone https://github.com/steferic/workbench.git
 cd workbench
-cargo build --release
+cargo build --release   # binary at target/release/workbench
 ```
 
-The binary will be at `target/release/workbench`.
+## Agents
 
-### Install globally
+Install the CLIs for whichever agents you want to drive (workbench spawns them by command name):
 
-```bash
-cargo install --path .
-```
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — `claude`
+- [Codex CLI](https://github.com/openai/codex) — `codex`
+- [Gemini CLI](https://github.com/google-gemini/gemini-cli) — `gemini`
+- [Grok CLI](https://github.com/xai-org/grok) — `grok`
+
+Custom agents (any command) can be added in `~/.config/workbench/user_config.toml` or via the in-app settings (`h`).
+
+### Optional
+
+- **VLC** — only needed for the classical radio stream (`brew install vlc` / `apt install vlc`). All other sounds are built in.
 
 ## Usage
 
-### Run the TUI
-
 ```bash
-workbench
+workbench                                  # run the TUI
+workbench --workspace /path/to/project    # open a specific workspace
+workbench add /path/to/project            # register a workspace
+workbench list                            # list workspaces
 ```
 
-### Start with a specific workspace
-
-```bash
-workbench --workspace /path/to/workspace
-```
-
-### Add a workspace
-
-```bash
-workbench add /path/to/workspace
-workbench add /path/to/workspace --name "My Workspace"
-```
-
-### List workspaces
-
-```bash
-workbench list
-```
+Press `h` or `?` in the app for keybindings and settings.
 
 ## License
 
-MIT
+[MIT](LICENSE)

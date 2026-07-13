@@ -4,6 +4,21 @@ version = "0.1.0"
 edition = "2021"
 description = "TUI for managing AI agent workspaces and sessions"
 license = "MIT"
+repository = "https://github.com/steferic/workbench"
+homepage = "https://github.com/steferic/workbench"
+readme = "README.md"
+keywords = ["tui", "ai", "agents", "terminal", "claude"]
+categories = ["command-line-utilities", "development-tools"]
+
+# Smaller, faster binaries for distribution
+[profile.release]
+lto = "thin"
+strip = true
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
 
 [[bin]]
 name = "workbench"
