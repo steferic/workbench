@@ -21,7 +21,7 @@ pub use action::{
 };
 pub use runtime::run_tui;
 pub use state::{
-    AppState, ConfigTab, ConfigTreeNode, Divider, FocusPanel, InputMode, PendingDelete,
+    AppState, ConfigTab, Divider, FocusPanel, InputMode, PendingDelete,
     PendingSessionStart, RawOutputBuffer, ReplayCache, SystemState, TextSelection,
     Toast, ToastLevel, TodoPaneMode, TodosTab, TranscriptBuffer, TranscriptLine,
     UtilityItem, UtilitySection, WorkspaceAction,

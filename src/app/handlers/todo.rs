@@ -1,6 +1,6 @@
 use crate::app::utilities::load_utility_content;
 use crate::app::{
-    Action, AppState, FocusPanel, InputMode, PendingDelete, TodoPaneMode, TodosTab, UtilityItem,
+    Action, AppState, InputMode, PendingDelete, TodoPaneMode, TodosTab, UtilityItem,
 };
 use crate::models::SessionStatus;
 use anyhow::Result;
@@ -323,40 +323,8 @@ pub fn handle_todo_action(
             state.ui.selected_todo_idx = 0;
         }
         Action::ActivateUtility => {
-            // Handle ToggleBanner specially - just toggle it without loading content
-            if state.ui.selected_utility == UtilityItem::ToggleBanner {
-                state.ui.banner_visible = !state.ui.banner_visible;
-                // Resize PTYs since pane height changed
-                crate::app::pty_ops::request_pty_resize(state);
-                let config = crate::persistence::GlobalConfig {
-                    banner_visible: state.ui.banner_visible,
-                    left_panel_ratio: state.ui.layout.left_panel_ratio,
-                    workspace_ratio: state.ui.layout.workspace_ratio,
-                    sessions_ratio: state.ui.layout.sessions_ratio,
-                    todos_ratio: state.ui.layout.todos_ratio,
-                    output_split_ratio: state.ui.layout.output_split_ratio,
-                    agent_done_sound_enabled: state.system.agent_done_sound_enabled,
-                    theme_mode: state.ui.theme_mode,
-                };
-                save_config(state, &config, "failed to save banner config");
-            }
-            // Handle AgentDoneSound - toggle and persist
-            else if state.ui.selected_utility == UtilityItem::AgentDoneSound {
-                state.system.agent_done_sound_enabled = !state.system.agent_done_sound_enabled;
-                let config = crate::persistence::GlobalConfig {
-                    banner_visible: state.ui.banner_visible,
-                    left_panel_ratio: state.ui.layout.left_panel_ratio,
-                    workspace_ratio: state.ui.layout.workspace_ratio,
-                    sessions_ratio: state.ui.layout.sessions_ratio,
-                    todos_ratio: state.ui.layout.todos_ratio,
-                    output_split_ratio: state.ui.layout.output_split_ratio,
-                    agent_done_sound_enabled: state.system.agent_done_sound_enabled,
-                    theme_mode: state.ui.theme_mode,
-                };
-                save_config(state, &config, "failed to save agent-done sound config");
-            }
             // Handle ToggleTheme - flip dark/light and persist
-            else if state.ui.selected_utility == UtilityItem::ToggleTheme {
+            if state.ui.selected_utility == UtilityItem::ToggleTheme {
                 state.ui.theme_mode = state.ui.theme_mode.toggled();
                 let config = crate::persistence::GlobalConfig {
                     banner_visible: state.ui.banner_visible,
@@ -365,63 +333,9 @@ pub fn handle_todo_action(
                     sessions_ratio: state.ui.layout.sessions_ratio,
                     todos_ratio: state.ui.layout.todos_ratio,
                     output_split_ratio: state.ui.layout.output_split_ratio,
-                    agent_done_sound_enabled: state.system.agent_done_sound_enabled,
                     theme_mode: state.ui.theme_mode,
                 };
                 save_config(state, &config, "failed to save theme config");
-            }
-            // Special handling for SuggestTodos - trigger analyzer
-            else if state.ui.selected_utility == UtilityItem::SuggestTodos {
-                let idle_agent = state.selected_workspace().and_then(|ws| {
-                    state.data.sessions.get(&ws.id).and_then(|sessions| {
-                        sessions
-                            .iter()
-                            .find(|s| {
-                                s.agent_type.is_agent() && state.data.idle_queue.contains(&s.id)
-                            })
-                            .map(|s| s.id)
-                    })
-                });
-
-                if let Some(session_id) = idle_agent {
-                    state.ui.analyzer_session_id = Some(session_id);
-                    let prompt = r##"Analyze this codebase and suggest 3-5 potential improvements, new features, or refactoring opportunities.
-
-For each suggestion, output it on its own line in this exact format:
-TODO: [DIFFICULTY] [IMPORTANCE] <description>
-
-Where:
-- DIFFICULTY is one of: EASY, MED, HARD
-- IMPORTANCE is one of: LOW, MED, HIGH, CRITICAL
-
-Examples:
-TODO: [EASY] [HIGH] Add input validation for user email fields
-TODO: [MED] [CRITICAL] Implement rate limiting on API endpoints
-TODO: [HARD] [MED] Refactor database layer to use connection pooling
-
-Focus on practical, actionable items. Be specific about what needs to be done."##;
-
-                    let text_bytes: Vec<u8> = prompt.bytes().collect();
-                    queue_session_input(
-                        action_tx,
-                        session_id,
-                        text_bytes,
-                        "failed to queue analyzer prompt",
-                    );
-                    queue_session_input(
-                        action_tx,
-                        session_id,
-                        vec![b'\r'],
-                        "failed to queue analyzer prompt newline",
-                    );
-
-                    state.data.idle_queue.retain(|&id| id != session_id);
-                    state.set_active_session_id(Some(session_id));
-                    state.ui.focus = FocusPanel::OutputPane;
-                } else {
-                    load_utility_content(state, action_tx);
-                    state.set_active_session_id(None);
-                }
             } else {
                 load_utility_content(state, action_tx);
                 state.set_active_session_id(None);

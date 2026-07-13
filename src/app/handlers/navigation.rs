@@ -271,14 +271,6 @@ pub fn handle_navigation_action(
                         state.ui.selected_sound = sounds[current_idx + 1];
                     }
                 }
-                UtilitySection::GlobalConfig => {
-                    // Navigate config tree
-                    if state.ui.config_tree_selected
-                        < state.ui.config_tree_nodes.len().saturating_sub(1)
-                    {
-                        state.ui.config_tree_selected += 1;
-                    }
-                }
                 UtilitySection::Notepad => {}
             }
         }
@@ -304,38 +296,11 @@ pub fn handle_navigation_action(
                         state.ui.selected_sound = sounds[current_idx - 1];
                     }
                 }
-                UtilitySection::GlobalConfig => {
-                    // Navigate config tree
-                    if state.ui.config_tree_selected > 0 {
-                        state.ui.config_tree_selected -= 1;
-                    }
-                }
                 UtilitySection::Notepad => {}
             }
         }
         Action::ToggleUtilitySection => {
             state.ui.utility_section = state.ui.utility_section.toggle();
-            // Initialize config tree when switching to GlobalConfig section
-            if state.ui.utility_section == UtilitySection::GlobalConfig
-                && state.ui.config_tree_nodes.is_empty()
-            {
-                crate::app::utilities::init_config_tree(state);
-            }
-        }
-        Action::ToggleConfigItem => {
-            // Open a terminal in the selected config directory
-            if state.ui.config_tree_nodes.is_empty() {
-                return Ok(());
-            }
-
-            let selected = state.ui.config_tree_selected;
-            if selected >= state.ui.config_tree_nodes.len() {
-                return Ok(());
-            }
-
-            let node = &state.ui.config_tree_nodes[selected];
-            // Store the config directory path for creating terminal (handled in handler.rs)
-            state.system.pending_config_terminal = Some(node.path().to_path_buf());
         }
         Action::ToggleBrownNoise => {
             state.system.brown_noise_playing = !state.system.brown_noise_playing;
@@ -735,7 +700,6 @@ fn handle_mouse_up(state: &mut AppState, x: u16, y: u16) {
             sessions_ratio: state.ui.layout.sessions_ratio,
             todos_ratio: state.ui.layout.todos_ratio,
             output_split_ratio: state.ui.layout.output_split_ratio,
-            agent_done_sound_enabled: state.system.agent_done_sound_enabled,
             theme_mode: state.ui.theme_mode,
         };
         save_config(state, &config, "failed to save pane layout config");

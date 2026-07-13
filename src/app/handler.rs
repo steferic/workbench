@@ -1,6 +1,6 @@
 use crate::app::{Action, AppState};
 use crate::git;
-use crate::pty::{PtyManager, SessionSpawnConfig};
+use crate::pty::PtyManager;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -8,8 +8,6 @@ use tokio::sync::mpsc;
 
 use super::handlers::{config, input, navigation, parallel, session, todo, workspace};
 use super::pty_ops::request_pty_resize;
-
-const AGENT_DONE_WAV: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/sounds/agent_done.wav");
 
 /// Send an action onto the dispatch channel, logging on failure instead of
 /// silently swallowing the error like a bare `let _ = tx.send(...)` did.
@@ -59,46 +57,6 @@ pub fn process_action(
             state.tick_animation();
             navigation::handle_drag_auto_scroll(state);
             let newly_idle = state.update_idle_queue();
-
-            // Play notification sound when agents go idle (debounced: max once per 5s)
-            // Only play if at least one session worked for ≥3 seconds to avoid
-            // spurious sounds from brief output bursts (shell init, prompt rendering)
-            if state.system.agent_done_sound_enabled
-                && !newly_idle.is_empty()
-                && state.system.last_agent_done_sound.elapsed().as_secs() >= 5
-            {
-                let any_meaningful = newly_idle
-                    .iter()
-                    .any(|id| state.session_work_duration(*id) >= 3.0);
-                if any_meaningful {
-                    state.system.last_agent_done_sound = std::time::Instant::now();
-                    crate::audio::play_sound(AGENT_DONE_WAV);
-                }
-            }
-
-            // Check if analyzer session went idle
-            if let Some(analyzer_id) = state.ui.analyzer_session_id {
-                if newly_idle.contains(&analyzer_id) {
-                    if let Some(parser) = state.system.output_buffers.get(&analyzer_id) {
-                        let screen = parser.screen();
-                        let contents = screen.contents();
-                        for line in contents.lines() {
-                            if let Some(idx) = line.find("TODO: ") {
-                                let todo_text = line[idx + 6..].trim();
-                                if !todo_text.is_empty() && todo_text.len() > 5 {
-                                    let clean_text: String =
-                                        todo_text.chars().filter(|c| !c.is_control()).collect();
-                                    dispatch_action(
-                                        action_tx,
-                                        Action::AddSuggestedTodo(clean_text),
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    state.ui.analyzer_session_id = None;
-                }
-            }
 
             // Process newly idle sessions
             for session_id in &newly_idle {
@@ -239,80 +197,6 @@ pub fn process_action(
                 }
             }
 
-            // Handle pending config terminal (from config tree)
-            if let Some(config_dir) = state.system.pending_config_terminal.take() {
-                // Create a terminal session in the config directory
-                if let Some(ws) = state.selected_workspace() {
-                    let workspace_id = ws.id;
-
-                    // Get directory name for terminal name
-                    let dir_name = config_dir
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("config")
-                        .to_string();
-
-                    // Create terminal session
-                    let agent_type = crate::models::AgentType::Terminal(dir_name.clone());
-                    let mut session =
-                        crate::models::Session::new(workspace_id, agent_type.clone(), false);
-
-                    // Set ls as the start command
-                    session.start_command = Some("ls".to_string());
-
-                    let session_id = session.id;
-                    state.add_session(session);
-
-                    // Spawn the terminal session in the config directory
-                    let pty_rows = state.pane_rows();
-                    let pty_cols = state.output_pane_cols();
-
-                    match pty_manager.spawn_session(SessionSpawnConfig {
-                        session_id,
-                        agent_type: agent_type.clone(),
-                        working_dir: &config_dir,
-                        rows: pty_rows,
-                        cols: pty_cols,
-                        pty_tx: pty_tx.clone(),
-                        resume: false,
-                        dangerously_skip_permissions: false,
-                        use_alternate_screen: state.system.use_alternate_screen,
-                    }) {
-                        Ok(handle) => {
-                            state.system.pty_handles.insert(session_id, handle);
-                            state.system.create_session_buffers(
-                                session_id,
-                                pty_rows,
-                                pty_cols,
-                                &agent_type,
-                            );
-
-                            // Mark session as running
-                            if let Some(s) = state.get_session_mut(session_id) {
-                                s.status = crate::models::SessionStatus::Running;
-                            }
-
-                            // Activate the session so it shows in the center pane
-                            state.set_active_session_id(Some(session_id));
-                            state.set_output_scroll_offset(0);
-                            state.ui.focus = crate::app::FocusPanel::OutputPane;
-
-                            // Run ls after a short delay to show directory contents
-                            let tx = action_tx.clone();
-                            let sid = session_id;
-                            tokio::spawn(async move {
-                                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                                dispatch_action(&tx, Action::SendInput(sid, b"ls".to_vec()));
-                                dispatch_action(&tx, Action::SendInput(sid, vec![b'\r']));
-                            });
-                        }
-                        Err(_) => {
-                            // Failed to spawn, remove the session
-                            state.delete_session(session_id);
-                        }
-                    }
-                }
-            }
         }
         Action::UtilityContentLoaded(payload) => {
             if payload.request_id == state.ui.utility_request_id {
@@ -392,7 +276,7 @@ pub fn process_action(
                 Action::MouseDrag(_, _) | Action::MouseUp(_, _) | Action::CopySelection |
                 Action::Paste(_) | Action::ClearSelection | Action::SelectNextUtility |
                 Action::SelectPrevUtility | Action::ToggleUtilitySection |
-                Action::ToggleConfigItem | Action::ToggleBrownNoise | Action::ToggleClassicalRadio |
+                Action::ToggleBrownNoise | Action::ToggleClassicalRadio |
                 Action::ToggleOceanWaves | Action::ToggleWindChimes | Action::ToggleRainforestRain => {
                     navigation::handle_navigation_action(state, action, pty_manager, pty_tx)?;
                 }

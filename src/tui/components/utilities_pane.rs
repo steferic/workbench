@@ -41,7 +41,6 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
     // Render horizontal tabs
     let utils_active = state.ui.utility_section == UtilitySection::Utilities;
     let sounds_active = state.ui.utility_section == UtilitySection::Sounds;
-    let config_active = state.ui.utility_section == UtilitySection::GlobalConfig;
     let notepad_active = state.ui.utility_section == UtilitySection::Notepad;
 
     let tab_style = |active: bool| {
@@ -62,8 +61,6 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
         Span::styled("|", Style::default().fg(t.fg_faint)),
         Span::styled(" Sounds ", tab_style(sounds_active)),
         Span::styled("|", Style::default().fg(t.fg_faint)),
-        Span::styled(" Cfg ", tab_style(config_active)),
-        Span::styled("|", Style::default().fg(t.fg_faint)),
         Span::styled(" Notes ", tab_style(notepad_active)),
     ]));
     frame.render_widget(tabs, tabs_area);
@@ -75,9 +72,6 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
         }
         UtilitySection::Sounds => {
             render_sounds_list(frame, content_area, state, is_focused);
-        }
-        UtilitySection::GlobalConfig => {
-            render_config_list(frame, content_area, state, is_focused);
         }
         UtilitySection::Notepad => {
             render_notepad(frame, content_area, state, is_focused);
@@ -125,22 +119,8 @@ fn render_utilities_list(frame: &mut Frame, area: Rect, state: &AppState, is_foc
 
             let prefix = if is_selected { "> " } else { "  " };
 
-            // Show ON/OFF indicator for toggles
+            // Show state indicator for toggles
             let toggle_indicator = match item {
-                UtilityItem::ToggleBanner => {
-                    if state.ui.banner_visible {
-                        Span::styled(" [ON]", Style::default().fg(t.success))
-                    } else {
-                        Span::styled(" [OFF]", Style::default().fg(t.error))
-                    }
-                }
-                UtilityItem::AgentDoneSound => {
-                    if state.system.agent_done_sound_enabled {
-                        Span::styled(" [ON]", Style::default().fg(t.success))
-                    } else {
-                        Span::styled(" [OFF]", Style::default().fg(t.error))
-                    }
-                }
                 UtilityItem::ToggleTheme => Span::styled(
                     format!(" [{}]", state.ui.theme_mode.label()),
                     Style::default().fg(t.accent),
@@ -259,70 +239,6 @@ fn render_sounds_list(frame: &mut Frame, area: Rect, state: &AppState, is_focuse
     let mut list_state = ListState::default();
     let selected_idx = sounds.iter().position(|i| *i == state.ui.selected_sound);
     list_state.select(selected_idx);
-
-    frame.render_stateful_widget(list, area, &mut list_state);
-}
-
-fn render_config_list(frame: &mut Frame, area: Rect, state: &AppState, is_focused: bool) {
-    let t = crate::theme::current();
-    // Render simple config directory list
-    if state.ui.config_tree_nodes.is_empty() {
-        let placeholder = Paragraph::new("No config directories found")
-            .style(Style::default().fg(t.fg_faint));
-        frame.render_widget(placeholder, area);
-        return;
-    }
-
-    let items: Vec<ListItem> = state
-        .ui
-        .config_tree_nodes
-        .iter()
-        .enumerate()
-        .map(|(idx, node)| {
-            let is_selected = idx == state.ui.config_tree_selected;
-
-            let style = if is_selected && is_focused {
-                Style::default()
-                    .fg(t.accent)
-                    .add_modifier(Modifier::BOLD)
-            } else if is_selected {
-                Style::default().fg(t.fg)
-            } else {
-                Style::default().fg(t.fg_dim)
-            };
-
-            let prefix = if is_selected { "> " } else { "  " };
-            let icon = node.icon();
-            let name = node.name();
-
-            // Show hint to open terminal
-            let hint = Span::styled(
-                " [Enter: open terminal]",
-                Style::default().fg(t.fg_faint),
-            );
-
-            ListItem::new(Line::from(vec![
-                Span::styled(prefix, style),
-                Span::raw(format!("{} ", icon)),
-                Span::styled(name, style),
-                hint,
-            ]))
-        })
-        .collect();
-
-    // Highlight style with full row background when focused
-    let highlight_style = if is_focused {
-        Style::default()
-            .bg(t.selection_bg)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default()
-    };
-
-    let list = List::new(items).highlight_style(highlight_style);
-
-    let mut list_state = ListState::default();
-    list_state.select(Some(state.ui.config_tree_selected));
 
     frame.render_stateful_widget(list, area, &mut list_state);
 }

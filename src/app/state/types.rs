@@ -82,7 +82,6 @@ pub enum UtilitySection {
     #[default]
     Utilities,
     Sounds,
-    GlobalConfig,
     Notepad,
 }
 
@@ -90,8 +89,7 @@ impl UtilitySection {
     pub fn toggle(&self) -> Self {
         match self {
             UtilitySection::Utilities => UtilitySection::Sounds,
-            UtilitySection::Sounds => UtilitySection::GlobalConfig,
-            UtilitySection::GlobalConfig => UtilitySection::Notepad,
+            UtilitySection::Sounds => UtilitySection::Notepad,
             UtilitySection::Notepad => UtilitySection::Utilities,
         }
     }
@@ -141,11 +139,7 @@ pub enum UtilityItem {
     TopFiles,
     Calendar,
     GitHistory,
-    FileTree,
-    SuggestTodos,
     Keybindings,
-    ToggleBanner,
-    AgentDoneSound,
     ToggleTheme,
     // Sounds
     BrownNoise,
@@ -162,11 +156,7 @@ impl UtilityItem {
             UtilityItem::TopFiles,
             UtilityItem::Calendar,
             UtilityItem::GitHistory,
-            UtilityItem::FileTree,
-            UtilityItem::SuggestTodos,
             UtilityItem::Keybindings,
-            UtilityItem::ToggleBanner,
-            UtilityItem::AgentDoneSound,
             UtilityItem::ToggleTheme,
         ]
     }
@@ -189,14 +179,10 @@ impl UtilityItem {
             UtilityItem::OceanWaves => "Ocean",
             UtilityItem::WindChimes => "Chimes",
             UtilityItem::RainforestRain => "Rain",
-            UtilityItem::AgentDoneSound => "Agent Done",
             UtilityItem::TopFiles => "Top Files (LOC)",
             UtilityItem::Calendar => "Calendar",
             UtilityItem::GitHistory => "Git History",
-            UtilityItem::FileTree => "File Tree",
-            UtilityItem::SuggestTodos => "Suggest Todos",
             UtilityItem::Keybindings => "Keybindings",
-            UtilityItem::ToggleBanner => "Banner Bar",
             UtilityItem::ToggleTheme => "Theme",
         }
     }
@@ -208,89 +194,11 @@ impl UtilityItem {
             UtilityItem::OceanWaves => "\u{1F30A}",
             UtilityItem::WindChimes => "\u{1F390}",
             UtilityItem::RainforestRain => "\u{1F327}\u{FE0F}",
-            UtilityItem::AgentDoneSound => "\u{1F514}",
             UtilityItem::TopFiles => "\u{1F4CA}",
             UtilityItem::Calendar => "\u{1F4C5}",
             UtilityItem::GitHistory => "\u{1F4DC}",
-            UtilityItem::FileTree => "\u{1F333}",
-            UtilityItem::SuggestTodos => "\u{1F4A1}",
             UtilityItem::Keybindings => "\u{2328}",
-            UtilityItem::ToggleBanner => "\u{1F4E2}",
             UtilityItem::ToggleTheme => "\u{1F313}",
-        }
-    }
-}
-
-/// Global config items (now just used for internal tracking, tree handles display)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ConfigItem {
-    #[default]
-    ClaudeConfig,
-}
-
-/// A node in the config file tree
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)]
-pub enum ConfigTreeNode {
-    /// Root item (Claude, Gemini, etc.)
-    Root {
-        name: String,
-        path: std::path::PathBuf,
-        expanded: bool,
-    },
-    /// A directory that can be expanded (unused - keeping for potential tree view)
-    Directory {
-        name: String,
-        path: std::path::PathBuf,
-        expanded: bool,
-        depth: usize,
-    },
-    /// A file that can be opened (unused - keeping for potential tree view)
-    File {
-        name: String,
-        path: std::path::PathBuf,
-        depth: usize,
-    },
-}
-
-impl ConfigTreeNode {
-    pub fn name(&self) -> &str {
-        match self {
-            ConfigTreeNode::Root { name, .. } => name,
-            ConfigTreeNode::Directory { name, .. } => name,
-            ConfigTreeNode::File { name, .. } => name,
-        }
-    }
-
-    pub fn path(&self) -> &std::path::Path {
-        match self {
-            ConfigTreeNode::Root { path, .. } => path,
-            ConfigTreeNode::Directory { path, .. } => path,
-            ConfigTreeNode::File { path, .. } => path,
-        }
-    }
-
-    pub fn icon(&self) -> &'static str {
-        match self {
-            ConfigTreeNode::Root { expanded: true, .. } => "\u{1F4C2}", // Open folder
-            ConfigTreeNode::Root {
-                expanded: false, ..
-            } => "\u{1F4C1}", // Closed folder
-            ConfigTreeNode::Directory { expanded: true, .. } => "\u{1F4C2}",
-            ConfigTreeNode::Directory {
-                expanded: false, ..
-            } => "\u{1F4C1}",
-            ConfigTreeNode::File { name, .. } => {
-                if name.ends_with(".json") {
-                    "\u{1F4C4}" // Document
-                } else if name.ends_with(".md") {
-                    "\u{1F4DD}" // Memo
-                } else if name.ends_with(".toml") {
-                    "\u{2699}" // Gear
-                } else {
-                    "\u{1F4C4}" // Document
-                }
-            }
         }
     }
 }

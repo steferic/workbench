@@ -152,8 +152,7 @@ pub enum Action {
     SelectNextUtility,
     SelectPrevUtility,
     ActivateUtility,      // Load and display utility content in output pane
-    ToggleUtilitySection, // Switch between Util, Sounds, Config, and Notepad sections
-    ToggleConfigItem,     // Toggle the selected config item (e.g., banner visibility)
+    ToggleUtilitySection, // Switch between Util, Sounds, and Notepad sections
     ToggleBrownNoise,     // Toggle brown noise player on/off
     ToggleClassicalRadio, // Toggle WRTI classical radio stream on/off
     ToggleOceanWaves,     // Toggle ocean waves sound on/off

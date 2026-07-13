@@ -1,4 +1,4 @@
-use crate::app::{Action, AppState, ConfigTreeNode, UtilityContentPayload, UtilityItem};
+use crate::app::{Action, AppState, UtilityContentPayload, UtilityItem};
 use std::path::Path;
 use tokio::sync::mpsc;
 use tokio::task;
@@ -87,17 +87,6 @@ pub fn load_utility_content(state: &mut AppState, action_tx: &mpsc::UnboundedSen
                 "  Press Enter to toggle on/off.".to_string(),
             ];
         }
-        UtilityItem::AgentDoneSound => {
-            state.ui.utility_content = vec![
-                "".to_string(),
-                "  Agent Done".to_string(),
-                "  ==========".to_string(),
-                "".to_string(),
-                "  Plays a short sound when an agent finishes.".to_string(),
-                "".to_string(),
-                "  Press Enter to toggle on/off.".to_string(),
-            ];
-        }
         UtilityItem::TopFiles => {
             state.ui.utility_content = loading_message("Top Files by Lines of Code");
             let action_tx = action_tx.clone();
@@ -135,44 +124,8 @@ pub fn load_utility_content(state: &mut AppState, action_tx: &mpsc::UnboundedSen
                 );
             });
         }
-        UtilityItem::FileTree => {
-            state.ui.utility_content = loading_message("File Tree");
-            let action_tx = action_tx.clone();
-            task::spawn_blocking(move || {
-                let content = build_file_tree(&workspace_path);
-                queue_utility_content(
-                    &action_tx,
-                    UtilityContentPayload {
-                        request_id,
-                        content,
-                        pie_chart_data: Vec::new(),
-                        show_calendar: false,
-                    },
-                    "failed to load file tree utility content",
-                );
-            });
-        }
-        UtilityItem::SuggestTodos => {
-            load_suggest_todos_info(state);
-        }
         UtilityItem::Keybindings => {
             load_keybindings_info(state);
-        }
-        UtilityItem::ToggleBanner => {
-            // ToggleBanner is handled directly, not through content loading
-            state.ui.utility_content = vec![
-                "".to_string(),
-                "  Banner Bar".to_string(),
-                "  ==========".to_string(),
-                "".to_string(),
-                "  Press Enter to toggle the banner bar visibility.".to_string(),
-                "".to_string(),
-                if state.ui.banner_visible {
-                    "  Status: Visible".to_string()
-                } else {
-                    "  Status: Hidden".to_string()
-                },
-            ];
         }
         UtilityItem::ToggleTheme => {
             // ToggleTheme is handled directly, not through content loading
@@ -197,32 +150,6 @@ fn loading_message(title: &str) -> Vec<String> {
         "".to_string(),
         "  Loading...".to_string(),
     ]
-}
-
-/// Show info about the Suggest Todos utility
-fn load_suggest_todos_info(state: &mut AppState) {
-    let content = vec![
-        "".to_string(),
-        "  Suggest Todos".to_string(),
-        "  ==============".to_string(),
-        "".to_string(),
-        "  This utility analyzes your codebase and suggests".to_string(),
-        "  potential features, improvements, and refactoring".to_string(),
-        "  opportunities as todo items.".to_string(),
-        "".to_string(),
-        "  Suggested todos appear with a (?) icon and can be:".to_string(),
-        "  - Approved with 'y' to become pending todos".to_string(),
-        "  - Deleted with 'd' if not relevant".to_string(),
-        "".to_string(),
-        "  Press Enter to analyze the codebase...".to_string(),
-        "".to_string(),
-        if state.ui.analyzer_session_id.is_some() {
-            "  Status: Analysis in progress...".to_string()
-        } else {
-            "  Status: Ready".to_string()
-        },
-    ];
-    state.ui.utility_content = content;
 }
 
 /// Show keybindings config information
@@ -386,106 +313,6 @@ fn build_git_history(workspace_path: &Path) -> Vec<String> {
     content
 }
 
-/// Load file tree for the workspace using git ls-files (respects .gitignore)
-fn build_file_tree(workspace_path: &Path) -> Vec<String> {
-    use std::collections::BTreeMap;
-
-    let mut content = vec![
-        "".to_string(),
-        "  File Tree".to_string(),
-        "  =========".to_string(),
-        "".to_string(),
-    ];
-
-    // Get workspace name for root
-    let ws_name = workspace_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or(".");
-
-    // Try git ls-files first (respects .gitignore)
-    let output = std::process::Command::new("git")
-        .args(["ls-files"])
-        .current_dir(workspace_path)
-        .output();
-
-    let files: Vec<String> = match output {
-        Ok(output) if output.status.success() => String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .map(|s| s.to_string())
-            .collect(),
-        _ => {
-            // Fallback: manual directory walk (limited)
-            content.push(format!("  {}/", ws_name));
-            content.push("  (not a git repository)".to_string());
-            return content;
-        }
-    };
-
-    if files.is_empty() {
-        content.push(format!("  {}/", ws_name));
-        content.push("  (no tracked files)".to_string());
-        return content;
-    }
-
-    // Build tree structure: path -> children (BTreeMap for sorted order)
-    #[derive(Default)]
-    struct TreeNode {
-        children: BTreeMap<String, TreeNode>,
-        is_file: bool,
-    }
-
-    let mut root = TreeNode::default();
-
-    for file_path in &files {
-        let parts: Vec<&str> = file_path.split('/').collect();
-        let mut current = &mut root;
-
-        for (i, part) in parts.iter().enumerate() {
-            let is_last = i == parts.len() - 1;
-            current = current.children.entry(part.to_string()).or_default();
-            if is_last {
-                current.is_file = true;
-            }
-        }
-    }
-
-    // Render tree with visual characters
-    content.push(format!("  {}/", ws_name));
-
-    fn render_tree(node: &TreeNode, prefix: &str, content: &mut Vec<String>) {
-        let entries: Vec<_> = node.children.iter().collect();
-        let count = entries.len();
-
-        for (i, (name, child)) in entries.iter().enumerate() {
-            let is_last = i == count - 1;
-            let connector = if is_last { "└── " } else { "├── " };
-            let child_prefix = if is_last { "    " } else { "│   " };
-
-            let display_name = if child.is_file && child.children.is_empty() {
-                name.to_string()
-            } else {
-                format!("{}/", name)
-            };
-
-            content.push(format!("  {}{}{}", prefix, connector, display_name));
-
-            // Recursively render children (but limit depth to avoid huge trees)
-            if !child.children.is_empty() && prefix.len() < 40 {
-                render_tree(child, &format!("{}{}", prefix, child_prefix), content);
-            }
-        }
-    }
-
-    render_tree(&root, "", &mut content);
-
-    // Add file count
-    content.push("".to_string());
-    content.push(format!("  {} files tracked", files.len()));
-
-    content
-}
-
 /// Load top 20 files by lines of code with pie chart visualization
 fn build_top_files(
     workspace_path: &Path,
@@ -628,54 +455,4 @@ fn build_top_files(
     ));
 
     (content, pie_chart_data)
-}
-
-/// Initialize the config tree with CLI agent config directories
-pub fn init_config_tree(state: &mut AppState) {
-    let home = dirs::home_dir().unwrap_or_default();
-
-    let mut nodes = Vec::new();
-
-    // Claude root
-    let claude_path = home.join(".claude");
-    if claude_path.exists() {
-        nodes.push(ConfigTreeNode::Root {
-            name: "Claude".to_string(),
-            path: claude_path,
-            expanded: false,
-        });
-    }
-
-    // Gemini root
-    let gemini_path = home.join(".gemini");
-    if gemini_path.exists() {
-        nodes.push(ConfigTreeNode::Root {
-            name: "Gemini".to_string(),
-            path: gemini_path,
-            expanded: false,
-        });
-    }
-
-    // Codex root
-    let codex_path = home.join(".codex");
-    if codex_path.exists() {
-        nodes.push(ConfigTreeNode::Root {
-            name: "Codex".to_string(),
-            path: codex_path,
-            expanded: false,
-        });
-    }
-
-    // Grok root
-    let grok_path = home.join(".grok");
-    if grok_path.exists() {
-        nodes.push(ConfigTreeNode::Root {
-            name: "Grok".to_string(),
-            path: grok_path,
-            expanded: false,
-        });
-    }
-
-    state.ui.config_tree_nodes = nodes;
-    state.ui.config_tree_selected = 0;
 }

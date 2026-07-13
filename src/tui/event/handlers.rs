@@ -387,7 +387,6 @@ impl EventHandler {
                     UtilityItem::RainforestRain => Action::ToggleRainforestRain,
                     _ => Action::Tick,
                 },
-                UtilitySection::GlobalConfig => Action::ToggleConfigItem,
                 UtilitySection::Notepad => Action::Tick,
             },
             KeyCode::Tab => Action::ToggleUtilitySection,

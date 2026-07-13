@@ -579,8 +579,6 @@ pub struct SystemState {
     pub startup_queue: VecDeque<PendingSessionStart>,
     /// Keybinding configuration
     pub keybindings: KeybindingConfig,
-    /// Config directory to open terminal in (set by config tree, consumed by handler)
-    pub pending_config_terminal: Option<PathBuf>,
     /// Performance metrics for FPS monitoring
     pub perf: PerformanceMetrics,
     /// Raw PTY output bytes for replay-based scrollback
@@ -596,10 +594,6 @@ pub struct SystemState {
     pub diff_stats: HashMap<PathBuf, DiffStat>,
     /// Last time diff stats were refreshed
     pub last_diff_refresh: Instant,
-    /// Play a sound when an agent finishes (goes idle)
-    pub agent_done_sound_enabled: bool,
-    /// Last time the agent-done sound was played (for debouncing)
-    pub last_agent_done_sound: Instant,
     /// User configuration loaded from ~/.config/workbench/user_config.toml
     pub user_config: UserConfig,
     /// Whether to use alternate screen mode (from CLI or config)
@@ -630,7 +624,6 @@ impl SystemState {
             rainforest_rain_playing: false,
             startup_queue: VecDeque::new(),
             keybindings: KeybindingConfig::default(),
-            pending_config_terminal: None,
             perf: PerformanceMetrics::new(),
             raw_output_buffers: HashMap::new(),
             transcript_buffers: HashMap::new(),
@@ -638,8 +631,6 @@ impl SystemState {
             sync_output_buffers: HashMap::new(),
             diff_stats: HashMap::new(),
             last_diff_refresh: Instant::now(),
-            agent_done_sound_enabled: true,
-            last_agent_done_sound: Instant::now(),
             user_config: crate::config::user_config::load_user_config(),
             use_alternate_screen: true,
             state_dirty: false,
