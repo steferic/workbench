@@ -29,6 +29,8 @@ powershell -ExecutionPolicy Bypass -c "irm https://github.com/steferic/workbench
 
 Prebuilt binaries for macOS (Apple Silicon + Intel), Linux (x86_64 + arm64), and Windows (x86_64) are also on the [releases page](https://github.com/steferic/workbench/releases).
 
+> **Linux note:** the binary needs the ALSA runtime for sounds, which every desktop distro already ships. On minimal/headless systems: `sudo apt install libasound2` (Debian/Ubuntu) or `sudo dnf install alsa-lib` (Fedora).
+
 ### From source
 
 Requires a recent stable [Rust](https://www.rust-lang.org/tools/install) toolchain.
