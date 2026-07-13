@@ -25,10 +25,6 @@ const RAIN_WAV: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/assets/sounds/rainforest_rain.wav"
 );
-const STARTUP_WAV: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/assets/sounds/startup_beep.wav"
-);
 
 fn stop_radio_process(mut child: std::process::Child) {
     if let Err(err) = child.kill() {
@@ -172,9 +168,6 @@ async fn run_main_loop(
 
     // Track if we've done initial session start after first render
     let mut initial_sessions_started = false;
-
-    // Play startup sound
-    crate::audio::play_sound(STARTUP_WAV);
 
     loop {
         // Start frame timing
