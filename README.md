@@ -33,13 +33,16 @@ Prebuilt binaries for macOS (Apple Silicon + Intel), Linux (x86_64 + arm64), and
 
 ### From source
 
-Requires a recent stable [Rust](https://www.rust-lang.org/tools/install) toolchain.
+Requires a recent stable [Rust](https://www.rust-lang.org/tools/install) toolchain. macOS and Windows need nothing else; Linux needs the audio build deps:
 
 ```bash
-# Linux only: audio build deps
 sudo apt install pkg-config libasound2-dev     # Debian/Ubuntu
 # sudo dnf install pkgconf-pkg-config alsa-lib-devel   # Fedora
+```
 
+Then, on any OS:
+
+```bash
 cargo install --git https://github.com/steferic/workbench
 ```
 
