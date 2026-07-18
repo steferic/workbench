@@ -74,6 +74,17 @@ enum Commands {
         #[arg(long, default_value_t = 600)]
         timeout: u64,
     },
+    /// Ask a peer for a structured handoff summary of its work
+    Handoff {
+        /// Target agent: short id, alias, or provider name (if unique)
+        target: String,
+        /// Block until the handoff arrives (or timeout)
+        #[arg(long)]
+        wait: bool,
+        /// Timeout in seconds for --wait
+        #[arg(long, default_value_t = 600)]
+        timeout: u64,
+    },
     /// Collect the reply for a consult ticket
     Replies {
         ticket: String,
@@ -122,6 +133,11 @@ async fn main() -> Result<()> {
             wait,
             timeout,
         }) => cli::cmd_ask(target, message, wait, timeout)?,
+        Some(Commands::Handoff {
+            target,
+            wait,
+            timeout,
+        }) => cli::cmd_handoff(target, wait, timeout)?,
         Some(Commands::Replies {
             ticket,
             wait,

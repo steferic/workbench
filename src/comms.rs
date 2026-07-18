@@ -314,15 +314,36 @@ agents (Claude, Codex, ...). Your session id is in `$WORKBENCH_SESSION`.
 The `workbench` CLI lets you discover and communicate with peers:
 
 - `workbench agents` — list agent sessions here (id, provider, alias, branch, idle/busy)
-- `workbench transcript <id|alias> --lines 200` — read a peer's recent conversation (exported each time it goes idle); useful to take over or review their work
-- `workbench ask <id|alias> "question"` — queue a question for a live peer; prints a ticket. Collect the answer with `workbench replies <ticket> --wait`
+- `workbench transcript <id|alias> --lines 200` — read a peer's recent conversation (exported each time it goes idle)
+- `workbench ask <id|alias> "question" --wait` — deliver a question to a live peer and collect its answer (or collect later: `workbench replies <ticket> --wait`)
+- `workbench handoff <id|alias> --wait` — ask a peer for a structured summary of its work (done/remaining/decisions/gotchas) before taking over or building on it
 - `workbench alias <name>` — set your own alias
 
 Address peers by id or alias; a provider name like `codex` only works when
 exactly one such agent is running. A consult costs the peer a full model
 turn — consult when the user asks you to or you are genuinely blocked, not
-by default. Peers' code changes live on their git branches (see `agents`
-output) — prefer reviewing their diff over reading their transcript.
+by default.
+
+### Choosing the right collaboration pattern
+
+Match the user's request to what is known to work; if it fits, just do it:
+- REVIEWING a peer's work: review its git branch/diff yourself with fresh
+  eyes (branches are in `agents` output). Do NOT ask the author to summarize
+  or defend its own work first — self-reports hide exactly the bugs the
+  author missed.
+- TAKING OVER or building on a peer's work: `workbench handoff` the live
+  author (its self-summary carries decisions a transcript reader must
+  guess); read `transcript` only when the author is stopped or unresponsive.
+- CONSULTING: one broad question beats many narrow ones; a cross-provider
+  opinion (claude<->codex) is worth more than a same-provider one.
+
+If the user asks for something known to be counterproductive — e.g. agents
+debating in rounds until they agree (models sycophantically converge on
+wrong answers), several agents editing the same branch/files (conflicting
+writes), or relaying work through a peer that you could do directly (token
+cost without benefit) — do not silently comply: briefly tell the user why it
+tends to fail, propose the closest effective alternative, and proceed with
+the original request only if they confirm.
 {BLOCK_END}"#
     )
 }

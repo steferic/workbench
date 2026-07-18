@@ -92,9 +92,16 @@ transcript and take over where it left off".
 workbench agents                       # roster: id, provider, alias, branch, idle/busy
 workbench transcript <id|alias>        # a peer's recent conversation (exported at each idle)
 workbench ask <id|alias> "question"    # queue a question for a live peer; prints a ticket
+workbench handoff <id|alias> --wait    # structured take-over summary from a live peer
 workbench replies <ticket> --wait      # collect the answer
 workbench alias <name>                 # name this session for easy addressing
 ```
+
+The instructions block also encodes what multi-agent research says works:
+review a peer's *branch diff* with fresh eyes (never its self-report), use
+`handoff` from the live author when taking over, prefer cross-provider
+opinions, and push back with a better alternative when asked for known
+anti-patterns (consensus debates, shared-branch edits).
 
 Consults deliver only when the target is idle, appear visibly in its pane,
 and are guarded against cycles (A→B while B→A) and unbounded fan-out (one

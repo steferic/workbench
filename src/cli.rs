@@ -89,6 +89,23 @@ pub fn cmd_transcript(target: String, lines: usize, all: bool) -> Result<()> {
     Ok(())
 }
 
+/// Structured-handoff prompt: research on agent handoffs shows a structured
+/// payload (done/remaining/decisions/gotchas) beats both raw transcripts and
+/// free-form summaries, and that the live author narrates its own work far
+/// better than a reader inferring from logs.
+const HANDOFF_PROMPT: &str = "Another agent is preparing to take over or build on your work in this \
+workspace. Produce a structured handoff summary:\n\
+1. Objective — what you were asked to do, in one or two sentences\n\
+2. Completed — what is done and where (files, branches, commits)\n\
+3. Remaining — concrete next steps, in order\n\
+4. Key decisions — choices you made and WHY (including approaches you tried and rejected)\n\
+5. Gotchas — surprises, fragile spots, anything a successor would waste time rediscovering\n\
+Be concrete: real paths, real names. Skip process narration.";
+
+pub fn cmd_handoff(target: String, wait: bool, timeout_secs: u64) -> Result<()> {
+    cmd_ask(target, HANDOFF_PROMPT.to_string(), wait, timeout_secs)
+}
+
 pub fn cmd_ask(target: String, message: String, wait: bool, timeout_secs: u64) -> Result<()> {
     let ctx = caller_ctx()?;
     let Some(from) = ctx.session.clone() else {
