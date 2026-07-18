@@ -36,6 +36,9 @@ pub struct Session {
     /// If this is a worktree-viewing terminal, links to the agent session it's viewing
     #[serde(default)]
     pub worktree_viewer_for: Option<Uuid>,
+    /// Human-friendly name for agent-to-agent addressing (`workbench alias`).
+    #[serde(default)]
+    pub alias: Option<String>,
 }
 
 impl Session {
@@ -57,6 +60,7 @@ impl Session {
             worktree_path: None,
             worktree_branch: None,
             worktree_viewer_for: None,
+            alias: None,
         }
     }
 
@@ -80,6 +84,7 @@ impl Session {
             worktree_path: None,
             worktree_branch: None,
             worktree_viewer_for: None,
+            alias: None,
         }
     }
 
@@ -104,6 +109,7 @@ impl Session {
             worktree_path: Some(worktree_path),
             worktree_branch: Some(worktree_branch),
             worktree_viewer_for: None,
+            alias: None,
         }
     }
 
@@ -122,6 +128,7 @@ impl Session {
             worktree_path: None,
             worktree_branch: None,
             worktree_viewer_for: Some(viewing_session_id),
+            alias: None,
         }
     }
 

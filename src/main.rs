@@ -1,5 +1,7 @@
 mod app;
 mod audio;
+mod cli;
+mod comms;
 mod config;
 mod git;
 mod logger;
@@ -46,6 +48,44 @@ enum Commands {
     },
     /// List all workspaces
     List,
+    /// List agent sessions in this workspace (agent-to-agent comms)
+    Agents,
+    /// Print a peer agent's recent conversation transcript
+    Transcript {
+        /// Target agent: short id, alias, or provider name (if unique)
+        target: String,
+        /// How many trailing lines to print
+        #[arg(long, default_value_t = 200)]
+        lines: usize,
+        /// Print the entire transcript (can be large)
+        #[arg(long)]
+        all: bool,
+    },
+    /// Queue a question for a live peer agent; prints a ticket
+    Ask {
+        /// Target agent: short id, alias, or provider name (if unique)
+        target: String,
+        /// The question to deliver
+        message: String,
+        /// Block until the reply arrives (or timeout)
+        #[arg(long)]
+        wait: bool,
+        /// Timeout in seconds for --wait
+        #[arg(long, default_value_t = 600)]
+        timeout: u64,
+    },
+    /// Collect the reply for a consult ticket
+    Replies {
+        ticket: String,
+        /// Block until the reply arrives (or timeout)
+        #[arg(long)]
+        wait: bool,
+        /// Timeout in seconds for --wait
+        #[arg(long, default_value_t = 600)]
+        timeout: u64,
+    },
+    /// Set this session's alias for agent-to-agent addressing
+    Alias { name: String },
 }
 
 #[tokio::main]
@@ -72,6 +112,22 @@ async fn main() -> Result<()> {
         Some(Commands::List) => {
             println!("Workspaces: (in-memory only, no persistence)");
         }
+        Some(Commands::Agents) => cli::cmd_agents()?,
+        Some(Commands::Transcript { target, lines, all }) => {
+            cli::cmd_transcript(target, lines, all)?
+        }
+        Some(Commands::Ask {
+            target,
+            message,
+            wait,
+            timeout,
+        }) => cli::cmd_ask(target, message, wait, timeout)?,
+        Some(Commands::Replies {
+            ticket,
+            wait,
+            timeout,
+        }) => cli::cmd_replies(ticket, wait, timeout)?,
+        Some(Commands::Alias { name }) => cli::cmd_alias(name)?,
         None => {
             // Load config to get default, CLI flag overrides
             let config = load_user_config();

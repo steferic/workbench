@@ -316,7 +316,7 @@ fn handle_parallel_worktrees_ready(
 
         match pty_manager.spawn_session(SessionSpawnConfig {
             session_id,
-            agent_type: spec.agent_type.clone(),
+            workspace_id,            agent_type: spec.agent_type.clone(),
             working_dir: &spec.worktree_path,
             rows: pty_rows,
             cols,

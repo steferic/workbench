@@ -386,11 +386,20 @@ fn create_session_item<'a>(
         "  "
     };
 
+    let alias_indicator = match session.alias.as_deref() {
+        Some(alias) => Span::styled(
+            format!(" “{alias}”"),
+            Style::default().fg(t.accent),
+        ),
+        None => Span::raw(""),
+    };
+
     let main_spans = vec![
         Span::styled(prefix.to_string(), name_style),
         Span::styled(status_icon, Style::default().fg(status_color)),
         Span::raw(" "),
         Span::styled(session.agent_type.display_name().to_string(), name_style),
+        alias_indicator,
         dangerous_indicator,
         branch_indicator,
     ];

@@ -607,6 +607,8 @@ pub struct SystemState {
     /// during render — resizing immediately would use the previous layout's
     /// dimensions and leave every PTY one resize behind.
     pub pty_resize_pending: bool,
+    /// Agent-to-agent comms driver state (see `app::comms_tick`).
+    pub comms: crate::app::comms_tick::CommsState,
 }
 
 impl SystemState {
@@ -636,6 +638,7 @@ impl SystemState {
             state_dirty: false,
             last_state_save: Instant::now(),
             pty_resize_pending: false,
+            comms: crate::app::comms_tick::CommsState::new(),
         }
     }
 

@@ -58,6 +58,10 @@ pub fn process_action(
             navigation::handle_drag_auto_scroll(state);
             let newly_idle = state.update_idle_queue();
 
+            // Agent-to-agent comms: transcript/roster export, consult
+            // delivery and reply capture (see app::comms_tick).
+            super::comms_tick::tick(state, action_tx, &newly_idle);
+
             // Process newly idle sessions
             for session_id in &newly_idle {
                 if let Some(workspace_id) = state.workspace_id_for_session(*session_id) {

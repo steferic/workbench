@@ -247,6 +247,7 @@ pub(super) fn handle_switch_to_worktree(
 
     match pty_manager.spawn_session(SessionSpawnConfig {
         session_id: new_session_id,
+        workspace_id,
         agent_type: terminal_agent_type,
         working_dir: &worktree_path,
         rows: pty_rows,

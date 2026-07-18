@@ -165,6 +165,7 @@ impl PtyHandle {
 /// Configuration for spawning a PTY session.
 pub struct SessionSpawnConfig<'a> {
     pub session_id: Uuid,
+    pub workspace_id: Uuid,
     pub agent_type: AgentType,
     pub working_dir: &'a Path,
     pub rows: u16,
@@ -189,6 +190,7 @@ impl PtyManager {
     pub fn spawn_session(&self, config: SessionSpawnConfig) -> Result<PtyHandle> {
         let SessionSpawnConfig {
             session_id,
+            workspace_id,
             agent_type,
             working_dir,
             rows,
@@ -279,6 +281,12 @@ impl PtyManager {
         } else {
             cmd.env("TERM", "xterm-256color");
         }
+
+        // Self-identity for agent-to-agent comms: the `workbench` CLI reads
+        // these to know which session is calling and which workspace's
+        // roster/inbox to use.
+        cmd.env(crate::comms::ENV_SESSION, &session_id.to_string()[..8]);
+        cmd.env(crate::comms::ENV_WORKSPACE, workspace_id.to_string());
 
         // Do NOT export LINES/COLUMNS. Exported, they override the live
         // TIOCGWINSZ size in Ink (Claude) and other TUI frameworks, freezing

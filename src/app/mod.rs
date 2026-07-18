@@ -1,4 +1,5 @@
 mod action;
+pub mod comms_tick;
 mod handler;
 pub mod handlers;
 mod pty_ops;

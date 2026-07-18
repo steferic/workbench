@@ -523,6 +523,14 @@ impl AppState {
             .push(session);
     }
 
+    pub fn get_session(&self, session_id: Uuid) -> Option<&Session> {
+        self.data
+            .sessions
+            .values()
+            .flatten()
+            .find(|s| s.id == session_id)
+    }
+
     pub fn get_session_mut(&mut self, session_id: Uuid) -> Option<&mut Session> {
         self.data
             .sessions

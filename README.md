@@ -78,6 +78,29 @@ workbench add /path/to/project            # register a workspace
 workbench list                            # list workspaces
 ```
 
+## Agent-to-agent communication
+
+Agents running inside workbench can discover and talk to each other through
+the `workbench` CLI (available on their PATH, with identity injected via
+`$WORKBENCH_SESSION`). Workbench maintains a standing instructions block in
+each workspace's `CLAUDE.local.md` / `AGENTS.md` (kept out of git via
+`.git/info/exclude`), so every agent knows the protocol by default — you can
+just tell Claude "ask codex what it thinks" or "read the other claude's
+transcript and take over where it left off".
+
+```bash
+workbench agents                       # roster: id, provider, alias, branch, idle/busy
+workbench transcript <id|alias>        # a peer's recent conversation (exported at each idle)
+workbench ask <id|alias> "question"    # queue a question for a live peer; prints a ticket
+workbench replies <ticket> --wait      # collect the answer
+workbench alias <name>                 # name this session for easy addressing
+```
+
+Consults deliver only when the target is idle, appear visibly in its pane,
+and are guarded against cycles (A→B while B→A) and unbounded fan-out (one
+outstanding consult per asker). Transcripts and rosters live outside the
+repo under the workbench config directory, so nothing pollutes git status.
+
 Press `h` or `?` in the app for keybindings and settings.
 
 ## License

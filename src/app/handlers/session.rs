@@ -443,6 +443,7 @@ fn create_session(
 
     let spawn_result = pty_manager.spawn_session(SessionSpawnConfig {
         session_id,
+        workspace_id,
         agent_type,
         working_dir: &workspace_path,
         rows: pty_rows,
@@ -522,6 +523,7 @@ fn finish_worktree_session_spawn(
 
     let spawn_result = pty_manager.spawn_session(SessionSpawnConfig {
         session_id,
+        workspace_id,
         agent_type,
         working_dir: &working_dir,
         rows: pty_rows,
@@ -573,6 +575,7 @@ fn create_terminal(
 
     let spawn_result = pty_manager.spawn_session(SessionSpawnConfig {
         session_id,
+        workspace_id: session.workspace_id,
         agent_type,
         working_dir: &workspace_path,
         rows: pty_rows,
@@ -702,6 +705,7 @@ fn restart_session(
 
     match pty_manager.spawn_session(SessionSpawnConfig {
         session_id,
+        workspace_id,
         agent_type: agent_type.clone(),
         working_dir: &working_dir,
         rows: pty_rows,

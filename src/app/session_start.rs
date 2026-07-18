@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 struct SessionStartRequest<'a> {
     session_id: Uuid,
+    workspace_id: Uuid,
     workspace_path: &'a Path,
     agent_type: AgentType,
     dangerously_skip_permissions: bool,
@@ -39,6 +40,7 @@ fn spawn_single_session(
 
     match pty_manager.spawn_session(SessionSpawnConfig {
         session_id: request.session_id,
+        workspace_id: request.workspace_id,
         resume: request.agent_type.is_agent(),
         agent_type: request.agent_type.clone(),
         working_dir: request.effective_dir(),
@@ -121,6 +123,7 @@ pub fn start_workspace_sessions(
             pty_tx,
             SessionStartRequest {
                 session_id,
+                workspace_id,
                 workspace_path: &workspace_path,
                 agent_type,
                 dangerously_skip_permissions,
@@ -209,6 +212,7 @@ pub fn process_startup_queue(
         pty_tx,
         SessionStartRequest {
             session_id: pending.session_id,
+            workspace_id: pending.workspace_id,
             workspace_path: &pending.workspace_path,
             agent_type: pending.agent_type.clone(),
             dangerously_skip_permissions: pending.dangerously_skip_permissions,
@@ -264,6 +268,7 @@ mod tests {
         let worktree_dir = tempfile::tempdir().unwrap();
         let request = SessionStartRequest {
             session_id: Uuid::new_v4(),
+            workspace_id: Uuid::new_v4(),
             workspace_path: workspace_dir.path(),
             agent_type: AgentType::Claude,
             dangerously_skip_permissions: false,
@@ -279,6 +284,7 @@ mod tests {
         let missing_worktree = workspace_dir.path().join("missing-worktree");
         let request = SessionStartRequest {
             session_id: Uuid::new_v4(),
+            workspace_id: Uuid::new_v4(),
             workspace_path: workspace_dir.path(),
             agent_type: AgentType::Claude,
             dangerously_skip_permissions: false,
@@ -293,6 +299,7 @@ mod tests {
         let workspace_dir = tempfile::tempdir().unwrap();
         let request = SessionStartRequest {
             session_id: Uuid::new_v4(),
+            workspace_id: Uuid::new_v4(),
             workspace_path: workspace_dir.path(),
             agent_type: AgentType::Claude,
             dangerously_skip_permissions: false,
