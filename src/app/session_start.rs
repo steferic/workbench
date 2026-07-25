@@ -87,6 +87,9 @@ pub fn start_workspace_sessions(
         Some(ws) => ws,
         None => return,
     };
+    if workspace.status != WorkspaceStatus::Working {
+        return;
+    }
     let workspace_id = workspace.id;
     let workspace_path = workspace.path.clone();
 
@@ -144,51 +147,40 @@ pub fn start_workspace_sessions(
     save_state(state, "failed to save started workspace sessions");
 }
 
-/// Queue all sessions in "Working" workspaces for staggered startup
-/// Sessions will be started one at a time via process_startup_queue
-pub fn start_all_working_sessions(
-    state: &mut AppState,
-    _pty_manager: &PtyManager,
-    _pty_tx: &mpsc::Sender<Action>,
-    _action_tx: &mpsc::UnboundedSender<Action>,
-) {
-    // Get all Working workspace IDs and their paths
-    let working_workspaces: Vec<(Uuid, std::path::PathBuf)> = state
-        .data
-        .workspaces
-        .iter()
+/// Queue the selected working workspace's sessions for staggered startup.
+/// Other working workspaces remain stopped until the user selects them.
+pub fn queue_selected_workspace_sessions(state: &mut AppState) {
+    let Some((workspace_id, workspace_path)) = state
+        .selected_workspace()
         .filter(|ws| ws.status == WorkspaceStatus::Working)
         .map(|ws| (ws.id, ws.path.clone()))
-        .collect();
+    else {
+        return;
+    };
 
-    // Queue all stopped sessions for staggered startup
-    for (workspace_id, workspace_path) in working_workspaces {
-        // Find all stopped sessions in this workspace
-        let stopped_sessions: Vec<PendingSessionStart> = state
-            .data
-            .sessions
-            .get(&workspace_id)
-            .map(|sessions| {
-                sessions
-                    .iter()
-                    .filter(|s| matches!(s.status, SessionStatus::Stopped | SessionStatus::Errored))
-                    .map(|s| PendingSessionStart {
-                        session_id: s.id,
-                        workspace_id,
-                        workspace_path: workspace_path.clone(),
-                        agent_type: s.agent_type.clone(),
-                        start_command: s.start_command.clone(),
-                        dangerously_skip_permissions: s.dangerously_skip_permissions,
-                        worktree_path: s.worktree_path.clone(),
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+    let stopped_sessions: Vec<PendingSessionStart> = state
+        .data
+        .sessions
+        .get(&workspace_id)
+        .map(|sessions| {
+            sessions
+                .iter()
+                .filter(|s| matches!(s.status, SessionStatus::Stopped | SessionStatus::Errored))
+                .map(|s| PendingSessionStart {
+                    session_id: s.id,
+                    workspace_id,
+                    workspace_path: workspace_path.clone(),
+                    agent_type: s.agent_type.clone(),
+                    start_command: s.start_command.clone(),
+                    dangerously_skip_permissions: s.dangerously_skip_permissions,
+                    worktree_path: s.worktree_path.clone(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
 
-        // Add to startup queue
-        for pending in stopped_sessions {
-            state.system.startup_queue.push_back(pending);
-        }
+    for pending in stopped_sessions {
+        state.system.startup_queue.push_back(pending);
     }
 }
 
@@ -258,8 +250,11 @@ pub fn process_startup_queue(
 
 #[cfg(test)]
 mod tests {
-    use super::SessionStartRequest;
-    use crate::models::AgentType;
+    use super::{queue_selected_workspace_sessions, start_workspace_sessions, SessionStartRequest};
+    use crate::app::AppState;
+    use crate::models::{AgentType, Session, SessionStatus, Workspace, WorkspaceStatus};
+    use crate::pty::PtyManager;
+    use tokio::sync::mpsc;
     use uuid::Uuid;
 
     #[test]
@@ -307,5 +302,72 @@ mod tests {
         };
 
         assert_eq!(request.effective_dir(), workspace_dir.path());
+    }
+
+    fn workspace_with_stopped_session(
+        state: &mut AppState,
+        status: WorkspaceStatus,
+    ) -> (Uuid, Uuid) {
+        let workspace_dir =
+            std::env::temp_dir().join(format!("workbench-session-start-{}", Uuid::new_v4()));
+        let mut workspace = Workspace::from_path(workspace_dir);
+        workspace.status = status;
+        let workspace_id = workspace.id;
+
+        let mut session = Session::new(workspace_id, AgentType::Claude, false);
+        session.status = SessionStatus::Stopped;
+        let session_id = session.id;
+
+        state.data.workspaces.push(workspace);
+        state.data.sessions.insert(workspace_id, vec![session]);
+        (workspace_id, session_id)
+    }
+
+    #[test]
+    fn initial_queue_only_includes_selected_workspace() {
+        let mut state = AppState::new();
+        let (_, selected_session_id) =
+            workspace_with_stopped_session(&mut state, WorkspaceStatus::Working);
+        let (_, other_session_id) =
+            workspace_with_stopped_session(&mut state, WorkspaceStatus::Working);
+        state.ui.selected_workspace_idx = 0;
+
+        queue_selected_workspace_sessions(&mut state);
+
+        let queued_ids: Vec<Uuid> = state
+            .system
+            .startup_queue
+            .iter()
+            .map(|pending| pending.session_id)
+            .collect();
+        assert_eq!(queued_ids, vec![selected_session_id]);
+        assert!(!queued_ids.contains(&other_session_id));
+    }
+
+    #[test]
+    fn paused_workspace_is_not_queued_on_initial_startup() {
+        let mut state = AppState::new();
+        workspace_with_stopped_session(&mut state, WorkspaceStatus::Paused);
+
+        queue_selected_workspace_sessions(&mut state);
+
+        assert!(state.system.startup_queue.is_empty());
+    }
+
+    #[test]
+    fn paused_workspace_is_not_started_by_navigation() {
+        let mut state = AppState::new();
+        let (_, session_id) = workspace_with_stopped_session(&mut state, WorkspaceStatus::Paused);
+        let pty_manager = PtyManager::new();
+        let (pty_tx, _pty_rx) = mpsc::channel(1);
+
+        start_workspace_sessions(&mut state, &pty_manager, &pty_tx);
+
+        assert_eq!(
+            state.get_session(session_id).map(|session| session.status),
+            Some(SessionStatus::Stopped)
+        );
+        assert!(!state.system.pty_handles.contains_key(&session_id));
+        assert!(!state.system.output_buffers.contains_key(&session_id));
     }
 }

@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use tokio::sync::mpsc;
 
 use super::handler::process_action;
-use super::session_start::{process_startup_queue, start_all_working_sessions};
+use super::session_start::{process_startup_queue, queue_selected_workspace_sessions};
 
 // Audio constants
 const WRTI_STREAM_URL: &str = "https://wrti-live.streamguys1.com/classical-mp3";
@@ -190,7 +190,7 @@ async fn run_main_loop(
         // This is critical because nvim and other full-screen apps can't handle
         // resize events during startup - they lock to the first size they see
         if !initial_sessions_started && state.ui.output_pane_area.is_some() {
-            start_all_working_sessions(state, pty_manager, &pty_tx, &action_tx);
+            queue_selected_workspace_sessions(state);
 
             // Auto-activate first agent session in currently selected workspace
             let first_agent_id = state
