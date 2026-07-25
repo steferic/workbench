@@ -120,8 +120,8 @@ pub fn handle_navigation_action(
                     }
                 }
                 FocusPanel::SessionList => FocusPanel::WorkspaceList,
-                FocusPanel::TodosPane => FocusPanel::SessionList,
-                FocusPanel::UtilitiesPane => FocusPanel::TodosPane,
+                FocusPanel::TasksPane => FocusPanel::SessionList,
+                FocusPanel::UtilitiesPane => FocusPanel::TasksPane,
                 FocusPanel::OutputPane => FocusPanel::UtilitiesPane,
                 FocusPanel::PinnedTerminalPane(idx) => {
                     if idx == 0 {
@@ -137,8 +137,8 @@ pub fn handle_navigation_action(
             let prev_focus = state.ui.focus;
             state.ui.focus = match state.ui.focus {
                 FocusPanel::WorkspaceList => FocusPanel::SessionList,
-                FocusPanel::SessionList => FocusPanel::TodosPane,
-                FocusPanel::TodosPane => FocusPanel::UtilitiesPane,
+                FocusPanel::SessionList => FocusPanel::TasksPane,
+                FocusPanel::TasksPane => FocusPanel::UtilitiesPane,
                 FocusPanel::UtilitiesPane => FocusPanel::OutputPane,
                 FocusPanel::OutputPane => {
                     if state.should_show_split() && pinned_count > 0 {
@@ -424,29 +424,29 @@ fn handle_mouse_click(
 
     let lower_left_height = main_height.saturating_sub(workspace_height);
     let sessions_height = (lower_left_height as f32 * state.ui.layout.sessions_ratio) as u16;
-    let sessions_todos_divider_y = workspace_height + sessions_height;
+    let sessions_tasks_divider_y = workspace_height + sessions_height;
 
     if x < left_width
-        && y >= sessions_todos_divider_y.saturating_sub(divider_tolerance)
-        && y <= sessions_todos_divider_y + divider_tolerance
+        && y >= sessions_tasks_divider_y.saturating_sub(divider_tolerance)
+        && y <= sessions_tasks_divider_y + divider_tolerance
     {
-        state.ui.layout.dragging_divider = Some(Divider::SessionsTodos);
+        state.ui.layout.dragging_divider = Some(Divider::SessionsTasks);
         state.ui.layout.drag_start_pos = Some((x, y));
         state.ui.layout.drag_start_ratio = state.ui.layout.sessions_ratio;
         return;
     }
 
     let remaining_height = lower_left_height.saturating_sub(sessions_height);
-    let todos_height = (remaining_height as f32 * state.ui.layout.todos_ratio) as u16;
-    let todos_utilities_divider_y = sessions_todos_divider_y + todos_height;
+    let tasks_height = (remaining_height as f32 * state.ui.layout.tasks_ratio) as u16;
+    let tasks_utilities_divider_y = sessions_tasks_divider_y + tasks_height;
 
     if x < left_width
-        && y >= todos_utilities_divider_y.saturating_sub(divider_tolerance)
-        && y <= todos_utilities_divider_y + divider_tolerance
+        && y >= tasks_utilities_divider_y.saturating_sub(divider_tolerance)
+        && y <= tasks_utilities_divider_y + divider_tolerance
     {
-        state.ui.layout.dragging_divider = Some(Divider::TodosUtilities);
+        state.ui.layout.dragging_divider = Some(Divider::TasksUtilities);
         state.ui.layout.drag_start_pos = Some((x, y));
-        state.ui.layout.drag_start_ratio = state.ui.layout.todos_ratio;
+        state.ui.layout.drag_start_ratio = state.ui.layout.tasks_ratio;
         return;
     }
 
@@ -506,9 +506,9 @@ fn handle_mouse_click(
         }
     }
 
-    if let Some(area) = state.ui.todos_area {
+    if let Some(area) = state.ui.tasks_area {
         if is_in_area(x, y, area) {
-            state.ui.focus = FocusPanel::TodosPane;
+            state.ui.focus = FocusPanel::TasksPane;
             return;
         }
     }
@@ -586,7 +586,7 @@ fn handle_mouse_drag(state: &mut AppState, x: u16, y: u16) {
                 let new_ratio = (y as f32 / main_height as f32).clamp(0.20, 0.80);
                 state.ui.layout.workspace_ratio = new_ratio;
             }
-            Divider::SessionsTodos => {
+            Divider::SessionsTasks => {
                 let workspace_height = (main_height as f32 * state.ui.layout.workspace_ratio) as u16;
                 let lower_left_height = main_height.saturating_sub(workspace_height);
                 let y_in_lower_left = y.saturating_sub(workspace_height);
@@ -594,7 +594,7 @@ fn handle_mouse_drag(state: &mut AppState, x: u16, y: u16) {
                     (y_in_lower_left as f32 / lower_left_height as f32).clamp(0.15, 0.70);
                 state.ui.layout.sessions_ratio = new_ratio;
             }
-            Divider::TodosUtilities => {
+            Divider::TasksUtilities => {
                 let workspace_height = (main_height as f32 * state.ui.layout.workspace_ratio) as u16;
                 let lower_left_height = main_height.saturating_sub(workspace_height);
                 let sessions_height = (lower_left_height as f32 * state.ui.layout.sessions_ratio) as u16;
@@ -603,7 +603,7 @@ fn handle_mouse_drag(state: &mut AppState, x: u16, y: u16) {
                     .saturating_sub(workspace_height)
                     .saturating_sub(sessions_height);
                 let new_ratio = (y_in_remaining as f32 / remaining_height as f32).clamp(0.20, 0.80);
-                state.ui.layout.todos_ratio = new_ratio;
+                state.ui.layout.tasks_ratio = new_ratio;
             }
             Divider::OutputPinned => {
                 let left_width = (w as f32 * state.ui.layout.left_panel_ratio) as u16;
@@ -698,7 +698,7 @@ fn handle_mouse_up(state: &mut AppState, x: u16, y: u16) {
             left_panel_ratio: state.ui.layout.left_panel_ratio,
             workspace_ratio: state.ui.layout.workspace_ratio,
             sessions_ratio: state.ui.layout.sessions_ratio,
-            todos_ratio: state.ui.layout.todos_ratio,
+            tasks_ratio: state.ui.layout.tasks_ratio,
             output_split_ratio: state.ui.layout.output_split_ratio,
             theme_mode: state.ui.theme_mode,
         };

@@ -204,42 +204,34 @@ fn render_quickref_tab(frame: &mut Frame, area: Rect, state: &AppState) {
         Span::raw("Merge worktree into main"),
     ]));
 
-    // -- Todos --
+    // -- Tasks --
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled("  Todos", section_style)));
+    lines.push(Line::from(Span::styled("  Tasks", section_style)));
     lines.push(sep());
     lines.push(Line::from(vec![
         Span::styled("  n                  ", key_style),
-        Span::raw("Create new todo"),
+        Span::raw("Ask the agent to add a task"),
     ]));
     lines.push(Line::from(vec![
-        Span::styled("  Enter              ", key_style),
-        Span::raw("Run todo with agent"),
-    ]));
-    lines.push(Line::from(vec![
-        Span::styled("  y / Y              ", key_style),
-        Span::raw("Accept suggested / Accept all"),
-    ]));
-    lines.push(Line::from(vec![
-        Span::styled("  x                  ", key_style),
-        Span::raw("Mark as done"),
-    ]));
-    lines.push(Line::from(vec![
-        Span::styled("  X                  ", key_style),
-        Span::raw("Archive todo"),
+        Span::styled("  e                  ", key_style),
+        Span::raw("Ask the agent to change a task"),
     ]));
     lines.push(Line::from(vec![
         Span::styled("  d                  ", key_style),
-        Span::raw("Delete todo"),
+        Span::raw("Ask the agent to drop a task"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  Enter              ", key_style),
+        Span::raw("Open the agent's terminal"),
     ]));
     lines.push(Line::from(vec![
         Span::styled("  Tab                ", key_style),
-        Span::raw("Switch tabs (Active/Archived/Reports)"),
+        Span::raw("Switch tabs (Agents/Reports)"),
     ]));
 
-    // -- Todo Reports --
+    // -- Parallel Task Reports --
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled("  Todo Reports", section_style)));
+    lines.push(Line::from(Span::styled("  Reports", section_style)));
     lines.push(sep());
     lines.push(Line::from(vec![
         Span::styled("  v                  ", key_style),

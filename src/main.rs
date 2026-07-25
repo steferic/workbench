@@ -1,3 +1,4 @@
+mod agent_tasks;
 mod app;
 mod audio;
 mod cli;

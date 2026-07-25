@@ -201,11 +201,11 @@ fn load_keybindings_info(state: &mut AppState) {
     }
 
     content.push("".to_string());
-    content.push("  Todos Pane".to_string());
+    content.push("  Tasks Pane".to_string());
     content.push("  ----------".to_string());
-    let mut todo_bindings: Vec<_> = kb.panel_todos_pane.iter().collect();
-    todo_bindings.sort_by_key(|(k, _)| k.display());
-    for (combo, action) in todo_bindings {
+    let mut task_bindings: Vec<_> = kb.panel_tasks_pane.iter().collect();
+    task_bindings.sort_by_key(|(k, _)| k.display());
+    for (combo, action) in task_bindings {
         content.push(format!("  {:12}  {}", combo.display(), action));
     }
 

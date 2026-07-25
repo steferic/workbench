@@ -93,16 +93,9 @@ pub(super) fn handle_input_mode_key(key: &KeyEvent, state: &AppState) -> Option<
             KeyCode::Char(c) => Action::InputChar(c),
             _ => Action::Tick,
         },
-        InputMode::CreateTodo => match key.code {
+        InputMode::ComposeTaskMessage => match key.code {
             KeyCode::Esc => Action::ExitMode,
-            KeyCode::Enter => {
-                let desc = state.ui.input_buffer.clone();
-                if desc.is_empty() {
-                    Action::ExitMode
-                } else {
-                    Action::CreateTodo(desc)
-                }
-            }
+            KeyCode::Enter => Action::SendTaskMessage(state.ui.input_buffer.clone()),
             KeyCode::Backspace => Action::InputBackspace,
             KeyCode::Char(c) => Action::InputChar(c),
             _ => Action::Tick,

@@ -38,8 +38,10 @@ pub struct GlobalConfig {
     pub workspace_ratio: f32,
     #[serde(default = "default_sessions_ratio")]
     pub sessions_ratio: f32,
-    #[serde(default = "default_todos_ratio")]
-    pub todos_ratio: f32,
+    // Named `todos_ratio` before the pane became the tasks pane; the alias
+    // keeps existing configs loading.
+    #[serde(default = "default_tasks_ratio", alias = "todos_ratio")]
+    pub tasks_ratio: f32,
     #[serde(default = "default_output_split_ratio")]
     pub output_split_ratio: f32,
 
@@ -63,7 +65,7 @@ fn default_sessions_ratio() -> f32 {
     0.40
 }
 
-fn default_todos_ratio() -> f32 {
+fn default_tasks_ratio() -> f32 {
     0.50
 }
 
@@ -78,7 +80,7 @@ impl Default for GlobalConfig {
             left_panel_ratio: default_left_panel_ratio(),
             workspace_ratio: default_workspace_ratio(),
             sessions_ratio: default_sessions_ratio(),
-            todos_ratio: default_todos_ratio(),
+            tasks_ratio: default_tasks_ratio(),
             output_split_ratio: default_output_split_ratio(),
             theme_mode: crate::theme::ThemeMode::default(),
         }
@@ -282,4 +284,44 @@ pub fn save_config(config: &GlobalConfig) -> Result<()> {
     let path = global_config_path()?;
     let contents = serde_json::to_string_pretty(config)?;
     write_atomic(&path, contents.as_bytes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Files written before the todos pane became the tasks pane still carry
+    /// `todos` on each workspace and `todos_ratio` in the config.
+    #[test]
+    fn pre_tasks_pane_files_still_load() {
+        let workspace: Workspace = serde_json::from_value(serde_json::json!({
+            "id": Uuid::new_v4(),
+            "name": "w",
+            "path": "/tmp/w",
+            "created_at": "2026-01-01T00:00:00Z",
+            "pinned_terminal_ids": [],
+            "status": "Working",
+            "todos": [{
+                "id": Uuid::new_v4(),
+                "description": "an old todo",
+                "status": "Pending",
+                "created_at": "2026-01-01T00:00:00Z"
+            }],
+            "parallel_tasks": []
+        }))
+        .expect("workspace with a legacy todos array must still deserialize");
+        assert_eq!(workspace.name, "w");
+
+        let config: GlobalConfig = serde_json::from_value(serde_json::json!({
+            "banner_visible": true,
+            "left_panel_ratio": 0.3,
+            "workspace_ratio": 0.2,
+            "sessions_ratio": 0.3,
+            "todos_ratio": 0.42,
+            "output_split_ratio": 0.5,
+            "theme_mode": "Dark"
+        }))
+        .expect("config with todos_ratio must still deserialize");
+        assert!((config.tasks_ratio - 0.42).abs() < f32::EPSILON);
+    }
 }

@@ -2,11 +2,12 @@
 
 [![CI](https://github.com/steferic/workbench/actions/workflows/ci.yml/badge.svg)](https://github.com/steferic/workbench/actions/workflows/ci.yml)
 
-A TUI for managing AI agent workspaces and sessions. Run Claude, Codex, Gemini, and other coding agents side by side across multiple projects, with per-workspace sessions, pinned terminals, todos, and git worktree isolation.
+A TUI for managing AI agent workspaces and sessions. Run Claude, Codex, Gemini, and other coding agents side by side across multiple projects, with per-workspace sessions, pinned terminals, a live view of the selected agent's task list, and git worktree isolation.
 
 ## Features
 
-- Multiple workspaces, each with its own agents, terminals, and todos
+- Multiple workspaces, each with its own agents and terminals
+- Tasks pane: the selected agent's own task list, the prompt behind it, and live progress — with keys to ask that agent to add, change, or drop a task
 - Run agents in isolated git worktrees and merge their work back with one key
 - Parallel tasks: race several agents on the same prompt in separate worktrees
 - Pinned terminal panes alongside the agent output

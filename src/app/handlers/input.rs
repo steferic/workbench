@@ -25,6 +25,7 @@ pub fn handle_input_action(state: &mut AppState, action: Action) -> Result<()> {
             state.ui.input_buffer.clear();
             state.ui.file_browser.query.clear();
             state.ui.editing_session_id = None;
+            state.ui.task_edit = None;
         }
         Action::EnterSetStartCommandMode => {
             let session_info = state
@@ -150,10 +151,6 @@ pub fn handle_input_action(state: &mut AppState, action: Action) -> Result<()> {
                 state.ui.input_mode = InputMode::Normal;
                 save_state(state, "failed to save workspace selection");
             }
-        }
-        Action::EnterCreateTodoMode => {
-            state.ui.input_mode = InputMode::CreateTodo;
-            state.ui.input_buffer.clear();
         }
         Action::EnterParallelTaskMode => {
             // Only enter if we have a workspace selected

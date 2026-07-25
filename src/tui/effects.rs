@@ -27,7 +27,7 @@ fn inner_area(area: Rect) -> Rect {
 pub enum PaneId {
     Workspace,
     Session,
-    Todos,
+    Tasks,
     Utilities,
     Output,
     Pinned(usize),
@@ -96,11 +96,11 @@ impl EffectsManager {
         ));
         delay += STAGGER_DELAY_MS;
 
-        let todos_inner = inner_area(areas.todos);
+        let tasks_inner = inner_area(areas.tasks);
         self.effects.push((
-            PaneId::Todos,
-            self.create_pane_effect(todos_inner, delay),
-            todos_inner,
+            PaneId::Tasks,
+            self.create_pane_effect(tasks_inner, delay),
+            tasks_inner,
         ));
         delay += STAGGER_DELAY_MS;
 
@@ -177,7 +177,7 @@ impl Default for EffectsManager {
 pub struct StartupAreas {
     pub workspace: Rect,
     pub session: Rect,
-    pub todos: Rect,
+    pub tasks: Rect,
     pub utilities: Rect,
     pub output: Rect,
     pub pinned: Vec<Rect>,

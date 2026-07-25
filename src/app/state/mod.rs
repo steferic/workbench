@@ -661,7 +661,7 @@ impl AppState {
         let mut newly_idle = Vec::new();
 
         // Add newly idle sessions (running but not working, not already in queue)
-        // Note: Active session CAN be idle - we need it for todo dispatch
+        // Note: Active session CAN be idle - the tasks pane and comms rely on it
         for session_id in running_agent_sessions {
             if !working_sessions.contains(&session_id)
                 && !self.data.idle_queue.contains(&session_id)

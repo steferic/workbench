@@ -5,8 +5,8 @@ use uuid::Uuid;
 use std::collections::VecDeque;
 
 use super::types::{
-    ConfigTab, Divider, FocusPanel, InputMode, PendingDelete,
-    TextSelection, Toast, TodoPaneMode, TodosTab, UtilityItem, UtilitySection, WorkspaceAction,
+    ConfigTab, Divider, FocusPanel, InputMode, PendingDelete, TaskEdit, TasksTab,
+    TextSelection, Toast, UtilityItem, UtilitySection, WorkspaceAction,
 };
 
 /// Per-pinned-pane runtime UI state. Lives inside `WorkspaceUiState` and is
@@ -140,7 +140,7 @@ pub struct LayoutState {
     pub output_split_ratio: f32,
     pub workspace_ratio: f32,
     pub sessions_ratio: f32,
-    pub todos_ratio: f32,
+    pub tasks_ratio: f32,
     pub dragging_divider: Option<Divider>,
     pub drag_start_pos: Option<(u16, u16)>,
     pub drag_start_ratio: f32,
@@ -155,7 +155,7 @@ impl Default for LayoutState {
             output_split_ratio: 0.50,
             workspace_ratio: 0.40,
             sessions_ratio: 0.40,
-            todos_ratio: 0.50,
+            tasks_ratio: 0.50,
             dragging_divider: None,
             drag_start_pos: None,
             drag_start_ratio: 0.0,
@@ -187,7 +187,7 @@ pub struct UIState {
     pub pinned_pane_areas: [Option<(u16, u16, u16, u16)>; MAX_PINNED_TERMINALS],
     pub workspace_area: Option<(u16, u16, u16, u16)>,
     pub session_area: Option<(u16, u16, u16, u16)>,
-    pub todos_area: Option<(u16, u16, u16, u16)>,
+    pub tasks_area: Option<(u16, u16, u16, u16)>,
     pub utilities_area: Option<(u16, u16, u16, u16)>,
 
     // Pane layout
@@ -216,10 +216,20 @@ pub struct UIState {
     pub merging_session_id: Option<Uuid>, // Session being merged (for ConfirmMergeWorktree modal)
     pub merging_parallel_attempt_id: Option<Uuid>, // Parallel attempt being merged
 
-    // Todos pane
-    pub selected_todo_idx: usize,
-    pub todo_pane_mode: TodoPaneMode,
-    pub selected_todos_tab: TodosTab,
+    // Tasks pane: selection is an index into the flattened row list built by
+    // `app::tasks_view::rows` (agent headers, prompts and tasks interleaved).
+    pub selected_task_row: usize,
+    pub selected_tasks_tab: TasksTab,
+    /// Agent whose tasks are currently on screen. When the Sessions pane
+    /// cursor moves to a different agent the row selection is stale, so it
+    /// resets (see `handlers::tasks::sync_selection`).
+    pub tasks_agent: Option<Uuid>,
+    /// What the message being composed in `ComposeTaskMessage` will do, and
+    /// which agent receives it.
+    pub task_edit: Option<(Uuid, TaskEdit, String)>,
+    /// Short-lived feedback shown in the tasks pane footer (toasts are not
+    /// rendered, and this is where the user is already looking).
+    pub task_status: Option<(String, std::time::Instant)>,
 
     // Workspace action selection
     pub selected_workspace_action: WorkspaceAction,
@@ -255,7 +265,7 @@ impl UIState {
             pinned_pane_areas: [None; MAX_PINNED_TERMINALS],
             workspace_area: None,
             session_area: None,
-            todos_area: None,
+            tasks_area: None,
             utilities_area: None,
             layout: LayoutState::default(),
             utility_section: UtilitySection::default(),
@@ -273,9 +283,11 @@ impl UIState {
             editing_session_id: None,
             merging_session_id: None,
             merging_parallel_attempt_id: None,
-            selected_todo_idx: 0,
-            todo_pane_mode: TodoPaneMode::default(),
-            selected_todos_tab: TodosTab::default(),
+            selected_task_row: 0,
+            selected_tasks_tab: TasksTab::default(),
+            tasks_agent: None,
+            task_edit: None,
+            task_status: None,
             selected_workspace_action: WorkspaceAction::default(),
             workspace_create_mode: false,
             parallel_task: ParallelTaskModalState::default(),
@@ -284,6 +296,20 @@ impl UIState {
             palette: CommandPaletteState::default(),
             toasts: VecDeque::new(),
         }
+    }
+}
+
+impl UIState {
+    /// Show a message in the tasks pane footer for a few seconds.
+    pub fn set_task_status(&mut self, message: impl Into<String>) {
+        self.task_status = Some((message.into(), std::time::Instant::now()));
+    }
+
+    /// The footer message, if it hasn't aged out.
+    pub fn task_status(&self) -> Option<&str> {
+        self.task_status.as_ref().and_then(|(msg, at)| {
+            (at.elapsed() < std::time::Duration::from_secs(4)).then_some(msg.as_str())
+        })
     }
 }
 

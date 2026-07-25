@@ -64,9 +64,9 @@
 "Enter" = "SubmitStartCommand"
 "Backspace" = "InputBackspace"
 
-[mode.create_todo]
+[mode.compose_task_message]
 "Esc" = "ExitMode"
-"Enter" = "SubmitTodo"
+"Enter" = "SendTaskMessage"
 "Backspace" = "InputBackspace"
 
 [mode.parallel_task]
@@ -132,21 +132,17 @@
 "3" = "CreateCodex"
 "4" = "CreateGrok"
 
-[panel.todos_pane]
-"j" = "SelectNextTodo"
-"Down" = "SelectNextTodo"
-"k" = "SelectPrevTodo"
-"Up" = "SelectPrevTodo"
+[panel.tasks_pane]
+"j" = "SelectNextTask"
+"Down" = "SelectNextTask"
+"k" = "SelectPrevTask"
+"Up" = "SelectPrevTask"
 "l" = "FocusRight"
-"Tab" = "ToggleTodosTab"
-"n" = "EnterCreateTodoMode"
-"Enter" = "RunSelectedTodo"
-"y" = "ApproveSuggestedTodo"
-"Y" = "ApproveAllSuggestedTodos"
-"x" = "MarkTodoDone"
-"X" = "ArchiveTodo"
-"a" = "ToggleTodoPaneMode"
-"d" = "InitiateDeleteTodo"
+"Tab" = "ToggleTasksTab"
+"Enter" = "FocusSelectedTaskAgent"
+"n" = "AddTask"
+"e" = "EditTask"
+"d" = "DropTask"
 "v" = "ViewReport"
 "m" = "MergeSelectedReport"
 "h" = "EnterConfigWindow"

@@ -14,7 +14,6 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         let (item_type, name) = match pending {
             PendingDelete::Session(_, name) => ("session", name.as_str()),
             PendingDelete::Workspace(_, name) => ("workspace", name.as_str()),
-            PendingDelete::Todo(_, name) => ("todo", name.as_str()),
         };
 
         let left_text = vec![
@@ -162,26 +161,40 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
                 Style::default().fg(t.fg_dim),
             )],
         ),
-        InputMode::CreateTodo => (
-            vec![
-                Span::styled(
-                    " NEW TODO ",
-                    Style::default()
-                        .fg(t.on_accent)
-                        .bg(t.success)
-                        .add_modifier(Modifier::BOLD),
+        InputMode::ComposeTaskMessage => {
+            use crate::app::TaskEdit;
+            let (label, hint) = match state.ui.task_edit.as_ref().map(|(_, edit, _)| *edit) {
+                Some(TaskEdit::Rewrite) => (
+                    " EDIT TASK ",
+                    "Describe what the task should be instead, Enter to send, Esc to cancel",
                 ),
-                Span::raw(" "),
-                Span::styled(
-                    format!("{}_", state.ui.input_buffer),
-                    Style::default().fg(t.fg),
+                Some(TaskEdit::Drop) => (
+                    " DROP TASK ",
+                    "Optional reason, Enter to ask the agent to drop it, Esc to cancel",
                 ),
-            ],
-            vec![Span::styled(
-                "Enter todo description, press Enter to create, Esc to cancel",
-                Style::default().fg(t.fg_dim),
-            )],
-        ),
+                _ => (
+                    " ADD TASK ",
+                    "Describe the task to add, Enter to send it to the agent, Esc to cancel",
+                ),
+            };
+            (
+                vec![
+                    Span::styled(
+                        label,
+                        Style::default()
+                            .fg(t.on_accent)
+                            .bg(t.success)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw(" "),
+                    Span::styled(
+                        format!("{}_", state.ui.input_buffer),
+                        Style::default().fg(t.fg),
+                    ),
+                ],
+                vec![Span::styled(hint, Style::default().fg(t.fg_dim))],
+            )
+        }
         InputMode::SelectWorkspaceAction => (
             vec![Span::styled(
                 " ADD WORKSPACE ",
@@ -306,17 +319,15 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
                     Span::styled("[s]", Style::default().fg(t.accent)),
                     Span::raw("Stop"),
                 ],
-                FocusPanel::TodosPane => vec![
+                FocusPanel::TasksPane => vec![
                     Span::styled("[n]", Style::default().fg(t.accent)),
-                    Span::raw(" New  "),
-                    Span::styled("[Enter]", Style::default().fg(t.accent)),
-                    Span::raw(" Run  "),
-                    Span::styled("[x]", Style::default().fg(t.accent)),
-                    Span::raw(" Done  "),
-                    Span::styled("[a]", Style::default().fg(t.accent)),
-                    Span::raw(" Autorun  "),
+                    Span::raw(" Add  "),
+                    Span::styled("[e]", Style::default().fg(t.accent)),
+                    Span::raw(" Edit  "),
                     Span::styled("[d]", Style::default().fg(t.accent)),
-                    Span::raw(" Del"),
+                    Span::raw(" Drop  "),
+                    Span::styled("[Enter]", Style::default().fg(t.accent)),
+                    Span::raw(" Open"),
                 ],
                 FocusPanel::OutputPane => {
                     if state.active_session_id().is_some() {

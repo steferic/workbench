@@ -2,7 +2,7 @@ use crate::app::{AppState, InputMode};
 use crate::tui::components::{
     banner, command_palette, config_window, create_session_dialog, create_workspace_dialog,
     debug_overlay, merge_confirm_modal, output_pane, parallel_merge_confirm_modal,
-    parallel_task_modal, pinned_terminal_pane, session_list, status_bar, todos_pane,
+    parallel_task_modal, pinned_terminal_pane, session_list, status_bar, tasks_pane,
     utilities_pane, workspace_action_dialog, workspace_list, workspace_name_dialog,
 };
 use crate::tui::effects::{EffectsManager, StartupAreas};
@@ -69,25 +69,25 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, effects: &mut EffectsManage
     let workspace_area = left_chunks[0];
     let lower_left = left_chunks[1];
 
-    // Split lower left into: sessions | todos | utilities (using dynamic ratios)
+    // Split lower left into: sessions | tasks | utilities (using dynamic ratios)
     // sessions_ratio controls how much of lower_left goes to sessions
-    // todos_ratio controls how the remainder is split between todos and utilities
+    // tasks_ratio controls how the remainder is split between tasks and utilities
     let sessions_pct = (state.ui.layout.sessions_ratio * 100.0) as u16;
     let remaining_pct = 100 - sessions_pct;
-    let todos_pct = ((state.ui.layout.todos_ratio * remaining_pct as f32) / 100.0 * 100.0) as u16;
-    let utilities_pct = remaining_pct - todos_pct;
+    let tasks_pct = ((state.ui.layout.tasks_ratio * remaining_pct as f32) / 100.0 * 100.0) as u16;
+    let utilities_pct = remaining_pct - tasks_pct;
 
     let lower_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Percentage(sessions_pct),
-            Constraint::Percentage(todos_pct),
+            Constraint::Percentage(tasks_pct),
             Constraint::Percentage(utilities_pct),
         ])
         .split(lower_left);
 
     let session_area = lower_chunks[0];
-    let todos_area = lower_chunks[1];
+    let tasks_area = lower_chunks[1];
     let utilities_area = lower_chunks[2];
 
     // Store areas in state for mouse interaction
@@ -103,11 +103,11 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, effects: &mut EffectsManage
         session_area.width,
         session_area.height,
     ));
-    state.ui.todos_area = Some((
-        todos_area.x,
-        todos_area.y,
-        todos_area.width,
-        todos_area.height,
+    state.ui.tasks_area = Some((
+        tasks_area.x,
+        tasks_area.y,
+        tasks_area.width,
+        tasks_area.height,
     ));
     state.ui.utilities_area = Some((
         utilities_area.x,
@@ -119,7 +119,7 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, effects: &mut EffectsManage
     // Render left components
     workspace_list::render(frame, workspace_area, state);
     session_list::render(frame, session_area, state);
-    todos_pane::render(frame, todos_area, state);
+    tasks_pane::render(frame, tasks_area, state);
     utilities_pane::render(frame, utilities_area, state);
 
     // Render right panel - split if pinned terminals exist and split view is enabled
@@ -192,8 +192,8 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, effects: &mut EffectsManage
         InputMode::SetStartCommand => {
             // Start command input is shown in the status bar
         }
-        InputMode::CreateTodo => {
-            // Todo input is shown in the status bar
+        InputMode::ComposeTaskMessage => {
+            // The composed message is shown in the status bar
         }
         InputMode::CreateParallelTask => {
             // Will render parallel task modal
@@ -234,7 +234,7 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, effects: &mut EffectsManage
         let areas = StartupAreas {
             workspace: workspace_area,
             session: session_area,
-            todos: todos_area,
+            tasks: tasks_area,
             utilities: utilities_area,
             output: if state.should_show_split() {
                 let output_pct = (state.ui.layout.output_split_ratio * 100.0) as u16;

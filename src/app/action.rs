@@ -1,4 +1,5 @@
 use crate::app::state::ConfigTab;
+use crate::app::state::TaskEdit;
 use crate::app::state::ToastLevel;
 use crate::git::DiffStat;
 use crate::models::AgentType;
@@ -163,27 +164,17 @@ pub enum Action {
     // Notepad operations (tui-textarea handles all editing)
     NotepadInput(KeyEvent), // Pass key event to TextArea widget
 
-    // Todo operations
-    SelectNextTodo,
-    SelectPrevTodo,
-    EnterCreateTodoMode,              // Enter mode to type a new todo
-    CreateTodo(String),               // Create a new todo with description
-    MarkTodoDone,                     // Mark selected todo as done
-    RunSelectedTodo,                  // Dispatch selected todo to active session
-    ToggleTodoPaneMode,               // Toggle between Write and Autorun modes
-    InitiateDeleteTodo(Uuid, String), // First 'd' press on todo
-    ConfirmDeleteTodo,                // Second 'd' press
-
-    // Auto-dispatch todos
-    DispatchTodoToSession(Uuid, Uuid, String), // (session_id, todo_id, description)
-    MarkTodoReadyForReview(Uuid),              // (todo_id) - agent went idle after dispatch
-
-    // Todo suggestion
-    AddSuggestedTodo(String),   // Add a suggested todo (from analyzer)
-    ApproveSuggestedTodo(Uuid), // Approve suggested todo -> becomes Pending
-    ApproveAllSuggestedTodos,   // Approve all suggested todos at once
-    ArchiveTodo(Uuid),          // Archive a todo (hide from main list)
-    ToggleTodosTab,             // Switch between Active and Archived tabs
+    // Tasks pane: a live mirror of each agent's own task list
+    SelectNextTask,
+    SelectPrevTask,
+    ToggleTasksTab,         // Switch between Tasks and Reports
+    FocusSelectedTaskAgent, // Jump to the selected agent's terminal
+    /// Compose a message steering the selected agent's task list.
+    EnterTaskEditMode(TaskEdit),
+    /// Send the composed message to the agent it was aimed at.
+    SendTaskMessage(String),
+    /// Off-thread re-read of the agent session logs finished.
+    AgentTasksRefreshed(HashMap<Uuid, crate::agent_tasks::TaskTracker>),
 
     // Parallel task operations
     EnterParallelTaskMode,          // Open parallel task modal (P key)

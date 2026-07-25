@@ -2,7 +2,7 @@
 pub enum FocusPanel {
     WorkspaceList,
     SessionList,
-    TodosPane,
+    TasksPane,
     UtilitiesPane,
     OutputPane,
     PinnedTerminalPane(usize), // Index of focused pinned pane (0-3)
@@ -15,7 +15,8 @@ pub enum InputMode {
     CreateWorkspace,       // Browse to select existing directory (Open Existing)
     EnterWorkspaceName,    // Enter name for new workspace (Create New)
     CreateSession,
-    CreateTodo,
+    /// Composing a message that steers an agent's task list.
+    ComposeTaskMessage,
     SetStartCommand,
     CreateParallelTask,   // Modal for starting a parallel task
     ConfirmMergeWorktree, // Confirm commit and merge worktree
@@ -73,7 +74,6 @@ impl WorkspaceAction {
 pub enum PendingDelete {
     Session(uuid::Uuid, String),   // Session ID and name for display
     Workspace(uuid::Uuid, String), // Workspace ID and name for display
-    Todo(uuid::Uuid, String),      // Todo ID and description for display
 }
 
 /// Sections in the utilities pane
@@ -95,38 +95,32 @@ impl UtilitySection {
     }
 }
 
-/// Mode for the todos pane
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum TodoPaneMode {
-    #[default]
-    Write, // Manual mode - create todos and run one at a time
-    Autorun, // Auto-dispatch todos to idle agents sequentially
+/// How a composed message will steer the selected agent's task list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskEdit {
+    /// Append a new task to the agent's list.
+    Add,
+    /// Replace what the selected task means.
+    Rewrite,
+    /// Ask the agent to drop the selected task.
+    Drop,
 }
 
-impl TodoPaneMode {
+/// Tab selection for the tasks pane
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TasksTab {
+    /// Live mirror of every agent's own task list.
+    #[default]
+    Tasks,
+    /// Reports from parallel task agents.
+    Reports,
+}
+
+impl TasksTab {
     pub fn toggle(&self) -> Self {
         match self {
-            TodoPaneMode::Write => TodoPaneMode::Autorun,
-            TodoPaneMode::Autorun => TodoPaneMode::Write,
-        }
-    }
-}
-
-/// Tab selection for the todos pane
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum TodosTab {
-    #[default]
-    Active,
-    Archived,
-    Reports, // Reports from parallel task agents
-}
-
-impl TodosTab {
-    pub fn toggle(&self) -> Self {
-        match self {
-            TodosTab::Active => TodosTab::Archived,
-            TodosTab::Archived => TodosTab::Reports,
-            TodosTab::Reports => TodosTab::Active,
+            TasksTab::Tasks => TasksTab::Reports,
+            TasksTab::Reports => TasksTab::Tasks,
         }
     }
 }
@@ -253,8 +247,8 @@ impl Toast {
 pub enum Divider {
     LeftRight,          // Between left panel and right panel
     WorkspaceSession,   // Between workspace list and session list (horizontal)
-    SessionsTodos,      // Between sessions and todos in lower-left (horizontal)
-    TodosUtilities,     // Between todos and utilities in lower-left (horizontal)
+    SessionsTasks,      // Between sessions and tasks in lower-left (horizontal)
+    TasksUtilities,     // Between tasks and utilities in lower-left (horizontal)
     OutputPinned,       // Between output pane and pinned terminal
     PinnedPanes(usize), // Between pinned panes (index is the pane above the divider)
 }

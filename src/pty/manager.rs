@@ -233,7 +233,19 @@ impl PtyManager {
                     cmd.arg("--dangerously-skip-permissions");
                 }
                 if resume {
+                    // `--session-id` is rejected alongside `--continue`; the
+                    // tasks pane falls back to matching the log by cwd.
                     cmd.arg("--continue");
+                } else if crate::agent_tasks::claude_log_for_session(&session_id.to_string())
+                    .is_none()
+                {
+                    // Pin Claude's session id to ours so its log file is at a
+                    // path we can predict (see `agent_tasks::locate_claude`).
+                    // Restarting a stopped session reuses the uuid, and Claude
+                    // refuses an id it has already written a log for — in that
+                    // case let it pick its own and match the log by cwd.
+                    cmd.arg("--session-id");
+                    cmd.arg(session_id.to_string());
                 }
             }
             AgentType::Gemini => {

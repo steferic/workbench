@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
-use super::handlers::{config, input, navigation, parallel, session, todo, workspace};
+use super::handlers::{config, input, navigation, parallel, session, tasks, workspace};
 use super::pty_ops::request_pty_resize;
 
 /// Send an action onto the dispatch channel, logging on failure instead of
@@ -65,20 +65,6 @@ pub fn process_action(
             // Process newly idle sessions
             for session_id in &newly_idle {
                 if let Some(workspace_id) = state.workspace_id_for_session(*session_id) {
-                    let has_in_progress = state
-                        .get_workspace(workspace_id)
-                        .and_then(|ws| ws.todo_for_session(*session_id))
-                        .map(|t| t.is_in_progress())
-                        .unwrap_or(false);
-
-                    if has_in_progress {
-                        if let Some(ws) = state.get_workspace_mut(workspace_id) {
-                            if let Some(todo) = ws.todo_for_session_mut(*session_id) {
-                                dispatch_action(action_tx, Action::MarkTodoReadyForReview(todo.id));
-                            }
-                        }
-                    }
-
                     // Check if this is a parallel task session
                     let parallel_info = state.get_workspace(workspace_id).and_then(|ws| {
                         ws.parallel_tasks
@@ -124,33 +110,8 @@ pub fn process_action(
                 }
             }
 
-            // Autorun dispatch
-            if state.ui.todo_pane_mode == crate::app::TodoPaneMode::Autorun {
-                for &session_id in &state.data.idle_queue {
-                    if let Some(workspace_id) = state.workspace_id_for_session(session_id) {
-                        let has_in_progress = state
-                            .get_workspace(workspace_id)
-                            .and_then(|ws| ws.todo_for_session(session_id))
-                            .map(|t| t.is_in_progress())
-                            .unwrap_or(false);
-
-                        if !has_in_progress {
-                            let pending = state
-                                .get_workspace(workspace_id)
-                                .and_then(|ws| ws.next_pending_todo())
-                                .map(|t| (t.id, t.description.clone()));
-
-                            if let Some((id, desc)) = pending {
-                                dispatch_action(
-                                    action_tx,
-                                    Action::DispatchTodoToSession(session_id, id, desc),
-                                );
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
+            tasks::sync_selection(state);
+            refresh_agent_tasks(state, action_tx);
 
             // Refresh diff stats every 5 seconds
             if state.system.last_diff_refresh.elapsed() >= Duration::from_secs(5) {
@@ -260,15 +221,13 @@ pub fn process_action(
                     session::handle_session_action(state, action, pty_manager, action_tx, pty_tx)?;
                 }
 
-                // Todo actions
-                Action::SelectNextTodo | Action::SelectPrevTodo | Action::EnterCreateTodoMode |
-                Action::CreateTodo(_) | Action::MarkTodoDone | Action::RunSelectedTodo |
-                Action::ToggleTodoPaneMode | Action::InitiateDeleteTodo(_, _) | Action::ConfirmDeleteTodo |
-                Action::DispatchTodoToSession(_, _, _) | Action::MarkTodoReadyForReview(_) |
-                Action::AddSuggestedTodo(_) | Action::ApproveSuggestedTodo(_) |
-                Action::ApproveAllSuggestedTodos | Action::ArchiveTodo(_) | Action::ToggleTodosTab |
+                // Tasks pane actions
+                Action::SelectNextTask | Action::SelectPrevTask | Action::ToggleTasksTab |
+                Action::FocusSelectedTaskAgent |
+                Action::EnterTaskEditMode(_) | Action::SendTaskMessage(_) |
+                Action::AgentTasksRefreshed(_) |
                 Action::ActivateUtility => {
-                    todo::handle_todo_action(state, action, action_tx)?;
+                    tasks::handle_task_action(state, action, action_tx)?;
                 }
 
                 // Navigation actions
@@ -392,6 +351,79 @@ pub fn process_action(
     }
 
     Ok(())
+}
+
+/// How often the agent session logs are re-read for the tasks pane. Each pass
+/// is usually a stat per agent (nothing new to parse), so this is cheap; it
+/// still runs off-thread because locating a log can touch many directories.
+const TASK_REFRESH_INTERVAL: Duration = Duration::from_millis(1000);
+
+/// Re-read every agent's task list off the UI thread.
+///
+/// Trackers are cloned out, refreshed, and sent back whole: they carry their
+/// own file offsets, so a pass only parses bytes appended since the last one.
+fn refresh_agent_tasks(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) {
+    use crate::agent_tasks::{Provider, TaskSource, TaskTracker};
+
+    if state.system.task_refresh_inflight
+        || state.system.last_task_refresh.elapsed() < TASK_REFRESH_INTERVAL
+    {
+        return;
+    }
+    state.system.last_task_refresh = std::time::Instant::now();
+
+    // Every agent session across all workspaces whose log format we can read.
+    let mut sources: HashMap<uuid::Uuid, TaskSource> = HashMap::new();
+    for workspace in &state.data.workspaces {
+        let Some(sessions) = state.data.sessions.get(&workspace.id) else {
+            continue;
+        };
+        for session in sessions {
+            let Some(provider) = Provider::for_agent(&session.agent_type) else {
+                continue;
+            };
+            let cwd = session
+                .worktree_path
+                .clone()
+                .unwrap_or_else(|| workspace.path.clone());
+            sources.insert(
+                session.id,
+                TaskSource {
+                    provider,
+                    session_uuid: session.id.to_string(),
+                    cwd,
+                    started_at: session.started_at,
+                },
+            );
+        }
+    }
+
+    // Drop trackers for sessions that no longer exist.
+    state
+        .system
+        .agent_tasks
+        .retain(|session_id, _| sources.contains_key(session_id));
+    if sources.is_empty() {
+        return;
+    }
+
+    let mut trackers = state.system.agent_tasks.clone();
+    for (session_id, source) in &sources {
+        trackers
+            .entry(*session_id)
+            .or_insert_with(|| TaskTracker::new(source.provider));
+    }
+
+    state.system.task_refresh_inflight = true;
+    let tx = action_tx.clone();
+    tokio::task::spawn_blocking(move || {
+        for (session_id, tracker) in trackers.iter_mut() {
+            if let Some(source) = sources.get(session_id) {
+                tracker.refresh(source);
+            }
+        }
+        dispatch_action(&tx, Action::AgentTasksRefreshed(trackers));
+    });
 }
 
 #[cfg(test)]

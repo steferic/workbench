@@ -79,7 +79,7 @@ pub async fn run_tui(initial_workspace: Option<PathBuf>, use_alternate_screen: b
             state.ui.layout.left_panel_ratio = config.left_panel_ratio;
             state.ui.layout.workspace_ratio = config.workspace_ratio;
             state.ui.layout.sessions_ratio = config.sessions_ratio;
-            state.ui.layout.todos_ratio = config.todos_ratio;
+            state.ui.layout.tasks_ratio = config.tasks_ratio;
             state.ui.layout.output_split_ratio = config.output_split_ratio;
             state.ui.theme_mode = config.theme_mode;
         }

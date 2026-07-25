@@ -7,6 +7,7 @@ mod runtime;
 mod selection;
 mod session_start;
 mod state;
+pub mod tasks_view;
 mod utilities;
 mod workspace_nav;
 
@@ -21,9 +22,10 @@ pub use action::{
     Action, ParallelMergePlan, ParallelWorktreeSpec, UtilityContentPayload, WorktreeMergeOutcome,
 };
 pub use runtime::run_tui;
+pub use tasks_view::TaskRow;
 pub use state::{
     AppState, ConfigTab, Divider, FocusPanel, InputMode, PendingDelete,
     PendingSessionStart, RawOutputBuffer, ReplayCache, SystemState, TextSelection,
-    Toast, ToastLevel, TodoPaneMode, TodosTab, TranscriptBuffer, TranscriptLine,
+    TaskEdit, TasksTab, Toast, ToastLevel, TranscriptBuffer, TranscriptLine,
     UtilityItem, UtilitySection, WorkspaceAction,
 };

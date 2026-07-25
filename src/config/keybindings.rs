@@ -169,7 +169,7 @@ pub struct ModeBindings {
     #[serde(default)]
     pub start_command: HashMap<String, String>,
     #[serde(default)]
-    pub create_todo: HashMap<String, String>,
+    pub compose_task_message: HashMap<String, String>,
     #[serde(default)]
     pub parallel_task: HashMap<String, String>,
     #[serde(default)]
@@ -183,7 +183,7 @@ pub struct PanelBindings {
     #[serde(default)]
     pub session_list: HashMap<String, String>,
     #[serde(default)]
-    pub todos_pane: HashMap<String, String>,
+    pub tasks_pane: HashMap<String, String>,
     #[serde(default)]
     pub utilities_pane: HashMap<String, String>,
     #[serde(default)]
@@ -206,14 +206,14 @@ pub struct KeybindingConfig {
     pub mode_create_workspace: HashMap<KeyCombo, ActionName>,
     pub mode_create_session: HashMap<KeyCombo, ActionName>,
     pub mode_start_command: HashMap<KeyCombo, ActionName>,
-    pub mode_create_todo: HashMap<KeyCombo, ActionName>,
+    pub mode_compose_task_message: HashMap<KeyCombo, ActionName>,
     pub mode_parallel_task: HashMap<KeyCombo, ActionName>,
     pub mode_confirm_merge: HashMap<KeyCombo, ActionName>,
 
     /// Panel-specific bindings (when in Normal mode)
     pub panel_workspace_list: HashMap<KeyCombo, ActionName>,
     pub panel_session_list: HashMap<KeyCombo, ActionName>,
-    pub panel_todos_pane: HashMap<KeyCombo, ActionName>,
+    pub panel_tasks_pane: HashMap<KeyCombo, ActionName>,
     pub panel_utilities_pane: HashMap<KeyCombo, ActionName>,
     pub panel_output_pane: HashMap<KeyCombo, ActionName>,
     pub panel_pinned_terminal: HashMap<KeyCombo, ActionName>,
@@ -247,13 +247,13 @@ pub fn load_keybindings() -> KeybindingConfig {
         mode_create_workspace: KeybindingConfig::parse_bindings(&raw.mode.create_workspace),
         mode_create_session: KeybindingConfig::parse_bindings(&raw.mode.create_session),
         mode_start_command: KeybindingConfig::parse_bindings(&raw.mode.start_command),
-        mode_create_todo: KeybindingConfig::parse_bindings(&raw.mode.create_todo),
+        mode_compose_task_message: KeybindingConfig::parse_bindings(&raw.mode.compose_task_message),
         mode_parallel_task: KeybindingConfig::parse_bindings(&raw.mode.parallel_task),
         mode_confirm_merge: KeybindingConfig::parse_bindings(&raw.mode.confirm_merge),
 
         panel_workspace_list: KeybindingConfig::parse_bindings(&raw.panel.workspace_list),
         panel_session_list: KeybindingConfig::parse_bindings(&raw.panel.session_list),
-        panel_todos_pane: KeybindingConfig::parse_bindings(&raw.panel.todos_pane),
+        panel_tasks_pane: KeybindingConfig::parse_bindings(&raw.panel.tasks_pane),
         panel_utilities_pane: KeybindingConfig::parse_bindings(&raw.panel.utilities_pane),
         panel_output_pane: KeybindingConfig::parse_bindings(&raw.panel.output_pane),
         panel_pinned_terminal: KeybindingConfig::parse_bindings(&raw.panel.pinned_terminal),

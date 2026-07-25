@@ -590,6 +590,13 @@ pub struct SystemState {
     pub replay_caches: HashMap<Uuid, ReplayCache>,
     /// Buffered terminal synchronized-update blocks (ESC[?2026h ... ESC[?2026l).
     sync_output_buffers: HashMap<Uuid, SynchronizedOutputBuffer>,
+    /// Live mirror of each agent's own task list, keyed by session. Parsed
+    /// from the agent's session log off-thread (see `crate::agent_tasks`).
+    pub agent_tasks: HashMap<Uuid, crate::agent_tasks::TaskTracker>,
+    /// Last time the agent task logs were re-read.
+    pub last_task_refresh: Instant,
+    /// A task-log refresh is running; don't start a second one.
+    pub task_refresh_inflight: bool,
     /// Git diff stats keyed by working directory path
     pub diff_stats: HashMap<PathBuf, DiffStat>,
     /// Last time diff stats were refreshed
@@ -631,6 +638,9 @@ impl SystemState {
             transcript_buffers: HashMap::new(),
             replay_caches: HashMap::new(),
             sync_output_buffers: HashMap::new(),
+            agent_tasks: HashMap::new(),
+            last_task_refresh: Instant::now(),
+            task_refresh_inflight: false,
             diff_stats: HashMap::new(),
             last_diff_refresh: Instant::now(),
             user_config: crate::config::user_config::load_user_config(),
@@ -667,6 +677,7 @@ impl SystemState {
 
     /// Remove parser + raw output buffer + replay cache for a session
     pub fn remove_session_buffers(&mut self, session_id: &Uuid) {
+        self.agent_tasks.remove(session_id);
         self.output_buffers.remove(session_id);
         self.raw_output_buffers.remove(session_id);
         self.transcript_buffers.remove(session_id);

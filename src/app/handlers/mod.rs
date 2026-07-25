@@ -4,7 +4,7 @@ pub mod navigation;
 pub mod parallel;
 pub mod session;
 mod session_worktree;
-pub mod todo;
+pub mod tasks;
 pub mod workspace;
 
 use crate::app::{AppState, Toast, ToastLevel};

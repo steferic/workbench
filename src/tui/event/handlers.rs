@@ -1,4 +1,4 @@
-use crate::app::{Action, AppState, FocusPanel, PendingDelete, TodosTab};
+use crate::app::{Action, AppState, FocusPanel, PendingDelete, TaskEdit, TasksTab};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::key_modes::handle_input_mode_key;
@@ -18,7 +18,6 @@ impl EventHandler {
                 KeyCode::Char('d') => match &state.ui.pending_delete {
                     Some(PendingDelete::Session(_, _)) => Action::ConfirmDeleteSession,
                     Some(PendingDelete::Workspace(_, _)) => Action::ConfirmDeleteWorkspace,
-                    Some(PendingDelete::Todo(_, _)) => Action::ConfirmDeleteTodo,
                     None => Action::Tick,
                 },
                 KeyCode::Esc => Action::CancelPendingDelete,
@@ -54,7 +53,7 @@ impl EventHandler {
         match state.ui.focus {
             FocusPanel::WorkspaceList => self.handle_workspace_list_keys(key, state),
             FocusPanel::SessionList => self.handle_session_list_keys(key, state),
-            FocusPanel::TodosPane => self.handle_todos_pane_keys(key, state),
+            FocusPanel::TasksPane => self.handle_tasks_pane_keys(key, state),
             FocusPanel::UtilitiesPane => self.handle_utilities_pane_keys(key, state),
             FocusPanel::OutputPane => self.handle_output_pane_keys(key, state),
             FocusPanel::PinnedTerminalPane(idx) => {
@@ -247,50 +246,35 @@ impl EventHandler {
         }
     }
 
-    fn handle_todos_pane_keys(&self, key: KeyEvent, state: &AppState) -> Action {
+    fn handle_tasks_pane_keys(&self, key: KeyEvent, state: &AppState) -> Action {
         if let Some(action) = check_global_keys(&key, &state.system.user_config) {
             return action;
         }
 
-        let get_selected_todo = || -> Option<&crate::models::Todo> {
-            state.selected_workspace().and_then(|ws| {
-                ws.todos
-                    .iter()
-                    .filter(|t| match state.ui.selected_todos_tab {
-                        TodosTab::Active => !t.is_archived(),
-                        TodosTab::Archived => t.is_archived(),
-                        TodosTab::Reports => false,
-                    })
-                    .nth(state.ui.selected_todo_idx)
-            })
-        };
+        let reports = state.ui.selected_tasks_tab == TasksTab::Reports;
 
         match key.code {
             KeyCode::Char('j') | KeyCode::Down => {
-                if state.ui.selected_todos_tab == TodosTab::Reports {
+                if reports {
                     Action::SelectNextReport
                 } else {
-                    Action::SelectNextTodo
+                    Action::SelectNextTask
                 }
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                if state.ui.selected_todos_tab == TodosTab::Reports {
+                if reports {
                     Action::SelectPrevReport
                 } else {
-                    Action::SelectPrevTodo
+                    Action::SelectPrevTask
                 }
             }
             KeyCode::Char('l') => Action::FocusRight,
-            KeyCode::Tab => Action::ToggleTodosTab,
-            KeyCode::Char('v') | KeyCode::Enter
-                if state.ui.selected_todos_tab == TodosTab::Reports =>
-            {
-                Action::ViewReport
-            }
-            KeyCode::Char('m') if state.ui.selected_todos_tab == TodosTab::Reports => {
-                Action::MergeSelectedReport
-            }
-            KeyCode::Char('d') if state.ui.selected_todos_tab == TodosTab::Reports => {
+            KeyCode::Tab => Action::ToggleTasksTab,
+
+            // -- Reports tab (parallel task attempts) --
+            KeyCode::Char('v') | KeyCode::Enter if reports => Action::ViewReport,
+            KeyCode::Char('m') if reports => Action::MergeSelectedReport,
+            KeyCode::Char('d') if reports => {
                 if let Some(task_id) = state
                     .selected_workspace()
                     .and_then(|ws| ws.active_parallel_task())
@@ -301,55 +285,13 @@ impl EventHandler {
                     Action::Tick
                 }
             }
-            KeyCode::Char('n') if state.ui.selected_todos_tab == TodosTab::Active => {
-                Action::EnterCreateTodoMode
-            }
-            KeyCode::Enter if state.ui.selected_todos_tab == TodosTab::Active => {
-                Action::RunSelectedTodo
-            }
-            KeyCode::Char('y') if state.ui.selected_todos_tab == TodosTab::Active => {
-                if let Some(todo) = get_selected_todo() {
-                    if todo.is_suggested() {
-                        Action::ApproveSuggestedTodo(todo.id)
-                    } else {
-                        Action::Tick
-                    }
-                } else {
-                    Action::Tick
-                }
-            }
-            KeyCode::Char('Y') if state.ui.selected_todos_tab == TodosTab::Active => {
-                Action::ApproveAllSuggestedTodos
-            }
-            KeyCode::Char('x') if state.ui.selected_todos_tab == TodosTab::Active => {
-                Action::MarkTodoDone
-            }
-            KeyCode::Char('X') if state.ui.selected_todos_tab == TodosTab::Active => {
-                if let Some(todo) = get_selected_todo() {
-                    if todo.is_ready_for_review() || todo.is_done() {
-                        Action::ArchiveTodo(todo.id)
-                    } else {
-                        Action::Tick
-                    }
-                } else {
-                    Action::Tick
-                }
-            }
-            KeyCode::Char('a') if state.ui.selected_todos_tab == TodosTab::Active => {
-                Action::ToggleTodoPaneMode
-            }
-            KeyCode::Char('d') => {
-                if let Some(todo) = get_selected_todo() {
-                    let desc = if todo.description.len() > 30 {
-                        format!("{}...", &todo.description[..30])
-                    } else {
-                        todo.description.clone()
-                    };
-                    Action::InitiateDeleteTodo(todo.id, desc)
-                } else {
-                    Action::Tick
-                }
-            }
+
+            // -- Agents tab (live mirror of each agent's task list) --
+            KeyCode::Enter => Action::FocusSelectedTaskAgent,
+            KeyCode::Char('n') => Action::EnterTaskEditMode(TaskEdit::Add),
+            KeyCode::Char('e') => Action::EnterTaskEditMode(TaskEdit::Rewrite),
+            KeyCode::Char('d') => Action::EnterTaskEditMode(TaskEdit::Drop),
+
             KeyCode::Char('h') => Action::EnterConfigWindow,
             KeyCode::Char('?') => Action::EnterConfigWindow,
             KeyCode::Char('q') => Action::Quit,
