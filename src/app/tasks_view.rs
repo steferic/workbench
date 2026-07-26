@@ -239,6 +239,8 @@ pub(crate) mod tests {
                 session_uuid: session_id.to_string(),
                 cwd: dir.to_path_buf(),
                 started_at: Utc::now(),
+                conversation: None,
+                spawned_at: None,
             },
             &std::collections::HashSet::new(),
         );

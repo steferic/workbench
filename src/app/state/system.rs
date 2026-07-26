@@ -595,6 +595,10 @@ pub struct SystemState {
     /// Live mirror of each agent's own task list, keyed by session. Parsed
     /// from the agent's session log off-thread (see `crate::agent_tasks`).
     pub agent_tasks: HashMap<Uuid, crate::agent_tasks::TaskTracker>,
+    /// When each session's current process was spawned. Process-local, like
+    /// the PTY handles: it anchors which store belongs to this run of the
+    /// agent, so a restart cannot keep mirroring the conversation it left.
+    pub session_spawned_at: HashMap<Uuid, chrono::DateTime<chrono::Utc>>,
     /// Last time the agent task logs were re-read.
     pub last_task_refresh: Instant,
     /// A task-log refresh is running; don't start a second one.
@@ -641,6 +645,7 @@ impl SystemState {
             replay_caches: HashMap::new(),
             sync_output_buffers: HashMap::new(),
             agent_tasks: HashMap::new(),
+            session_spawned_at: HashMap::new(),
             last_task_refresh: Instant::now(),
             task_refresh_inflight: false,
             diff_stats: HashMap::new(),
@@ -669,6 +674,13 @@ impl SystemState {
         };
         let parser = vt100::Parser::new(parser_rows, cols, self.user_config.live_scrollback_rows);
         self.output_buffers.insert(session_id, parser);
+        // Called once per spawn, so this is where a restart starts over: the
+        // agent may be writing to a different conversation now (codex forks a
+        // new rollout on resume), and the old tracker would keep tailing the
+        // one it left behind.
+        self.agent_tasks.remove(&session_id);
+        self.session_spawned_at
+            .insert(session_id, chrono::Utc::now());
         self.raw_output_buffers.insert(
             session_id,
             RawOutputBuffer::new(self.user_config.scrollback_buffer_kb * 1024),
@@ -680,6 +692,7 @@ impl SystemState {
     /// Remove parser + raw output buffer + replay cache for a session
     pub fn remove_session_buffers(&mut self, session_id: &Uuid) {
         self.agent_tasks.remove(session_id);
+        self.session_spawned_at.remove(session_id);
         self.output_buffers.remove(session_id);
         self.raw_output_buffers.remove(session_id);
         self.transcript_buffers.remove(session_id);

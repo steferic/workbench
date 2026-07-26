@@ -195,23 +195,30 @@ pub fn claude_log_for_session(session_uuid: &str) -> Option<PathBuf> {
 }
 
 /// Sessions we spawn carry `--session-id <workbench uuid>`, so the log is named
-/// after the session we already know. Sessions where that id was already taken
-/// (a restart) or that resumed with `--continue` keep some other id, so fall
-/// back to the newest unclaimed log for this cwd.
+/// after the session we already know; a resumed session's log is named after
+/// the conversation it resumed (Claude appends to it rather than forking).
+/// Only when neither id is available — a `--continue` fallback — does this
+/// guess from the newest unclaimed log for this cwd.
 pub(super) fn locate_claude(
     projects: &Path,
     ctx: &TaskSource,
     claimed: &HashSet<String>,
 ) -> Option<PathBuf> {
-    // A pinned log is named after this session, so it is unambiguous.
-    let pinned_name = format!("{}.jsonl", ctx.session_uuid);
-    if let Some(found) = fs::read_dir(projects)
-        .ok()?
+    // A log named after this session, or after the conversation we asked it to
+    // resume, is unambiguous — no cwd/mtime guessing needed.
+    for id in [Some(ctx.session_uuid.as_str()), ctx.conversation.as_deref()]
+        .into_iter()
         .flatten()
-        .map(|entry| entry.path().join(&pinned_name))
-        .find(|path| path.is_file())
     {
-        return Some(found);
+        let name = format!("{id}.jsonl");
+        if let Some(found) = fs::read_dir(projects)
+            .ok()?
+            .flatten()
+            .map(|entry| entry.path().join(&name))
+            .find(|path| path.is_file())
+        {
+            return Some(found);
+        }
     }
 
     let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
@@ -317,21 +324,34 @@ pub(super) fn ingest_codex(batches: &mut BatchBuilder, v: &Value) {
     }
 }
 
-/// Codex has no "use this id" flag, so match on the `cwd` recorded in the
-/// rollout's `session_meta` and take the newest unclaimed one started with the
-/// session.
+/// Codex has no "use this id" flag, so its rollout has to be recognised.
+///
+/// Every codex start — fresh *or* resumed — creates a new rollout, so the one
+/// belonging to a running session is the first rollout for this cwd created
+/// after that process was spawned. Claiming then hands the next one to the
+/// next session, which is why sessions are resolved in spawn order (see
+/// `handler::refresh_agent_tasks`).
+///
+/// Without a spawn time (a session that is not running, or was already going
+/// when this rule arrived) fall back to the newest unclaimed log for the cwd.
 pub(super) fn locate_codex(
     root: &Path,
     ctx: &TaskSource,
     claimed: &HashSet<String>,
 ) -> Option<PathBuf> {
-    let cutoff = ctx.started_at - ChronoDuration::minutes(1);
+    // Clock skew between our spawn and codex writing its metadata.
+    const SLACK: i64 = 5;
+    let spawn_cutoff = ctx.spawned_at.map(|at| at - ChronoDuration::seconds(SLACK));
+    let cutoff = spawn_cutoff.unwrap_or(ctx.started_at - ChronoDuration::minutes(1));
 
     // Rollout directories are YYYY/MM/DD in local time; only days from the
-    // session's start onwards can hold its log.
+    // cutoff onwards can hold this session's log.
     let start_day = cutoff.with_timezone(&Local).date_naive();
     let today = Local::now().date_naive();
-    let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
+
+    // Spawn-anchored: the *earliest* qualifying rollout. Newest-first: the
+    // last one touched. Both keep a single candidate.
+    let mut best: Option<(DateTime<Utc>, PathBuf)> = None;
 
     let mut day = start_day;
     while day <= today {
@@ -351,37 +371,78 @@ pub(super) fn locate_codex(
             let Ok(modified) = file.metadata().and_then(|m| m.modified()) else {
                 continue;
             };
+            // A rollout is only appended to, so its last write can never
+            // precede its creation — cheap way to skip old days' files.
             if DateTime::<Utc>::from(modified) < cutoff {
                 continue;
             }
             if claimed.contains(&path.to_string_lossy().into_owned()) {
                 continue;
             }
-            let is_newer = newest.as_ref().map_or(true, |(m, _)| modified > *m);
-            if is_newer && codex_log_cwd(&path).as_deref() == Some(ctx.cwd.as_path()) {
-                newest = Some((modified, path));
+            let Some(head) = codex_log_head(&path) else {
+                continue;
+            };
+            if head.cwd.as_deref() != Some(ctx.cwd.as_path()) {
+                continue;
+            }
+
+            let (rank, better) = match spawn_cutoff {
+                // Created since this process started, earliest first.
+                Some(_) => {
+                    // No opening timestamp means we cannot tell whether this
+                    // rollout belongs to this process — skip it, don't abandon
+                    // the search.
+                    let Some(created) = head.created else { continue };
+                    if created < cutoff {
+                        continue;
+                    }
+                    (created, best.as_ref().map_or(true, |(b, _)| created < *b))
+                }
+                // No spawn anchor: the most recently written one.
+                None => {
+                    let touched = DateTime::<Utc>::from(modified);
+                    (touched, best.as_ref().map_or(true, |(b, _)| touched > *b))
+                }
+            };
+            if better {
+                best = Some((rank, path));
             }
         }
     }
-    newest.map(|(_, p)| p)
+    best.map(|(_, p)| p)
 }
 
-fn codex_log_cwd(path: &Path) -> Option<PathBuf> {
-    codex_log_meta(path, "cwd").map(PathBuf::from)
+/// The id `codex resume <id>` reopens: the uuid the rollout is *named* after.
+///
+/// Not `session_meta.session_id` — on a rollout forked from another (which is
+/// what resuming produces) that field holds the lineage root, so resuming it
+/// would rewind past everything done since the fork.
+pub(super) fn codex_rollout_id(path: &Path) -> Option<String> {
+    const UUID_LEN: usize = 36;
+    let stem = path.file_stem()?.to_string_lossy();
+    let id = stem.get(stem.len().checked_sub(UUID_LEN)?..)?;
+    let dashes: Vec<usize> = id.match_indices('-').map(|(i, _)| i).collect();
+    (dashes == [8, 13, 18, 23]).then(|| id.to_string())
 }
 
-pub(super) fn codex_log_session_id(path: &Path) -> Option<String> {
-    codex_log_meta(path, "session_id")
+/// What the rollout's leading `session_meta` line says about itself.
+struct CodexHead {
+    cwd: Option<PathBuf>,
+    created: Option<DateTime<Utc>>,
 }
 
-/// A field from the rollout's leading `session_meta` line.
-fn codex_log_meta(path: &Path, field: &str) -> Option<String> {
+fn codex_log_head(path: &Path) -> Option<CodexHead> {
     let file = File::open(path).ok()?;
     let mut first = String::new();
     BufReader::new(file).read_line(&mut first).ok()?;
     let value: Value = serde_json::from_str(first.trim_end()).ok()?;
-    value
-        .pointer(&format!("/payload/{field}"))
-        .and_then(Value::as_str)
-        .map(str::to_string)
+    Some(CodexHead {
+        cwd: value
+            .pointer("/payload/cwd")
+            .and_then(Value::as_str)
+            .map(PathBuf::from),
+        // The envelope timestamp is when the rollout was opened.
+        created: timestamp(value.get("timestamp"))
+            .or_else(|| timestamp(value.pointer("/payload/timestamp"))),
+    })
 }

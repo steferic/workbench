@@ -141,6 +141,13 @@ pub struct TaskSource {
     /// Directory the agent runs in (worktree path or workspace path).
     pub cwd: PathBuf,
     pub started_at: DateTime<Utc>,
+    /// The conversation this session was told to resume, when known. Claude
+    /// appends to that conversation's log, so it names the file outright.
+    pub conversation: Option<String>,
+    /// When the *current* process was spawned, if it is running. Codex forks
+    /// a fresh rollout on every start, so its log is the one created after
+    /// this moment — a far tighter anchor than "newest in this directory".
+    pub spawned_at: Option<DateTime<Utc>>,
 }
 
 /// The resolved store for one session.
@@ -218,9 +225,11 @@ impl TaskTracker {
             Source::File(path) if self.provider == Provider::Claude => {
                 path.file_stem().map(|s| s.to_string_lossy().into_owned())
             }
-            // The rollout's own metadata; the filename embeds it too, but the
-            // metadata is authoritative.
-            Source::File(path) => files::codex_log_session_id(path),
+            // The rollout's *filename*, which is what `codex resume <id>`
+            // reopens. Its `session_meta.session_id` is the lineage root
+            // whenever the rollout was itself forked from another, so
+            // resuming that would rewind to before the fork.
+            Source::File(path) => files::codex_rollout_id(path),
             Source::DbSession { session, .. } => Some(session.clone()),
         }
     }

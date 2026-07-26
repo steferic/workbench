@@ -358,22 +358,31 @@ pub fn process_action(
 /// still runs off-thread because locating a log can touch many directories.
 const TASK_REFRESH_INTERVAL: Duration = Duration::from_millis(1000);
 
-/// Re-read every agent's task list off the UI thread.
+/// Which sessions a refresh pass reads, and in what order.
+struct TaskRefreshPlan {
+    /// Where to look, for the sessions worth looking at.
+    sources: HashMap<uuid::Uuid, crate::agent_tasks::TaskSource>,
+    /// Every agent session that still exists, running or not — trackers for
+    /// anything else are dropped.
+    known: std::collections::HashSet<uuid::Uuid>,
+    /// `sources` keys in spawn order.
+    order: Vec<uuid::Uuid>,
+}
+
+/// Only *running* agents are read. A stopped session's list stays on screen
+/// (its tracker is kept), but it neither rescans the stores every second nor
+/// claims a conversation the live agent should get.
 ///
-/// Trackers are cloned out, refreshed, and sent back whole: they carry their
-/// own file offsets, so a pass only parses bytes appended since the last one.
-fn refresh_agent_tasks(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) {
-    use crate::agent_tasks::{Provider, TaskSource, TaskTracker};
+/// The order matters: a codex rollout is recognised as "the first one opened
+/// after this process started", so the session that spawned first has to pick
+/// first — iterating a HashMap would hand two agents in one project each
+/// other's conversation.
+fn plan_task_refresh(state: &AppState) -> TaskRefreshPlan {
+    use crate::agent_tasks::{Provider, TaskSource};
 
-    if state.system.task_refresh_inflight
-        || state.system.last_task_refresh.elapsed() < TASK_REFRESH_INTERVAL
-    {
-        return;
-    }
-    state.system.last_task_refresh = std::time::Instant::now();
-
-    // Every agent session across all workspaces whose log format we can read.
     let mut sources: HashMap<uuid::Uuid, TaskSource> = HashMap::new();
+    let mut known: std::collections::HashSet<uuid::Uuid> = std::collections::HashSet::new();
+
     for workspace in &state.data.workspaces {
         let Some(sessions) = state.data.sessions.get(&workspace.id) else {
             continue;
@@ -382,6 +391,10 @@ fn refresh_agent_tasks(state: &mut AppState, action_tx: &mpsc::UnboundedSender<A
             let Some(provider) = Provider::for_agent(&session.agent_type) else {
                 continue;
             };
+            known.insert(session.id);
+            if session.status != crate::models::SessionStatus::Running {
+                continue;
+            }
             let cwd = session
                 .worktree_path
                 .clone()
@@ -393,16 +406,48 @@ fn refresh_agent_tasks(state: &mut AppState, action_tx: &mpsc::UnboundedSender<A
                     session_uuid: session.id.to_string(),
                     cwd,
                     started_at: session.started_at,
+                    conversation: session.provider_session_id.clone(),
+                    spawned_at: state.system.session_spawned_at.get(&session.id).copied(),
                 },
             );
         }
     }
 
+    let mut order: Vec<uuid::Uuid> = sources.keys().copied().collect();
+    order.sort_by_key(|id| (sources[id].spawned_at, *id));
+
+    TaskRefreshPlan {
+        sources,
+        known,
+        order,
+    }
+}
+
+/// Re-read every running agent's task list off the UI thread.
+///
+/// Trackers are cloned out, refreshed, and sent back whole: they carry their
+/// own file offsets, so a pass only parses bytes appended since the last one.
+fn refresh_agent_tasks(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) {
+    use crate::agent_tasks::TaskTracker;
+
+    if state.system.task_refresh_inflight
+        || state.system.last_task_refresh.elapsed() < TASK_REFRESH_INTERVAL
+    {
+        return;
+    }
+    state.system.last_task_refresh = std::time::Instant::now();
+
+    let TaskRefreshPlan {
+        sources,
+        known,
+        order,
+    } = plan_task_refresh(state);
+
     // Drop trackers for sessions that no longer exist.
     state
         .system
         .agent_tasks
-        .retain(|session_id, _| sources.contains_key(session_id));
+        .retain(|session_id, _| known.contains(session_id));
     if sources.is_empty() {
         return;
     }
@@ -417,20 +462,22 @@ fn refresh_agent_tasks(state: &mut AppState, action_tx: &mpsc::UnboundedSender<A
     state.system.task_refresh_inflight = true;
     let tx = action_tx.clone();
     tokio::task::spawn_blocking(move || {
-        // Logs already spoken for. Sessions that resolved earlier keep their
-        // log, so an unresolved session in the same directory has to take a
-        // different one instead of mirroring its neighbour.
+        // Logs already spoken for — including stopped sessions', which still
+        // own their conversation.
         let mut claimed: std::collections::HashSet<String> = trackers
             .values()
             .filter_map(|tracker| tracker.source().map(|source| source.key()))
             .collect();
 
-        for (session_id, tracker) in trackers.iter_mut() {
-            if let Some(source) = sources.get(session_id) {
-                tracker.refresh(source, &claimed);
-                if let Some(source) = tracker.source() {
-                    claimed.insert(source.key());
-                }
+        for session_id in order {
+            let (Some(tracker), Some(source)) =
+                (trackers.get_mut(&session_id), sources.get(&session_id))
+            else {
+                continue;
+            };
+            tracker.refresh(source, &claimed);
+            if let Some(source) = tracker.source() {
+                claimed.insert(source.key());
             }
         }
         dispatch_action(&tx, Action::AgentTasksRefreshed(trackers));
@@ -439,7 +486,101 @@ fn refresh_agent_tasks(state: &mut AppState, action_tx: &mpsc::UnboundedSender<A
 
 #[cfg(test)]
 mod tests {
-    use super::process_action;
+    use super::{plan_task_refresh, process_action};
+    use crate::models::{AgentType, Session, SessionStatus, Workspace};
+    use chrono::{Duration as ChronoDuration, Utc};
+
+    /// Add an agent session to `state`, optionally already spawned.
+    fn add_agent(
+        state: &mut AppState,
+        workspace_id: uuid::Uuid,
+        status: SessionStatus,
+        spawned_ago_secs: Option<i64>,
+    ) -> uuid::Uuid {
+        let mut session = Session::new(workspace_id, AgentType::Codex, false);
+        session.status = status;
+        let id = session.id;
+        state
+            .data
+            .sessions
+            .entry(workspace_id)
+            .or_default()
+            .push(session);
+        if let Some(secs) = spawned_ago_secs {
+            state
+                .system
+                .session_spawned_at
+                .insert(id, Utc::now() - ChronoDuration::seconds(secs));
+        }
+        id
+    }
+
+    fn state_with_workspace() -> (AppState, uuid::Uuid) {
+        let mut state = AppState::default();
+        let workspace = Workspace::new("w".into(), std::path::PathBuf::from("/tmp/w"));
+        let id = workspace.id;
+        state.data.workspaces.push(workspace);
+        (state, id)
+    }
+
+    #[test]
+    fn only_running_agents_are_read_but_stopped_ones_keep_their_tracker() {
+        let (mut state, workspace_id) = state_with_workspace();
+        let running = add_agent(&mut state, workspace_id, SessionStatus::Running, Some(10));
+        let stopped = add_agent(&mut state, workspace_id, SessionStatus::Stopped, None);
+        // Terminals have no task list at all.
+        let mut terminal = Session::new(workspace_id, AgentType::Terminal("sh".into()), false);
+        terminal.status = SessionStatus::Running;
+        let terminal_id = terminal.id;
+        state
+            .data
+            .sessions
+            .get_mut(&workspace_id)
+            .unwrap()
+            .push(terminal);
+
+        let plan = plan_task_refresh(&state);
+
+        assert!(plan.sources.contains_key(&running));
+        assert!(
+            !plan.sources.contains_key(&stopped),
+            "a stopped agent must not rescan the stores or claim a conversation"
+        );
+        assert!(
+            plan.known.contains(&stopped),
+            "its task list should stay on screen, so keep its tracker"
+        );
+        assert!(!plan.known.contains(&terminal_id));
+    }
+
+    #[test]
+    fn sessions_are_resolved_in_spawn_order() {
+        let (mut state, workspace_id) = state_with_workspace();
+        // Deliberately added newest-first; the plan must still put the
+        // earliest spawn first, whatever order the map iterates in.
+        let newest = add_agent(&mut state, workspace_id, SessionStatus::Running, Some(5));
+        let oldest = add_agent(&mut state, workspace_id, SessionStatus::Running, Some(500));
+        let middle = add_agent(&mut state, workspace_id, SessionStatus::Running, Some(50));
+
+        let plan = plan_task_refresh(&state);
+
+        assert_eq!(plan.order, vec![oldest, middle, newest]);
+    }
+
+    #[test]
+    fn a_session_that_never_spawned_sorts_before_ones_that_did() {
+        let (mut state, workspace_id) = state_with_workspace();
+        let spawned = add_agent(&mut state, workspace_id, SessionStatus::Running, Some(30));
+        let unspawned = add_agent(&mut state, workspace_id, SessionStatus::Running, None);
+
+        let plan = plan_task_refresh(&state);
+
+        // `None` first is deliberate: a session with no spawn anchor falls back
+        // to the loose "newest log for this cwd" rule, so it must not get to
+        // pick after an anchored session has already taken its own.
+        assert_eq!(plan.order, vec![unspawned, spawned]);
+    }
+
     use crate::app::{Action, AppState, UtilityContentPayload};
     use crate::pty::PtyManager;
     use ratatui::style::Color;

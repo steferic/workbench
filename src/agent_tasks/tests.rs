@@ -257,6 +257,8 @@ fn a_claimed_log_is_not_handed_to_a_second_session() {
         session_uuid: "x".into(),
         cwd: cwd.path().to_path_buf(),
         started_at: Utc::now() - ChronoDuration::hours(1),
+        conversation: None,
+        spawned_at: None,
     };
 
     let root = files::codex_sessions_root(home.path());
@@ -296,6 +298,8 @@ fn a_pinned_claude_log_wins_over_the_cwd_scan() {
         session_uuid: uuid.into(),
         cwd: PathBuf::from("/tmp/project"),
         started_at: Utc::now() - ChronoDuration::hours(1),
+        conversation: None,
+        spawned_at: None,
     };
 
     let found = files::locate_claude(&files::claude_projects_root(home.path()), &ctx, &HashSet::new());
@@ -315,24 +319,47 @@ fn the_resolved_log_yields_the_conversation_id_to_resume() {
         Some("2f1e3d4c-0000-4000-8000-000000000001")
     );
 
-    // Codex records it in the rollout's session_meta.
-    let codex_log = dir.path().join("rollout-2026-07-25T10-00-00-abc.jsonl");
+    // Codex names the rollout after the conversation `codex resume <id>`
+    // reopens. Resuming forks a NEW rollout whose `session_meta.session_id` is
+    // the lineage root, so taking the id from the metadata would rewind the
+    // agent past everything it did since that fork.
+    let root = "019f4ca0-d760-7610-a9a8-427c266d1cfc";
+    let fork = "019f6212-1d59-79e2-a71a-7d92e739d58c";
+    let codex_log = dir.path().join(format!("rollout-2026-07-25T10-00-00-{fork}.jsonl"));
     fs::write(
         &codex_log,
         format!(
             "{}\n",
             serde_json::json!({
                 "type": "session_meta",
-                "payload": {"session_id": "019f950b-446f-7bd0", "cwd": "/tmp"}
+                "payload": {
+                    "session_id": root,
+                    "forked_from_id": root,
+                    "parent_thread_id": root,
+                    "cwd": "/tmp"
+                }
             })
         ),
     )
     .unwrap();
     let codex = TaskTracker::with_source(Provider::Codex, Source::File(codex_log));
+    assert_eq!(codex.provider_session_id().as_deref(), Some(fork));
+}
+
+#[test]
+fn a_rollout_id_is_only_taken_from_a_well_formed_name() {
+    let id = "019f6212-1d59-79e2-a71a-7d92e739d58c";
     assert_eq!(
-        codex.provider_session_id().as_deref(),
-        Some("019f950b-446f-7bd0")
+        files::codex_rollout_id(Path::new(&format!(
+            "/s/rollout-2026-07-25T10-00-00-{id}.jsonl"
+        )))
+        .as_deref(),
+        Some(id)
     );
+    // Nothing uuid-shaped on the end: better no id than a wrong one, which
+    // would resume some other conversation.
+    assert_eq!(files::codex_rollout_id(Path::new("/s/rollout-abc.jsonl")), None);
+    assert_eq!(files::codex_rollout_id(Path::new("/s/short.jsonl")), None);
 }
 
 #[test]
@@ -350,6 +377,8 @@ fn refresh_reads_only_what_is_new_and_skips_partial_lines() {
         session_uuid: "x".into(),
         cwd: dir.path().to_path_buf(),
         started_at: Utc::now(),
+        conversation: None,
+        spawned_at: None,
     };
     let mut t = TaskTracker::new(Provider::Codex);
     t.source = Some(Source::File(path.clone()));
@@ -486,6 +515,8 @@ fn hermes_prefers_a_cwd_match_and_never_reuses_a_claimed_session() {
         session_uuid: "x".into(),
         cwd: PathBuf::from("/tmp/project"),
         started_at: Utc::now() - ChronoDuration::minutes(1),
+        conversation: None,
+        spawned_at: None,
     };
 
     // An exact cwd match wins over any newer session.
@@ -618,6 +649,8 @@ fn opencode_maps_a_session_by_its_directory() {
         session_uuid: "x".into(),
         cwd: PathBuf::from("/tmp/p"),
         started_at: Utc::now() - ChronoDuration::minutes(1),
+        conversation: None,
+        spawned_at: None,
     };
 
     let first = db::locate_opencode(&db, &ctx, &HashSet::new()).unwrap();
@@ -645,3 +678,203 @@ fn a_db_sessions_conversation_id_is_what_resume_needs() {
     );
 }
 
+
+// ---------------------------------------------------------------------------
+// Recognising the rollout a *running* codex process owns
+// ---------------------------------------------------------------------------
+
+/// Today's rollout directory under `home`, created.
+fn codex_day_dir(home: &Path) -> PathBuf {
+    let today = Local::now().date_naive();
+    let dir = files::codex_sessions_root(home)
+        .join(today.format("%Y").to_string())
+        .join(today.format("%m").to_string())
+        .join(today.format("%d").to_string());
+    fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// A rollout whose `session_meta` says when it was opened and for which cwd.
+fn codex_rollout(dir: &Path, id: &str, cwd: &Path, created: DateTime<Utc>) -> PathBuf {
+    let path = dir.join(format!("rollout-2026-07-26T00-00-00-{id}.jsonl"));
+    fs::write(
+        &path,
+        format!(
+            "{}\n",
+            serde_json::json!({
+                "timestamp": created.to_rfc3339(),
+                "type": "session_meta",
+                "payload": {"session_id": id, "cwd": cwd.to_string_lossy()}
+            })
+        ),
+    )
+    .unwrap();
+    path
+}
+
+fn codex_ctx(cwd: &Path, spawned_at: Option<DateTime<Utc>>) -> TaskSource {
+    TaskSource {
+        provider: Provider::Codex,
+        session_uuid: "x".into(),
+        cwd: cwd.to_path_buf(),
+        started_at: Utc::now() - ChronoDuration::hours(6),
+        conversation: None,
+        spawned_at,
+    }
+}
+
+#[test]
+fn a_restarted_codex_session_takes_the_rollout_its_new_process_opened() {
+    let home = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let dir = codex_day_dir(home.path());
+    let root = files::codex_sessions_root(home.path());
+
+    // The conversation this session had before the restart...
+    let before = codex_rollout(
+        &dir,
+        "00000000-0000-4000-8000-00000000aaaa",
+        cwd.path(),
+        Utc::now() - ChronoDuration::hours(2),
+    );
+    // ...and the fork its new process opened. Resuming always forks, so the
+    // pre-restart rollout still exists and is still the newest *by name*.
+    let spawned_at = Utc::now() - ChronoDuration::seconds(30);
+    let after = codex_rollout(
+        &dir,
+        "00000000-0000-4000-8000-00000000bbbb",
+        cwd.path(),
+        spawned_at + ChronoDuration::seconds(1),
+    );
+
+    let found = files::locate_codex(&root, &codex_ctx(cwd.path(), Some(spawned_at)), &HashSet::new());
+    assert_eq!(
+        found.as_deref(),
+        Some(after.as_path()),
+        "must follow the running process, not the conversation it left"
+    );
+    assert!(before.exists(), "the old rollout is still on disk");
+}
+
+#[test]
+fn two_codex_agents_in_one_project_get_the_rollout_each_one_opened() {
+    let home = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let dir = codex_day_dir(home.path());
+    let root = files::codex_sessions_root(home.path());
+
+    // Two agents spawned a few seconds apart in the same directory; each
+    // rollout appears just after its own spawn.
+    let first_spawn = Utc::now() - ChronoDuration::seconds(60);
+    let second_spawn = Utc::now() - ChronoDuration::seconds(20);
+    let first_log = codex_rollout(
+        &dir,
+        "00000000-0000-4000-8000-000000000001",
+        cwd.path(),
+        first_spawn + ChronoDuration::seconds(1),
+    );
+    let second_log = codex_rollout(
+        &dir,
+        "00000000-0000-4000-8000-000000000002",
+        cwd.path(),
+        second_spawn + ChronoDuration::seconds(1),
+    );
+
+    // Resolved in spawn order, as `handler::refresh_agent_tasks` does.
+    let mut claimed = HashSet::new();
+    let first = files::locate_codex(&root, &codex_ctx(cwd.path(), Some(first_spawn)), &claimed)
+        .expect("a rollout for the first agent");
+    claimed.insert(first.to_string_lossy().into_owned());
+    let second = files::locate_codex(&root, &codex_ctx(cwd.path(), Some(second_spawn)), &claimed)
+        .expect("a rollout for the second agent");
+
+    assert_eq!(first.as_path(), first_log.as_path());
+    assert_eq!(second.as_path(), second_log.as_path());
+}
+
+#[test]
+fn a_rollout_opened_before_this_process_is_never_claimed_by_it() {
+    let home = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let dir = codex_day_dir(home.path());
+    let root = files::codex_sessions_root(home.path());
+
+    codex_rollout(
+        &dir,
+        "00000000-0000-4000-8000-00000000cccc",
+        cwd.path(),
+        Utc::now() - ChronoDuration::minutes(10),
+    );
+
+    let spawned_at = Utc::now();
+    assert!(
+        files::locate_codex(&root, &codex_ctx(cwd.path(), Some(spawned_at)), &HashSet::new())
+            .is_none(),
+        "a rollout that predates the spawn belongs to some other session"
+    );
+}
+
+#[test]
+fn a_resumed_claude_session_is_found_by_the_conversation_it_resumed() {
+    let home = tempfile::tempdir().unwrap();
+    let projects = files::claude_projects_root(home.path()).join("-tmp-project");
+    fs::create_dir_all(&projects).unwrap();
+
+    // Claude appends to the conversation it resumed, so the log keeps the
+    // conversation's name — not this workbench session's uuid.
+    let conversation = "aaaaaaaa-2222-4333-8444-555555555555";
+    let resumed = projects.join(format!("{conversation}.jsonl"));
+    fs::write(&resumed, "").unwrap();
+    // A newer log for the same cwd that the cwd fallback would have picked.
+    fs::write(
+        projects.join("bbbbbbbb-2222-4333-8444-555555555555.jsonl"),
+        format!(
+            "{}\n",
+            serde_json::json!({"type": "user", "cwd": "/tmp/project"})
+        ),
+    )
+    .unwrap();
+
+    let ctx = TaskSource {
+        provider: Provider::Claude,
+        session_uuid: "99999999-2222-4333-8444-555555555555".into(),
+        cwd: PathBuf::from("/tmp/project"),
+        started_at: Utc::now() - ChronoDuration::hours(1),
+        conversation: Some(conversation.to_string()),
+        spawned_at: Some(Utc::now()),
+    };
+
+    let found = files::locate_claude(&files::claude_projects_root(home.path()), &ctx, &HashSet::new());
+    assert_eq!(found.as_deref(), Some(resumed.as_path()));
+}
+
+#[test]
+fn a_rollout_with_no_opening_timestamp_is_skipped_not_fatal() {
+    let home = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let dir = codex_day_dir(home.path());
+    let root = files::codex_sessions_root(home.path());
+    let spawned_at = Utc::now() - ChronoDuration::seconds(30);
+
+    // A malformed rollout for the same cwd, listed before the real one.
+    fs::write(
+        dir.join("rollout-2026-07-26T00-00-00-00000000-0000-4000-8000-00000000dddd.jsonl"),
+        format!(
+            "{}\n",
+            serde_json::json!({
+                "type": "session_meta",
+                "payload": {"cwd": cwd.path().to_string_lossy()}
+            })
+        ),
+    )
+    .unwrap();
+    let good = codex_rollout(
+        &dir,
+        "00000000-0000-4000-8000-00000000eeee",
+        cwd.path(),
+        spawned_at + ChronoDuration::seconds(1),
+    );
+
+    let found = files::locate_codex(&root, &codex_ctx(cwd.path(), Some(spawned_at)), &HashSet::new());
+    assert_eq!(found.as_deref(), Some(good.as_path()));
+}
