@@ -344,6 +344,19 @@ writes), or relaying work through a peer that you could do directly (token
 cost without benefit) — do not silently comply: briefly tell the user why it
 tends to fail, propose the closest effective alternative, and proceed with
 the original request only if they confirm.
+
+### Keep your task list current
+
+Workbench mirrors your own task list in its Tasks pane — that pane is how
+the user watches progress across several agents at once, and how they add,
+reword or drop work without interrupting you.
+
+So whenever a request has more than one step, write the list down as you go
+(`TaskCreate`/`TaskUpdate`, or `TodoWrite` if that is what you have) and
+keep the states honest: exactly one task in progress, completed the moment
+it is done. An empty pane reads as "this agent is doing nothing". Do not
+manufacture tasks for genuinely single-step work — a one-line answer or a
+one-file edit needs no list.
 {BLOCK_END}"#
     )
 }
