@@ -12,10 +12,10 @@
 # Global keybindings (work anywhere, even in terminal input)
 # ============================================================
 [global]
-"F6" = "CyclePrevWorkspace"
-"F7" = "CycleNextWorkspace"
-"F8" = "CyclePrevSession"
-"F9" = "CycleNextSession"
+"Alt-Left" = "CyclePrevWorkspace"
+"Alt-Right" = "CycleNextWorkspace"
+"Alt-Up" = "CyclePrevSession"
+"Alt-Down" = "CycleNextSession"
 "Ctrl-q" = "InitiateQuit"
 "F1" = "EnterConfigWindow"
 

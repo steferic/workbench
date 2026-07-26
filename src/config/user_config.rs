@@ -3,23 +3,35 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
+// Global hotkeys are swallowed before the focused agent ever sees them, so
+// they have to stay off keys Claude/Codex need. Alt+arrows are free at the
+// macOS level (unlike Ctrl+arrows, which switch Spaces) and inside workbench
+// (Shift+arrows already move pane focus and scroll output). The one thing
+// they cost is Option+←/→ word-jump inside an agent's composer.
 const GLOBAL_HOTKEY_DEFAULTS: [(&str, &str); 8] = [
-    ("CyclePrevWorkspace", "F6"),
-    ("CycleNextWorkspace", "F7"),
-    ("CyclePrevSession", "F8"),
-    ("CycleNextSession", "F9"),
+    ("CyclePrevWorkspace", "Alt-Left"),
+    ("CycleNextWorkspace", "Alt-Right"),
+    ("CyclePrevSession", "Alt-Up"),
+    ("CycleNextSession", "Alt-Down"),
     ("InitiateQuit", "Ctrl-q"),
     ("TestToast", "F2"),
     ("ToggleDebugOverlay", "F11"),
     ("EnterConfigWindow", "F1"),
 ];
 
-const LEGACY_GLOBAL_HOTKEY_MIGRATIONS: [(&str, &str, &str); 5] = [
-    ("CycleNextWorkspace", "Ctrl-z", "F7"),
-    ("CyclePrevWorkspace", "Ctrl-Shift-z", "F6"),
-    ("CycleNextSession", "Ctrl-x", "F9"),
-    ("CycleNextSession", "Ctrl-s", "F9"),
-    ("CyclePrevSession", "Ctrl-Shift-s", "F8"),
+/// Older defaults, moved forward so a saved config keeps working. Each entry
+/// points at the *current* binding rather than the next one in the chain, so
+/// the order of this table never matters.
+const LEGACY_GLOBAL_HOTKEY_MIGRATIONS: [(&str, &str, &str); 9] = [
+    ("CycleNextWorkspace", "Ctrl-z", "Alt-Right"),
+    ("CyclePrevWorkspace", "Ctrl-Shift-z", "Alt-Left"),
+    ("CycleNextSession", "Ctrl-x", "Alt-Down"),
+    ("CycleNextSession", "Ctrl-s", "Alt-Down"),
+    ("CyclePrevSession", "Ctrl-Shift-s", "Alt-Up"),
+    ("CyclePrevWorkspace", "F6", "Alt-Left"),
+    ("CycleNextWorkspace", "F7", "Alt-Right"),
+    ("CyclePrevSession", "F8", "Alt-Up"),
+    ("CycleNextSession", "F9", "Alt-Down"),
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -286,20 +298,69 @@ mod tests {
 
         normalize_global_hotkeys(&mut hotkeys);
 
-        assert_eq!(hotkeys.get("CyclePrevWorkspace"), Some(&"F6".to_string()));
-        assert_eq!(hotkeys.get("CycleNextWorkspace"), Some(&"F7".to_string()));
-        assert_eq!(hotkeys.get("CyclePrevSession"), Some(&"F8".to_string()));
-        assert_eq!(hotkeys.get("CycleNextSession"), Some(&"F9".to_string()));
+        assert_eq!(
+            hotkeys.get("CyclePrevWorkspace"),
+            Some(&"Alt-Left".to_string())
+        );
+        assert_eq!(
+            hotkeys.get("CycleNextWorkspace"),
+            Some(&"Alt-Right".to_string())
+        );
+        assert_eq!(hotkeys.get("CyclePrevSession"), Some(&"Alt-Up".to_string()));
+        assert_eq!(
+            hotkeys.get("CycleNextSession"),
+            Some(&"Alt-Down".to_string())
+        );
+    }
+
+    /// The F-key era: configs saved between the Ctrl-* and Alt-arrow defaults.
+    #[test]
+    fn normalize_global_hotkeys_migrates_the_function_key_defaults() {
+        let mut hotkeys = HashMap::from([
+            ("CyclePrevWorkspace".to_string(), "F6".to_string()),
+            ("CycleNextWorkspace".to_string(), "F7".to_string()),
+            ("CyclePrevSession".to_string(), "F8".to_string()),
+            ("CycleNextSession".to_string(), "F9".to_string()),
+        ]);
+
+        normalize_global_hotkeys(&mut hotkeys);
+
+        assert_eq!(
+            hotkeys.get("CyclePrevWorkspace"),
+            Some(&"Alt-Left".to_string())
+        );
+        assert_eq!(
+            hotkeys.get("CycleNextWorkspace"),
+            Some(&"Alt-Right".to_string())
+        );
+        assert_eq!(hotkeys.get("CyclePrevSession"), Some(&"Alt-Up".to_string()));
+        assert_eq!(
+            hotkeys.get("CycleNextSession"),
+            Some(&"Alt-Down".to_string())
+        );
+    }
+
+    /// A hand-picked binding that is not a previous default is left alone.
+    #[test]
+    fn normalize_global_hotkeys_keeps_custom_bindings() {
+        let mut hotkeys = HashMap::from([("CycleNextSession".to_string(), "F5".to_string())]);
+
+        normalize_global_hotkeys(&mut hotkeys);
+
+        assert_eq!(hotkeys.get("CycleNextSession"), Some(&"F5".to_string()));
     }
 
     #[test]
     fn normalize_global_hotkeys_clears_duplicates_deterministically() {
         let mut hotkeys = default_global_hotkeys();
-        hotkeys.insert("CyclePrevSession".to_string(), "F7".to_string());
+        hotkeys.insert("CyclePrevSession".to_string(), "Alt-Right".to_string());
 
         normalize_global_hotkeys(&mut hotkeys);
 
-        assert_eq!(hotkeys.get("CycleNextWorkspace"), Some(&"F7".to_string()));
+        assert_eq!(
+            hotkeys.get("CycleNextWorkspace"),
+            Some(&"Alt-Right".to_string())
+        );
         assert_eq!(hotkeys.get("CyclePrevSession"), Some(&String::new()));
     }
 }

@@ -117,6 +117,14 @@ fn render_quickref_tab(frame: &mut Frame, area: Rect, state: &AppState) {
         Span::raw("Focus left/right panel"),
     ]));
     lines.push(Line::from(vec![
+        Span::styled("  Alt+Up/Down        ", key_style),
+        Span::raw("Previous/next agent (works while typing)"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  Alt+Left/Right     ", key_style),
+        Span::raw("Previous/next project (works while typing)"),
+    ]));
+    lines.push(Line::from(vec![
         Span::styled("  `                  ", key_style),
         Span::raw("Jump to next idle session"),
     ]));
@@ -436,10 +444,12 @@ fn render_agents_tab(frame: &mut Frame, area: Rect, state: &AppState) {
 
 fn format_action_name(action: &str) -> &str {
     match action {
-        "CycleNextWorkspace" => "Cycle Workspace →",
-        "CyclePrevWorkspace" => "Cycle Workspace ←",
-        "CycleNextSession" => "Cycle Session →",
-        "CyclePrevSession" => "Cycle Session ←",
+        // Direction-neutral: the bindings are rebindable, so a label must not
+        // imply an arrow the key may not be.
+        "CycleNextWorkspace" => "Next Project",
+        "CyclePrevWorkspace" => "Previous Project",
+        "CycleNextSession" => "Next Agent",
+        "CyclePrevSession" => "Previous Agent",
         "InitiateQuit" => "Quit",
         "ToggleDebugOverlay" => "Debug Overlay",
         "EnterConfigWindow" => "Help & Settings",
