@@ -200,41 +200,6 @@ fn render_row<'a>(
     let prefix = if is_selected { "> " } else { "  " };
 
     match row {
-        TaskRow::Agent { session_id } => {
-            let Some(agent) = tasks_view::selected_agent(state)
-                .filter(|a| a.session_id == *session_id)
-            else {
-                return ListItem::new(Line::from(""));
-            };
-
-            let (status_icon, status_color) = if !agent.running {
-                ("○", t.fg_faint)
-            } else if agent.idle {
-                ("◆", t.success)
-            } else {
-                (state.spinner_char(), t.active)
-            };
-
-            let label = agent.alias.clone().unwrap_or_else(|| agent.name.clone());
-            let mut spans = vec![
-                Span::styled(prefix, Style::default().fg(t.fg)),
-                Span::styled(
-                    format!("[{}] ", agent.agent_type.badge()),
-                    Style::default().fg(t.special),
-                ),
-                Span::styled(label, Style::default().fg(t.fg).add_modifier(Modifier::BOLD)),
-                Span::raw(" "),
-                Span::styled(status_icon, Style::default().fg(status_color)),
-            ];
-            if let Some(branch) = &agent.branch {
-                spans.push(Span::styled(
-                    format!("  {branch}"),
-                    Style::default().fg(t.accent),
-                ));
-            }
-            ListItem::new(Line::from(spans))
-        }
-
         TaskRow::Prompt { session_id, batch } => {
             let entry = state
                 .system
@@ -253,7 +218,7 @@ fn render_row<'a>(
             let age = entry.and_then(|b| b.age()).unwrap_or_default();
 
             // The prompt is context, not a task: two lines at most.
-            let budget = width.saturating_sub(8 + age.chars().count());
+            let budget = width.saturating_sub(4 + age.chars().count());
             let lines = wrap(&single_line(&prompt), budget, 2);
             let last = lines.len().saturating_sub(1);
             let style = Style::default().fg(t.fg_dim).add_modifier(Modifier::ITALIC);
@@ -264,7 +229,7 @@ fn render_row<'a>(
                     .map(|(i, chunk)| {
                         let mut spans = vec![
                             Span::styled(if i == 0 { prefix } else { "  " }, style),
-                            Span::raw(if i == 0 { "  ❝ " } else { "    " }),
+                            Span::raw(if i == 0 { "❝ " } else { "  " }),
                             Span::styled(chunk, style),
                         ];
                         if i == last && !age.is_empty() {
@@ -292,13 +257,18 @@ fn render_row<'a>(
                 TaskState::InProgress => ("◐", t.active),
                 TaskState::Completed => ("✓", t.success),
             };
+            // Done work recedes; what the agent is on right now stands out.
             let text_style = match task.state {
                 TaskState::Completed => Style::default().fg(t.fg_faint),
-                TaskState::InProgress => Style::default().fg(t.fg).add_modifier(Modifier::BOLD),
+                TaskState::InProgress => Style::default()
+                    .fg(t.active)
+                    .add_modifier(Modifier::BOLD),
                 TaskState::Pending => Style::default().fg(t.fg),
             };
 
-            const INDENT: usize = 8;
+            // One column in from the prompt: enough hierarchy to read the ❝
+            // line as a heading, not enough to bury the tasks.
+            const INDENT: usize = 5;
             let mut lines: Vec<Line> = wrap(&single_line(&task.subject), width.saturating_sub(INDENT), 2)
                 .into_iter()
                 .enumerate()
@@ -306,7 +276,7 @@ fn render_row<'a>(
                     if i == 0 {
                         Line::from(vec![
                             Span::styled(prefix, text_style),
-                            Span::raw("   "),
+                            Span::raw(" "),
                             Span::styled(icon, Style::default().fg(color)),
                             Span::raw(" "),
                             Span::styled(chunk, text_style),
@@ -326,7 +296,7 @@ fn render_row<'a>(
                 if let Some(detail) = &task.detail {
                     for chunk in wrap(&single_line(detail), width.saturating_sub(INDENT + 2), 2) {
                         lines.push(Line::from(vec![
-                            Span::raw(" ".repeat(INDENT + 2)),
+                            Span::raw(" ".repeat(INDENT)),
                             Span::styled(chunk, Style::default().fg(t.fg_faint)),
                         ]));
                     }
@@ -338,7 +308,6 @@ fn render_row<'a>(
 
         TaskRow::Note { text, .. } => ListItem::new(Line::from(vec![
             Span::styled(prefix, Style::default().fg(t.fg_faint)),
-            Span::raw("    "),
             Span::styled(text.clone(), Style::default().fg(t.fg_faint)),
         ])),
     }
@@ -588,7 +557,7 @@ mod tests {
     }
 
     #[test]
-    fn pane_shows_the_agent_its_prompt_and_its_tasks() {
+    fn pane_shows_the_prompt_and_its_tasks_but_not_the_agent() {
         let (state, _session_id, _dir) = crate::app::tasks_view::tests::fixture();
         let out = screen(&state, 60, 12);
 
@@ -600,6 +569,37 @@ mod tests {
         assert!(out.contains("◐"), "{out}");
         // Counts open/total for this agent's current list.
         assert!(out.contains("(1/1)"), "{out}");
+        // The Sessions pane above already names the agent; this one must not
+        // spend a row repeating it.
+        assert!(!out.contains("Claude"), "{out}");
+    }
+
+    #[test]
+    fn a_task_starts_at_the_left_edge_rather_than_indented_under_a_heading() {
+        let (state, _session_id, _dir) = crate::app::tasks_view::tests::fixture();
+        let out = screen(&state, 60, 12);
+
+        let task_line = out
+            .lines()
+            .find(|l| l.contains("Parse agent logs"))
+            .expect("the task is on screen");
+        let indent = task_line.len() - task_line.trim_start().len();
+        assert!(
+            indent <= 4,
+            "tasks are what the pane is for; they should not be buried: {task_line:?}"
+        );
+    }
+
+    #[test]
+    fn a_mixed_state_list_reads_top_to_bottom() {
+        let (state, _session_id, _dir) = crate::app::tasks_view::tests::mixed_fixture();
+        let out = screen(&state, 38, 12);
+
+        // Every task is on screen at the same indent, under its prompt.
+        for subject in ["Parse the logs", "Render the pane", "Wire the keys"] {
+            assert!(out.contains(subject), "{out}");
+        }
+        assert!(out.contains("(2/3)"), "{out}");
     }
 
     #[test]

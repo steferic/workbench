@@ -1,10 +1,11 @@
 //! Flattened view of the selected agent's task list.
 //!
 //! The pane follows the Sessions pane above it: it shows the task lists of
-//! whichever agent the session cursor is on, and nothing else. Rows nest
-//! (agent → prompt → tasks) but navigate as a flat list, so rendering and key
-//! handling must agree on exactly which rows exist and in what order. Both
-//! build it here.
+//! whichever agent the session cursor is on, and nothing else — the agent's
+//! own name never appears, since the cursor above already says who it is.
+//! Rows nest (prompt → tasks) but navigate as a flat list, so rendering and
+//! key handling must agree on exactly which rows exist and in what order.
+//! Both build it here.
 
 use uuid::Uuid;
 
@@ -16,12 +17,11 @@ use crate::models::{AgentType, SessionStatus};
 /// follow-up prompt changed, without burying the current one.
 pub const MAX_BATCHES_PER_AGENT: usize = 3;
 
+/// A row of the pane. There is deliberately no row for the agent itself:
+/// which agent this is is already answered by the Sessions pane cursor above,
+/// and repeating it costs a line the tasks can use.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskRow {
-    /// The agent these rows belong to — its name, status and branch.
-    Agent {
-        session_id: Uuid,
-    },
     /// The prompt that produced the task list below it.
     Prompt {
         session_id: Uuid,
@@ -42,23 +42,18 @@ pub enum TaskRow {
 impl TaskRow {
     pub fn session_id(&self) -> Uuid {
         match self {
-            TaskRow::Agent { session_id }
-            | TaskRow::Prompt { session_id, .. }
+            TaskRow::Prompt { session_id, .. }
             | TaskRow::Task { session_id, .. }
             | TaskRow::Note { session_id, .. } => *session_id,
         }
     }
 }
 
-/// An agent session that can appear in the pane.
+/// The agent whose list the pane is showing.
 pub struct AgentEntry {
     pub session_id: Uuid,
-    pub name: String,
     pub agent_type: AgentType,
-    pub alias: Option<String>,
-    pub branch: Option<String>,
     pub running: bool,
-    pub idle: bool,
     /// False when we cannot read this provider's task list (Gemini, Grok, …).
     pub readable: bool,
 }
@@ -75,12 +70,8 @@ pub fn selected_agent(state: &AppState) -> Option<AgentEntry> {
     }
     Some(AgentEntry {
         session_id: session.id,
-        name: session.display_name(),
         agent_type: session.agent_type.clone(),
-        alias: session.alias.clone(),
-        branch: session.worktree_branch.clone(),
         running: session.status == SessionStatus::Running,
-        idle: state.data.idle_queue.contains(&session.id),
         readable: Provider::for_agent(&session.agent_type).is_some(),
     })
 }
@@ -116,7 +107,7 @@ pub fn rows(state: &AppState) -> Vec<TaskRow> {
         return Vec::new();
     };
     let session_id = agent.session_id;
-    let mut rows = vec![TaskRow::Agent { session_id }];
+    let mut rows = Vec::new();
 
     if !agent.readable {
         rows.push(TaskRow::Note {
@@ -200,6 +191,22 @@ pub(crate) mod tests {
         state_with_log(&claude_log())
     }
 
+    /// One prompt, three tasks: done, in progress, still pending.
+    pub(crate) fn mixed_fixture() -> (AppState, Uuid, tempfile::TempDir) {
+        let mut lines = vec![claude_prompt_line("show me what each agent is doing")];
+        for (i, subject) in ["Parse the logs", "Render the pane", "Wire the keys"]
+            .iter()
+            .enumerate()
+        {
+            let tool = format!("t{i}");
+            lines.push(claude_create_line(&tool, subject));
+            lines.push(claude_created_line(&tool, i + 1, subject));
+        }
+        lines.push(claude_update_line("1", "completed"));
+        lines.push(claude_update_line("2", "in_progress"));
+        state_with_log(&format!("{}\n", lines.join("\n")))
+    }
+
     /// A workspace with one Claude session whose log is `log`, already parsed.
     fn state_with_log(log: &str) -> (AppState, Uuid, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
@@ -253,39 +260,58 @@ pub(crate) mod tests {
     }
 
     fn claude_log_with(prompt: &str, subject: &str) -> String {
-        [
-            serde_json::json!({
-                "type": "user",
-                "timestamp": "2026-07-25T10:00:00.000Z",
-                "message": {"content": [{"type": "text", "text": prompt}]}
-            }),
-            serde_json::json!({
-                "type": "assistant",
-                "message": {"content": [{
-                    "type": "tool_use", "id": "t1", "name": "TaskCreate",
-                    "input": {"subject": subject, "description": "tail jsonl"}
-                }]}
-            }),
-            serde_json::json!({
-                "type": "user",
-                "message": {"content": [{
-                    "type": "tool_result", "tool_use_id": "t1",
-                    "content": format!("Task #1 created successfully: {subject}")
-                }]}
-            }),
-            serde_json::json!({
-                "type": "assistant",
-                "message": {"content": [{
-                    "type": "tool_use", "id": "t2", "name": "TaskUpdate",
-                    "input": {"taskId": "1", "status": "in_progress"}
-                }]}
-            }),
-        ]
-        .iter()
-        .map(|v| v.to_string())
-        .collect::<Vec<_>>()
-        .join("\n")
-            + "\n"
+        format!(
+            "{}\n",
+            [
+                claude_prompt_line(prompt),
+                claude_create_line("t1", subject),
+                claude_created_line("t1", 1, subject),
+                claude_update_line("1", "in_progress"),
+            ]
+            .join("\n")
+        )
+    }
+
+    fn claude_prompt_line(prompt: &str) -> String {
+        serde_json::json!({
+            "type": "user",
+            "timestamp": "2026-07-25T10:00:00.000Z",
+            "message": {"content": [{"type": "text", "text": prompt}]}
+        })
+        .to_string()
+    }
+
+    fn claude_create_line(tool_id: &str, subject: &str) -> String {
+        serde_json::json!({
+            "type": "assistant",
+            "message": {"content": [{
+                "type": "tool_use", "id": tool_id, "name": "TaskCreate",
+                "input": {"subject": subject, "description": "tail jsonl"}
+            }]}
+        })
+        .to_string()
+    }
+
+    fn claude_created_line(tool_id: &str, n: usize, subject: &str) -> String {
+        serde_json::json!({
+            "type": "user",
+            "message": {"content": [{
+                "type": "tool_result", "tool_use_id": tool_id,
+                "content": format!("Task #{n} created successfully: {subject}")
+            }]}
+        })
+        .to_string()
+    }
+
+    fn claude_update_line(id: &str, status: &str) -> String {
+        serde_json::json!({
+            "type": "assistant",
+            "message": {"content": [{
+                "type": "tool_use", "id": "upd", "name": "TaskUpdate",
+                "input": {"taskId": id, "status": status}
+            }]}
+        })
+        .to_string()
     }
 
     #[test]
@@ -296,7 +322,6 @@ pub(crate) mod tests {
         assert_eq!(
             rows,
             vec![
-                TaskRow::Agent { session_id },
                 TaskRow::Prompt {
                     session_id,
                     batch: 0
@@ -306,7 +331,8 @@ pub(crate) mod tests {
                     batch: 0,
                     task: 0
                 },
-            ]
+            ],
+            "the agent itself gets no row — the Sessions pane already names it"
         );
         assert_eq!(
             task_at(&state, session_id, 0, 0).unwrap().subject,
@@ -385,11 +411,11 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn an_agent_with_no_task_list_still_shows_up() {
-        let (state, session_id, _dir) = state_with_log("");
+    fn an_agent_with_no_task_list_says_so() {
+        let (state, _session_id, _dir) = state_with_log("");
         let rows = rows(&state);
-        assert_eq!(rows[0], TaskRow::Agent { session_id });
-        assert!(matches!(rows[1], TaskRow::Note { .. }), "{rows:?}");
+        assert_eq!(rows.len(), 1);
+        assert!(matches!(rows[0], TaskRow::Note { .. }), "{rows:?}");
     }
 
     #[test]
