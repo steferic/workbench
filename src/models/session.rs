@@ -39,6 +39,12 @@ pub struct Session {
     /// Human-friendly name for agent-to-agent addressing (`workbench alias`).
     #[serde(default)]
     pub alias: Option<String>,
+    /// The agent's own conversation id (Claude session uuid, Codex rollout
+    /// id), learned from its session log. Restarting resumes THIS
+    /// conversation; without it we can only ask for the most recent one in
+    /// the directory, which collides when a project runs several agents.
+    #[serde(default)]
+    pub provider_session_id: Option<String>,
 }
 
 impl Session {
@@ -61,6 +67,7 @@ impl Session {
             worktree_branch: None,
             worktree_viewer_for: None,
             alias: None,
+            provider_session_id: None,
         }
     }
 
@@ -85,6 +92,7 @@ impl Session {
             worktree_branch: None,
             worktree_viewer_for: None,
             alias: None,
+            provider_session_id: None,
         }
     }
 
@@ -110,6 +118,7 @@ impl Session {
             worktree_branch: Some(worktree_branch),
             worktree_viewer_for: None,
             alias: None,
+            provider_session_id: None,
         }
     }
 
@@ -129,6 +138,7 @@ impl Session {
             worktree_branch: None,
             worktree_viewer_for: Some(viewing_session_id),
             alias: None,
+            provider_session_id: None,
         }
     }
 

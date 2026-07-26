@@ -156,6 +156,8 @@ pub struct PendingSessionStart {
     pub dangerously_skip_permissions: bool,
     /// If the session uses worktree isolation, spawn in this directory instead
     pub worktree_path: Option<PathBuf>,
+    /// The agent conversation this session owns, if known (see `Session`).
+    pub provider_session_id: Option<String>,
 }
 
 /// Circular buffer storing raw PTY output bytes for replay-based scrollback

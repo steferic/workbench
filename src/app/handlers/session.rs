@@ -4,7 +4,7 @@ use crate::app::{
 };
 use crate::git;
 use crate::models::{AgentType, AttemptStatus, Session};
-use crate::pty::{PtyHandle, PtyManager, SessionSpawnConfig};
+use crate::pty::{PtyHandle, PtyManager, Resume, SessionSpawnConfig};
 use anyhow::Result;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -449,7 +449,7 @@ fn create_session(
         rows: pty_rows,
         cols,
         pty_tx: pty_tx.clone(),
-        resume: false,
+        resume: Resume::No,
         dangerously_skip_permissions,
         use_alternate_screen: state.system.use_alternate_screen,
     });
@@ -529,7 +529,7 @@ fn finish_worktree_session_spawn(
         rows: pty_rows,
         cols,
         pty_tx: pty_tx.clone(),
-        resume: false,
+        resume: Resume::No,
         dangerously_skip_permissions,
         use_alternate_screen: state.system.use_alternate_screen,
     });
@@ -581,7 +581,7 @@ fn create_terminal(
         rows: pty_rows,
         cols,
         pty_tx: pty_tx.clone(),
-        resume: false,
+        resume: Resume::No,
         dangerously_skip_permissions: false,
         use_alternate_screen: state.system.use_alternate_screen,
     });
@@ -668,11 +668,18 @@ fn restart_session(
                 s.start_command.clone(),
                 s.dangerously_skip_permissions,
                 s.worktree_path.clone(),
+                s.provider_session_id.clone(),
             )
         });
 
-    let Some((agent_type, workspace_id, start_command, dangerously_skip_permissions, worktree_path)) =
-        session_info
+    let Some((
+        agent_type,
+        workspace_id,
+        start_command,
+        dangerously_skip_permissions,
+        worktree_path,
+        provider_session_id,
+    )) = session_info
     else {
         return;
     };
@@ -701,7 +708,16 @@ fn restart_session(
         .system
         .create_session_buffers(session_id, pty_rows, cols, &agent_type);
 
-    let resume = agent_type.is_agent();
+    // Resume this session's own conversation when we know which one it is;
+    // `MostRecent` is directory-scoped and collides across agents.
+    let resume = if agent_type.is_agent() {
+        match provider_session_id {
+            Some(id) => Resume::Conversation(id),
+            None => Resume::MostRecent,
+        }
+    } else {
+        Resume::No
+    };
 
     match pty_manager.spawn_session(SessionSpawnConfig {
         session_id,

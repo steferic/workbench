@@ -162,6 +162,22 @@ impl PtyHandle {
     }
 }
 
+/// How a spawned agent attaches to conversation history.
+///
+/// `MostRecent` is the fallback the providers give us (`claude --continue`,
+/// `codex resume --last`) and it is scoped to the *directory*, not the
+/// session — several agents in one project all land on the same conversation.
+/// Prefer `Conversation` whenever the session's own id is known.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Resume {
+    /// Start a fresh conversation.
+    No,
+    /// Resume this exact provider conversation.
+    Conversation(String),
+    /// Resume whatever this directory used last (id not known yet).
+    MostRecent,
+}
+
 /// Configuration for spawning a PTY session.
 pub struct SessionSpawnConfig<'a> {
     pub session_id: Uuid,
@@ -171,9 +187,110 @@ pub struct SessionSpawnConfig<'a> {
     pub rows: u16,
     pub cols: u16,
     pub pty_tx: mpsc::Sender<Action>,
-    pub resume: bool,
+    pub resume: Resume,
     pub dangerously_skip_permissions: bool,
     pub use_alternate_screen: bool,
+}
+
+/// The provider-specific CLI arguments for a session.
+///
+/// Split out from spawning so the resume contract is testable: getting this
+/// wrong silently merges two agents' histories rather than failing loudly.
+/// `claude_id_free` is whether Claude has no log under our session uuid yet —
+/// it refuses `--session-id` for an id it has already written.
+fn agent_args(
+    agent_type: &AgentType,
+    session_id: Uuid,
+    resume: &Resume,
+    dangerously_skip_permissions: bool,
+    claude_id_free: bool,
+) -> Vec<String> {
+    if agent_type.is_terminal() {
+        return Vec::new();
+    }
+    let mut args: Vec<String> = Vec::new();
+    // Dispatch on the command, not the enum, so an agent added through
+    // `user_config.toml` behaves exactly like a built-in one.
+    match agent_type.command() {
+        "claude" => {
+            if dangerously_skip_permissions {
+                args.push("--dangerously-skip-permissions".into());
+            }
+            match resume {
+                // This session's own conversation.
+                Resume::Conversation(id) => {
+                    args.push("--resume".into());
+                    args.push(id.clone());
+                }
+                // Directory-scoped — only until we learn this session's id.
+                Resume::MostRecent => args.push("--continue".into()),
+                Resume::No => {
+                    // Pin Claude's session id to ours so its log is at a path
+                    // we can predict (`agent_tasks::files`) and the
+                    // conversation is addressable on restart. Restarting a
+                    // stopped session reuses the uuid, and Claude refuses an id
+                    // it has already written a log for — then let it pick its
+                    // own and match the log by cwd instead.
+                    if claude_id_free {
+                        args.push("--session-id".into());
+                        args.push(session_id.to_string());
+                    }
+                }
+            }
+        }
+        "codex" => {
+            // Codex resumes via a subcommand, so it has to come first.
+            match resume {
+                Resume::No => {}
+                Resume::Conversation(id) => {
+                    args.push("resume".into());
+                    args.push(id.clone());
+                }
+                Resume::MostRecent => {
+                    args.push("resume".into());
+                    args.push("--last".into());
+                }
+            }
+            if dangerously_skip_permissions {
+                args.push("--dangerously-bypass-approvals-and-sandbox".into());
+            }
+        }
+        "hermes" => {
+            if dangerously_skip_permissions {
+                args.push("--yolo".into());
+            }
+            match resume {
+                Resume::Conversation(id) => {
+                    args.push("--resume".into());
+                    args.push(id.clone());
+                }
+                Resume::MostRecent => args.push("--continue".into()),
+                Resume::No => {}
+            }
+        }
+        "gemini" => {
+            if dangerously_skip_permissions {
+                args.push("--yolo".into());
+            }
+            if resume != &Resume::No {
+                args.push("--resume".into());
+            }
+        }
+        "grok" => {
+            if dangerously_skip_permissions {
+                args.push("--permission-mode".into());
+                args.push("full".into());
+            }
+            if resume != &Resume::No {
+                args.push("--continue".into());
+            }
+        }
+        // Anything else (including opencode, whose resume flags are not yet
+        // verified) runs bare. Its task list is still mirrored — that reads the
+        // agent's own store and needs no cooperation from the command line.
+        _ => {}
+    }
+    args
 }
 
 pub struct PtyManager {
@@ -227,63 +344,17 @@ impl PtyManager {
         cmd.cwd(working_dir);
 
         // Add agent-specific flags (not for terminals)
-        match agent_type {
-            AgentType::Claude => {
-                if dangerously_skip_permissions {
-                    cmd.arg("--dangerously-skip-permissions");
-                }
-                if resume {
-                    // `--session-id` is rejected alongside `--continue`; the
-                    // tasks pane falls back to matching the log by cwd.
-                    cmd.arg("--continue");
-                } else if crate::agent_tasks::claude_log_for_session(&session_id.to_string())
-                    .is_none()
-                {
-                    // Pin Claude's session id to ours so its log file is at a
-                    // path we can predict (see `agent_tasks::locate_claude`).
-                    // Restarting a stopped session reuses the uuid, and Claude
-                    // refuses an id it has already written a log for — in that
-                    // case let it pick its own and match the log by cwd.
-                    cmd.arg("--session-id");
-                    cmd.arg(session_id.to_string());
-                }
-            }
-            AgentType::Gemini => {
-                if dangerously_skip_permissions {
-                    cmd.arg("--yolo");
-                }
-                if resume {
-                    cmd.arg("--resume");
-                }
-            }
-            AgentType::Codex => {
-                // Codex resumes via a subcommand (`codex resume --last`), not a flag.
-                // Rebuild the command so `resume` is the first positional arg.
-                if resume {
-                    cmd = CommandBuilder::new("codex");
-                    cmd.cwd(working_dir);
-                    cmd.arg("resume");
-                    cmd.arg("--last");
-                }
-                if dangerously_skip_permissions {
-                    cmd.arg("--dangerously-bypass-approvals-and-sandbox");
-                }
-            }
-            AgentType::Grok => {
-                if dangerously_skip_permissions {
-                    cmd.arg("--permission-mode");
-                    cmd.arg("full");
-                }
-                if resume {
-                    cmd.arg("--continue");
-                }
-            }
-            AgentType::Custom { .. } => {
-                // Custom agents: just run the command as-is, no special flags
-            }
-            AgentType::Terminal(_) => {
-                // No special flags for terminals, they're just shells
-            }
+        let claude_id_free = agent_type.command() == "claude"
+            && resume == Resume::No
+            && crate::agent_tasks::claude_log_for_session(&session_id.to_string()).is_none();
+        for arg in agent_args(
+            &agent_type,
+            session_id,
+            &resume,
+            dangerously_skip_permissions,
+            claude_id_free,
+        ) {
+            cmd.arg(arg);
         }
 
         // Set TERM for proper terminal emulation
@@ -777,6 +848,165 @@ impl Default for PtyManager {
 mod tests {
     use super::*;
     use portable_pty::{Child, ChildKiller, ExitStatus};
+
+    mod resume_args {
+        use super::super::{agent_args, Resume};
+        use crate::models::AgentType;
+        use uuid::Uuid;
+
+        fn args(agent: AgentType, resume: Resume, id: Uuid, claude_id_free: bool) -> Vec<String> {
+            agent_args(&agent, id, &resume, false, claude_id_free)
+        }
+
+        /// The bug this guards: `--continue` / `resume --last` are scoped to
+        /// the directory, so several agents in one project all restore the
+        /// same conversation. A known id must produce a targeted resume.
+        #[test]
+        fn a_known_conversation_is_resumed_by_id_not_by_directory() {
+            let id = Uuid::new_v4();
+            let claude = args(
+                AgentType::Claude,
+                Resume::Conversation("conv-a".into()),
+                id,
+                true,
+            );
+            assert_eq!(claude, vec!["--resume", "conv-a"]);
+            assert!(!claude.iter().any(|a| a == "--continue"));
+
+            let codex = args(
+                AgentType::Codex,
+                Resume::Conversation("conv-b".into()),
+                id,
+                true,
+            );
+            assert_eq!(codex, vec!["resume", "conv-b"]);
+            assert!(!codex.iter().any(|a| a == "--last"));
+        }
+
+        #[test]
+        fn an_unknown_conversation_falls_back_to_the_directorys_most_recent() {
+            let id = Uuid::new_v4();
+            assert_eq!(
+                args(AgentType::Claude, Resume::MostRecent, id, true),
+                vec!["--continue"]
+            );
+            assert_eq!(
+                args(AgentType::Codex, Resume::MostRecent, id, true),
+                vec!["resume", "--last"]
+            );
+        }
+
+        #[test]
+        fn a_fresh_claude_session_pins_our_id_so_it_can_be_resumed_later() {
+            let id = Uuid::new_v4();
+            assert_eq!(
+                args(AgentType::Claude, Resume::No, id, true),
+                vec!["--session-id".to_string(), id.to_string()]
+            );
+        }
+
+        /// Restarting a stopped session reuses its uuid; Claude aborts with
+        /// "Session ID is already in use" if we pin one it has written before.
+        #[test]
+        fn a_taken_claude_id_is_not_pinned_again() {
+            let id = Uuid::new_v4();
+            assert!(args(AgentType::Claude, Resume::No, id, false).is_empty());
+        }
+
+        #[test]
+        fn codex_puts_the_resume_subcommand_before_its_flags() {
+            let id = Uuid::new_v4();
+            let with_perms = agent_args(
+                &AgentType::Codex,
+                id,
+                &Resume::Conversation("conv".into()),
+                true,
+                true,
+            );
+            assert_eq!(
+                with_perms,
+                vec![
+                    "resume",
+                    "conv",
+                    "--dangerously-bypass-approvals-and-sandbox"
+                ]
+            );
+        }
+
+        #[test]
+        fn terminals_and_unknown_commands_take_no_resume_flags() {
+            let id = Uuid::new_v4();
+            assert!(args(
+                AgentType::Terminal("shell".into()),
+                Resume::MostRecent,
+                id,
+                true
+            )
+            .is_empty());
+            assert!(args(
+                AgentType::Custom {
+                    command: "some-other-agent".into(),
+                    display_name: "Other".into(),
+                    badge: "O".into(),
+                },
+                Resume::MostRecent,
+                id,
+                true,
+            )
+            .is_empty());
+        }
+
+        /// Agents added through `user_config.toml` are `Custom`, but they are
+        /// the same programs — they must get the same flags as a built-in.
+        #[test]
+        fn a_custom_agent_is_driven_by_its_command_not_its_enum_variant() {
+            let id = Uuid::new_v4();
+            let custom = |command: &str| AgentType::Custom {
+                command: command.into(),
+                display_name: "X".into(),
+                badge: "X".into(),
+            };
+
+            assert_eq!(
+                args(custom("claude"), Resume::Conversation("conv".into()), id, true),
+                vec!["--resume", "conv"]
+            );
+            assert_eq!(
+                args(custom("codex"), Resume::Conversation("conv".into()), id, true),
+                vec!["resume", "conv"]
+            );
+        }
+
+        #[test]
+        fn hermes_resumes_a_named_session_and_falls_back_to_its_last() {
+            let id = Uuid::new_v4();
+            let hermes = AgentType::Custom {
+                command: "hermes".into(),
+                display_name: "Hermes".into(),
+                badge: "H".into(),
+            };
+            assert_eq!(
+                args(
+                    hermes.clone(),
+                    Resume::Conversation("20260719_114141_b85183".into()),
+                    id,
+                    true
+                ),
+                vec!["--resume", "20260719_114141_b85183"]
+            );
+            assert_eq!(
+                args(hermes.clone(), Resume::MostRecent, id, true),
+                vec!["--continue"]
+            );
+            assert!(args(hermes.clone(), Resume::No, id, true).is_empty());
+            // Dangerous mode is the agent's own flag.
+            assert_eq!(
+                agent_args(&hermes, id, &Resume::No, true, true),
+                vec!["--yolo"]
+            );
+        }
+    }
+
     use std::io::{self, Read};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;

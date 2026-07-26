@@ -1,7 +1,7 @@
 use crate::app::handlers::{report_background_error, save_state};
 use crate::app::{Action, AppState, PendingSessionStart, Toast, ToastLevel};
 use crate::models::{AgentType, SessionStatus, WorkspaceStatus};
-use crate::pty::{PtyManager, SessionSpawnConfig};
+use crate::pty::{PtyManager, Resume, SessionSpawnConfig};
 use std::path::{Path, PathBuf};
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -13,6 +13,8 @@ struct SessionStartRequest<'a> {
     agent_type: AgentType,
     dangerously_skip_permissions: bool,
     worktree_path: Option<&'a Path>,
+    /// The agent conversation this session owns, if we have learned it.
+    provider_session_id: Option<String>,
 }
 
 impl<'a> SessionStartRequest<'a> {
@@ -20,6 +22,20 @@ impl<'a> SessionStartRequest<'a> {
         self.worktree_path
             .filter(|path| path.exists())
             .unwrap_or(self.workspace_path)
+    }
+
+    /// Restore this session's own history. Falling back to `MostRecent` is
+    /// only right when we never learned its conversation id — it resumes
+    /// whatever the *directory* touched last, so two agents in one project
+    /// would both land on the same conversation.
+    fn resume_target(&self) -> Resume {
+        if !self.agent_type.is_agent() {
+            return Resume::No;
+        }
+        match &self.provider_session_id {
+            Some(id) => Resume::Conversation(id.clone()),
+            None => Resume::MostRecent,
+        }
     }
 }
 
@@ -41,7 +57,7 @@ fn spawn_single_session(
     match pty_manager.spawn_session(SessionSpawnConfig {
         session_id: request.session_id,
         workspace_id: request.workspace_id,
-        resume: request.agent_type.is_agent(),
+        resume: request.resume_target(),
         agent_type: request.agent_type.clone(),
         working_dir: request.effective_dir(),
         rows: pty_rows,
@@ -94,7 +110,7 @@ pub fn start_workspace_sessions(
     let workspace_path = workspace.path.clone();
 
     // Find all stopped sessions in this workspace
-    let stopped_sessions: Vec<(Uuid, AgentType, bool, Option<PathBuf>)> = state
+    let stopped_sessions: Vec<(Uuid, AgentType, bool, Option<PathBuf>, Option<String>)> = state
         .data
         .sessions
         .get(&workspace_id)
@@ -108,6 +124,7 @@ pub fn start_workspace_sessions(
                         s.agent_type.clone(),
                         s.dangerously_skip_permissions,
                         s.worktree_path.clone(),
+                        s.provider_session_id.clone(),
                     )
                 })
                 .collect()
@@ -119,7 +136,9 @@ pub fn start_workspace_sessions(
     }
 
     // Start each stopped session
-    for (session_id, agent_type, dangerously_skip_permissions, worktree_path) in stopped_sessions {
+    for (session_id, agent_type, dangerously_skip_permissions, worktree_path, provider_session_id) in
+        stopped_sessions
+    {
         spawn_single_session(
             state,
             pty_manager,
@@ -131,6 +150,7 @@ pub fn start_workspace_sessions(
                 agent_type,
                 dangerously_skip_permissions,
                 worktree_path: worktree_path.as_deref(),
+                provider_session_id,
             },
         );
     }
@@ -174,6 +194,7 @@ pub fn queue_selected_workspace_sessions(state: &mut AppState) {
                     start_command: s.start_command.clone(),
                     dangerously_skip_permissions: s.dangerously_skip_permissions,
                     worktree_path: s.worktree_path.clone(),
+                    provider_session_id: s.provider_session_id.clone(),
                 })
                 .collect()
         })
@@ -209,6 +230,7 @@ pub fn process_startup_queue(
             agent_type: pending.agent_type.clone(),
             dangerously_skip_permissions: pending.dangerously_skip_permissions,
             worktree_path: pending.worktree_path.as_deref(),
+            provider_session_id: pending.provider_session_id.clone(),
         },
     ) {
         // Send start command for terminals after a short delay
@@ -268,6 +290,7 @@ mod tests {
             agent_type: AgentType::Claude,
             dangerously_skip_permissions: false,
             worktree_path: Some(worktree_dir.path()),
+            provider_session_id: None,
         };
 
         assert_eq!(request.effective_dir(), worktree_dir.path());
@@ -284,6 +307,7 @@ mod tests {
             agent_type: AgentType::Claude,
             dangerously_skip_permissions: false,
             worktree_path: Some(&missing_worktree),
+            provider_session_id: None,
         };
 
         assert_eq!(request.effective_dir(), workspace_dir.path());
@@ -299,6 +323,7 @@ mod tests {
             agent_type: AgentType::Claude,
             dangerously_skip_permissions: false,
             worktree_path: None,
+            provider_session_id: None,
         };
 
         assert_eq!(request.effective_dir(), workspace_dir.path());

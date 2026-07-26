@@ -112,6 +112,7 @@ pub fn handle_workspace_action(
                                         dangerously_skip_permissions: s
                                             .dangerously_skip_permissions,
                                         worktree_path: s.worktree_path.clone(),
+                                        provider_session_id: s.provider_session_id.clone(),
                                     })
                                     .collect()
                             })

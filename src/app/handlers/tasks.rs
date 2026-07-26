@@ -107,6 +107,7 @@ pub fn handle_task_action(
             }
         }
         Action::AgentTasksRefreshed(trackers) => {
+            record_provider_session_ids(state, &trackers);
             state.system.agent_tasks = trackers;
             state.system.task_refresh_inflight = false;
         }
@@ -132,6 +133,34 @@ pub fn handle_task_action(
         _ => {}
     }
     Ok(())
+}
+
+/// Remember which provider conversation each session owns, so a restart can
+/// resume THAT conversation instead of the directory's most recent one (which
+/// several agents in one project would all land on).
+///
+/// The id is re-read every refresh rather than trusted forever: resuming can
+/// leave an agent writing to a different conversation than the one we asked
+/// for, and the log we resolved is the ground truth for where it ended up.
+fn record_provider_session_ids(
+    state: &mut AppState,
+    trackers: &std::collections::HashMap<Uuid, crate::agent_tasks::TaskTracker>,
+) {
+    let mut changed = false;
+    for (session_id, tracker) in trackers {
+        let Some(id) = tracker.provider_session_id() else {
+            continue;
+        };
+        if let Some(session) = state.get_session_mut(*session_id) {
+            if session.provider_session_id.as_deref() != Some(id.as_str()) {
+                session.provider_session_id = Some(id);
+                changed = true;
+            }
+        }
+    }
+    if changed {
+        super::save_state(state, "failed to save agent conversation ids");
+    }
 }
 
 /// Phrase the edit as an instruction to the agent. These are deliberately

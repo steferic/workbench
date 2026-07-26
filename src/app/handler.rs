@@ -417,9 +417,20 @@ fn refresh_agent_tasks(state: &mut AppState, action_tx: &mpsc::UnboundedSender<A
     state.system.task_refresh_inflight = true;
     let tx = action_tx.clone();
     tokio::task::spawn_blocking(move || {
+        // Logs already spoken for. Sessions that resolved earlier keep their
+        // log, so an unresolved session in the same directory has to take a
+        // different one instead of mirroring its neighbour.
+        let mut claimed: std::collections::HashSet<String> = trackers
+            .values()
+            .filter_map(|tracker| tracker.source().map(|source| source.key()))
+            .collect();
+
         for (session_id, tracker) in trackers.iter_mut() {
             if let Some(source) = sources.get(session_id) {
-                tracker.refresh(source);
+                tracker.refresh(source, &claimed);
+                if let Some(source) = tracker.source() {
+                    claimed.insert(source.key());
+                }
             }
         }
         dispatch_action(&tx, Action::AgentTasksRefreshed(trackers));

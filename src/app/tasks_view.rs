@@ -232,13 +232,16 @@ pub(crate) mod tests {
             .expect("workspace sessions")
             .push(session);
 
-        let mut tracker = TaskTracker::with_source(Provider::Claude, path);
-        tracker.refresh(&TaskSource {
-            provider: Provider::Claude,
-            session_uuid: session_id.to_string(),
-            cwd: dir.to_path_buf(),
-            started_at: Utc::now(),
-        });
+        let mut tracker = TaskTracker::with_source(Provider::Claude, crate::agent_tasks::Source::File(path));
+        tracker.refresh(
+            &TaskSource {
+                provider: Provider::Claude,
+                session_uuid: session_id.to_string(),
+                cwd: dir.to_path_buf(),
+                started_at: Utc::now(),
+            },
+            &std::collections::HashSet::new(),
+        );
         state.system.agent_tasks.insert(session_id, tracker);
         session_id
     }

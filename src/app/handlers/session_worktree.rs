@@ -1,7 +1,7 @@
 use crate::app::{Action, AppState, FocusPanel, InputMode, Toast, ToastLevel, WorktreeMergeOutcome};
 use crate::git;
 use crate::models::{AgentType, Session, SessionStatus};
-use crate::pty::{PtyManager, SessionSpawnConfig};
+use crate::pty::{PtyManager, Resume, SessionSpawnConfig};
 use std::path::Path;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -253,7 +253,7 @@ pub(super) fn handle_switch_to_worktree(
         rows: pty_rows,
         cols,
         pty_tx: pty_tx.clone(),
-        resume: false,
+        resume: Resume::No,
         dangerously_skip_permissions: false,
         use_alternate_screen: state.system.use_alternate_screen,
     }) {

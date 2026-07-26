@@ -1,3 +1,3 @@
 mod manager;
 
-pub use manager::{PtyHandle, PtyManager, SessionSpawnConfig};
+pub use manager::{PtyHandle, PtyManager, Resume, SessionSpawnConfig};

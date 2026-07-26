@@ -25,6 +25,10 @@ name = "workbench"
 path = "src/main.rs"
 
 [dependencies]
+# Reading agent session stores (opencode, hermes keep theirs in SQLite).
+# `bundled` compiles SQLite itself so there is no system dependency.
+rusqlite = { version = "0.32", features = ["bundled"] }
+
 # CLI argument parsing
 clap = { version = "4.4", features = ["derive", "env"] }
 
