@@ -841,6 +841,15 @@ fn confirm_delete_session(state: &mut AppState, action_tx: &mpsc::UnboundedSende
     if let Some(handle) = state.system.pty_handles.remove(&session_id) {
         terminate_session_handle(handle, is_terminal);
     }
+    // The agent's last hook report outlives the process it described, so drop
+    // it with the session rather than leaving a file a future session with the
+    // same short id could inherit.
+    if let Some(workspace_id) = state.workspace_id_for_session(session_id) {
+        crate::agent_status::forget(
+            &workspace_id.to_string(),
+            &crate::models::Session::short_id_of(session_id),
+        );
+    }
     state.system.remove_session_buffers(&session_id);
 
     // Clean up worktree - either from parallel task or regular session

@@ -1,3 +1,4 @@
+use crate::agent_status::Activity;
 use crate::app::{AppState, FocusPanel};
 use crate::git;
 use crate::models::{Session, SessionStatus};
@@ -283,7 +284,7 @@ fn create_session_item<'a>(
     let t = crate::theme::current();
     let is_selected = session_idx == state.selected_session_idx() && is_focused;
     let is_active = state.active_session_id() == Some(session.id);
-    let is_working = state.is_session_working(session.id);
+    let activity = state.activity(session.id);
     let is_pinned = pinned_ids.contains(&session.id);
     let is_worktree_active = state
         .selected_workspace()
@@ -291,15 +292,18 @@ fn create_session_item<'a>(
         .map(|id| id == session.id)
         .unwrap_or(false);
 
-    // Status icon: spinner when working, diamond when idle, circle for stopped/errored
+    // Status icon: an agent that stopped *for you* outranks every other
+    // state — it is the only one that costs you time by going unnoticed.
     let (status_icon, status_color) = match session.status {
         SessionStatus::Running => {
             if session.agent_type.is_terminal() {
                 ("◆", t.success)
-            } else if is_working {
-                (state.spinner_char(), t.active)
             } else {
-                ("◆", t.fg_faint)
+                match activity {
+                    Activity::NeedsAttention(_) => ("!", t.warning),
+                    Activity::Working => (state.spinner_char(), t.active),
+                    Activity::Idle | Activity::Exited => ("◆", t.fg_faint),
+                }
             }
         }
         SessionStatus::Stopped => ("○", t.fg_dim),
@@ -394,12 +398,23 @@ fn create_session_item<'a>(
         None => Span::raw(""),
     };
 
+    // What it is stopped for, in the agent's own words ("needs approval").
+    // Only for the blocked state: a label on every row would be noise.
+    let attention_indicator = match activity.needs_attention() {
+        Some(kind) => Span::styled(
+            format!(" {}", kind.label()),
+            Style::default().fg(t.warning).add_modifier(Modifier::BOLD),
+        ),
+        None => Span::raw(""),
+    };
+
     let main_spans = vec![
         Span::styled(prefix.to_string(), name_style),
         Span::styled(status_icon, Style::default().fg(status_color)),
         Span::raw(" "),
         Span::styled(session.agent_type.display_name().to_string(), name_style),
         alias_indicator,
+        attention_indicator,
         dangerous_indicator,
         branch_indicator,
     ];
@@ -421,5 +436,76 @@ fn create_session_item<'a>(
         ListItem::new(Text::from(vec![main_line, cmd_line]))
     } else {
         ListItem::new(main_line)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent_status::{AgentStatus, Attention};
+    use crate::models::{AgentType, Workspace};
+    use ratatui::{backend::TestBackend, Terminal};
+
+    fn screen(state: &AppState, width: u16, height: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| render(frame, frame.area(), state))
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        (0..height)
+            .map(|y| {
+                (0..width)
+                    .map(|x| buffer[(x, y)].symbol().to_string())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn state_with_blocked_agent(kind: Attention, reason: &str) -> AppState {
+        let mut state = AppState::default();
+        let workspace = Workspace::new("w".into(), std::path::PathBuf::from("/tmp/w"));
+        let workspace_id = workspace.id;
+        let session = Session::new(workspace_id, AgentType::Claude, false);
+        let session_id = session.id;
+        state.data.workspaces.push(workspace);
+        state.data.sessions.insert(workspace_id, vec![session]);
+        state.system.agent_status.insert(
+            session_id,
+            AgentStatus {
+                activity: crate::agent_status::Activity::NeedsAttention(kind),
+                reason: reason.into(),
+                at: chrono::Utc::now(),
+                event: "Notification".into(),
+            },
+        );
+        state
+    }
+
+    #[test]
+    fn a_blocked_agent_says_so_on_its_row() {
+        let state = state_with_blocked_agent(
+            Attention::Permission,
+            "Claude needs your permission to use Bash",
+        );
+        let out = screen(&state, 44, 10);
+
+        assert!(out.contains("needs approval"), "{out}");
+        // The marker replaces the idle diamond, so a glance at the column is
+        // enough — this is the row you have to act on.
+        assert!(out.contains("! Claude"), "{out}");
+        assert!(!out.contains("◆ Claude"), "{out}");
+    }
+
+    #[test]
+    fn an_unblocked_agent_keeps_the_ordinary_row() {
+        let mut state = state_with_blocked_agent(Attention::Input, "waiting");
+        state.system.agent_status.clear();
+        let out = screen(&state, 44, 10);
+
+        assert!(!out.contains('!'), "{out}");
+        assert!(out.contains("◆ Claude"), "{out}");
     }
 }

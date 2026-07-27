@@ -242,3 +242,37 @@ fn print_reply(reply: &Reply) {
         }
     }
 }
+
+/// `workbench hook <event>` — called by the agent's own lifecycle hooks.
+///
+/// Two rules govern this verb. It must never fail the agent: a hook that exits
+/// non-zero can interrupt a turn, so every error path here is swallowed and
+/// the exit status is always success. And it must be quick — it runs inline
+/// on events as frequent as every tool call, so it does one small read and one
+/// atomic write, with no locking and no network.
+pub fn cmd_hook(event: &str) {
+    use std::io::Read;
+
+    // The hook inherits its PTY's environment, which is how the event knows
+    // whose it is. Outside a workbench-spawned agent there is nothing to
+    // report against.
+    let (Ok(workspace_id), Ok(session)) = (
+        std::env::var(comms::ENV_WORKSPACE),
+        std::env::var(comms::ENV_SESSION),
+    ) else {
+        return;
+    };
+
+    // Claude passes the event payload on stdin. Read it if it is there, but
+    // never block waiting for a provider that sends nothing.
+    let mut raw = String::new();
+    let payload = if std::io::stdin().read_to_string(&mut raw).is_ok() && !raw.trim().is_empty() {
+        serde_json::from_str::<serde_json::Value>(&raw).ok()
+    } else {
+        None
+    };
+
+    if let Some(status) = crate::agent_status::interpret(event, payload.as_ref()) {
+        let _ = crate::agent_status::record(&workspace_id, &session, &status);
+    }
+}

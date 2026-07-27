@@ -197,13 +197,16 @@ pub struct SessionSpawnConfig<'a> {
 /// Split out from spawning so the resume contract is testable: getting this
 /// wrong silently merges two agents' histories rather than failing loudly.
 /// `claude_id_free` is whether Claude has no log under our session uuid yet —
-/// it refuses `--session-id` for an id it has already written.
+/// it refuses `--session-id` for an id it has already written. `hook_bin` is
+/// the workbench binary agents call back on lifecycle events; `None` disables
+/// status reporting for this spawn.
 fn agent_args(
     agent_type: &AgentType,
     session_id: Uuid,
     resume: &Resume,
     dangerously_skip_permissions: bool,
     claude_id_free: bool,
+    hook_bin: Option<&str>,
 ) -> Vec<String> {
     if agent_type.is_terminal() {
         return Vec::new();
@@ -213,6 +216,15 @@ fn agent_args(
     // `user_config.toml` behaves exactly like a built-in one.
     match agent_type.command() {
         "claude" => {
+            // Lifecycle hooks, so the agent reports what it is doing instead
+            // of us guessing from its output. Passed inline rather than
+            // written into ~/.claude/settings.json: Claude *merges* what
+            // `--settings` carries with the user's own settings, so their
+            // hooks keep running and workbench leaves nothing behind.
+            if let Some(bin) = hook_bin {
+                args.push("--settings".into());
+                args.push(crate::agent_status::claude_hook_settings(bin));
+            }
             if dangerously_skip_permissions {
                 args.push("--dangerously-skip-permissions".into());
             }
@@ -347,12 +359,20 @@ impl PtyManager {
         let claude_id_free = agent_type.command() == "claude"
             && resume == Resume::No
             && crate::agent_tasks::claude_log_for_session(&session_id.to_string()).is_none();
+        // Agents call this binary back on lifecycle events — but only where
+        // the agent can be told to, and only if we know our own path. Anything
+        // else simply reports nothing and keeps the output-timing inference.
+        let hook_bin = std::env::current_exe()
+            .ok()
+            .filter(|_| crate::agent_status::supports_status_hooks(agent_type.command()))
+            .map(|p| p.to_string_lossy().into_owned());
         for arg in agent_args(
             &agent_type,
             session_id,
             &resume,
             dangerously_skip_permissions,
             claude_id_free,
+            hook_bin.as_deref(),
         ) {
             cmd.arg(arg);
         }
@@ -855,7 +875,57 @@ mod tests {
         use uuid::Uuid;
 
         fn args(agent: AgentType, resume: Resume, id: Uuid, claude_id_free: bool) -> Vec<String> {
-            agent_args(&agent, id, &resume, false, claude_id_free)
+            agent_args(&agent, id, &resume, false, claude_id_free, None)
+        }
+
+        #[test]
+        fn claude_is_spawned_with_status_hooks_pointing_at_this_binary() {
+            let args = agent_args(
+                &AgentType::Claude,
+                Uuid::new_v4(),
+                &Resume::No,
+                false,
+                false,
+                Some("/opt/workbench"),
+            );
+            let settings_idx = args
+                .iter()
+                .position(|a| a == "--settings")
+                .expect("hooks are installed at spawn");
+            let settings: serde_json::Value =
+                serde_json::from_str(&args[settings_idx + 1]).expect("valid settings JSON");
+            assert_eq!(
+                settings["hooks"]["Notification"][0]["hooks"][0]["command"],
+                "'/opt/workbench' hook Notification"
+            );
+        }
+
+        #[test]
+        fn without_a_binary_path_claude_still_spawns_cleanly() {
+            // current_exe() can fail; status reporting is optional, spawning
+            // is not.
+            let args = args(AgentType::Claude, Resume::No, Uuid::new_v4(), true);
+            assert!(!args.iter().any(|a| a == "--settings"), "{args:?}");
+            assert!(args.iter().any(|a| a == "--session-id"), "{args:?}");
+        }
+
+        /// Hooks are additive, and the user's own settings must survive:
+        /// verified against Claude Code 2.1.220, where `--settings` merges
+        /// rather than replaces (their global hooks still ran).
+        #[test]
+        fn hooks_do_not_displace_the_users_own_claude_settings() {
+            let args = agent_args(
+                &AgentType::Claude,
+                Uuid::new_v4(),
+                &Resume::No,
+                false,
+                false,
+                Some("/opt/workbench"),
+            );
+            assert!(
+                !args.iter().any(|a| a.contains("settings.json")),
+                "workbench must not point Claude at a settings *file* it owns: {args:?}"
+            );
         }
 
         /// The bug this guards: `--continue` / `resume --last` are scoped to
@@ -922,6 +992,7 @@ mod tests {
                 &Resume::Conversation("conv".into()),
                 true,
                 true,
+                None,
             );
             assert_eq!(
                 with_perms,
@@ -1001,7 +1072,7 @@ mod tests {
             assert!(args(hermes.clone(), Resume::No, id, true).is_empty());
             // Dangerous mode is the agent's own flag.
             assert_eq!(
-                agent_args(&hermes, id, &Resume::No, true, true),
+                agent_args(&hermes, id, &Resume::No, true, true, None),
                 vec!["--yolo"]
             );
         }

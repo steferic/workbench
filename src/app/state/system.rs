@@ -599,6 +599,12 @@ pub struct SystemState {
     /// the PTY handles: it anchors which store belongs to this run of the
     /// agent, so a restart cannot keep mirroring the conversation it left.
     pub session_spawned_at: HashMap<Uuid, chrono::DateTime<chrono::Utc>>,
+    /// What each agent says it is doing, from its own lifecycle hooks (see
+    /// `crate::agent_status`). Absent for providers without a hook contract,
+    /// which keep the output-timing inference.
+    pub agent_status: HashMap<Uuid, crate::agent_status::AgentStatus>,
+    /// Last time the hook reports were re-read.
+    pub last_status_refresh: Instant,
     /// Last time the agent task logs were re-read.
     pub last_task_refresh: Instant,
     /// A task-log refresh is running; don't start a second one.
@@ -646,6 +652,8 @@ impl SystemState {
             sync_output_buffers: HashMap::new(),
             agent_tasks: HashMap::new(),
             session_spawned_at: HashMap::new(),
+            agent_status: HashMap::new(),
+            last_status_refresh: Instant::now(),
             last_task_refresh: Instant::now(),
             task_refresh_inflight: false,
             diff_stats: HashMap::new(),
@@ -679,6 +687,7 @@ impl SystemState {
         // new rollout on resume), and the old tracker would keep tailing the
         // one it left behind.
         self.agent_tasks.remove(&session_id);
+        self.agent_status.remove(&session_id);
         self.session_spawned_at
             .insert(session_id, chrono::Utc::now());
         self.raw_output_buffers.insert(
@@ -692,6 +701,7 @@ impl SystemState {
     /// Remove parser + raw output buffer + replay cache for a session
     pub fn remove_session_buffers(&mut self, session_id: &Uuid) {
         self.agent_tasks.remove(session_id);
+        self.agent_status.remove(session_id);
         self.session_spawned_at.remove(session_id);
         self.output_buffers.remove(session_id);
         self.raw_output_buffers.remove(session_id);

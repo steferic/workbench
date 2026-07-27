@@ -12,6 +12,7 @@ pub use system::{
 pub use types::*;
 pub use ui::{PinnedPaneState, UIState, WorkspaceUiState};
 
+use crate::agent_status::{Activity, Attention};
 use crate::models::{Session, SessionStatus, Workspace, WorkspaceStatus};
 use std::collections::HashMap;
 use tui_textarea::TextArea;
@@ -591,6 +592,65 @@ impl AppState {
         }
     }
 
+    /// What a session is doing, preferring what the agent reported over what
+    /// its output looks like.
+    ///
+    /// Hooks are authoritative while fresh: only the agent knows the
+    /// difference between thinking and being stopped at a permission prompt,
+    /// and both look like silence from out here. Providers without hooks (and
+    /// agents whose reports have gone stale) fall back to output timing, which
+    /// is what workbench always did.
+    pub fn activity(&self, session_id: Uuid) -> Activity {
+        let running = self
+            .get_session(session_id)
+            .map(|s| s.status == SessionStatus::Running)
+            .unwrap_or(false);
+        if !running {
+            return Activity::Exited;
+        }
+
+        if let Some(status) = self.system.agent_status.get(&session_id) {
+            if status.is_fresh(chrono::Utc::now()) && status.activity != Activity::Exited {
+                return status.activity;
+            }
+        }
+
+        if self.is_session_working(session_id) {
+            Activity::Working
+        } else {
+            Activity::Idle
+        }
+    }
+
+    /// The prose behind `activity`, when the agent supplied any.
+    pub fn activity_reason(&self, session_id: Uuid) -> Option<&str> {
+        let status = self.system.agent_status.get(&session_id)?;
+        status
+            .is_fresh(chrono::Utc::now())
+            .then(|| status.reason.as_str())
+    }
+
+    /// Sessions that stopped and are waiting on the user, newest report first.
+    pub fn sessions_needing_attention(&self) -> Vec<(Uuid, Attention)> {
+        let now = chrono::Utc::now();
+        let mut waiting: Vec<(Uuid, Attention, chrono::DateTime<chrono::Utc>)> = self
+            .system
+            .agent_status
+            .iter()
+            .filter(|(_, status)| status.is_fresh(now))
+            .filter_map(|(id, status)| {
+                let kind = status.activity.needs_attention()?;
+                let running = self
+                    .get_session(*id)
+                    .map(|s| s.status == SessionStatus::Running)
+                    .unwrap_or(false);
+                running.then_some((*id, kind, status.at))
+            })
+            .collect();
+        waiting.sort_by(|a, b| b.2.cmp(&a.2));
+        waiting.into_iter().map(|(id, kind, _)| (id, kind)).collect()
+    }
+
     /// Check if a workspace has sessions waiting to start in the startup queue
     pub fn is_workspace_loading(&self, workspace_id: Uuid) -> bool {
         self.system
@@ -645,10 +705,13 @@ impl AppState {
             .map(|s| s.id)
             .collect();
 
-        // Check which sessions are currently working (to avoid borrow issues)
+        // Sessions that cannot take new work. "Idle" here means free, so an
+        // agent stopped at a permission prompt does not qualify: it cannot
+        // read a consult until a human unblocks it, and offering it as the
+        // next idle target would just strand the message.
         let working_sessions: Vec<Uuid> = running_agent_sessions
             .iter()
-            .filter(|id| self.is_session_working(**id))
+            .filter(|id| !self.activity(**id).is_free())
             .copied()
             .collect();
 
@@ -737,5 +800,127 @@ impl AppState {
 impl Default for AppState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod activity_tests {
+    use super::*;
+    use crate::agent_status::{AgentStatus, Attention};
+    use crate::models::AgentType;
+
+    fn state_with_agent() -> (AppState, Uuid) {
+        let mut state = AppState::default();
+        let workspace = Workspace::new("w".into(), std::path::PathBuf::from("/tmp/w"));
+        let workspace_id = workspace.id;
+        let session = Session::new(workspace_id, AgentType::Claude, false);
+        let session_id = session.id;
+        state.data.workspaces.push(workspace);
+        state.data.sessions.insert(workspace_id, vec![session]);
+        (state, session_id)
+    }
+
+    fn report(state: &mut AppState, id: Uuid, activity: Activity, age_mins: i64) {
+        state.system.agent_status.insert(
+            id,
+            AgentStatus {
+                activity,
+                reason: "because".into(),
+                at: chrono::Utc::now() - chrono::TimeDelta::minutes(age_mins),
+                event: "test".into(),
+            },
+        );
+    }
+
+    /// The whole point: silence looks identical whether an agent is thinking
+    /// or stopped at a permission prompt. Only the agent can tell us.
+    #[test]
+    fn a_blocked_agent_is_not_mistaken_for_a_quiet_one() {
+        let (mut state, id) = state_with_agent();
+        // No output for a while — the old inference would call this idle.
+        assert_eq!(state.activity(id), Activity::Idle);
+
+        report(
+            &mut state,
+            id,
+            Activity::NeedsAttention(Attention::Permission),
+            0,
+        );
+        assert_eq!(
+            state.activity(id),
+            Activity::NeedsAttention(Attention::Permission)
+        );
+        assert_eq!(
+            state.sessions_needing_attention(),
+            vec![(id, Attention::Permission)]
+        );
+    }
+
+    #[test]
+    fn a_blocked_agent_is_not_offered_as_free_for_new_work() {
+        let (mut state, id) = state_with_agent();
+        report(&mut state, id, Activity::Idle, 0);
+        assert!(state.activity(id).is_free());
+
+        // It cannot read a consult until a human unblocks it.
+        report(&mut state, id, Activity::NeedsAttention(Attention::Input), 0);
+        assert!(!state.activity(id).is_free());
+        assert!(state.update_idle_queue().is_empty());
+        assert!(!state.data.idle_queue.contains(&id));
+    }
+
+    #[test]
+    fn stale_reports_hand_back_to_output_timing() {
+        let (mut state, id) = state_with_agent();
+        // An agent that died without a SessionEnd would otherwise look busy
+        // forever.
+        report(&mut state, id, Activity::Working, 45);
+        assert_eq!(state.activity(id), Activity::Idle, "stale report ignored");
+
+        report(&mut state, id, Activity::Working, 1);
+        assert_eq!(state.activity(id), Activity::Working);
+    }
+
+    #[test]
+    fn a_stopped_session_reports_nothing_regardless_of_its_last_hook() {
+        let (mut state, id) = state_with_agent();
+        report(&mut state, id, Activity::Working, 0);
+        if let Some(session) = state.get_session_mut(id) {
+            session.status = SessionStatus::Stopped;
+        }
+        assert_eq!(state.activity(id), Activity::Exited);
+        assert!(state.sessions_needing_attention().is_empty());
+    }
+
+    #[test]
+    fn the_most_recent_blocked_agent_is_surfaced_first() {
+        let (mut state, first) = state_with_agent();
+        let workspace_id = state.data.workspaces[0].id;
+        let second = Session::new(workspace_id, AgentType::Claude, false);
+        let second_id = second.id;
+        state
+            .data
+            .sessions
+            .get_mut(&workspace_id)
+            .unwrap()
+            .push(second);
+
+        report(
+            &mut state,
+            first,
+            Activity::NeedsAttention(Attention::Permission),
+            5,
+        );
+        report(
+            &mut state,
+            second_id,
+            Activity::NeedsAttention(Attention::Question),
+            1,
+        );
+
+        assert_eq!(
+            state.sessions_needing_attention(),
+            vec![(second_id, Attention::Question), (first, Attention::Permission)]
+        );
     }
 }

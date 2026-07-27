@@ -8,6 +8,7 @@ A TUI for managing AI agent workspaces and sessions. Run Claude, Codex, Gemini, 
 
 - Multiple workspaces, each with its own agents and terminals
 - Tasks pane: the selected agent's own task list, the prompt behind it, and live progress — with keys to ask that agent to add, change, or drop a task (Claude, Codex, opencode, hermes)
+- Live status reported by the agent itself: a Claude session stopped at a permission prompt is flagged `!` instead of looking idle, in its session row, its project row, and the status bar
 - Restart restores each agent's *own* conversation, so several agents in one project keep separate histories
 - Run agents in isolated git worktrees and merge their work back with one key
 - Parallel tasks: race several agents on the same prompt in separate worktrees

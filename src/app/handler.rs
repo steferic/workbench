@@ -110,6 +110,7 @@ pub fn process_action(
                 }
             }
 
+            refresh_agent_status(state);
             tasks::sync_selection(state);
             refresh_agent_tasks(state, action_tx);
 
@@ -357,6 +358,58 @@ pub fn process_action(
 /// is usually a stat per agent (nothing new to parse), so this is cheap; it
 /// still runs off-thread because locating a log can touch many directories.
 const TASK_REFRESH_INTERVAL: Duration = Duration::from_millis(1000);
+
+/// How often agent hook reports are re-read. Fast enough that a permission
+/// prompt surfaces while you are still looking at the pane, cheap enough to
+/// run inline: a handful of small files per workspace with a live agent.
+const STATUS_REFRESH_INTERVAL: Duration = Duration::from_millis(300);
+
+/// Pull in what agents reported about themselves since the last pass.
+///
+/// The hook wrote one file per session keyed by the short session id it
+/// inherited through `WORKBENCH_SESSION`; this resolves those back to
+/// sessions and drops reports for sessions that no longer exist.
+fn refresh_agent_status(state: &mut AppState) {
+    if state.system.last_status_refresh.elapsed() < STATUS_REFRESH_INTERVAL {
+        return;
+    }
+    state.system.last_status_refresh = std::time::Instant::now();
+
+    // Only workspaces with a running agent can have anything new to say.
+    let live: Vec<(uuid::Uuid, HashMap<String, uuid::Uuid>)> = state
+        .data
+        .workspaces
+        .iter()
+        .filter_map(|workspace| {
+            let sessions = state.data.sessions.get(&workspace.id)?;
+            let by_short: HashMap<String, uuid::Uuid> = sessions
+                .iter()
+                .filter(|s| {
+                    s.agent_type.is_agent() && s.status == crate::models::SessionStatus::Running
+                })
+                .map(|s| (s.short_id(), s.id))
+                .collect();
+            (!by_short.is_empty()).then_some((workspace.id, by_short))
+        })
+        .collect();
+
+    for (workspace_id, by_short) in live {
+        for (short_id, status) in crate::agent_status::load_all(&workspace_id.to_string()) {
+            let Some(session_id) = by_short.get(&short_id) else {
+                continue;
+            };
+            // A report older than the current process describes the previous
+            // one: restarting a session reuses its short id, so the file left
+            // by the run before it must not be read as this run's state.
+            if let Some(spawned_at) = state.system.session_spawned_at.get(session_id) {
+                if status.at < *spawned_at {
+                    continue;
+                }
+            }
+            state.system.agent_status.insert(*session_id, status);
+        }
+    }
+}
 
 /// Which sessions a refresh pass reads, and in what order.
 struct TaskRefreshPlan {

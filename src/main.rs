@@ -1,3 +1,4 @@
+mod agent_status;
 mod agent_tasks;
 mod app;
 mod audio;
@@ -98,6 +99,11 @@ enum Commands {
     },
     /// Set this session's alias for agent-to-agent addressing
     Alias { name: String },
+    /// Report an agent lifecycle event (invoked by the agent's own hooks)
+    Hook {
+        /// The provider's event name, e.g. `Stop` or `Notification`
+        event: String,
+    },
 }
 
 #[tokio::main]
@@ -144,6 +150,7 @@ async fn main() -> Result<()> {
             wait,
             timeout,
         }) => cli::cmd_replies(ticket, wait, timeout)?,
+        Some(Commands::Hook { event }) => cli::cmd_hook(&event),
         Some(Commands::Alias { name }) => cli::cmd_alias(name)?,
         None => {
             // Load config to get default, CLI flag overrides

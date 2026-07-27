@@ -187,9 +187,19 @@ fn create_workspace_item<'a>(
     // Check if workspace is loading (has pending sessions in startup queue)
     let is_loading = state.is_workspace_loading(ws.id);
 
+    // An agent in this project stopped for the user. It outranks the working
+    // spinner: this is the project you should switch to, and it is easy to
+    // miss when you are looking at a different one.
+    let waiting_here = state
+        .sessions_needing_attention()
+        .iter()
+        .any(|(session_id, _)| state.workspace_id_for_session(*session_id) == Some(ws.id));
+
     // Working/Loading indicator (spinner) - fixed width so name doesn't shift
     // Blue = loading (sessions starting up), Yellow = working (actively processing)
-    let working_indicator = if is_loading && !is_paused {
+    let working_indicator = if waiting_here {
+        Span::styled("! ", Style::default().fg(t.warning).add_modifier(Modifier::BOLD))
+    } else if is_loading && !is_paused {
         Span::styled(
             format!("{} ", state.spinner_char()),
             Style::default().fg(t.info),

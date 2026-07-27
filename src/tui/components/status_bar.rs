@@ -294,6 +294,33 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
             )],
         ),
         InputMode::Normal => {
+            // An agent stopped for you outranks key hints: it is the one thing
+            // on screen that is costing time while it goes unread. The agent's
+            // own words say what it wants, which "needs approval" cannot.
+            let waiting = state.sessions_needing_attention().first().copied().map(
+                |(session_id, kind)| {
+                    let name = state
+                        .get_session(session_id)
+                        .map(|s| s.display_name())
+                        .unwrap_or_else(|| "An agent".to_string());
+                    let detail = state
+                        .activity_reason(session_id)
+                        .filter(|reason| !reason.is_empty())
+                        .map(str::to_string)
+                        .unwrap_or_else(|| kind.label().to_string());
+                    (
+                        vec![Span::styled(
+                            format!(" {name} "),
+                            Style::default()
+                                .fg(t.on_accent)
+                                .bg(t.warning)
+                                .add_modifier(Modifier::BOLD),
+                        )],
+                        vec![Span::styled(detail, Style::default().fg(t.warning))],
+                    )
+                },
+            );
+
             let context_hints = match state.ui.focus {
                 FocusPanel::WorkspaceList => vec![
                     Span::styled("[n]", Style::default().fg(t.accent)),
@@ -452,7 +479,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
                 ));
             }
 
-            (status, context_hints)
+            waiting.unwrap_or((status, context_hints))
         }
     };
 

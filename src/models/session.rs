@@ -156,7 +156,13 @@ impl Session {
     }
 
     pub fn short_id(&self) -> String {
-        self.id.to_string()[..8].to_string()
+        Self::short_id_of(self.id)
+    }
+
+    /// The address form workbench injects as `WORKBENCH_SESSION`, derivable
+    /// from an id alone (a deleted session has no struct left to ask).
+    pub fn short_id_of(id: Uuid) -> String {
+        id.to_string()[..8].to_string()
     }
 
     pub fn duration(&self) -> chrono::Duration {
