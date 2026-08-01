@@ -111,6 +111,7 @@ pub fn process_action(
             }
 
             refresh_agent_status(state);
+            remote_tick(state, action_tx);
             super::todo_dispatch::tick(state, action_tx);
             tasks::sync_selection(state);
             refresh_agent_tasks(state, action_tx);
@@ -410,6 +411,101 @@ fn refresh_agent_status(state: &mut AppState) {
                 }
             }
             state.system.agent_status.insert(*session_id, status);
+        }
+    }
+}
+
+/// Start the tailnet server if we can, publish what the phone should see, and
+/// apply whatever it asked for.
+///
+/// Commands are applied here rather than in the server thread so they take the
+/// same path as the TUI's own keys: no locks, no racing the event loop.
+fn remote_tick(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) {
+    use crate::remote::Remote;
+
+    if !state.system.remote_tried {
+        state.system.remote_tried = true;
+        let port = state.system.user_config.remote_port;
+        if port != 0 {
+            // Kept in the config so the phone's bookmark survives a restart.
+            if state.system.user_config.remote_token.is_empty() {
+                state.system.user_config.remote_token = crate::remote::new_token();
+                if let Err(err) =
+                    crate::config::user_config::save_user_config(&state.system.user_config)
+                {
+                    crate::logger::warn(format!("could not save the phone token: {err}"));
+                }
+            }
+            let token = state.system.user_config.remote_token.clone();
+            let (tx, rx) = mpsc::unbounded_channel();
+            match Remote::start(port, token, state.system.remote_state.clone(), tx, action_tx.clone())
+            {
+                Ok(remote) => {
+                    crate::logger::info(format!("phone view on {}", remote.config.url()));
+                    state.system.remote = Some(remote);
+                    state.system.remote_commands = Some(rx);
+                }
+                // No tailnet, or the port is taken: the TUI carries on without
+                // it rather than refusing to start.
+                Err(err) => crate::logger::warn(format!("phone view unavailable: {err}")),
+            }
+        }
+    }
+
+    crate::remote::publish(state, &state.system.remote_state.clone());
+
+    let mut pending = Vec::new();
+    if let Some(rx) = state.system.remote_commands.as_mut() {
+        while let Ok(command) = rx.try_recv() {
+            pending.push(command);
+        }
+    }
+    for command in pending {
+        apply_remote(state, command, action_tx);
+    }
+}
+
+/// Everything the phone can ask for, in terms of what the keyboard could do.
+fn apply_remote(
+    state: &mut AppState,
+    command: crate::remote::RemoteCommand,
+    action_tx: &mpsc::UnboundedSender<Action>,
+) {
+    use crate::remote::RemoteCommand;
+
+    let agent = match &command {
+        RemoteCommand::Todo { agent, .. }
+        | RemoteCommand::Reply { agent, .. }
+        | RemoteCommand::Approve { agent }
+        | RemoteCommand::Deny { agent } => agent.clone(),
+    };
+    let Some(session_id) = crate::remote::session_for(state, &agent) else {
+        crate::logger::warn(format!("phone asked for unknown agent {agent}"));
+        return;
+    };
+
+    match command {
+        RemoteCommand::Todo { text, .. } => {
+            if let Some(session) = state.get_session_mut(session_id) {
+                session.todo_queue.add(text.clone());
+            }
+            crate::logger::info(format!("phone queued for {agent}: {text}"));
+            super::handlers::save_state(state, "failed to save a queued todo");
+        }
+        RemoteCommand::Reply { text, .. } => {
+            crate::logger::info(format!("phone replied to {agent}: {text}"));
+            dispatch_action(action_tx, Action::SendInput(session_id, text.into_bytes()));
+            dispatch_action(action_tx, Action::SendInput(session_id, vec![b'\r']));
+        }
+        // Prompts are keyboard-driven: Enter takes the highlighted choice,
+        // Esc backs out. Sending those is exactly what your hands would do.
+        RemoteCommand::Approve { .. } => {
+            crate::logger::info(format!("phone approved {agent}"));
+            dispatch_action(action_tx, Action::SendInput(session_id, vec![b'\r']));
+        }
+        RemoteCommand::Deny { .. } => {
+            crate::logger::info(format!("phone denied {agent}"));
+            dispatch_action(action_tx, Action::SendInput(session_id, vec![0x1b]));
         }
     }
 }

@@ -8,6 +8,7 @@ A TUI for managing AI agent workspaces and sessions. Run Claude, Codex, Gemini, 
 
 - Multiple workspaces, each with its own agents and terminals
 - TODO pane: queue up work for an agent and it gets through the list one item at a time, sending the next when a turn ends — unless the agent is blocked on you or you are mid-conversation with it. The agent's own steps show under whatever is running (Claude, Codex, opencode, hermes)
+- Phone view over Tailscale: every agent's status across projects, queue work, and approve or deny a blocked agent from your phone — served on the tailnet address only, never a public port
 - Live status reported by the agent itself: a session stopped at a permission prompt is flagged `!` instead of looking idle, in its session row, its project row, and the status bar (Claude; Codex in ⚡ mode, which is what lets its hooks run)
 - Restart restores each agent's *own* conversation, so several agents in one project keep separate histories
 - Run agents in isolated git worktrees and merge their work back with one key

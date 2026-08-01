@@ -10,6 +10,7 @@ mod logger;
 mod models;
 mod persistence;
 mod pty;
+mod remote;
 mod theme;
 mod tui;
 

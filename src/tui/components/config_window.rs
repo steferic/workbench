@@ -96,6 +96,21 @@ fn render_quickref_tab(frame: &mut Frame, area: Rect, state: &AppState) {
         ))
     };
 
+    // -- Phone --
+    if let Some(remote) = state.system.remote.as_ref() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled("  Phone (tailnet only)", section_style)));
+        lines.push(sep());
+        lines.push(Line::from(vec![
+            Span::styled("  open on your phone ", key_style),
+            Span::styled(remote.config.url(), Style::default().fg(t.accent)),
+        ]));
+        lines.push(Line::from(Span::styled(
+            "  Reachable from your tailnet devices only. The token changes each start.",
+            Style::default().fg(t.fg_dim),
+        )));
+    }
+
     // -- Navigation --
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled("  Navigation", section_style)));

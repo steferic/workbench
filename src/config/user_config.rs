@@ -57,6 +57,14 @@ pub struct UserConfig {
     pub global_hotkeys: HashMap<String, String>,
     #[serde(default = "default_scrollback_mb")]
     pub scrollback_mb: usize,
+    /// Port for the phone view, served on the Tailscale address only. Set to
+    /// 0 to turn it off.
+    #[serde(default = "default_remote_port")]
+    pub remote_port: u16,
+    /// Secret in the phone's bookmark. Generated on first use and kept, so the
+    /// bookmark survives restarts; delete the line to rotate it.
+    #[serde(default)]
+    pub remote_token: String,
     #[serde(default = "default_true")]
     pub use_alternate_screen: bool,
 
@@ -201,6 +209,10 @@ fn default_scrollback_mb() -> usize {
     2
 }
 
+fn default_remote_port() -> u16 {
+    8765
+}
+
 impl UserConfig {
     /// Derive the internal scrollback parameters from the single `scrollback_mb` value.
     /// Call this after loading config from disk.
@@ -227,6 +239,8 @@ impl Default for UserConfig {
             agents: default_agents(),
             global_hotkeys: default_global_hotkeys(),
             scrollback_mb: default_scrollback_mb(),
+            remote_port: default_remote_port(),
+            remote_token: String::new(),
             use_alternate_screen: default_true(),
             scrollback_buffer_kb: 0,
             replay_parser_rows: 0,
