@@ -101,8 +101,10 @@ enum Commands {
     Alias { name: String },
     /// Report an agent lifecycle event (invoked by the agent's own hooks)
     Hook {
-        /// The provider's event name, e.g. `Stop` or `Notification`
-        event: String,
+        /// The provider's event name, e.g. `Stop` or `Notification`. Omitted
+        /// by providers whose hook command cannot carry arguments (Codex),
+        /// where the event is read from the payload instead.
+        event: Option<String>,
     },
 }
 
@@ -150,7 +152,7 @@ async fn main() -> Result<()> {
             wait,
             timeout,
         }) => cli::cmd_replies(ticket, wait, timeout)?,
-        Some(Commands::Hook { event }) => cli::cmd_hook(&event),
+        Some(Commands::Hook { event }) => cli::cmd_hook(event.as_deref()),
         Some(Commands::Alias { name }) => cli::cmd_alias(name)?,
         None => {
             // Load config to get default, CLI flag overrides

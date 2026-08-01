@@ -250,7 +250,7 @@ fn print_reply(reply: &Reply) {
 /// the exit status is always success. And it must be quick — it runs inline
 /// on events as frequent as every tool call, so it does one small read and one
 /// atomic write, with no locking and no network.
-pub fn cmd_hook(event: &str) {
+pub fn cmd_hook(event: Option<&str>) {
     use std::io::Read;
 
     // The hook inherits its PTY's environment, which is how the event knows
@@ -270,6 +270,16 @@ pub fn cmd_hook(event: &str) {
         serde_json::from_str::<serde_json::Value>(&raw).ok()
     } else {
         None
+    };
+
+    // Codex's hook command takes no arguments, so the event name arrives in
+    // the payload instead; both providers put it in `hook_event_name`.
+    let from_payload = payload
+        .as_ref()
+        .and_then(|p| p.get("hook_event_name"))
+        .and_then(serde_json::Value::as_str);
+    let Some(event) = event.or(from_payload) else {
+        return;
     };
 
     if let Some(status) = crate::agent_status::interpret(event, payload.as_ref()) {

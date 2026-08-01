@@ -23,7 +23,7 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::comms;
 
@@ -168,7 +168,7 @@ pub fn forget(workspace_id: &str, session_short_id: &str) {
 }
 
 // ---------------------------------------------------------------------------
-// Claude Code hook events
+// Provider hook wiring
 // ---------------------------------------------------------------------------
 
 /// The hook events workbench installs. Verified to fire on Claude Code
@@ -188,11 +188,28 @@ pub const CLAUDE_HOOK_EVENTS: [&str; 7] = [
     "SessionEnd",
 ];
 
+/// The hook events Codex is given. Verified on Codex 0.145.0.
+///
+/// Codex has no session-end event — a dead process is something workbench can
+/// see for itself — and `SubagentStop` is skipped for the same reason as
+/// Claude's: it can arrive after the parent's `Stop`.
+pub const CODEX_HOOK_EVENTS: [&str; 7] = [
+    "SessionStart",
+    "UserPromptSubmit",
+    "PreToolUse",
+    "PostToolUse",
+    "PermissionRequest",
+    "PreCompact",
+    "Stop",
+];
+
 /// Turn a hook event into a state.
 ///
-/// `payload` is the JSON Claude writes to the hook's stdin; only `message`
-/// (Notification) and `tool_name` (Pre/PostToolUse) are read, and both are
-/// optional — a payload we cannot parse still yields the event's base state.
+/// The event vocabulary overlaps across providers by design — both Claude and
+/// Codex send `Stop`, `PreToolUse` and friends — so one mapping serves both.
+/// `payload` is the JSON the provider writes to the hook's stdin; every field
+/// read here is optional, so a payload we cannot parse still yields the
+/// event's base state.
 pub fn interpret(event: &str, payload: Option<&serde_json::Value>) -> Option<AgentStatus> {
     let field = |name: &str| {
         payload
@@ -218,7 +235,30 @@ pub fn interpret(event: &str, payload: Option<&serde_json::Value>) -> Option<Age
                 message.to_string(),
             )
         }
-        "Stop" => (Activity::Idle, "finished its turn".to_string()),
+        // Codex's own permission gate — a stronger signal than Claude's
+        // prose, since it says outright that approval is what is wanted.
+        "PermissionRequest" => (
+            Activity::NeedsAttention(Attention::Permission),
+            field("tool_name")
+                .map(|tool| format!("wants to run {tool}"))
+                .unwrap_or_else(|| "needs approval".to_string()),
+        ),
+        "PreCompact" | "PostCompact" | "SubagentStart" => {
+            (Activity::Working, "compacting context".to_string())
+        }
+        "Stop" => {
+            // A Stop raised *by* a stop hook means the turn is continuing,
+            // not finishing.
+            let re_entered = payload
+                .and_then(|p| p.get("stop_hook_active"))
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            if re_entered {
+                (Activity::Working, "continuing after a stop hook".to_string())
+            } else {
+                (Activity::Idle, "finished its turn".to_string())
+            }
+        }
         "SessionEnd" => (Activity::Exited, "session ended".to_string()),
         _ => return None,
     };
@@ -245,6 +285,78 @@ fn classify_notification(message: &str) -> Attention {
     }
 }
 
+/// The `-c` overrides that point Codex's hooks at our wrapper script.
+///
+/// Codex takes hook config as TOML on the command line, so nothing is written
+/// to the user's `~/.codex/config.toml` — which matters, since that file
+/// commonly already chains other tools through `notify`.
+pub fn codex_hook_args(script: &Path) -> Vec<String> {
+    let script = script.to_string_lossy();
+    CODEX_HOOK_EVENTS
+        .iter()
+        .flat_map(|event| {
+            [
+                "-c".to_string(),
+                // `command` must be a bare string: Codex rejects an array
+                // outright, and silently declines to run a string carrying
+                // arguments. Hence the wrapper.
+                format!(r#"hooks.{event}=[{{hooks=[{{type="command",command="{script}",timeout=30}}]}}]"#),
+            ]
+        })
+        .collect()
+}
+
+/// Where the Codex wrapper can live.
+///
+/// Codex runs a hook command by splitting it, so a path containing whitespace
+/// never executes — and it says nothing when that happens. On macOS the
+/// natural home (`~/Library/Application Support/workbench`) has a space in it,
+/// so fall back to a dotted directory, and give up rather than install a hook
+/// that will silently never run.
+fn codex_hook_dir(config_dir: Option<&Path>, home: Option<&Path>) -> Option<PathBuf> {
+    let candidates = [
+        config_dir.map(|dir| dir.join("workbench").join("hooks")),
+        home.map(|dir| dir.join(".workbench").join("hooks")),
+    ];
+    candidates
+        .into_iter()
+        .flatten()
+        .find(|path| !path.to_string_lossy().contains(char::is_whitespace))
+}
+
+/// Write (or refresh) the argument-free script Codex's hooks invoke, and
+/// return its path.
+///
+/// One script serves every event: the payload names it in `hook_event_name`,
+/// and `workbench hook` reads it from there.
+pub fn ensure_codex_hook_script(workbench_bin: &str) -> Result<PathBuf> {
+    let dir = codex_hook_dir(dirs::config_dir().as_deref(), dirs::home_dir().as_deref())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "no whitespace-free directory for the hook script; Codex would never run it"
+            )
+        })?;
+    fs::create_dir_all(&dir)?;
+    let path = dir.join("codex-hook.sh");
+
+    let body = format!(
+        "#!/bin/sh\n\
+         # Generated by workbench. Codex hook commands take no arguments, so\n\
+         # this passes the payload through and lets the event name come from it.\n\
+         exec {} hook\n",
+        shell_quote(workbench_bin)
+    );
+    if fs::read_to_string(&path).ok().as_deref() != Some(body.as_str()) {
+        comms::write_atomic(&path, body.as_bytes())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755))?;
+        }
+    }
+    Ok(path)
+}
+
 /// Whether an agent command can be asked to report its status.
 ///
 /// Only Claude has a hook contract wired up so far, and only if its build
@@ -256,6 +368,8 @@ pub fn supports_status_hooks(command: &str) -> bool {
     static CLAUDE: OnceLock<bool> = OnceLock::new();
     match command {
         "claude" => *CLAUDE.get_or_init(|| help_mentions_settings(command)),
+        // Gated further at the spawn site: Codex needs its hooks trusted.
+        "codex" => true,
         _ => false,
     }
 }
@@ -381,6 +495,78 @@ mod tests {
     }
 
     #[test]
+    fn the_codex_wrapper_avoids_paths_codex_cannot_run() {
+        // Verified against Codex 0.145.0: a hook command containing a space
+        // never executes and nothing is reported, so macOS's
+        // "Application Support" must not be used.
+        let mac_config = PathBuf::from("/Users/x/Library/Application Support");
+        let home = PathBuf::from("/Users/x");
+        assert_eq!(
+            codex_hook_dir(Some(&mac_config), Some(&home)),
+            Some(PathBuf::from("/Users/x/.workbench/hooks"))
+        );
+
+        // A whitespace-free config dir (Linux) is used directly.
+        let linux_config = PathBuf::from("/home/x/.config");
+        assert_eq!(
+            codex_hook_dir(Some(&linux_config), Some(&home)),
+            Some(PathBuf::from("/home/x/.config/workbench/hooks"))
+        );
+
+        // Nowhere safe: no hook is better than one that silently never runs.
+        let spaced_home = PathBuf::from("/Users/my name");
+        assert_eq!(codex_hook_dir(Some(&mac_config), Some(&spaced_home)), None);
+    }
+
+    #[test]
+    fn codex_permission_requests_are_the_clearest_attention_signal() {
+        let asked = interpret(
+            "PermissionRequest",
+            payload(serde_json::json!({"tool_name": "shell"})).as_ref(),
+        )
+        .unwrap();
+        assert_eq!(
+            asked.activity,
+            Activity::NeedsAttention(Attention::Permission)
+        );
+        assert_eq!(asked.reason, "wants to run shell");
+    }
+
+    #[test]
+    fn a_stop_raised_by_a_stop_hook_is_not_the_end_of_the_turn() {
+        let finished = interpret(
+            "Stop",
+            payload(serde_json::json!({"stop_hook_active": false})).as_ref(),
+        )
+        .unwrap();
+        assert_eq!(finished.activity, Activity::Idle);
+
+        // Codex re-enters Stop while a stop hook drives more work; calling
+        // that idle would advertise the agent as free mid-turn.
+        let continuing = interpret(
+            "Stop",
+            payload(serde_json::json!({"stop_hook_active": true})).as_ref(),
+        )
+        .unwrap();
+        assert_eq!(continuing.activity, Activity::Working);
+    }
+
+    #[test]
+    fn codex_hook_args_are_bare_command_strings() {
+        let args = codex_hook_args(Path::new("/cfg/workbench/hooks/codex-hook.sh"));
+        assert_eq!(args.len(), CODEX_HOOK_EVENTS.len() * 2);
+        assert_eq!(args[0], "-c");
+        // Codex rejects an array outright and silently declines a string that
+        // carries arguments, so the command must be exactly the script path.
+        assert_eq!(
+            args[1],
+            r#"hooks.SessionStart=[{hooks=[{type="command",command="/cfg/workbench/hooks/codex-hook.sh",timeout=30}]}]"#
+        );
+        assert!(args.iter().any(|a| a.starts_with("hooks.PermissionRequest=")));
+        assert!(!args.iter().any(|a| a.contains("SessionEnd")));
+    }
+
+    #[test]
     fn only_verified_events_are_installed() {
         let settings = claude_hook_settings("/usr/local/bin/workbench");
         let parsed: serde_json::Value = serde_json::from_str(&settings).unwrap();
@@ -408,7 +594,7 @@ mod tests {
     fn providers_without_a_hook_contract_are_left_alone() {
         // Codex's `notify` would clobber whatever the user already has
         // configured, so it stays on output-timing inference for now.
-        for command in ["codex", "gemini", "grok", "opencode", "bash"] {
+        for command in ["gemini", "grok", "opencode", "bash"] {
             assert!(!supports_status_hooks(command), "{command}");
         }
     }

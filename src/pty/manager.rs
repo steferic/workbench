@@ -251,6 +251,13 @@ fn agent_args(
             }
         }
         "codex" => {
+            // Codex only runs hooks it has been told to trust, so status
+            // reporting rides along with the session's existing consent: a
+            // ⚡ session already opted out of approval gates, and an ordinary
+            // one keeps the output-timing inference rather than being handed
+            // a flag named "dangerously".
+            let hook_script = hook_bin.filter(|_| dangerously_skip_permissions);
+
             // Codex resumes via a subcommand, so it has to come first.
             match resume {
                 Resume::No => {}
@@ -265,6 +272,10 @@ fn agent_args(
             }
             if dangerously_skip_permissions {
                 args.push("--dangerously-bypass-approvals-and-sandbox".into());
+            }
+            if let Some(script) = hook_script {
+                args.push("--dangerously-bypass-hook-trust".into());
+                args.extend(crate::agent_status::codex_hook_args(Path::new(script)));
             }
         }
         "hermes" => {
@@ -359,13 +370,26 @@ impl PtyManager {
         let claude_id_free = agent_type.command() == "claude"
             && resume == Resume::No
             && crate::agent_tasks::claude_log_for_session(&session_id.to_string()).is_none();
-        // Agents call this binary back on lifecycle events — but only where
-        // the agent can be told to, and only if we know our own path. Anything
-        // else simply reports nothing and keeps the output-timing inference.
+        // Agents call back on lifecycle events — Claude runs this binary
+        // directly, Codex runs a generated wrapper because its hook command
+        // cannot carry the event name. Anything we cannot wire up simply
+        // reports nothing and keeps the output-timing inference.
         let hook_bin = std::env::current_exe()
             .ok()
+            .map(|p| p.to_string_lossy().into_owned())
             .filter(|_| crate::agent_status::supports_status_hooks(agent_type.command()))
-            .map(|p| p.to_string_lossy().into_owned());
+            .and_then(|bin| match agent_type.command() {
+                // Only written for sessions that will actually use it: Codex
+                // hooks need trust this session has already waived.
+                "codex" if !dangerously_skip_permissions => None,
+                "codex" => crate::agent_status::ensure_codex_hook_script(&bin)
+                    .map_err(|err| {
+                        crate::logger::warn(format!("codex hook script unavailable: {err}"))
+                    })
+                    .ok()
+                    .map(|path| path.to_string_lossy().into_owned()),
+                _ => Some(bin),
+            });
         for arg in agent_args(
             &agent_type,
             session_id,
@@ -898,6 +922,48 @@ mod tests {
                 settings["hooks"]["Notification"][0]["hooks"][0]["command"],
                 "'/opt/workbench' hook Notification"
             );
+        }
+
+        #[test]
+        fn codex_gets_hooks_only_when_the_session_already_bypasses_approval() {
+            let id = Uuid::new_v4();
+            let script = Some("/cfg/hooks/codex-hook.sh");
+
+            // Codex refuses untrusted hooks, so an ordinary session would be
+            // handed a "dangerously" flag it never asked for.
+            let ordinary = agent_args(&AgentType::Codex, id, &Resume::No, false, false, script);
+            assert!(!ordinary.iter().any(|a| a.contains("hooks.")), "{ordinary:?}");
+            assert!(
+                !ordinary
+                    .iter()
+                    .any(|a| a == "--dangerously-bypass-hook-trust"),
+                "{ordinary:?}"
+            );
+
+            let dangerous = agent_args(&AgentType::Codex, id, &Resume::No, true, false, script);
+            assert!(dangerous
+                .iter()
+                .any(|a| a == "--dangerously-bypass-hook-trust"));
+            assert!(dangerous
+                .iter()
+                .any(|a| a.starts_with("hooks.PermissionRequest=")));
+        }
+
+        #[test]
+        fn codex_hook_flags_follow_the_resume_subcommand() {
+            let args = agent_args(
+                &AgentType::Codex,
+                Uuid::new_v4(),
+                &Resume::Conversation("conv".into()),
+                true,
+                false,
+                Some("/cfg/hooks/codex-hook.sh"),
+            );
+            // `resume` is a subcommand: anything before it is a parse error.
+            assert_eq!(args[0], "resume");
+            assert_eq!(args[1], "conv");
+            let hooks_at = args.iter().position(|a| a.starts_with("hooks.")).unwrap();
+            assert!(hooks_at > 1, "{args:?}");
         }
 
         #[test]
