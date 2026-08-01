@@ -45,6 +45,11 @@ pub struct Session {
     /// the directory, which collides when a project runs several agents.
     #[serde(default)]
     pub provider_session_id: Option<String>,
+    /// Work queued for this agent, dispatched one item at a time as its turns
+    /// end (see `app::todo_dispatch`). Workbench's own state, unlike the
+    /// mirrored task list the agent maintains for itself.
+    #[serde(default)]
+    pub todo_queue: super::TodoQueue,
 }
 
 impl Session {
@@ -68,6 +73,7 @@ impl Session {
             worktree_viewer_for: None,
             alias: None,
             provider_session_id: None,
+            todo_queue: super::TodoQueue::default(),
         }
     }
 
@@ -93,6 +99,7 @@ impl Session {
             worktree_viewer_for: None,
             alias: None,
             provider_session_id: None,
+            todo_queue: super::TodoQueue::default(),
         }
     }
 
@@ -119,6 +126,7 @@ impl Session {
             worktree_viewer_for: None,
             alias: None,
             provider_session_id: None,
+            todo_queue: super::TodoQueue::default(),
         }
     }
 
@@ -139,6 +147,7 @@ impl Session {
             worktree_viewer_for: Some(viewing_session_id),
             alias: None,
             provider_session_id: None,
+            todo_queue: super::TodoQueue::default(),
         }
     }
 

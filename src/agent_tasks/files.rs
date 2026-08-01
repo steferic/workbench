@@ -77,17 +77,11 @@ pub(super) fn ingest_claude(batches: &mut BatchBuilder, v: &Value) {
                         if subject.is_empty() {
                             continue;
                         }
-                        let detail = input
-                            .get("description")
-                            .and_then(Value::as_str)
-                            .filter(|s| !s.is_empty())
-                            .map(str::to_string);
                         let at = batches.push_task(
                             AgentTask {
                                 // Provisional until the tool_result names it.
                                 id: String::new(),
                                 subject,
-                                detail,
                                 state: TaskState::Pending,
                             },
                             ts,
@@ -132,7 +126,6 @@ pub(super) fn ingest_claude(batches: &mut BatchBuilder, v: &Value) {
                                 Some(AgentTask {
                                     id: (i + 1).to_string(),
                                     subject: subject.to_string(),
-                                    detail: None,
                                     state: todo
                                         .get("status")
                                         .and_then(Value::as_str)
@@ -308,7 +301,6 @@ pub(super) fn ingest_codex(batches: &mut BatchBuilder, v: &Value) {
                     Some(AgentTask {
                         id: (i + 1).to_string(),
                         subject: subject.to_string(),
-                        detail: None,
                         state: step
                             .get("status")
                             .and_then(Value::as_str)

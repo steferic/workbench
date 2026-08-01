@@ -95,15 +95,13 @@ impl UtilitySection {
     }
 }
 
-/// How a composed message will steer the selected agent's task list.
+/// What the text being composed will do to the queue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskEdit {
-    /// Append a new task to the agent's list.
+    /// Append a new item.
     Add,
-    /// Replace what the selected task means.
+    /// Replace the selected item's text.
     Rewrite,
-    /// Ask the agent to drop the selected task.
-    Drop,
 }
 
 /// Tab selection for the tasks pane

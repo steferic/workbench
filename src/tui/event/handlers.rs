@@ -286,11 +286,15 @@ impl EventHandler {
                 }
             }
 
-            // -- Agents tab (live mirror of each agent's task list) --
+            // -- TODO tab (the queue this agent works through) --
             KeyCode::Enter => Action::FocusSelectedTaskAgent,
             KeyCode::Char('n') => Action::EnterTaskEditMode(TaskEdit::Add),
             KeyCode::Char('e') => Action::EnterTaskEditMode(TaskEdit::Rewrite),
-            KeyCode::Char('d') => Action::EnterTaskEditMode(TaskEdit::Drop),
+            KeyCode::Char('d') => Action::DeleteSelectedTodo,
+            KeyCode::Char('p') => Action::ToggleTodoQueuePaused,
+            KeyCode::Char('c') => Action::ClearCompletedTodos,
+            KeyCode::Char('J') => Action::MoveSelectedTodo(1),
+            KeyCode::Char('K') => Action::MoveSelectedTodo(-1),
 
             KeyCode::Char('h') => Action::EnterConfigWindow,
             KeyCode::Char('?') => Action::EnterConfigWindow,

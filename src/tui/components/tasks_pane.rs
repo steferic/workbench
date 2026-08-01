@@ -1,13 +1,14 @@
-//! Tasks pane — a live mirror of what the selected agent is doing.
+//! Tasks pane — the work queued for the selected agent, and how it is going.
 //!
 //! It follows the Sessions pane above: whichever agent the session cursor is
-//! on is the one whose task lists appear here. Rows come from
-//! `app::tasks_view` so navigation and rendering can never disagree about what
-//! is on screen. Nothing here mutates a task list: the agent owns it (see
-//! `handlers::tasks`).
+//! on is the one whose queue appears here. Your items are the pane; under the
+//! one currently running, the agent's own steps show as progress detail. Rows
+//! come from `app::tasks_view` so navigation and rendering can never disagree
+//! about what is on screen.
 
 use crate::agent_tasks::TaskState;
 use crate::app::{tasks_view, AppState, FocusPanel, TaskRow, TasksTab};
+use crate::models::TodoState;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
@@ -26,23 +27,28 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     };
 
     let rows = tasks_view::rows(state);
-    let (open, total) = task_counts(state);
+    let (left, total) = queue_counts(state);
 
-    let title_line = Line::from(vec![
-        Span::raw(" Tasks "),
-        if total > 0 {
-            Span::styled(
-                format!("({open}/{total}) "),
-                if open > 0 {
-                    Style::default().fg(t.active)
-                } else {
-                    Style::default().fg(t.fg_faint)
-                },
-            )
-        } else {
-            Span::raw("")
-        },
-    ]);
+    let mut title_spans = vec![Span::raw(" TODO ")];
+    if total > 0 {
+        title_spans.push(Span::styled(
+            format!("({left} left) "),
+            if left > 0 {
+                Style::default().fg(t.active)
+            } else {
+                Style::default().fg(t.fg_faint)
+            },
+        ));
+    }
+    // Why nothing is moving, when nothing is moving — a queue that silently
+    // sits there is indistinguishable from a broken one.
+    if let Some(reason) = holding_reason(state) {
+        title_spans.push(Span::styled(
+            format!("{reason} "),
+            Style::default().fg(t.warning),
+        ));
+    }
+    let title_line = Line::from(title_spans);
 
     let block = Block::default()
         .title(title_line)
@@ -99,16 +105,29 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     frame.render_stateful_widget(list, list_area, &mut list_state);
 }
 
-/// Open vs. total tasks in the selected agent's current list — older lists are
-/// history, not work in flight.
-fn task_counts(state: &AppState) -> (usize, usize) {
-    let Some(batch) = tasks_view::selected_agent(state)
-        .and_then(|agent| state.system.agent_tasks.get(&agent.session_id))
-        .and_then(|tracker| tracker.current())
+/// Items still to run vs. items in the queue.
+fn queue_counts(state: &AppState) -> (usize, usize) {
+    let Some(session) = tasks_view::selected_agent(state)
+        .and_then(|agent| state.get_session(agent.session_id))
     else {
         return (0, 0);
     };
-    (batch.tasks.len() - batch.completed(), batch.tasks.len())
+    let queue = &session.todo_queue;
+    let left = queue.pending_count() + usize::from(queue.running().is_some());
+    (left, queue.items.len())
+}
+
+/// The queue's state, when it is worth saying out loud.
+fn holding_reason(state: &AppState) -> Option<&'static str> {
+    use crate::app::todo_dispatch::Holding;
+    let agent = tasks_view::selected_agent(state)?;
+    match crate::app::todo_dispatch::holding(state, agent.session_id) {
+        // Nothing to say: either idle with nothing queued, or about to send.
+        Holding::Empty => None,
+        // Visible on the item itself.
+        Holding::Running => None,
+        other => Some(other.label()),
+    }
 }
 
 fn render_tab_bar(frame: &mut Frame, area: Rect, state: &AppState, is_focused: bool) {
@@ -135,7 +154,7 @@ fn render_tab_bar(frame: &mut Frame, area: Rect, state: &AppState, is_focused: b
     };
 
     let tab_bar = Paragraph::new(Line::from(vec![
-        Span::styled(" Tasks ", tasks_style),
+        Span::styled(" TODO ", tasks_style),
         Span::styled("│", dim),
         Span::styled(" Reports", reports_style),
         Span::styled(format!("({reports_count}) "), reports_style),
@@ -173,8 +192,9 @@ fn render_action_bar(frame: &mut Frame, area: Rect, state: &AppState, is_focused
         &[
             ("n", ":add "),
             ("e", ":edit "),
-            ("d", ":drop "),
-            ("Enter", ":open "),
+            ("d", ":del "),
+            ("p", ":pause "),
+            ("J/K", ":move "),
             ("h", ":help"),
         ]
     };
@@ -200,83 +220,31 @@ fn render_row<'a>(
     let prefix = if is_selected { "> " } else { "  " };
 
     match row {
-        TaskRow::Prompt { session_id, batch } => {
-            let entry = state
-                .system
-                .agent_tasks
-                .get(session_id)
-                .and_then(|tracker| tracker.batches().get(*batch));
-            let prompt = entry
-                .map(|b| {
-                    if b.prompt.is_empty() {
-                        "(no prompt captured)".to_string()
-                    } else {
-                        b.prompt.clone()
-                    }
-                })
-                .unwrap_or_default();
-            let age = entry.and_then(|b| b.age()).unwrap_or_default();
-
-            // The prompt is context, not a task: two lines at most.
-            let budget = width.saturating_sub(4 + age.chars().count());
-            let lines = wrap(&single_line(&prompt), budget, 2);
-            let last = lines.len().saturating_sub(1);
-            let style = Style::default().fg(t.fg_dim).add_modifier(Modifier::ITALIC);
-            ListItem::new(
-                lines
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, chunk)| {
-                        let mut spans = vec![
-                            Span::styled(if i == 0 { prefix } else { "  " }, style),
-                            Span::raw(if i == 0 { "❝ " } else { "  " }),
-                            Span::styled(chunk, style),
-                        ];
-                        if i == last && !age.is_empty() {
-                            spans.push(Span::styled(
-                                format!("  {age}"),
-                                Style::default().fg(t.fg_faint),
-                            ));
-                        }
-                        Line::from(spans)
-                    })
-                    .collect::<Vec<_>>(),
-            )
-        }
-
-        TaskRow::Task {
-            session_id,
-            batch,
-            task,
-        } => {
-            let Some(task) = tasks_view::task_at(state, *session_id, *batch, *task) else {
+        // Your item. The state glyph carries the queue's story: waiting,
+        // with the agent now, or finished.
+        TaskRow::Todo { session_id, todo } => {
+            let Some(item) = tasks_view::todo_at(state, *session_id, *todo) else {
                 return ListItem::new(Line::from(""));
             };
-            let (icon, color) = match task.state {
-                TaskState::Pending => ("○", t.fg_dim),
-                TaskState::InProgress => ("◐", t.active),
-                TaskState::Completed => ("✓", t.success),
+            let (icon, color) = match item.state {
+                TodoState::Pending => ("○", t.fg_dim),
+                TodoState::Running => (state.spinner_char(), t.active),
+                TodoState::Done => ("✓", t.success),
             };
-            // Done work recedes; what the agent is on right now stands out.
-            let text_style = match task.state {
-                TaskState::Completed => Style::default().fg(t.fg_faint),
-                TaskState::InProgress => Style::default()
-                    .fg(t.active)
-                    .add_modifier(Modifier::BOLD),
-                TaskState::Pending => Style::default().fg(t.fg),
+            let text_style = match item.state {
+                TodoState::Done => Style::default().fg(t.fg_faint),
+                TodoState::Running => Style::default().fg(t.active).add_modifier(Modifier::BOLD),
+                TodoState::Pending => Style::default().fg(t.fg),
             };
 
-            // One column in from the prompt: enough hierarchy to read the ❝
-            // line as a heading, not enough to bury the tasks.
-            const INDENT: usize = 5;
-            let mut lines: Vec<Line> = wrap(&single_line(&task.subject), width.saturating_sub(INDENT), 2)
+            const INDENT: usize = 4;
+            let lines: Vec<Line> = wrap(&single_line(&item.text), width.saturating_sub(INDENT), 3)
                 .into_iter()
                 .enumerate()
                 .map(|(i, chunk)| {
                     if i == 0 {
                         Line::from(vec![
                             Span::styled(prefix, text_style),
-                            Span::raw(" "),
                             Span::styled(icon, Style::default().fg(color)),
                             Span::raw(" "),
                             Span::styled(chunk, text_style),
@@ -289,21 +257,49 @@ fn render_row<'a>(
                     }
                 })
                 .collect();
-
-            // The agent's own note about the task — only worth the rows when
-            // the cursor is on it.
-            if is_selected {
-                if let Some(detail) = &task.detail {
-                    for chunk in wrap(&single_line(detail), width.saturating_sub(INDENT + 2), 2) {
-                        lines.push(Line::from(vec![
-                            Span::raw(" ".repeat(INDENT)),
-                            Span::styled(chunk, Style::default().fg(t.fg_faint)),
-                        ]));
-                    }
-                }
-            }
-
             ListItem::new(lines)
+        }
+
+        // The agent's own step, under the item it belongs to. Dimmer than
+        // your items throughout: this is progress, not work you can edit.
+        TaskRow::Step {
+            session_id,
+            batch,
+            task,
+        } => {
+            let Some(step) = tasks_view::task_at(state, *session_id, *batch, *task) else {
+                return ListItem::new(Line::from(""));
+            };
+            let (icon, color) = match step.state {
+                TaskState::Pending => ("○", t.fg_faint),
+                TaskState::InProgress => ("◐", t.active),
+                TaskState::Completed => ("✓", t.fg_faint),
+            };
+            let style = Style::default().fg(t.fg_dim);
+
+            const INDENT: usize = 8;
+            ListItem::new(
+                wrap(&single_line(&step.subject), width.saturating_sub(INDENT), 2)
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, chunk)| {
+                        if i == 0 {
+                            Line::from(vec![
+                                Span::styled(prefix, style),
+                                Span::raw("    "),
+                                Span::styled(icon, Style::default().fg(color)),
+                                Span::raw(" "),
+                                Span::styled(chunk, style),
+                            ])
+                        } else {
+                            Line::from(vec![
+                                Span::raw(" ".repeat(INDENT)),
+                                Span::styled(chunk, style),
+                            ])
+                        }
+                    })
+                    .collect::<Vec<_>>(),
+            )
         }
 
         TaskRow::Note { text, .. } => ListItem::new(Line::from(vec![
@@ -556,51 +552,58 @@ mod tests {
             .join("\n")
     }
 
-    #[test]
-    fn pane_shows_the_prompt_and_its_tasks_but_not_the_agent() {
-        let (state, _session_id, _dir) = crate::app::tasks_view::tests::fixture();
-        let out = screen(&state, 60, 12);
-
-        assert!(out.contains("Tasks"), "{out}");
-        // The prompt that produced the list, and the list itself.
-        assert!(out.contains("make the tasks pane"), "{out}");
-        assert!(out.contains("Parse agent logs"), "{out}");
-        // In-progress marker, not a pending one.
-        assert!(out.contains("◐"), "{out}");
-        // Counts open/total for this agent's current list.
-        assert!(out.contains("(1/1)"), "{out}");
-        // The Sessions pane above already names the agent; this one must not
-        // spend a row repeating it.
-        assert!(!out.contains("Claude"), "{out}");
+    /// The fixture's agent has one parsed task; queue two items and run the
+    /// first so the pane shows both kinds of row.
+    fn state_with_queue() -> (AppState, uuid::Uuid, tempfile::TempDir) {
+        let (mut state, session_id, dir) = crate::app::tasks_view::tests::fixture();
+        let queue = &mut state.get_session_mut(session_id).unwrap().todo_queue;
+        let first = queue.add("fix the login redirect");
+        queue.add("write the migration");
+        queue.mark_running(first);
+        (state, session_id, dir)
     }
 
     #[test]
-    fn a_task_starts_at_the_left_edge_rather_than_indented_under_a_heading() {
-        let (state, _session_id, _dir) = crate::app::tasks_view::tests::fixture();
-        let out = screen(&state, 60, 12);
+    fn the_pane_shows_your_queue_with_the_agents_steps_under_the_running_item() {
+        let (state, _session_id, _dir) = state_with_queue();
+        let out = screen(&state, 46, 12);
 
-        let task_line = out
-            .lines()
-            .find(|l| l.contains("Parse agent logs"))
-            .expect("the task is on screen");
-        let indent = task_line.len() - task_line.trim_start().len();
+        assert!(out.contains("TODO"), "{out}");
+        assert!(out.contains("fix the login redirect"), "{out}");
+        assert!(out.contains("write the migration"), "{out}");
+        // The agent's own step, shown as progress for the running item.
+        assert!(out.contains("Parse agent logs"), "{out}");
+        assert!(out.contains("(2 left)"), "{out}");
+    }
+
+    #[test]
+    fn your_items_sit_left_of_the_agents_steps() {
+        let (state, _session_id, _dir) = state_with_queue();
+        let out = screen(&state, 46, 12);
+
+        let indent = |needle: &str| {
+            let line = out
+                .lines()
+                .find(|l| l.contains(needle))
+                .unwrap_or_else(|| panic!("{needle} missing from:\n{out}"))
+                .trim_start_matches('│')
+                .to_string();
+            line.len() - line.trim_start().len()
+        };
+
         assert!(
-            indent <= 4,
-            "tasks are what the pane is for; they should not be buried: {task_line:?}"
+            indent("fix the login redirect") < indent("Parse agent logs"),
+            "the agent's progress belongs under your item:\n{out}"
         );
     }
 
     #[test]
-    fn a_mixed_state_list_reads_top_to_bottom() {
-        let (state, _session_id, _dir) = crate::app::tasks_view::tests::mixed_fixture();
-        let out = screen(&state, 38, 12);
-
-        // Every task is on screen at the same indent, under its prompt.
-        for subject in ["Parse the logs", "Render the pane", "Wire the keys"] {
-            assert!(out.contains(subject), "{out}");
-        }
-        assert!(out.contains("(2/3)"), "{out}");
+    fn an_empty_queue_says_how_to_fill_it() {
+        let (state, _session_id, _dir) = crate::app::tasks_view::tests::fixture();
+        let out = screen(&state, 46, 10);
+        assert!(out.contains("Press n to add"), "{out}");
     }
+
 
     #[test]
     fn pane_points_at_the_sessions_list_when_no_agent_is_selected() {

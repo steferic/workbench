@@ -214,19 +214,31 @@ fn render_quickref_tab(frame: &mut Frame, area: Rect, state: &AppState) {
 
     // -- Tasks --
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled("  Tasks", section_style)));
+    lines.push(Line::from(Span::styled("  TODO queue", section_style)));
     lines.push(sep());
     lines.push(Line::from(vec![
         Span::styled("  n                  ", key_style),
-        Span::raw("Ask the agent to add a task"),
+        Span::raw("Queue a TODO for this agent"),
     ]));
     lines.push(Line::from(vec![
         Span::styled("  e                  ", key_style),
-        Span::raw("Ask the agent to change a task"),
+        Span::raw("Edit the selected TODO"),
     ]));
     lines.push(Line::from(vec![
         Span::styled("  d                  ", key_style),
-        Span::raw("Ask the agent to drop a task"),
+        Span::raw("Delete the selected TODO"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  J / K              ", key_style),
+        Span::raw("Move the TODO later / earlier"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  p                  ", key_style),
+        Span::raw("Pause / resume the queue"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  c                  ", key_style),
+        Span::raw("Clear finished TODOs"),
     ]));
     lines.push(Line::from(vec![
         Span::styled("  Enter              ", key_style),
@@ -234,7 +246,7 @@ fn render_quickref_tab(frame: &mut Frame, area: Rect, state: &AppState) {
     ]));
     lines.push(Line::from(vec![
         Span::styled("  Tab                ", key_style),
-        Span::raw("Switch tabs (Agents/Reports)"),
+        Span::raw("Switch tabs (TODO/Reports)"),
     ]));
 
     // -- Parallel Task Reports --

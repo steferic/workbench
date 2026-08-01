@@ -165,16 +165,12 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
             use crate::app::TaskEdit;
             let (label, hint) = match state.ui.task_edit.as_ref().map(|(_, edit, _)| *edit) {
                 Some(TaskEdit::Rewrite) => (
-                    " EDIT TASK ",
-                    "Describe what the task should be instead, Enter to send, Esc to cancel",
-                ),
-                Some(TaskEdit::Drop) => (
-                    " DROP TASK ",
-                    "Optional reason, Enter to ask the agent to drop it, Esc to cancel",
+                    " EDIT TODO ",
+                    "Change the text, Enter to save, Esc to cancel",
                 ),
                 _ => (
-                    " ADD TASK ",
-                    "Describe the task to add, Enter to send it to the agent, Esc to cancel",
+                    " ADD TODO ",
+                    "Describe the work, Enter to queue it for this agent, Esc to cancel",
                 ),
             };
             (

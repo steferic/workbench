@@ -1,61 +1,61 @@
-//! Flattened view of the selected agent's task list.
+//! Flattened view of the selected agent's queue.
 //!
-//! The pane follows the Sessions pane above it: it shows the task lists of
+//! The pane follows the Sessions pane above it: it shows the work queued for
 //! whichever agent the session cursor is on, and nothing else — the agent's
 //! own name never appears, since the cursor above already says who it is.
-//! Rows nest (prompt → tasks) but navigate as a flat list, so rendering and
+//!
+//! Two kinds of row, and the difference matters. A **Todo** is ours: you wrote
+//! it, it persists, and the dispatcher sends it when the agent frees up. A
+//! **Step** is the agent's, mirrored read-only from its own task list and
+//! shown under the item it is currently working on — progress detail for the
+//! thing in flight. Rows nest but navigate as a flat list, so rendering and
 //! key handling must agree on exactly which rows exist and in what order.
-//! Both build it here.
 
 use uuid::Uuid;
 
-use crate::agent_tasks::{AgentTask, Provider, TaskBatch};
+use crate::agent_tasks::{AgentTask, TaskBatch};
 use crate::app::AppState;
-use crate::models::{AgentType, SessionStatus};
-
-/// How many of the agent's task lists to show — enough to see what a
-/// follow-up prompt changed, without burying the current one.
-pub const MAX_BATCHES_PER_AGENT: usize = 3;
+use crate::models::{QueuedTodo, SessionStatus, TodoState};
 
 /// A row of the pane. There is deliberately no row for the agent itself:
 /// which agent this is is already answered by the Sessions pane cursor above,
 /// and repeating it costs a line the tasks can use.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskRow {
-    /// The prompt that produced the task list below it.
-    Prompt {
-        session_id: Uuid,
-        batch: usize,
-    },
-    Task {
+    /// A queued item of yours. The only row the edit keys act on.
+    Todo { session_id: Uuid, todo: Uuid },
+    /// One step of the agent's own list, shown under the running item.
+    Step {
         session_id: Uuid,
         batch: usize,
         task: usize,
     },
-    /// Non-actionable note (no tasks yet, older lists elided, …).
-    Note {
-        session_id: Uuid,
-        text: String,
-    },
+    /// Non-actionable note (empty queue, why the queue is waiting, …).
+    Note { session_id: Uuid, text: String },
 }
 
 impl TaskRow {
     pub fn session_id(&self) -> Uuid {
         match self {
-            TaskRow::Prompt { session_id, .. }
-            | TaskRow::Task { session_id, .. }
+            TaskRow::Todo { session_id, .. }
+            | TaskRow::Step { session_id, .. }
             | TaskRow::Note { session_id, .. } => *session_id,
+        }
+    }
+
+    /// The queued item this row acts on, if any.
+    pub fn todo_id(&self) -> Option<Uuid> {
+        match self {
+            TaskRow::Todo { todo, .. } => Some(*todo),
+            _ => None,
         }
     }
 }
 
-/// The agent whose list the pane is showing.
+/// The agent whose queue the pane is showing.
 pub struct AgentEntry {
     pub session_id: Uuid,
-    pub agent_type: AgentType,
     pub running: bool,
-    /// False when we cannot read this provider's task list (Gemini, Grok, …).
-    pub readable: bool,
 }
 
 /// The agent the pane is showing: whatever the Sessions pane cursor is on.
@@ -70,24 +70,18 @@ pub fn selected_agent(state: &AppState) -> Option<AgentEntry> {
     }
     Some(AgentEntry {
         session_id: session.id,
-        agent_type: session.agent_type.clone(),
         running: session.status == SessionStatus::Running,
-        readable: Provider::for_agent(&session.agent_type).is_some(),
     })
 }
 
-/// The task lists we show for one agent: newest first, capped.
-pub fn batches_for(state: &AppState, session_id: Uuid) -> Vec<(usize, &TaskBatch)> {
-    let Some(tracker) = state.system.agent_tasks.get(&session_id) else {
-        return Vec::new();
-    };
-    let batches = tracker.batches();
-    batches
+/// A queued item by id.
+pub fn todo_at(state: &AppState, session_id: Uuid, todo: Uuid) -> Option<&QueuedTodo> {
+    state
+        .get_session(session_id)?
+        .todo_queue
+        .items
         .iter()
-        .enumerate()
-        .rev()
-        .take(MAX_BATCHES_PER_AGENT)
-        .collect()
+        .find(|item| item.id == todo)
 }
 
 pub fn task_at(state: &AppState, session_id: Uuid, batch: usize, task: usize) -> Option<&AgentTask> {
@@ -107,66 +101,52 @@ pub fn rows(state: &AppState) -> Vec<TaskRow> {
         return Vec::new();
     };
     let session_id = agent.session_id;
-    let mut rows = Vec::new();
+    let Some(session) = state.get_session(session_id) else {
+        return Vec::new();
+    };
+    let queue = &session.todo_queue;
 
-    if !agent.readable {
-        rows.push(TaskRow::Note {
+    if queue.is_empty() {
+        return vec![TaskRow::Note {
             session_id,
-            text: format!(
-                "{} does not publish a task list",
-                agent.agent_type.display_name()
-            ),
-        });
-        return rows;
-    }
-
-    let batches = batches_for(state, session_id);
-    if batches.is_empty() {
-        let found_log = state
-            .system
-            .agent_tasks
-            .get(&session_id)
-            .map(|tracker| tracker.has_source())
-            .unwrap_or(false);
-        rows.push(TaskRow::Note {
-            session_id,
-            text: match (agent.running, found_log) {
-                (false, _) => "not started".to_string(),
-                (true, false) => "waiting for the agent to start".to_string(),
-                (true, true) => "no task list yet".to_string(),
+            text: if agent.running {
+                "No queued work. Press n to add some.".to_string()
+            } else {
+                "No queued work — this agent is not running.".to_string()
             },
-        });
-        return rows;
+        }];
     }
 
-    let total = state
-        .system
-        .agent_tasks
-        .get(&session_id)
-        .map(|t| t.batches().len())
-        .unwrap_or(0);
-
-    for (batch_idx, batch) in batches {
-        rows.push(TaskRow::Prompt {
+    let mut rows = Vec::new();
+    for item in &queue.items {
+        rows.push(TaskRow::Todo {
             session_id,
-            batch: batch_idx,
+            todo: item.id,
         });
-        for task_idx in 0..batch.tasks.len() {
-            rows.push(TaskRow::Task {
-                session_id,
-                batch: batch_idx,
-                task: task_idx,
-            });
+
+        // Under the item in flight, the agent's own steps for it: this is
+        // the only place the mirrored list earns its space.
+        if item.state == TodoState::Running {
+            if let Some(batch) = current_batch(state, session_id) {
+                for task in 0..batch.1.tasks.len() {
+                    rows.push(TaskRow::Step {
+                        session_id,
+                        batch: batch.0,
+                        task,
+                    });
+                }
+            }
         }
     }
-
-    if total > MAX_BATCHES_PER_AGENT {
-        rows.push(TaskRow::Note {
-            session_id,
-            text: format!("{} earlier task lists", total - MAX_BATCHES_PER_AGENT),
-        });
-    }
     rows
+}
+
+/// The agent's newest task list, which belongs to whatever it is doing now.
+pub fn current_batch(state: &AppState, session_id: Uuid) -> Option<(usize, &TaskBatch)> {
+    let tracker = state.system.agent_tasks.get(&session_id)?;
+    let batches = tracker.batches();
+    let index = batches.len().checked_sub(1)?;
+    Some((index, batches.last()?))
 }
 
 /// The row the user is on, clamped to what actually exists.
@@ -183,28 +163,12 @@ pub fn selected_row(state: &AppState) -> Option<TaskRow> {
 pub(crate) mod tests {
     use super::*;
     use crate::agent_tasks::{Provider, TaskSource, TaskTracker};
-    use crate::models::{Session, Workspace};
+    use crate::models::{AgentType, Session, Workspace};
     use chrono::Utc;
 
     /// The shared fixture: one Claude agent, one prompt, one in-progress task.
     pub(crate) fn fixture() -> (AppState, Uuid, tempfile::TempDir) {
         state_with_log(&claude_log())
-    }
-
-    /// One prompt, three tasks: done, in progress, still pending.
-    pub(crate) fn mixed_fixture() -> (AppState, Uuid, tempfile::TempDir) {
-        let mut lines = vec![claude_prompt_line("show me what each agent is doing")];
-        for (i, subject) in ["Parse the logs", "Render the pane", "Wire the keys"]
-            .iter()
-            .enumerate()
-        {
-            let tool = format!("t{i}");
-            lines.push(claude_create_line(&tool, subject));
-            lines.push(claude_created_line(&tool, i + 1, subject));
-        }
-        lines.push(claude_update_line("1", "completed"));
-        lines.push(claude_update_line("2", "in_progress"));
-        state_with_log(&format!("{}\n", lines.join("\n")))
     }
 
     /// A workspace with one Claude session whose log is `log`, already parsed.
@@ -314,34 +278,58 @@ pub(crate) mod tests {
         .to_string()
     }
 
-    #[test]
-    fn rows_nest_tasks_under_the_prompt_under_the_agent() {
-        let (state, session_id, _dir) = state_with_log(&claude_log());
-        let rows = rows(&state);
+    /// Queue an item for a session and return its id.
+    fn queue(state: &mut AppState, session_id: Uuid, text: &str) -> Uuid {
+        state
+            .get_session_mut(session_id)
+            .unwrap()
+            .todo_queue
+            .add(text)
+    }
 
+    #[test]
+    fn the_queue_is_the_pane_and_the_agents_steps_hide_until_one_runs() {
+        let (mut state, session_id, _dir) = state_with_log(&claude_log());
+        let first = queue(&mut state, session_id, "fix the redirect");
+        queue(&mut state, session_id, "write the migration");
+
+        // Nothing dispatched yet: just your two items, no agent steps.
         assert_eq!(
-            rows,
+            rows(&state),
             vec![
-                TaskRow::Prompt {
+                TaskRow::Todo {
                     session_id,
-                    batch: 0
+                    todo: first
                 },
-                TaskRow::Task {
+                TaskRow::Todo {
                     session_id,
-                    batch: 0,
-                    task: 0
+                    todo: rows(&state)[1].todo_id().unwrap()
                 },
-            ],
-            "the agent itself gets no row — the Sessions pane already names it"
+            ]
+        );
+
+        // Once an item is with the agent, its steps appear beneath it.
+        state
+            .get_session_mut(session_id)
+            .unwrap()
+            .todo_queue
+            .mark_running(first);
+        let rows = rows(&state);
+        assert_eq!(rows[0].todo_id(), Some(first));
+        assert!(
+            matches!(rows[1], TaskRow::Step { .. }),
+            "the agent's step belongs under the item it is working on: {rows:?}"
         );
         assert_eq!(
             task_at(&state, session_id, 0, 0).unwrap().subject,
             "Parse agent logs"
         );
+        // The second item still follows the running one and its steps.
+        assert!(rows.last().unwrap().todo_id().is_some());
     }
 
     /// The whole point of the pane: one agent at a time, the one selected in
-    /// the Sessions pane — never every agent's tasks piled together.
+    /// the Sessions pane — never every agent's work piled together.
     #[test]
     fn only_the_session_under_the_cursor_contributes_rows() {
         let (mut state, first, dir) = state_with_log(&claude_log());
@@ -353,26 +341,32 @@ pub(crate) mod tests {
             "b",
             &claude_log_with("second agent prompt", "Second agent task"),
         );
+        queue(&mut state, first, "first agent work");
+        queue(&mut state, second, "second agent work");
 
         state.set_selected_session_idx(0);
         let rows_first = rows(&state);
         assert!(rows_first.iter().all(|r| r.session_id() == first));
         assert_eq!(
-            task_at(&state, first, 0, 0).unwrap().subject,
-            "Parse agent logs"
+            todo_at(&state, first, rows_first[0].todo_id().unwrap())
+                .unwrap()
+                .text,
+            "first agent work"
         );
 
         state.set_selected_session_idx(1);
         let rows_second = rows(&state);
         assert!(rows_second.iter().all(|r| r.session_id() == second));
         assert_eq!(
-            task_at(&state, second, 0, 0).unwrap().subject,
-            "Second agent task"
+            todo_at(&state, second, rows_second[0].todo_id().unwrap())
+                .unwrap()
+                .text,
+            "second agent work"
         );
     }
 
     #[test]
-    fn a_terminal_under_the_cursor_shows_nothing_rather_than_another_agents_tasks() {
+    fn a_terminal_under_the_cursor_shows_nothing_rather_than_another_agents_work() {
         let (mut state, _session_id, _dir) = state_with_log(&claude_log());
         let workspace_id = state.data.workspaces[0].id;
         let terminal = Session::new(
@@ -393,26 +387,28 @@ pub(crate) mod tests {
 
     #[test]
     fn moving_to_another_agent_resets_the_row_cursor() {
-        let (mut state, _first, dir) = state_with_log(&claude_log());
+        let (mut state, first, dir) = state_with_log(&claude_log());
         let workspace_id = state.data.workspaces[0].id;
-        add_agent(&mut state, workspace_id, dir.path(), "b", &claude_log());
+        let second = add_agent(&mut state, workspace_id, dir.path(), "b", &claude_log());
+        queue(&mut state, first, "a");
+        queue(&mut state, second, "b");
 
         crate::app::handlers::tasks::sync_selection(&mut state);
-        state.ui.selected_task_row = 2;
+        state.ui.selected_task_row = 1;
 
         state.set_selected_session_idx(1);
         crate::app::handlers::tasks::sync_selection(&mut state);
         assert_eq!(state.ui.selected_task_row, 0);
 
         // Staying on the same agent leaves the cursor alone.
-        state.ui.selected_task_row = 1;
+        state.ui.selected_task_row = 0;
         crate::app::handlers::tasks::sync_selection(&mut state);
-        assert_eq!(state.ui.selected_task_row, 1);
+        assert_eq!(state.ui.selected_task_row, 0);
     }
 
     #[test]
-    fn an_agent_with_no_task_list_says_so() {
-        let (state, _session_id, _dir) = state_with_log("");
+    fn an_agent_with_an_empty_queue_says_so() {
+        let (state, _session_id, _dir) = state_with_log(&claude_log());
         let rows = rows(&state);
         assert_eq!(rows.len(), 1);
         assert!(matches!(rows[0], TaskRow::Note { .. }), "{rows:?}");
@@ -421,13 +417,13 @@ pub(crate) mod tests {
     #[test]
     fn selection_is_clamped_to_the_rows_that_exist() {
         let (mut state, session_id, _dir) = state_with_log(&claude_log());
+        let only = queue(&mut state, session_id, "the only item");
         state.ui.selected_task_row = 99;
         assert_eq!(
             selected_row(&state),
-            Some(TaskRow::Task {
+            Some(TaskRow::Todo {
                 session_id,
-                batch: 0,
-                task: 0
+                todo: only
             })
         );
     }

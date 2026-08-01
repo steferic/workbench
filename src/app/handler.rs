@@ -111,6 +111,7 @@ pub fn process_action(
             }
 
             refresh_agent_status(state);
+            super::todo_dispatch::tick(state, action_tx);
             tasks::sync_selection(state);
             refresh_agent_tasks(state, action_tx);
 
@@ -226,6 +227,8 @@ pub fn process_action(
                 Action::SelectNextTask | Action::SelectPrevTask | Action::ToggleTasksTab |
                 Action::FocusSelectedTaskAgent |
                 Action::EnterTaskEditMode(_) | Action::SendTaskMessage(_) |
+                Action::DeleteSelectedTodo | Action::MoveSelectedTodo(_) |
+                Action::ToggleTodoQueuePaused | Action::ClearCompletedTodos |
                 Action::AgentTasksRefreshed(_) |
                 Action::ActivateUtility => {
                     tasks::handle_task_action(state, action, action_tx)?;

@@ -73,13 +73,15 @@ fn claude_batches_tasks_under_the_prompt_that_created_them() {
     );
 
     assert_eq!(t.batches().len(), 1);
-    let batch = t.current().unwrap();
-    assert_eq!(batch.prompt, "build the tasks pane");
+    let batch = t.batches().last().unwrap();
     assert_eq!(batch.tasks.len(), 2);
     assert_eq!(batch.tasks[0].id, "1");
     assert_eq!(batch.tasks[0].state, TaskState::Completed);
     assert_eq!(batch.tasks[1].state, TaskState::InProgress);
-    assert_eq!(batch.completed(), 1);
+    assert_eq!(
+        batch.tasks.iter().filter(|t| t.state == TaskState::Completed).count(),
+        1
+    );
 }
 
 #[test]
@@ -100,9 +102,7 @@ fn claude_starts_a_new_batch_per_prompt_and_updates_reach_back() {
     );
 
     assert_eq!(t.batches().len(), 2);
-    assert_eq!(t.batches()[0].prompt, "first ask");
     assert_eq!(t.batches()[0].tasks[0].state, TaskState::Completed);
-    assert_eq!(t.batches()[1].prompt, "second ask");
     assert_eq!(t.batches()[1].tasks[0].state, TaskState::Pending);
 }
 
@@ -128,9 +128,8 @@ fn claude_ignores_subagent_transcripts_and_synthetic_prompts() {
     );
 
     assert_eq!(t.batches().len(), 1);
-    assert_eq!(t.current().unwrap().prompt, "real prompt");
-    assert_eq!(t.current().unwrap().tasks.len(), 1);
-    assert_eq!(t.current().unwrap().tasks[0].subject, "real task");
+    assert_eq!(t.batches().last().unwrap().tasks.len(), 1);
+    assert_eq!(t.batches().last().unwrap().tasks[0].subject, "real task");
 }
 
 #[test]
@@ -159,7 +158,7 @@ fn claude_todowrite_snapshots_replace_the_list() {
     );
 
     assert_eq!(t.batches().len(), 1);
-    let batch = t.current().unwrap();
+    let batch = t.batches().last().unwrap();
     assert_eq!(batch.tasks.len(), 2);
     assert_eq!(batch.tasks[0].state, TaskState::Completed);
     assert_eq!(batch.tasks[1].state, TaskState::InProgress);
@@ -206,10 +205,8 @@ fn codex_plan_snapshots_replace_within_a_batch() {
     );
 
     assert_eq!(t.batches().len(), 2);
-    assert_eq!(t.batches()[0].prompt, "audit the repo");
     assert_eq!(t.batches()[0].tasks.len(), 2);
     assert_eq!(t.batches()[0].tasks[0].state, TaskState::Completed);
-    assert_eq!(t.batches()[1].prompt, "now fix the worst one");
     assert_eq!(t.batches()[1].tasks.len(), 1);
 }
 
@@ -218,8 +215,7 @@ fn tasks_without_a_preceding_prompt_still_land_somewhere() {
     let mut t = TaskTracker::new(Provider::Codex);
     feed(&mut t, &[&codex_plan(vec![("Orphan step", "pending")])]);
     assert_eq!(t.batches().len(), 1);
-    assert!(t.current().unwrap().prompt.is_empty());
-    assert_eq!(t.current().unwrap().tasks.len(), 1);
+    assert_eq!(t.batches().last().unwrap().tasks.len(), 1);
 }
 
 /// Two agents in one project write two logs for the same cwd. Without
@@ -383,7 +379,7 @@ fn refresh_reads_only_what_is_new_and_skips_partial_lines() {
     let mut t = TaskTracker::new(Provider::Codex);
     t.source = Some(Source::File(path.clone()));
     t.refresh(&ctx, &HashSet::new());
-    assert_eq!(t.current().unwrap().tasks.len(), 1);
+    assert_eq!(t.batches().last().unwrap().tasks.len(), 1);
     let after_first = t.offset;
 
     // Append a complete line plus a torn one.
@@ -396,8 +392,8 @@ fn refresh_reads_only_what_is_new_and_skips_partial_lines() {
     .unwrap();
 
     t.refresh(&ctx, &HashSet::new());
-    assert_eq!(t.current().unwrap().tasks.len(), 2);
-    assert_eq!(t.current().unwrap().tasks[0].state, TaskState::Completed);
+    assert_eq!(t.batches().last().unwrap().tasks.len(), 2);
+    assert_eq!(t.batches().last().unwrap().tasks[0].state, TaskState::Completed);
     // The torn line was left unconsumed for the next pass.
     assert!(t.offset > after_first);
     assert!(t.offset < fs::metadata(&path).unwrap().len());
@@ -489,7 +485,6 @@ fn hermes_todo_calls_become_a_task_list_under_their_prompt() {
 
     assert_eq!(builder.batches.len(), 1);
     let batch = &builder.batches[0];
-    assert_eq!(batch.prompt, "wire up the calendar");
     assert_eq!(batch.tasks.len(), 2, "merge must not drop the untouched task");
     assert_eq!(batch.tasks[0].id, "inspect");
     assert_eq!(batch.tasks[0].state, TaskState::Completed);
@@ -619,7 +614,6 @@ fn opencode_todo_rows_become_the_task_list_with_its_prompt() {
     assert_eq!(builder.batches.len(), 1);
     let batch = &builder.batches[0];
     // The prompt in flight when the list was written, not the newest one.
-    assert_eq!(batch.prompt, "add the parser");
     let subjects: Vec<&str> = batch.tasks.iter().map(|t| t.subject.as_str()).collect();
     assert_eq!(
         subjects,
@@ -628,7 +622,10 @@ fn opencode_todo_rows_become_the_task_list_with_its_prompt() {
     );
     assert_eq!(batch.tasks[0].state, TaskState::Completed);
     assert_eq!(batch.tasks[1].state, TaskState::InProgress);
-    assert_eq!(batch.completed(), 1);
+    assert_eq!(
+        batch.tasks.iter().filter(|t| t.state == TaskState::Completed).count(),
+        1
+    );
 }
 
 #[test]

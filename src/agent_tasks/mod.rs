@@ -57,41 +57,21 @@ impl TaskState {
 #[derive(Debug, Clone)]
 pub struct AgentTask {
     /// Agent-assigned id ("3" for Claude, the plan index for Codex, the todo
-    /// key for hermes). Used to apply later updates and to address the task
-    /// when messaging the agent.
+    /// key for hermes), used to apply later updates.
     pub id: String,
     pub subject: String,
-    pub detail: Option<String>,
     pub state: TaskState,
 }
 
-/// A task list and the prompt that produced it.
-#[derive(Debug, Clone)]
+/// One task list, as the agent last published it.
+///
+/// A new prompt starts a new batch, which is how the newest list is known to
+/// belong to what the agent is doing now. The prompt text itself is not kept:
+/// the pane shows the queued item that caused the work, which says the same
+/// thing in your words rather than the agent's.
+#[derive(Debug, Clone, Default)]
 pub struct TaskBatch {
-    pub prompt: String,
-    pub at: Option<DateTime<Utc>>,
     pub tasks: Vec<AgentTask>,
-}
-
-impl TaskBatch {
-    pub fn completed(&self) -> usize {
-        self.tasks
-            .iter()
-            .filter(|t| t.state == TaskState::Completed)
-            .count()
-    }
-
-    /// "4m", "2h" since the prompt landed — how stale this list is.
-    pub fn age(&self) -> Option<String> {
-        let at = self.at?;
-        let mins = (Utc::now() - at).num_minutes().max(0);
-        Some(match mins {
-            0 => "now".to_string(),
-            m if m < 60 => format!("{m}m"),
-            m if m < 60 * 24 => format!("{}h", m / 60),
-            m => format!("{}d", m / (60 * 24)),
-        })
-    }
 }
 
 /// Which session-store format an agent writes.
@@ -201,15 +181,6 @@ impl TaskTracker {
 
     pub fn batches(&self) -> &[TaskBatch] {
         &self.batches.batches
-    }
-
-    /// The batch the agent is working through right now (the newest one).
-    pub fn current(&self) -> Option<&TaskBatch> {
-        self.batches.batches.last()
-    }
-
-    pub fn has_source(&self) -> bool {
-        self.source.is_some()
     }
 
     pub fn source(&self) -> Option<&Source> {
@@ -377,37 +348,26 @@ fn locate(ctx: &TaskSource, claimed: &HashSet<String>) -> Option<Source> {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct BatchBuilder {
     batches: Vec<TaskBatch>,
-    /// Prompt seen since the last mutation — starts the next batch.
-    pending_prompt: Option<(String, Option<DateTime<Utc>>)>,
+    /// A prompt has arrived since the last mutation, so the next task
+    /// belongs to a new list rather than the one before it.
+    prompt_pending: bool,
     /// Claude only: tool_use id → (batch, task), awaiting the tool_result that
     /// reveals the agent-assigned task number.
     awaiting_id: HashMap<String, (usize, usize)>,
 }
 
 impl BatchBuilder {
-    pub(crate) fn note_prompt(&mut self, text: &str, at: Option<DateTime<Utc>>) {
-        let text = text.trim();
-        if !is_real_prompt(text) {
-            return;
+    pub(crate) fn note_prompt(&mut self, text: &str, _at: Option<DateTime<Utc>>) {
+        if is_real_prompt(text.trim()) {
+            self.prompt_pending = true;
         }
-        self.pending_prompt = Some((text.to_string(), at));
     }
 
     /// Index of the batch new tasks belong to: a fresh one if a prompt has
     /// arrived since the last mutation, otherwise the batch in progress.
-    pub(crate) fn open_batch(&mut self, at: Option<DateTime<Utc>>) -> usize {
-        if let Some((prompt, prompt_at)) = self.pending_prompt.take() {
-            self.batches.push(TaskBatch {
-                prompt,
-                at: prompt_at.or(at),
-                tasks: Vec::new(),
-            });
-        } else if self.batches.is_empty() {
-            self.batches.push(TaskBatch {
-                prompt: String::new(),
-                at,
-                tasks: Vec::new(),
-            });
+    pub(crate) fn open_batch(&mut self, _at: Option<DateTime<Utc>>) -> usize {
+        if std::mem::take(&mut self.prompt_pending) || self.batches.is_empty() {
+            self.batches.push(TaskBatch::default());
         }
         self.batches.len() - 1
     }

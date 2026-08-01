@@ -169,10 +169,18 @@ pub enum Action {
     SelectPrevTask,
     ToggleTasksTab,         // Switch between Tasks and Reports
     FocusSelectedTaskAgent, // Jump to the selected agent's terminal
-    /// Compose a message steering the selected agent's task list.
+    /// Start composing a queued item (new, or a rewrite of the selected one).
     EnterTaskEditMode(TaskEdit),
-    /// Send the composed message to the agent it was aimed at.
+    /// Commit the composed text to the queue.
     SendTaskMessage(String),
+    /// Remove the selected item from the queue.
+    DeleteSelectedTodo,
+    /// Move the selected item one place earlier (-1) or later (+1).
+    MoveSelectedTodo(isize),
+    /// Hold the queue, or let it run again.
+    ToggleTodoQueuePaused,
+    /// Drop the items that have already run.
+    ClearCompletedTodos,
     /// Off-thread re-read of the agent session logs finished.
     AgentTasksRefreshed(HashMap<Uuid, crate::agent_tasks::TaskTracker>),
 

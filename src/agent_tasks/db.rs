@@ -187,7 +187,6 @@ pub(super) fn load_hermes(batches: &mut BatchBuilder, db: &Path, session: &str) 
                             .map(str::to_string)
                             .unwrap_or_else(|| (i + 1).to_string()),
                         subject: subject.to_string(),
-                        detail: None,
                         state: todo
                             .get("status")
                             .and_then(Value::as_str)
@@ -275,7 +274,6 @@ pub(super) fn load_opencode(batches: &mut BatchBuilder, db: &Path, session: &str
         tasks.push(AgentTask {
             id: (i + 1).to_string(),
             subject: content,
-            detail: None,
             state: TaskState::parse(&status),
         });
     }

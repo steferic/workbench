@@ -8,6 +8,7 @@ mod selection;
 mod session_start;
 mod state;
 pub mod tasks_view;
+pub mod todo_dispatch;
 mod utilities;
 mod workspace_nav;
 
