@@ -186,11 +186,7 @@ fn dispatch_next(state: &mut AppState, session_id: Uuid, action_tx: &mpsc::Unbou
 }
 
 fn send(action_tx: &mpsc::UnboundedSender<Action>, session_id: Uuid, text: &str) {
-    let bytes: Vec<u8> = text.bytes().collect();
-    if action_tx.send(Action::SendInput(session_id, bytes)).is_err() {
-        return;
-    }
-    let _ = action_tx.send(Action::SendInput(session_id, vec![b'\r']));
+    crate::app::agent_input::submit_text(action_tx, session_id, text);
 }
 
 #[cfg(test)]

@@ -1,4 +1,5 @@
 mod action;
+pub mod agent_input;
 pub mod comms_tick;
 mod handler;
 pub mod handlers;

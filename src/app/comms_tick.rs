@@ -497,7 +497,9 @@ fn deliver_pending(
         payload.extend_from_slice(framed.as_bytes());
         payload.extend_from_slice(b"\x1b[201~");
         let _ = action_tx.send(crate::app::Action::SendInput(target, payload));
-        let _ = action_tx.send(crate::app::Action::SendInput(target, vec![b'\r']));
+        // The Enter goes on its own, a beat later, or the agent reads the
+        // newline as part of the paste (see `app::agent_input`).
+        crate::app::agent_input::submit(action_tx, target);
 
         // Sending input marks activity via the echo path only after output
         // arrives; drop the target from the idle queue now so a second
