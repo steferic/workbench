@@ -33,6 +33,9 @@ use crate::models::{SessionStatus, TodoState};
 /// What the phone sees. Rebuilt on the tick, small enough to send whole.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Snapshot {
+    /// Every project, including ones with no agents yet — you can start one
+    /// there from the phone.
+    pub projects: Vec<ProjectView>,
     pub agents: Vec<AgentView>,
     /// Seconds since the epoch, so the page can show staleness if the desktop
     /// goes away mid-session.
@@ -40,10 +43,18 @@ pub struct Snapshot {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct ProjectView {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct AgentView {
     /// Short session id — the address for every write endpoint.
     pub id: String,
     pub project: String,
+    /// Which project to start a sibling agent in.
+    pub project_id: String,
     pub provider: String,
     /// "blocked" | "working" | "idle" | "stopped"
     pub status: String,
@@ -57,8 +68,9 @@ pub struct AgentView {
     pub paused: bool,
     /// Why the queue is holding, when it is.
     pub holding: Option<String>,
-    /// The last few lines of output — carried only for a blocked agent, where
-    /// it is the difference between approving blind and approving informed.
+    /// Recent output: what the agent said, so you can read the thread on the
+    /// phone and answer it. Carried for every live agent, not only blocked
+    /// ones — the point is to be able to talk to it.
     pub tail: Vec<String>,
 }
 
@@ -76,6 +88,15 @@ pub type Shared = Arc<Mutex<Snapshot>>;
 /// run every time rather than inventing a change signal.
 pub fn publish(state: &AppState, shared: &Shared) {
     let mut agents = Vec::new();
+    let projects: Vec<ProjectView> = state
+        .data
+        .workspaces
+        .iter()
+        .map(|workspace| ProjectView {
+            id: workspace.id.to_string(),
+            name: workspace.name.clone(),
+        })
+        .collect();
 
     for workspace in &state.data.workspaces {
         let Some(sessions) = state.data.sessions.get(&workspace.id) else {
@@ -124,6 +145,7 @@ pub fn publish(state: &AppState, shared: &Shared) {
             agents.push(AgentView {
                 id: session.short_id(),
                 project: workspace.name.clone(),
+                project_id: workspace.id.to_string(),
                 provider: session.agent_type.display_name(),
                 status: status.to_string(),
                 reason: state.activity_reason(session.id).map(str::to_string),
@@ -137,10 +159,12 @@ pub fn publish(state: &AppState, shared: &Shared) {
                     .collect(),
                 paused: queue.paused,
                 holding,
-                tail: if status == "blocked" {
-                    output_tail(state, session.id, 12)
-                } else {
-                    Vec::new()
+                // Deep history for the conversation you have open; a glance
+                // for the rest, so the snapshot stays phone-sized.
+                tail: match (status, state.system.remote_focus == Some(session.id)) {
+                    ("stopped", _) => Vec::new(),
+                    (_, true) => output_tail(state, session.id, 400),
+                    (_, false) => output_tail(state, session.id, 8),
                 },
             });
         }
@@ -155,6 +179,7 @@ pub fn publish(state: &AppState, shared: &Shared) {
     });
 
     if let Ok(mut snapshot) = shared.lock() {
+        snapshot.projects = projects;
         snapshot.agents = agents;
         snapshot.at = chrono::Utc::now().timestamp();
     }
@@ -271,6 +296,41 @@ mod tests {
             .unwrap();
         assert_eq!(agent.running.as_deref(), Some("fix the redirect"));
         assert_eq!(agent.queued, vec!["write the migration"]);
+    }
+
+    /// The phone can only hold a conversation if the words reach it.
+    #[test]
+    fn a_live_agent_carries_its_recent_output_but_a_stopped_one_does_not() {
+        let (mut state, busy, _blocked) = state_with_agents();
+        state
+            .system
+            .create_session_buffers(busy, 24, 80, &AgentType::Claude);
+        if let Some(parser) = state.system.output_buffers.get_mut(&busy) {
+            parser.process(b"I looked at the migration and it needs a backfill.\r\n");
+        }
+        state.system.update_transcript_from_screen(busy);
+
+        publish(&state, &Default::default());
+        let shared: Shared = Default::default();
+        publish(&state, &shared);
+        let snapshot = shared.lock().unwrap();
+
+        let short = state.get_session(busy).unwrap().short_id();
+        let live = snapshot.agents.iter().find(|a| a.id == short).unwrap();
+        assert!(
+            live.tail.iter().any(|l| l.contains("needs a backfill")),
+            "{:?}",
+            live.tail
+        );
+
+        // A stopped agent has nothing to say and should not carry a stale
+        // transcript to the phone.
+        drop(snapshot);
+        state.get_session_mut(busy).unwrap().status = SessionStatus::Stopped;
+        publish(&state, &shared);
+        let snapshot = shared.lock().unwrap();
+        let stopped = snapshot.agents.iter().find(|a| a.id == short).unwrap();
+        assert!(stopped.tail.is_empty());
     }
 
     #[test]

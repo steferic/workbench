@@ -209,7 +209,7 @@ pub fn process_action(
                 }
 
                 // Session actions
-                Action::CreateSession(_, _, _) | Action::CreateTerminal |
+                Action::CreateSession(_, _, _) | Action::CreateSessionIn(_, _, _, _) | Action::CreateTerminal |
                 Action::ActivateSession(_) | Action::RestartSession(_) | Action::StopSession(_) |
                 Action::KillSession(_) | Action::InitiateDeleteSession(_, _) |
                 Action::ConfirmDeleteSession | Action::CancelPendingDelete | Action::EnterCreateSessionMode |
@@ -473,11 +473,41 @@ fn apply_remote(
 ) {
     use crate::remote::RemoteCommand;
 
+    // Creating an agent names a project, not a session.
+    if let RemoteCommand::NewAgent { project, provider } = &command {
+        let Ok(workspace_id) = project.parse::<uuid::Uuid>() else {
+            return;
+        };
+        let agent_type = match provider.as_str() {
+            "codex" => crate::models::AgentType::Codex,
+            "claude" => crate::models::AgentType::Claude,
+            other => {
+                crate::logger::warn(format!("phone asked for an unknown agent: {other}"));
+                return;
+            }
+        };
+        if state.get_workspace(workspace_id).is_none() {
+            crate::logger::warn(format!("phone asked for an agent in unknown project {project}"));
+            return;
+        }
+        crate::logger::info(format!("phone started a {provider} in {project}"));
+        // Permissions stay on: a prompt is answerable from the phone now, so
+        // there is no reason to hand a remote-started agent a free pass.
+        dispatch_action(
+            action_tx,
+            Action::CreateSessionIn(workspace_id, agent_type, false, false),
+        );
+        return;
+    }
+
     let agent = match &command {
         RemoteCommand::Todo { agent, .. }
         | RemoteCommand::Reply { agent, .. }
         | RemoteCommand::Approve { agent }
-        | RemoteCommand::Deny { agent } => agent.clone(),
+        | RemoteCommand::Deny { agent }
+        | RemoteCommand::Focus { agent } => agent.clone(),
+        // Handled above.
+        RemoteCommand::NewAgent { .. } => return,
     };
     let Some(session_id) = crate::remote::session_for(state, &agent) else {
         crate::logger::warn(format!("phone asked for unknown agent {agent}"));
@@ -493,19 +523,44 @@ fn apply_remote(
             super::handlers::save_state(state, "failed to save a queued todo");
         }
         RemoteCommand::Reply { text, .. } => {
-            crate::logger::info(format!("phone replied to {agent}: {text}"));
-            dispatch_action(action_tx, Action::SendInput(session_id, text.into_bytes()));
-            dispatch_action(action_tx, Action::SendInput(session_id, vec![b'\r']));
+            let running = state
+                .get_session(session_id)
+                .map(|s| s.status == crate::models::SessionStatus::Running)
+                .unwrap_or(false);
+            if running {
+                crate::logger::info(format!("phone replied to {agent}: {text}"));
+                super::agent_input::submit_text(action_tx, session_id, &text);
+            } else {
+                // Talking to a stopped agent means you want it back. Start it,
+                // and let the queue deliver as soon as it is ready — the agent
+                // takes seconds to boot, and its own hooks say when it is.
+                crate::logger::info(format!("phone woke {agent} to say: {text}"));
+                if let Some(session) = state.get_session_mut(session_id) {
+                    session.todo_queue.add_next(text);
+                }
+                dispatch_action(action_tx, Action::RestartSession(session_id));
+                super::handlers::save_state(state, "failed to save a woken message");
+            }
         }
         // Prompts are keyboard-driven: Enter takes the highlighted choice,
         // Esc backs out. Sending those is exactly what your hands would do.
         RemoteCommand::Approve { .. } => {
             crate::logger::info(format!("phone approved {agent}"));
-            dispatch_action(action_tx, Action::SendInput(session_id, vec![b'\r']));
+            super::agent_input::submit(action_tx, session_id);
         }
+        RemoteCommand::Focus { .. } => {
+            state.system.remote_focus = Some(session_id);
+        }
+        // Handled before the session lookup, which it does not need.
+        RemoteCommand::NewAgent { .. } => {}
         RemoteCommand::Deny { .. } => {
             crate::logger::info(format!("phone denied {agent}"));
-            dispatch_action(action_tx, Action::SendInput(session_id, vec![0x1b]));
+            super::agent_input::press_after(
+                action_tx,
+                session_id,
+                vec![0x1b],
+                std::time::Duration::from_millis(0),
+            );
         }
     }
 }
@@ -638,7 +693,7 @@ fn refresh_agent_tasks(state: &mut AppState, action_tx: &mpsc::UnboundedSender<A
 
 #[cfg(test)]
 mod tests {
-    use super::{plan_task_refresh, process_action};
+    use super::{apply_remote, plan_task_refresh, process_action};
     use crate::models::{AgentType, Session, SessionStatus, Workspace};
     use chrono::{Duration as ChronoDuration, Utc};
 
@@ -673,6 +728,110 @@ mod tests {
         let id = workspace.id;
         state.data.workspaces.push(workspace);
         (state, id)
+    }
+
+    /// Talking to an agent you stopped means you want it back — the message
+    /// should wake it, not vanish.
+    #[test]
+    fn messaging_a_stopped_agent_starts_it_and_keeps_the_message() {
+        let (mut state, workspace_id) = state_with_workspace();
+        let id = add_agent(&mut state, workspace_id, SessionStatus::Stopped, None);
+        let short = state.get_session(id).unwrap().short_id();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+
+        apply_remote(
+            &mut state,
+            crate::remote::RemoteCommand::Reply {
+                agent: short,
+                text: "pick this back up please".into(),
+            },
+            &tx,
+        );
+
+        // The message waits in the queue, to be delivered when it is ready.
+        let queue = &state.get_session(id).unwrap().todo_queue;
+        assert_eq!(queue.items.len(), 1);
+        assert_eq!(queue.items[0].text, "pick this back up please");
+
+        // And the session was asked to start.
+        let restarted = std::iter::from_fn(|| rx.try_recv().ok())
+            .any(|action| matches!(action, Action::RestartSession(target) if target == id));
+        assert!(restarted, "a stopped agent must be started, not written to");
+    }
+
+    #[test]
+    fn the_phone_can_start_an_agent_in_a_named_project() {
+        let (mut state, workspace_id) = state_with_workspace();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+
+        apply_remote(
+            &mut state,
+            crate::remote::RemoteCommand::NewAgent {
+                project: workspace_id.to_string(),
+                provider: "codex".into(),
+            },
+            &tx,
+        );
+
+        match rx.try_recv() {
+            Ok(Action::CreateSessionIn(target, agent, dangerous, worktree)) => {
+                assert_eq!(target, workspace_id);
+                assert_eq!(agent, AgentType::Codex);
+                // A prompt is answerable from the phone, so a remotely started
+                // agent keeps its permission gates.
+                assert!(!dangerous);
+                assert!(!worktree);
+            }
+            other => panic!("expected a session to be created, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_nonsense_project_or_provider_starts_nothing() {
+        let (mut state, workspace_id) = state_with_workspace();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+
+        for command in [
+            crate::remote::RemoteCommand::NewAgent {
+                project: workspace_id.to_string(),
+                provider: "definitely-not-an-agent".into(),
+            },
+            crate::remote::RemoteCommand::NewAgent {
+                project: uuid::Uuid::new_v4().to_string(),
+                provider: "claude".into(),
+            },
+            crate::remote::RemoteCommand::NewAgent {
+                project: "not-a-uuid".into(),
+                provider: "claude".into(),
+            },
+        ] {
+            apply_remote(&mut state, command, &tx);
+        }
+        assert!(rx.try_recv().is_err(), "nothing should have been started");
+    }
+
+    /// A running agent is typed to directly — no queue, no delay.
+    #[test]
+    fn messaging_a_running_agent_goes_straight_to_its_terminal() {
+        let (mut state, workspace_id) = state_with_workspace();
+        let id = add_agent(&mut state, workspace_id, SessionStatus::Running, Some(5));
+        let short = state.get_session(id).unwrap().short_id();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+
+        apply_remote(
+            &mut state,
+            crate::remote::RemoteCommand::Reply {
+                agent: short,
+                text: "hello".into(),
+            },
+            &tx,
+        );
+
+        assert!(state.get_session(id).unwrap().todo_queue.is_empty());
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(Action::SendInput(target, bytes)) if target == id && bytes == b"hello".to_vec()
+        ));
     }
 
     #[test]

@@ -69,6 +69,9 @@ pub enum Action {
 
     // Session operations
     CreateSession(AgentType, bool, bool), // (agent_type, dangerously_skip_permissions, with_worktree)
+    /// Same, but in a named workspace — used when the request did not come
+    /// from the cursor (the phone).
+    CreateSessionIn(Uuid, AgentType, bool, bool),
     ActivateSession(Uuid),
     RestartSession(Uuid),
     StopSession(Uuid),

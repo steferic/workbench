@@ -637,6 +637,8 @@ pub struct SystemState {
     /// Set once we have tried to start, so a machine without Tailscale does
     /// not retry every tick.
     pub remote_tried: bool,
+    /// The conversation the phone has open, which gets full history.
+    pub remote_focus: Option<Uuid>,
 }
 
 impl SystemState {
@@ -677,6 +679,7 @@ impl SystemState {
             remote: None,
             remote_commands: None,
             remote_tried: false,
+            remote_focus: None,
         }
     }
 

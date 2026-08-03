@@ -70,6 +70,21 @@ impl TodoQueue {
         id
     }
 
+    /// Put something at the head of the queue: a message you just sent should
+    /// reach the agent before work queued earlier.
+    pub fn add_next(&mut self, text: impl Into<String>) -> Uuid {
+        let todo = QueuedTodo::new(text);
+        let id = todo.id;
+        // After anything already in flight, before everything waiting.
+        let at = self
+            .items
+            .iter()
+            .position(|item| item.state == TodoState::Pending)
+            .unwrap_or(self.items.len());
+        self.items.insert(at, todo);
+        id
+    }
+
     pub fn remove(&mut self, id: Uuid) {
         self.items.retain(|item| item.id != id);
     }
@@ -201,6 +216,22 @@ mod tests {
         queue.shift(a, -1);
         queue.shift(b, 1);
         assert_eq!(order(&queue), vec![a, c, b]);
+    }
+
+    #[test]
+    fn a_message_jumps_the_queue_but_not_the_item_in_flight() {
+        let mut queue = queue_of(&["running work", "queued work"]);
+        let first = queue.items[0].id;
+        queue.mark_running(first);
+
+        queue.add_next("what are you doing?");
+
+        let order: Vec<&str> = queue.items.iter().map(|i| i.text.as_str()).collect();
+        assert_eq!(
+            order,
+            vec!["running work", "what are you doing?", "queued work"],
+            "a message goes next, but cannot displace the turn already underway"
+        );
     }
 
     #[test]

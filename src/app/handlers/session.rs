@@ -62,6 +62,18 @@ pub fn handle_session_action(
                 pty_tx,
             );
         }
+        Action::CreateSessionIn(workspace_id, agent_type, dangerously_skip_permissions, with_worktree) => {
+            create_session_in(
+                state,
+                workspace_id,
+                agent_type,
+                dangerously_skip_permissions,
+                with_worktree,
+                pty_manager,
+                action_tx,
+                pty_tx,
+            );
+        }
         Action::CreateTerminal => {
             create_terminal(state, pty_manager, pty_tx);
         }
@@ -384,14 +396,37 @@ fn create_session(
     action_tx: &mpsc::UnboundedSender<Action>,
     pty_tx: &mpsc::Sender<Action>,
 ) -> Option<Uuid> {
-    let Some(workspace) = state.selected_workspace() else {
-        return None;
-    };
-    let workspace_id = workspace.id;
-    let workspace_path = workspace.path.clone();
-    let ws_idx = state.ui.selected_workspace_idx;
+    let workspace_id = state.selected_workspace()?.id;
+    create_session_in(
+        state,
+        workspace_id,
+        agent_type,
+        dangerously_skip_permissions,
+        with_worktree,
+        pty_manager,
+        action_tx,
+        pty_tx,
+    )
+}
 
-    if let Some(ws) = state.data.workspaces.get_mut(ws_idx) {
+/// Create a session in a named workspace.
+///
+/// The phone can ask for an agent in a project it is not looking at, so the
+/// target is explicit rather than "whatever the cursor is on".
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn create_session_in(
+    state: &mut AppState,
+    workspace_id: Uuid,
+    agent_type: AgentType,
+    dangerously_skip_permissions: bool,
+    with_worktree: bool,
+    pty_manager: &PtyManager,
+    action_tx: &mpsc::UnboundedSender<Action>,
+    pty_tx: &mpsc::Sender<Action>,
+) -> Option<Uuid> {
+    let workspace_path = state.get_workspace(workspace_id)?.path.clone();
+
+    if let Some(ws) = state.get_workspace_mut(workspace_id) {
         ws.touch();
     }
     state.ui.input_mode = InputMode::Normal;

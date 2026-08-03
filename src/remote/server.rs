@@ -47,6 +47,12 @@ pub enum RemoteCommand {
     Approve { agent: String },
     /// Back out of a prompt (Esc).
     Deny { agent: String },
+    /// The conversation the phone currently has open. Only this agent's full
+    /// history is published, so the snapshot stays small.
+    Focus { agent: String },
+    /// Start a new agent in a project. `agent` carries the project id and
+    /// `text` the provider, since every write endpoint speaks that shape.
+    NewAgent { project: String, provider: String },
 }
 
 /// This machine's Tailscale address, if it is on a tailnet.
@@ -90,20 +96,39 @@ impl Remote {
         let addr = SocketAddr::new(ip, port);
         let config = RemoteConfig { addr, token };
 
-        let server = Server::http(addr).map_err(|err| anyhow!("could not bind {addr}: {err}"))?;
-        let token = config.token.clone();
+        serve_on(addr, &config.token, &shared, &commands)
+            .map_err(|err| anyhow!("could not bind {addr}: {err}"))?;
 
-        std::thread::spawn(move || {
-            for mut request in server.incoming_requests() {
-                let response = handle(&mut request, &token, &shared, &commands);
-                if let Err(err) = request.respond(response) {
-                    crate::logger::warn(format!("remote response failed: {err}"));
-                }
-            }
-        });
+        // Also on loopback, so `tailscale serve` — which proxies to
+        // 127.0.0.1 — can put HTTPS in front. That is what unlocks
+        // dictation, which browsers refuse outside a secure context.
+        let loopback = SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), port);
+        if let Err(err) = serve_on(loopback, &config.token, &shared, &commands) {
+            crate::logger::warn(format!("phone view not on loopback: {err}"));
+        }
 
         Ok(Remote { config })
     }
+}
+
+/// Bind one address and answer requests on it until the process ends.
+fn serve_on(
+    addr: SocketAddr,
+    token: &str,
+    shared: &Shared,
+    commands: &mpsc::UnboundedSender<RemoteCommand>,
+) -> Result<()> {
+    let server = Server::http(addr).map_err(|err| anyhow!("{err}"))?;
+    let (token, shared, commands) = (token.to_string(), shared.clone(), commands.clone());
+    std::thread::spawn(move || {
+        for mut request in server.incoming_requests() {
+            let response = handle(&mut request, &token, &shared, &commands);
+            if let Err(err) = request.respond(response) {
+                crate::logger::warn(format!("remote response failed: {err}"));
+            }
+        }
+    });
+    Ok(())
 }
 
 fn json(body: String) -> Response<std::io::Cursor<Vec<u8>>> {
@@ -153,6 +178,12 @@ fn handle(
         ("POST", "/api/deny") => {
             command_from(request, commands, |agent, _| Some(RemoteCommand::Deny { agent }))
         }
+        ("POST", "/api/focus") => {
+            command_from(request, commands, |agent, _| Some(RemoteCommand::Focus { agent }))
+        }
+        ("POST", "/api/new-agent") => command_from(request, commands, |project, provider| {
+            Some(RemoteCommand::NewAgent { project, provider })
+        }),
         _ => status(404, "not found"),
     }
 }
