@@ -40,8 +40,14 @@ pub const HTML: &str = r##"<!doctype html>
     }
   }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-  html, body { height:100%; overflow:hidden; }
+  /* The composer's colour, so the strip under the home indicator reads as
+     part of it rather than as a black gap below the page. */
+  html { height:100%; overflow:hidden; background:var(--surface); }
   body {
+    /* 100% is the *large* viewport on iOS: with Safari's bars showing, the
+       page runs off the bottom and the composer sits below the fold. dvh is
+       what is actually visible, and it follows the bars as they hide. */
+    height:100vh; height:100dvh; overflow:hidden;
     margin:0; background:var(--bg); color:var(--fg);
     display:flex; flex-direction:column;
     font:15px/1.5 -apple-system,ui-sans-serif,system-ui,"Segoe UI",sans-serif;

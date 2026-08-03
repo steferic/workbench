@@ -691,8 +691,22 @@ fn codex_day_dir(home: &Path) -> PathBuf {
     dir
 }
 
-/// A rollout whose `session_meta` says when it was opened and for which cwd.
+/// A rollout whose `session_meta` says when it was opened and for which cwd,
+/// last written at `created` — a conversation nobody has resumed.
 fn codex_rollout(dir: &Path, id: &str, cwd: &Path, created: DateTime<Utc>) -> PathBuf {
+    codex_rollout_touched(dir, id, cwd, created, created)
+}
+
+/// The same, but appended to since — which is what a resumed conversation
+/// looks like on disk, and the only thing that distinguishes it from an
+/// abandoned one.
+fn codex_rollout_touched(
+    dir: &Path,
+    id: &str,
+    cwd: &Path,
+    created: DateTime<Utc>,
+    touched: DateTime<Utc>,
+) -> PathBuf {
     let path = dir.join(format!("rollout-2026-07-26T00-00-00-{id}.jsonl"));
     fs::write(
         &path,
@@ -706,6 +720,12 @@ fn codex_rollout(dir: &Path, id: &str, cwd: &Path, created: DateTime<Utc>) -> Pa
         ),
     )
     .unwrap();
+    fs::File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_modified(std::time::SystemTime::from(touched))
+        .unwrap();
     path
 }
 
@@ -807,7 +827,76 @@ fn a_rollout_opened_before_this_process_is_never_claimed_by_it() {
     assert!(
         files::locate_codex(&root, &codex_ctx(cwd.path(), Some(spawned_at)), &HashSet::new())
             .is_none(),
-        "a rollout that predates the spawn belongs to some other session"
+        "a rollout nobody has written to since we spawned belongs to some other session"
+    );
+}
+
+/// The failure this guards: codex 0.146 appends to the rollout it resumes
+/// instead of forking a new one, so after a workbench restart every codex
+/// session was writing to a file opened days ago — and nothing that looked
+/// only at creation time could find it. The pane and the phone both went
+/// blank for codex while claude was fine.
+#[test]
+fn a_resumed_codex_session_keeps_writing_to_the_rollout_it_reopened() {
+    let home = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let dir = codex_day_dir(home.path());
+    let root = files::codex_sessions_root(home.path());
+    let spawned_at = Utc::now() - ChronoDuration::seconds(30);
+
+    let reopened = codex_rollout_touched(
+        &dir,
+        "00000000-0000-4000-8000-0000000000aa",
+        cwd.path(),
+        Utc::now() - ChronoDuration::days(11),
+        Utc::now(),
+    );
+    // An older conversation for the same directory, left alone.
+    codex_rollout(
+        &dir,
+        "00000000-0000-4000-8000-0000000000bb",
+        cwd.path(),
+        Utc::now() - ChronoDuration::days(2),
+    );
+
+    let found = files::locate_codex(&root, &codex_ctx(cwd.path(), Some(spawned_at)), &HashSet::new());
+    assert_eq!(found.as_deref(), Some(reopened.as_path()));
+}
+
+/// And once the id is known, none of that guessing is needed — even for a
+/// rollout filed under a day we would never have scanned.
+#[test]
+fn a_resumed_codex_session_is_found_by_the_conversation_it_resumed() {
+    let home = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let root = files::codex_sessions_root(home.path());
+    let old_day = root.join("2026").join("07").join("23");
+    fs::create_dir_all(&old_day).unwrap();
+
+    let conversation = "00000000-0000-4000-8000-0000000000cc";
+    let resumed = codex_rollout(
+        &old_day,
+        conversation,
+        cwd.path(),
+        Utc::now() - ChronoDuration::days(11),
+    );
+    // A newer conversation for the same cwd, which the search would prefer.
+    codex_rollout_touched(
+        &codex_day_dir(home.path()),
+        "00000000-0000-4000-8000-0000000000dd",
+        cwd.path(),
+        Utc::now(),
+        Utc::now(),
+    );
+
+    let mut ctx = codex_ctx(cwd.path(), Some(Utc::now() - ChronoDuration::seconds(30)));
+    ctx.conversation = Some(conversation.to_string());
+
+    let found = files::locate_codex(&root, &ctx, &HashSet::new());
+    assert_eq!(
+        found.as_deref(),
+        Some(resumed.as_path()),
+        "the rollout we named on the command line is the one it is writing to"
     );
 }
 
@@ -875,3 +964,4 @@ fn a_rollout_with_no_opening_timestamp_is_skipped_not_fatal() {
     let found = files::locate_codex(&root, &codex_ctx(cwd.path(), Some(spawned_at)), &HashSet::new());
     assert_eq!(found.as_deref(), Some(good.as_path()));
 }
+

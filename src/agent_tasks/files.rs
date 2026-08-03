@@ -4,7 +4,7 @@
 //! only what was appended. Finding *which* file belongs to a workbench session
 //! is the subtle part — see `locate_claude` / `locate_codex`.
 
-use chrono::{DateTime, Duration as ChronoDuration, Local, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use serde_json::Value;
 use std::collections::HashSet;
 use std::fs::{self, File};
@@ -318,14 +318,25 @@ pub(super) fn ingest_codex(batches: &mut BatchBuilder, v: &Value) {
 
 /// Codex has no "use this id" flag, so its rollout has to be recognised.
 ///
-/// Every codex start — fresh *or* resumed — creates a new rollout, so the one
-/// belonging to a running session is the first rollout for this cwd created
-/// after that process was spawned. Claiming then hands the next one to the
-/// next session, which is why sessions are resolved in spawn order (see
-/// `handler::refresh_agent_tasks`).
+/// Workbench always starts codex with `resume` — either a conversation id or
+/// `--last` — and codex 0.146 *appends to the rollout it reopens* rather than
+/// forking a new one. (A workbench rollout here spans 2026-07-23 to today with
+/// a single `session_meta`.) So "the rollout created since this process
+/// spawned" finds nothing for any resumed session, which is every session
+/// after a workbench restart.
 ///
-/// Without a spawn time (a session that is not running, or was already going
-/// when this rule arrived) fall back to the newest unclaimed log for the cwd.
+/// Three rules, in order:
+///
+/// 1. The rollout we named on the command line. Unambiguous, and it does not
+///    care when the file was created or where it lives.
+/// 2. Failing that, the earliest rollout for this cwd *created* since we
+///    spawned — a codex that did open a new file is ours.
+/// 3. Failing that, the most recently *written* rollout for this cwd. That is
+///    what `resume --last` reopened, by the same definition codex used.
+///
+/// Rules 2 and 3 both skip conversations another session has claimed, which is
+/// why sessions are resolved in spawn order (see `handler::refresh_agent_tasks`).
+/// A rollout untouched since we spawned is never ours: a live codex writes.
 pub(super) fn locate_codex(
     root: &Path,
     ctx: &TaskSource,
@@ -336,72 +347,94 @@ pub(super) fn locate_codex(
     let spawn_cutoff = ctx.spawned_at.map(|at| at - ChronoDuration::seconds(SLACK));
     let cutoff = spawn_cutoff.unwrap_or(ctx.started_at - ChronoDuration::minutes(1));
 
-    // Rollout directories are YYYY/MM/DD in local time; only days from the
-    // cutoff onwards can hold this session's log.
-    let start_day = cutoff.with_timezone(&Local).date_naive();
-    let today = Local::now().date_naive();
-
-    // Spawn-anchored: the *earliest* qualifying rollout. Newest-first: the
-    // last one touched. Both keep a single candidate.
-    let mut best: Option<(DateTime<Utc>, PathBuf)> = None;
-
-    let mut day = start_day;
-    while day <= today {
-        let dir = root
-            .join(day.format("%Y").to_string())
-            .join(day.format("%m").to_string())
-            .join(day.format("%d").to_string());
-        day += ChronoDuration::days(1);
-        let Ok(entries) = fs::read_dir(&dir) else {
-            continue;
-        };
-        for file in entries.flatten() {
-            let path = file.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
-                continue;
-            }
-            let Ok(modified) = file.metadata().and_then(|m| m.modified()) else {
-                continue;
-            };
-            // A rollout is only appended to, so its last write can never
-            // precede its creation — cheap way to skip old days' files.
-            if DateTime::<Utc>::from(modified) < cutoff {
-                continue;
-            }
-            if claimed.contains(&path.to_string_lossy().into_owned()) {
-                continue;
-            }
-            let Some(head) = codex_log_head(&path) else {
-                continue;
-            };
-            if head.cwd.as_deref() != Some(ctx.cwd.as_path()) {
-                continue;
-            }
-
-            let (rank, better) = match spawn_cutoff {
-                // Created since this process started, earliest first.
-                Some(_) => {
-                    // No opening timestamp means we cannot tell whether this
-                    // rollout belongs to this process — skip it, don't abandon
-                    // the search.
-                    let Some(created) = head.created else { continue };
-                    if created < cutoff {
-                        continue;
-                    }
-                    (created, best.as_ref().map_or(true, |(b, _)| created < *b))
-                }
-                // No spawn anchor: the most recently written one.
-                None => {
-                    let touched = DateTime::<Utc>::from(modified);
-                    (touched, best.as_ref().map_or(true, |(b, _)| touched > *b))
-                }
-            };
-            if better {
-                best = Some((rank, path));
+    if let Some(id) = ctx.conversation.as_deref() {
+        if let Some(path) = rollout_named(root, id) {
+            if !claimed.contains(&path.to_string_lossy().into_owned()) {
+                return Some(path);
             }
         }
     }
-    best.map(|(_, p)| p)
+
+    // Created since we spawned, earliest first / written since we spawned,
+    // latest first. The first kind wins when there is one.
+    let mut opened: Option<(DateTime<Utc>, PathBuf)> = None;
+    let mut reopened: Option<(DateTime<Utc>, PathBuf)> = None;
+
+    for path in rollouts(root) {
+        let Ok(modified) = fs::metadata(&path).and_then(|m| m.modified()) else {
+            continue;
+        };
+        let touched = DateTime::<Utc>::from(modified);
+        if touched < cutoff {
+            continue;
+        }
+        if claimed.contains(&path.to_string_lossy().into_owned()) {
+            continue;
+        }
+        let Some(head) = codex_log_head(&path) else {
+            continue;
+        };
+        if head.cwd.as_deref() != Some(ctx.cwd.as_path()) {
+            continue;
+        }
+
+        match head.created {
+            // A rollout with no opening timestamp cannot be dated, but it can
+            // still be the one being written to.
+            Some(created) if spawn_cutoff.is_some() && created >= cutoff => {
+                if opened.as_ref().map_or(true, |(best, _)| created < *best) {
+                    opened = Some((created, path));
+                }
+            }
+            _ => {
+                if reopened.as_ref().map_or(true, |(best, _)| touched > *best) {
+                    reopened = Some((touched, path));
+                }
+            }
+        }
+    }
+    opened.or(reopened).map(|(_, path)| path)
+}
+
+/// Every rollout under the sessions root, whatever day it was filed under.
+///
+/// The layout is `YYYY/MM/DD/rollout-*.jsonl`, and a rollout that has been
+/// resumed for a week still lives in the directory for the day it was opened —
+/// so the day cannot be used to narrow the search. A few hundred paths, listed
+/// only when a session has no store yet.
+fn rollouts(root: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let dirs = |dir: &Path| -> Vec<PathBuf> {
+        fs::read_dir(dir)
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .map(|entry| entry.path())
+                    .filter(|path| path.is_dir())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    for year in dirs(root) {
+        for month in dirs(&year) {
+            for day in dirs(&month) {
+                let Ok(entries) = fs::read_dir(&day) else {
+                    continue;
+                };
+                out.extend(entries.flatten().map(|entry| entry.path()).filter(|path| {
+                    path.extension().and_then(|ext| ext.to_str()) == Some("jsonl")
+                }));
+            }
+        }
+    }
+    out
+}
+
+/// The rollout `codex resume <id>` reopened, wherever it was filed.
+fn rollout_named(root: &Path, id: &str) -> Option<PathBuf> {
+    rollouts(root)
+        .into_iter()
+        .find(|path| codex_rollout_id(path).as_deref() == Some(id))
 }
 
 /// The id `codex resume <id>` reopens: the uuid the rollout is *named* after.

@@ -123,8 +123,7 @@ fn conversation(state: &mut AppState, session_id: Uuid) -> Option<Vec<Message>> 
     };
     let path = path.clone();
 
-    // A cache for another session, or another of its journals, is of no use:
-    // codex forks a fresh rollout on every resume.
+    // A cache for another session, or another of its journals, is of no use.
     let mut cache = match state.system.remote_thread.take() {
         Some(cache) if cache.session == session_id && cache.path == path => cache,
         _ => crate::app::ThreadCache {
@@ -473,3 +472,4 @@ mod tests {
         assert_eq!(session_for(&state, "nosuchid"), None);
     }
 }
+
