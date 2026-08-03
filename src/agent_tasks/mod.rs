@@ -187,6 +187,10 @@ impl TaskTracker {
         self.source.as_ref()
     }
 
+    pub fn provider(&self) -> Provider {
+        self.provider
+    }
+
     /// The agent's own conversation id, read off the store we resolved. This
     /// is what `claude --resume` / `codex resume` / `hermes --resume` need to
     /// restore THIS session's history rather than the directory's most recent.

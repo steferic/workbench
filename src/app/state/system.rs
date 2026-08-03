@@ -639,6 +639,20 @@ pub struct SystemState {
     pub remote_tried: bool,
     /// The conversation the phone has open, which gets full history.
     pub remote_focus: Option<Uuid>,
+    /// That conversation as last read off disk. Agent journals reach tens of
+    /// megabytes; re-parsing one every tick to find nothing new is the kind of
+    /// waste that shows up as a warm laptop.
+    pub remote_thread: Option<ThreadCache>,
+}
+
+/// One session's conversation, and how far into its journal we have read.
+#[derive(Debug, Clone)]
+pub struct ThreadCache {
+    pub session: Uuid,
+    /// The journal this was read from — a resumed session may open a new one.
+    pub path: std::path::PathBuf,
+    pub cursor: crate::remote::Cursor,
+    pub messages: Vec<crate::remote::Message>,
 }
 
 impl SystemState {
@@ -680,6 +694,7 @@ impl SystemState {
             remote_commands: None,
             remote_tried: false,
             remote_focus: None,
+            remote_thread: None,
         }
     }
 

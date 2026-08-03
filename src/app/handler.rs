@@ -503,8 +503,7 @@ fn apply_remote(
     let agent = match &command {
         RemoteCommand::Todo { agent, .. }
         | RemoteCommand::Reply { agent, .. }
-        | RemoteCommand::Approve { agent }
-        | RemoteCommand::Deny { agent }
+        | RemoteCommand::Answer { agent, .. }
         | RemoteCommand::Focus { agent } => agent.clone(),
         // Handled above.
         RemoteCommand::NewAgent { .. } => return,
@@ -542,26 +541,38 @@ fn apply_remote(
                 super::handlers::save_state(state, "failed to save a woken message");
             }
         }
-        // Prompts are keyboard-driven: Enter takes the highlighted choice,
-        // Esc backs out. Sending those is exactly what your hands would do.
-        RemoteCommand::Approve { .. } => {
-            crate::logger::info(format!("phone approved {agent}"));
-            super::agent_input::submit(action_tx, session_id);
+        // Both providers take a bare digit for a numbered choice — verified by
+        // driving each in a pty until it blocked, then answering. That beats
+        // the Enter this used to send, which took whichever option happened to
+        // be highlighted.
+        RemoteCommand::Answer { key, .. } => {
+            let offered = crate::remote::prompt_on_screen(state, session_id);
+            let bytes = match (key.as_str(), &offered) {
+                ("esc", _) => Some(vec![0x1b]),
+                (key, Some(prompt)) if prompt.options.iter().any(|o| o.key == key) => {
+                    Some(key.as_bytes().to_vec())
+                }
+                // The prompt was answered at the desk while the tap was in
+                // flight. Typing the digit now would put it in the composer.
+                _ => None,
+            };
+            match bytes {
+                Some(bytes) => {
+                    crate::logger::info(format!("phone answered {agent} with {key}"));
+                    dispatch_action(action_tx, Action::SendInput(session_id, bytes));
+                }
+                None => crate::logger::info(format!(
+                    "phone answered {agent} with {key}, but that choice is no longer on screen"
+                )),
+            }
         }
         RemoteCommand::Focus { .. } => {
             state.system.remote_focus = Some(session_id);
+            // A different conversation means the cached one is of no use.
+            state.system.remote_thread = None;
         }
         // Handled before the session lookup, which it does not need.
         RemoteCommand::NewAgent { .. } => {}
-        RemoteCommand::Deny { .. } => {
-            crate::logger::info(format!("phone denied {agent}"));
-            super::agent_input::press_after(
-                action_tx,
-                session_id,
-                vec![0x1b],
-                std::time::Duration::from_millis(0),
-            );
-        }
     }
 }
 

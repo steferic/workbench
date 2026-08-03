@@ -6,7 +6,7 @@ mod ui;
 
 pub use data::DataState;
 pub use system::{
-    PendingSessionStart, RawOutputBuffer, ReplayCache, SystemState, TranscriptBuffer,
+    PendingSessionStart, RawOutputBuffer, ReplayCache, SystemState, ThreadCache, TranscriptBuffer,
     TranscriptLine,
 };
 pub use types::*;

@@ -43,10 +43,9 @@ pub enum RemoteCommand {
     Todo { agent: String, text: String },
     /// Type a reply and submit it.
     Reply { agent: String, text: String },
-    /// Accept the highlighted choice on a prompt (Enter).
-    Approve { agent: String },
-    /// Back out of a prompt (Esc).
-    Deny { agent: String },
+    /// Pick one of the choices the agent is offering. `key` is the option's
+    /// own key as it appears on screen ("1", "2", …) or "esc" to back out.
+    Answer { agent: String, key: String },
     /// The conversation the phone currently has open. Only this agent's full
     /// history is published, so the snapshot stays small.
     Focus { agent: String },
@@ -172,12 +171,9 @@ fn handle(
         ("POST", "/api/reply") => command_from(request, commands, |agent, text| {
             (!text.is_empty()).then_some(RemoteCommand::Reply { agent, text })
         }),
-        ("POST", "/api/approve") => {
-            command_from(request, commands, |agent, _| Some(RemoteCommand::Approve { agent }))
-        }
-        ("POST", "/api/deny") => {
-            command_from(request, commands, |agent, _| Some(RemoteCommand::Deny { agent }))
-        }
+        ("POST", "/api/answer") => command_from(request, commands, |agent, key| {
+            (!key.is_empty()).then_some(RemoteCommand::Answer { agent, key })
+        }),
         ("POST", "/api/focus") => {
             command_from(request, commands, |agent, _| Some(RemoteCommand::Focus { agent }))
         }

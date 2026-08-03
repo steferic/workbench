@@ -18,17 +18,28 @@
 //! held across a request, and nothing here can corrupt app state.
 
 mod page;
+mod prompt;
 mod server;
+mod thread;
 
+pub use prompt::Prompt;
 pub use server::{new_token, Remote, RemoteCommand};
+pub use thread::{Cursor, Message};
 
 use serde::Serialize;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
 use crate::agent_status::Activity;
+use crate::agent_tasks::Source;
 use crate::app::{tasks_view, todo_dispatch, AppState};
 use crate::models::{SessionStatus, TodoState};
+
+/// How far back the open conversation goes. Enough to scroll through the
+/// morning; not so much that the snapshot stops being phone-sized.
+const MAX_MESSAGES: usize = 80;
+/// Screen lines carried for an agent whose journal we cannot read.
+const FALLBACK_TAIL: usize = 200;
 
 /// What the phone sees. Rebuilt on the tick, small enough to send whole.
 #[derive(Debug, Clone, Default, Serialize)]
@@ -68,9 +79,14 @@ pub struct AgentView {
     pub paused: bool,
     /// Why the queue is holding, when it is.
     pub holding: Option<String>,
-    /// Recent output: what the agent said, so you can read the thread on the
-    /// phone and answer it. Carried for every live agent, not only blocked
-    /// ones — the point is to be able to talk to it.
+    /// The question the agent is stopped on, read off its screen. Present
+    /// means it is blocked on you, whatever else the status says.
+    pub prompt: Option<prompt::Prompt>,
+    /// The conversation, for the agent you have open. Read from the agent's
+    /// own journal, so it is speech rather than terminal chrome.
+    pub messages: Vec<Message>,
+    /// Screen lines, for an agent whose journal workbench cannot read. Worse
+    /// than `messages`, and only ever used instead of it.
     pub tail: Vec<String>,
 }
 
@@ -86,7 +102,49 @@ pub type Shared = Arc<Mutex<Snapshot>>;
 
 /// Rebuild the snapshot from app state. Called on the tick; cheap enough to
 /// run every time rather than inventing a change signal.
-pub fn publish(state: &AppState, shared: &Shared) {
+///
+/// The open conversation is read first, because that is the one step that can
+/// touch the disk — everything after it is a read of state already in memory.
+pub fn publish(state: &mut AppState, shared: &Shared) {
+    let open = state.system.remote_focus.and_then(|id| conversation(state, id));
+    publish_with(state, shared, open);
+}
+
+/// The focused agent's conversation, reading only what the agent has appended
+/// since the last tick.
+///
+/// `None` for a provider with no journal we can read; the caller falls back to
+/// the terminal.
+fn conversation(state: &mut AppState, session_id: Uuid) -> Option<Vec<Message>> {
+    let tracker = state.system.agent_tasks.get(&session_id)?;
+    let provider = tracker.provider();
+    let Source::File(path) = tracker.source()? else {
+        return None;
+    };
+    let path = path.clone();
+
+    // A cache for another session, or another of its journals, is of no use:
+    // codex forks a fresh rollout on every resume.
+    let mut cache = match state.system.remote_thread.take() {
+        Some(cache) if cache.session == session_id && cache.path == path => cache,
+        _ => crate::app::ThreadCache {
+            session: session_id,
+            path: path.clone(),
+            cursor: Default::default(),
+            messages: Vec::new(),
+        },
+    };
+    cache.cursor = thread::read_more(&path, provider, cache.cursor, &mut cache.messages);
+    if cache.messages.len() > MAX_MESSAGES {
+        cache.messages.drain(..cache.messages.len() - MAX_MESSAGES);
+    }
+
+    let messages = cache.messages.clone();
+    state.system.remote_thread = Some(cache);
+    Some(messages)
+}
+
+fn publish_with(state: &AppState, shared: &Shared, open: Option<Vec<Message>>) {
     let mut agents = Vec::new();
     let projects: Vec<ProjectView> = state
         .data
@@ -106,8 +164,13 @@ pub fn publish(state: &AppState, shared: &Shared) {
             if !session.agent_type.is_agent() || session.worktree_viewer_for.is_some() {
                 continue;
             }
+            let live = session.status == SessionStatus::Running;
+            // A question on screen outranks the hook: hooks also fire for
+            // plain idleness, and a prompt we can read is proof.
+            let question = live.then(|| screen_prompt(state, session.id)).flatten();
             let activity = state.activity(session.id);
             let status = match (session.status, activity) {
+                _ if question.is_some() => "blocked",
                 (SessionStatus::Running, Activity::NeedsAttention(_)) => "blocked",
                 (SessionStatus::Running, Activity::Working) => "working",
                 (SessionStatus::Running, _) => "idle",
@@ -159,12 +222,21 @@ pub fn publish(state: &AppState, shared: &Shared) {
                     .collect(),
                 paused: queue.paused,
                 holding,
-                // Deep history for the conversation you have open; a glance
-                // for the rest, so the snapshot stays phone-sized.
-                tail: match (status, state.system.remote_focus == Some(session.id)) {
-                    ("stopped", _) => Vec::new(),
-                    (_, true) => output_tail(state, session.id, 400),
-                    (_, false) => output_tail(state, session.id, 8),
+                prompt: question,
+                // Only the conversation you have open travels, so the snapshot
+                // stays phone-sized however many agents are running.
+                messages: match state.system.remote_focus == Some(session.id) {
+                    true => open.clone().unwrap_or_default(),
+                    false => Vec::new(),
+                },
+                // Also the fallback for a session whose journal exists but has
+                // nothing in it yet: an agent still booting has said nothing,
+                // and an empty screen would look like a broken page.
+                tail: match state.system.remote_focus == Some(session.id)
+                    && open.as_ref().map(Vec::is_empty).unwrap_or(true)
+                {
+                    true => output_tail(state, session.id, FALLBACK_TAIL),
+                    false => Vec::new(),
                 },
             });
         }
@@ -194,6 +266,21 @@ pub fn session_for(state: &AppState, short_id: &str) -> Option<Uuid> {
         .flatten()
         .find(|session| session.short_id().eq_ignore_ascii_case(short_id))
         .map(|session| session.id)
+}
+
+/// The question on an agent's current screen, if it is stopped on one.
+///
+/// Public so answering can check the choice is still the one being offered: a
+/// tap crosses the network, and the prompt may have been answered at the desk
+/// in the meantime. A stray digit typed into a composer is exactly the kind of
+/// thing that made the old buttons feel broken.
+pub fn prompt_on_screen(state: &AppState, session_id: Uuid) -> Option<Prompt> {
+    screen_prompt(state, session_id)
+}
+
+fn screen_prompt(state: &AppState, session_id: Uuid) -> Option<Prompt> {
+    let parser = state.system.output_buffers.get(&session_id)?;
+    prompt::parse(&parser.screen().contents())
 }
 
 /// The last non-empty lines of an agent's output, for deciding whether to
@@ -256,10 +343,10 @@ mod tests {
 
     #[test]
     fn the_blocked_agent_is_first_because_that_is_why_you_looked() {
-        let (state, _busy, blocked) = state_with_agents();
+        let (mut state, _busy, blocked) = state_with_agents();
         let shared: Shared = Default::default();
 
-        publish(&state, &shared);
+        publish(&mut state, &shared);
 
         let snapshot = shared.lock().unwrap();
         assert_eq!(snapshot.agents.len(), 2);
@@ -286,7 +373,7 @@ mod tests {
         queue.mark_running(first);
 
         let shared: Shared = Default::default();
-        publish(&state, &shared);
+        publish(&mut state, &shared);
 
         let snapshot = shared.lock().unwrap();
         let agent = snapshot
@@ -298,9 +385,11 @@ mod tests {
         assert_eq!(agent.queued, vec!["write the migration"]);
     }
 
-    /// The phone can only hold a conversation if the words reach it.
+    /// With no journal to read — no tracker has resolved a log for this
+    /// session — the open conversation still has to show something, so the
+    /// terminal stands in for it.
     #[test]
-    fn a_live_agent_carries_its_recent_output_but_a_stopped_one_does_not() {
+    fn the_open_conversation_falls_back_to_the_terminal() {
         let (mut state, busy, _blocked) = state_with_agents();
         state
             .system
@@ -309,28 +398,69 @@ mod tests {
             parser.process(b"I looked at the migration and it needs a backfill.\r\n");
         }
         state.system.update_transcript_from_screen(busy);
+        state.system.remote_focus = Some(busy);
 
-        publish(&state, &Default::default());
         let shared: Shared = Default::default();
-        publish(&state, &shared);
+        publish(&mut state, &shared);
         let snapshot = shared.lock().unwrap();
 
         let short = state.get_session(busy).unwrap().short_id();
-        let live = snapshot.agents.iter().find(|a| a.id == short).unwrap();
+        let open = snapshot.agents.iter().find(|a| a.id == short).unwrap();
         assert!(
-            live.tail.iter().any(|l| l.contains("needs a backfill")),
+            open.tail.iter().any(|l| l.contains("needs a backfill")),
             "{:?}",
-            live.tail
+            open.tail
         );
 
-        // A stopped agent has nothing to say and should not carry a stale
-        // transcript to the phone.
+        // Every other agent's output stays on the desktop: one conversation
+        // travels, so the snapshot stays phone-sized however many are running.
         drop(snapshot);
-        state.get_session_mut(busy).unwrap().status = SessionStatus::Stopped;
-        publish(&state, &shared);
+        state.system.remote_focus = None;
+        publish(&mut state, &shared);
         let snapshot = shared.lock().unwrap();
-        let stopped = snapshot.agents.iter().find(|a| a.id == short).unwrap();
-        assert!(stopped.tail.is_empty());
+        let closed = snapshot.agents.iter().find(|a| a.id == short).unwrap();
+        assert!(closed.tail.is_empty() && closed.messages.is_empty());
+    }
+
+    /// The failure this guards is the phone showing Approve/Deny for a
+    /// question nobody asked — the hook fires for plain idleness too.
+    #[test]
+    fn a_question_on_screen_is_what_marks_an_agent_blocked() {
+        let (mut state, busy, _blocked) = state_with_agents();
+        state
+            .system
+            .create_session_buffers(busy, 24, 80, &AgentType::Claude);
+        let short = state.get_session(busy).unwrap().short_id();
+        let shared: Shared = Default::default();
+
+        publish(&mut state, &shared);
+        let view = |snapshot: &Snapshot| {
+            snapshot
+                .agents
+                .iter()
+                .find(|a| a.id == short)
+                .cloned()
+                .unwrap()
+        };
+        assert!(view(&shared.lock().unwrap()).prompt.is_none());
+        assert_eq!(view(&shared.lock().unwrap()).status, "idle");
+
+        if let Some(parser) = state.system.output_buffers.get_mut(&busy) {
+            parser.process(
+                b" Bash command\r\n\r\n   rm -rf build\r\n\r\n Do you want to proceed?\r\n \
+                  \xe2\x9d\xaf 1. Yes\r\n   2. No\r\n",
+            );
+        }
+        publish(&mut state, &shared);
+        let blocked = view(&shared.lock().unwrap());
+        assert_eq!(blocked.status, "blocked");
+        let prompt = blocked.prompt.expect("the question travels with it");
+        assert_eq!(prompt.options.len(), 2);
+        assert!(
+            prompt.lines.iter().any(|l| l.contains("rm -rf build")),
+            "the phone has to show what it is agreeing to: {:?}",
+            prompt.lines
+        );
     }
 
     #[test]
