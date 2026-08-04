@@ -437,9 +437,17 @@ fn remote_tick(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) 
                 }
             }
             let token = state.system.user_config.remote_token.clone();
+            state.system.push = crate::remote::Push::load();
+            let push_key = state.system.push.public_key();
             let (tx, rx) = mpsc::unbounded_channel();
-            match Remote::start(port, token, state.system.remote_state.clone(), tx, action_tx.clone())
-            {
+            match Remote::start(
+                port,
+                token,
+                push_key,
+                state.system.remote_state.clone(),
+                tx,
+                action_tx.clone(),
+            ) {
                 Ok(remote) => {
                     crate::logger::info(format!("phone view on {}", remote.config.url()));
                     state.system.remote = Some(remote);
@@ -453,6 +461,7 @@ fn remote_tick(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) 
     }
 
     crate::remote::publish(state, &state.system.remote_state.clone());
+    notify_newly_blocked(state);
 
     let mut pending = Vec::new();
     if let Some(rx) = state.system.remote_commands.as_mut() {
@@ -465,6 +474,42 @@ fn remote_tick(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) 
     }
 }
 
+/// Poke subscribed devices when an agent has *just* become blocked.
+///
+/// Read off the snapshot that was published a moment ago, so the phone is told
+/// exactly what it would see if it looked. The edge is what matters: an agent
+/// sits blocked for as long as it takes you to answer, and a notification a
+/// second is not a feature.
+/// Returns the agents it told the phone about, which is what the tests read.
+///
+/// The set is kept up to date even with nobody subscribed, so turning
+/// notifications on does not immediately fire for every agent that was already
+/// waiting — you are told about what blocks from then on.
+fn notify_newly_blocked(state: &mut AppState) -> Vec<String> {
+    let blocked: std::collections::HashSet<String> = match state.system.remote_state.lock() {
+        Ok(snapshot) => snapshot
+            .agents
+            .iter()
+            .filter(|agent| agent.status == "blocked")
+            .map(|agent| agent.id.clone())
+            .collect(),
+        Err(_) => return Vec::new(),
+    };
+
+    let mut fresh: Vec<String> = blocked
+        .difference(&state.system.remote_notified)
+        .cloned()
+        .collect();
+    fresh.sort();
+    state.system.remote_notified = blocked;
+
+    if !fresh.is_empty() && !state.system.push.is_empty() {
+        crate::logger::info(format!("telling the phone about {}", fresh.join(", ")));
+        state.system.push.notify();
+    }
+    fresh
+}
+
 /// Everything the phone can ask for, in terms of what the keyboard could do.
 fn apply_remote(
     state: &mut AppState,
@@ -472,6 +517,17 @@ fn apply_remote(
     action_tx: &mpsc::UnboundedSender<Action>,
 ) {
     use crate::remote::RemoteCommand;
+
+    // A subscription names a device, not a session.
+    if let RemoteCommand::Subscribe { endpoint } = &command {
+        if state.system.push.subscribe(endpoint.clone()) {
+            crate::logger::info("a device asked to be told when an agent needs you".to_string());
+            if let Err(err) = state.system.push.save() {
+                crate::logger::warn(format!("could not store the subscription: {err}"));
+            }
+        }
+        return;
+    }
 
     // Creating an agent names a project, not a session.
     if let RemoteCommand::NewAgent { project, provider } = &command {
@@ -506,7 +562,7 @@ fn apply_remote(
         | RemoteCommand::Answer { agent, .. }
         | RemoteCommand::Focus { agent } => agent.clone(),
         // Handled above.
-        RemoteCommand::NewAgent { .. } => return,
+        RemoteCommand::NewAgent { .. } | RemoteCommand::Subscribe { .. } => return,
     };
     let Some(session_id) = crate::remote::session_for(state, &agent) else {
         crate::logger::warn(format!("phone asked for unknown agent {agent}"));
@@ -571,8 +627,8 @@ fn apply_remote(
             // A different conversation means the cached one is of no use.
             state.system.remote_thread = None;
         }
-        // Handled before the session lookup, which it does not need.
-        RemoteCommand::NewAgent { .. } => {}
+        // Handled before the session lookup, which they do not need.
+        RemoteCommand::NewAgent { .. } | RemoteCommand::Subscribe { .. } => {}
     }
 }
 
@@ -704,7 +760,7 @@ fn refresh_agent_tasks(state: &mut AppState, action_tx: &mpsc::UnboundedSender<A
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_remote, plan_task_refresh, process_action};
+    use super::{apply_remote, notify_newly_blocked, plan_task_refresh, process_action};
     use crate::models::{AgentType, Session, SessionStatus, Workspace};
     use chrono::{Duration as ChronoDuration, Utc};
 
@@ -731,6 +787,55 @@ mod tests {
                 .insert(id, Utc::now() - ChronoDuration::seconds(secs));
         }
         id
+    }
+
+    /// A blocked agent stays blocked until you answer it. The phone should
+    /// hear about that once, on the edge — not once a second for as long as
+    /// it takes you to get to your desk.
+    #[test]
+    fn the_phone_is_told_when_an_agent_becomes_blocked_and_not_again() {
+        let mut state = AppState::default();
+        let workspace = Workspace::new("zeta".into(), std::path::PathBuf::from("/tmp/z"));
+        let workspace_id = workspace.id;
+        state.data.workspaces.push(workspace);
+        let agent = add_agent(&mut state, workspace_id, SessionStatus::Running, Some(30));
+        let short = crate::models::Session::short_id_of(agent);
+
+        let block = |state: &mut AppState, blocked: bool| {
+            state.system.agent_status.insert(
+                agent,
+                crate::agent_status::AgentStatus {
+                    activity: if blocked {
+                        crate::agent_status::Activity::NeedsAttention(
+                            crate::agent_status::Attention::Permission,
+                        )
+                    } else {
+                        crate::agent_status::Activity::Working
+                    },
+                    reason: "wants to run shell".into(),
+                    at: Utc::now(),
+                    event: "PermissionRequest".into(),
+                },
+            );
+            crate::remote::publish(state, &state.system.remote_state.clone());
+        };
+
+        block(&mut state, false);
+        assert!(notify_newly_blocked(&mut state).is_empty(), "working is not news");
+
+        block(&mut state, true);
+        assert_eq!(notify_newly_blocked(&mut state), vec![short.clone()]);
+        block(&mut state, true);
+        assert!(
+            notify_newly_blocked(&mut state).is_empty(),
+            "still blocked is not a new thing to say"
+        );
+
+        // Answered, then blocked again: that is news a second time.
+        block(&mut state, false);
+        assert!(notify_newly_blocked(&mut state).is_empty());
+        block(&mut state, true);
+        assert_eq!(notify_newly_blocked(&mut state), vec![short]);
     }
 
     fn state_with_workspace() -> (AppState, uuid::Uuid) {

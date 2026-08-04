@@ -19,10 +19,12 @@
 
 mod page;
 mod prompt;
+mod push;
 mod server;
 mod thread;
 
 pub use prompt::Prompt;
+pub use push::Push;
 pub use server::{new_token, Remote, RemoteCommand};
 pub use thread::{Cursor, Message};
 

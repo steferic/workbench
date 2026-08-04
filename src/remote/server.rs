@@ -52,6 +52,8 @@ pub enum RemoteCommand {
     /// Start a new agent in a project. `agent` carries the project id and
     /// `text` the provider, since every write endpoint speaks that shape.
     NewAgent { project: String, provider: String },
+    /// A device asking to be told when an agent needs you.
+    Subscribe { endpoint: String },
 }
 
 /// This machine's Tailscale address, if it is on a tailnet.
@@ -83,9 +85,14 @@ pub fn new_token() -> String {
 
 impl Remote {
     /// Start serving, or explain why we cannot.
+    ///
+    /// `push_key` is the VAPID public key the phone subscribes with. It is
+    /// fixed for the life of the process, so the server thread holds a copy
+    /// rather than reaching into app state for it.
     pub fn start(
         port: u16,
         token: String,
+        push_key: String,
         shared: Shared,
         commands: mpsc::UnboundedSender<RemoteCommand>,
         _actions: mpsc::UnboundedSender<Action>,
@@ -95,14 +102,14 @@ impl Remote {
         let addr = SocketAddr::new(ip, port);
         let config = RemoteConfig { addr, token };
 
-        serve_on(addr, &config.token, &shared, &commands)
+        serve_on(addr, &config.token, &push_key, &shared, &commands)
             .map_err(|err| anyhow!("could not bind {addr}: {err}"))?;
 
         // Also on loopback, so `tailscale serve` — which proxies to
         // 127.0.0.1 — can put HTTPS in front. That is what unlocks
         // dictation, which browsers refuse outside a secure context.
         let loopback = SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), port);
-        if let Err(err) = serve_on(loopback, &config.token, &shared, &commands) {
+        if let Err(err) = serve_on(loopback, &config.token, &push_key, &shared, &commands) {
             crate::logger::warn(format!("phone view not on loopback: {err}"));
         }
 
@@ -114,14 +121,16 @@ impl Remote {
 fn serve_on(
     addr: SocketAddr,
     token: &str,
+    push_key: &str,
     shared: &Shared,
     commands: &mpsc::UnboundedSender<RemoteCommand>,
 ) -> Result<()> {
     let server = Server::http(addr).map_err(|err| anyhow!("{err}"))?;
     let (token, shared, commands) = (token.to_string(), shared.clone(), commands.clone());
+    let push_key = push_key.to_string();
     std::thread::spawn(move || {
         for mut request in server.incoming_requests() {
-            let response = handle(&mut request, &token, &shared, &commands);
+            let response = handle(&mut request, &token, &push_key, &shared, &commands);
             if let Err(err) = request.respond(response) {
                 crate::logger::warn(format!("remote response failed: {err}"));
             }
@@ -137,9 +146,11 @@ fn json(body: String) -> Response<std::io::Cursor<Vec<u8>>> {
 }
 
 fn html(body: &str) -> Response<std::io::Cursor<Vec<u8>>> {
-    let header = Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..])
-        .expect("static header parses");
-    Response::from_string(body.to_string()).with_header(header)
+    with_type(body, "text/html; charset=utf-8")
+}
+
+fn with_type(body: &str, content_type: &str) -> Response<std::io::Cursor<Vec<u8>>> {
+    Response::from_string(body.to_string()).with_header(header("Content-Type", content_type))
 }
 
 fn status(code: u16, message: &str) -> Response<std::io::Cursor<Vec<u8>>> {
@@ -149,18 +160,32 @@ fn status(code: u16, message: &str) -> Response<std::io::Cursor<Vec<u8>>> {
 fn handle(
     request: &mut tiny_http::Request,
     token: &str,
+    push_key: &str,
     shared: &Shared,
     commands: &mpsc::UnboundedSender<RemoteCommand>,
 ) -> Response<std::io::Cursor<Vec<u8>>> {
     let url = request.url().to_string();
     let (path, query) = url.split_once('?').unwrap_or((url.as_str(), ""));
 
+    // The manifest is fetched by the browser on its own account — iOS reads it
+    // when you add the page to the home screen, without the page's token to
+    // hand. It names the app and nothing else.
+    if path == "/manifest.webmanifest" {
+        return with_type(page::MANIFEST, "application/manifest+json");
+    }
     if !authorized(request, &query_params(query), token) {
         return status(401, "unauthorized");
     }
 
     match (request.method().as_str(), path) {
         ("GET", "/") => html(page::HTML),
+        // Registered as `/sw.js?t=…` so the worker inherits the token and can
+        // read state when a notification arrives.
+        ("GET", "/sw.js") => with_type(page::SERVICE_WORKER, "text/javascript; charset=utf-8"),
+        ("GET", "/api/push-key") => with_type(push_key, "text/plain; charset=utf-8"),
+        ("POST", "/api/subscribe") => command_from(request, commands, |_, endpoint| {
+            (!endpoint.is_empty()).then_some(RemoteCommand::Subscribe { endpoint })
+        }),
         ("GET", "/api/state") => state_body(request, &query_params(query), shared),
         ("POST", "/api/todo") => command_from(request, commands, |agent, text| {
             (!text.is_empty()).then_some(RemoteCommand::Todo { agent, text })

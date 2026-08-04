@@ -248,6 +248,12 @@ pub const HTML: &str = r##"<!doctype html>
     flex:1; font-size:13px; padding:8px; border-radius:10px;
     border:1px dashed var(--line); background:none; color:var(--dim);
   }
+  .notify {
+    flex:none; margin:8px 16px 0; padding:11px 13px; text-align:left;
+    border:1px solid var(--line); border-radius:11px; background:var(--bg);
+    color:var(--fg); font-size:13.5px; line-height:1.35;
+  }
+  .notify.on { border-color:var(--ok); color:var(--dim); }
   .theme {
     flex:none; display:flex; gap:2px; margin:8px 16px;
     margin-bottom:calc(16px + env(safe-area-inset-bottom));
@@ -292,6 +298,9 @@ pub const HTML: &str = r##"<!doctype html>
 <aside id="drawer">
   <h2>projects</h2>
   <div class="tree" id="tree"></div>
+  <button class="notify" id="notify" onclick="enablePush()">
+    <span>Notify me when an agent is blocked</span>
+  </button>
   <div class="theme" id="theme">
     <button onclick="setTheme('system')">Auto</button>
     <button onclick="setTheme('light')">Light</button>
@@ -463,6 +472,62 @@ function toggleMic() {
 function setListening(on) {
   listening = on;
   document.getElementById("mic").classList.toggle("on", on);
+}
+
+/* ---- notifications ---------------------------------------------------- */
+
+/* iOS only allows this for a web app on the home screen, and only over https,
+   and only from a tap — so it is a button rather than something done on load,
+   and it says which of those is missing rather than failing quietly. */
+async function enablePush() {
+  const button = document.getElementById("notify");
+  const say = text => { button.querySelector("span").textContent = text; };
+
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+    say(window.isSecureContext
+      ? "This browser cannot do notifications. On iOS, add the page to your home screen first."
+      : "Notifications need https — run: tailscale serve --bg 8765");
+    return;
+  }
+  try {
+    if (await Notification.requestPermission() !== "granted") {
+      say("Notifications refused. Allow them in Settings to turn this on.");
+      return;
+    }
+    const registration = await navigator.serviceWorker.register(q("/sw.js"));
+    await navigator.serviceWorker.ready;
+
+    let subscription = await registration.pushManager.getSubscription();
+    if (!subscription) {
+      const key = (await (await fetch(q("/api/push-key"))).text()).trim();
+      subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: keyBytes(key),
+      });
+    }
+    // The endpoint is the whole address; nothing else here is needed, since
+    // the push carries no payload to encrypt.
+    await post("/api/subscribe", { agent: "-", text: subscription.endpoint });
+    store.set("push", "on");
+    markPush(true);
+  } catch (err) {
+    say("Could not turn them on: " + err.message);
+  }
+}
+
+/* base64url → the Uint8Array `subscribe` insists on. */
+function keyBytes(key) {
+  const padded = (key + "=".repeat((4 - key.length % 4) % 4)).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(padded);
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+}
+
+function markPush(on) {
+  const button = document.getElementById("notify");
+  button.classList.toggle("on", on);
+  button.querySelector("span").textContent = on
+    ? "Notifying this device when an agent is blocked"
+    : "Notify me when an agent is blocked";
 }
 
 /* ---- theme ------------------------------------------------------------ */
@@ -667,10 +732,88 @@ async function refresh() {
 }
 
 setTheme(localStorage.getItem("theme") || "system");
+markPush(store.get("push", "") === "on");
 if (current) post("/api/focus", { agent: current });
 refresh();
 setInterval(refresh, 1000);
 </script>
 </body>
 </html>
+"##;
+
+/// What iOS reads when you add the page to the home screen. Installing is not
+/// cosmetic there: Safari only allows Web Push for a web app on the home
+/// screen, so without this there are no notifications.
+pub const MANIFEST: &str = r##"{
+  "name": "workbench",
+  "short_name": "workbench",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0c0e13",
+  "theme_color": "#171a21"
+}"##;
+
+/// The worker that runs when a notification arrives — with the page closed,
+/// which is the whole point.
+///
+/// The push itself is empty (see `super::push`), so the text is written here
+/// from state read at delivery. That is deliberately better than a payload:
+/// what matters is what is blocked *now*, not what was blocked when the poke
+/// was sent. When the phone is off the tailnet and cannot read anything, it
+/// says so in general terms rather than saying nothing.
+pub const SERVICE_WORKER: &str = r##"
+const token = new URL(self.location).searchParams.get("t") || "";
+const url = path => path + (path.includes("?") ? "&" : "?") + "t=" + encodeURIComponent(token);
+
+self.addEventListener("install", () => self.skipWaiting());
+self.addEventListener("activate", event => event.waitUntil(self.clients.claim()));
+
+self.addEventListener("push", event => {
+  event.waitUntil((async () => {
+    let title = "An agent needs you";
+    let body = "Open workbench to see which.";
+    try {
+      // `have` is nonsense on purpose: we want statuses, not the conversation.
+      const res = await fetch(url("/api/state?have=999999999"), { cache: "no-store" });
+      if (res.ok) {
+        const blocked = (await res.json()).agents.filter(a => a.status === "blocked");
+        if (blocked.length === 1) {
+          const a = blocked[0];
+          title = a.provider + " · " + a.project;
+          // The whole question, flattened. The useful part is usually the
+          // command it wants to run, not the "do you want to proceed?" — so
+          // take the lot and let the notification truncate.
+          body = a.prompt
+            ? a.prompt.lines.map(l => l.trim()).filter(Boolean).join(" · ").slice(0, 180)
+            : (a.reason || "is waiting for you");
+        } else if (blocked.length > 1) {
+          title = blocked.length + " agents need you";
+          body = blocked.map(a => a.provider + " · " + a.project).join(", ");
+        } else {
+          // Answered at the desk between the poke and its delivery.
+          return;
+        }
+      }
+    } catch (err) {
+      // Off the tailnet: the generic text above still says enough to act on.
+    }
+    await self.registration.showNotification(title, {
+      body,
+      tag: "workbench-blocked",   // one notification, replaced, not a pile
+      renotify: true,
+    });
+  })());
+});
+
+self.addEventListener("notificationclick", event => {
+  event.notification.close();
+  event.waitUntil((async () => {
+    const open = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    for (const client of open) {
+      if (client.url.includes(self.location.origin)) return client.focus();
+    }
+    return self.clients.openWindow(url("/"));
+  })());
+});
 "##;

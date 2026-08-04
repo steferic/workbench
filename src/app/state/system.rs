@@ -639,6 +639,11 @@ pub struct SystemState {
     pub remote_tried: bool,
     /// The conversation the phone has open, which gets full history.
     pub remote_focus: Option<Uuid>,
+    /// Push keypair and the devices listening (see `crate::remote::push`).
+    pub push: crate::remote::Push,
+    /// Agents already notified about, so a phone is poked when one *becomes*
+    /// blocked rather than every tick it stays blocked.
+    pub remote_notified: std::collections::HashSet<String>,
     /// That conversation as last read off disk. Agent journals reach tens of
     /// megabytes; re-parsing one every tick to find nothing new is the kind of
     /// waste that shows up as a warm laptop.
@@ -698,6 +703,8 @@ impl SystemState {
             remote_tried: false,
             remote_focus: None,
             remote_thread: None,
+            push: Default::default(),
+            remote_notified: Default::default(),
         }
     }
 
