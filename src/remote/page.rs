@@ -20,18 +20,31 @@ pub const HTML: &str = r##"<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<!-- Deliberately not `black-translucent`. Under it iOS gives a home-screen
+     app a web view the full width but the height of the screen *minus* the
+     status bar, pinned to the top — so the page ends one status-bar-height
+     above the bottom of the screen and nothing the page can paint reaches
+     that strip. `default` lets iOS size the view properly; the status bar
+     takes its colour from `theme-color`, which the theme toggle keeps in
+     step with the header. -->
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#171a21">
 <title>workbench</title>
 <style>
+  /* One palette per line, twice over: CSS cannot name a set of custom
+     properties and apply it from two selectors, and the toggle needs to beat
+     the system preference in both directions. */
   :root {
+    color-scheme:dark;
     --bg:#0c0e13; --surface:#171a21; --raised:#1e222b; --line:#272c37;
     --fg:#e8eaf0; --dim:#8b93a4; --faint:#5d6575;
-    --accent:#6d8cff; --on-accent:#0a0c11;
+    --accent:#4361ee; --on-accent:#fff;
     --warn:#f0b429; --warn-bg:#2a2113; --ok:#57c785;
     --shadow:0 1px 2px #0000004d;
   }
   @media (prefers-color-scheme: light) {
-    :root {
+    :root:not([data-theme="dark"]) {
+      color-scheme:light;
       --bg:#f2f3f7; --surface:#fff; --raised:#fff; --line:#e3e6ec;
       --fg:#14161b; --dim:#5f6779; --faint:#98a0b0;
       --accent:#3355e8; --on-accent:#fff;
@@ -39,15 +52,24 @@ pub const HTML: &str = r##"<!doctype html>
       --shadow:0 1px 2px #10121a14, 0 1px 1px #10121a0f;
     }
   }
+  :root[data-theme="light"] {
+    color-scheme:light;
+    --bg:#f2f3f7; --surface:#fff; --raised:#fff; --line:#e3e6ec;
+    --fg:#14161b; --dim:#5f6779; --faint:#98a0b0;
+    --accent:#3355e8; --on-accent:#fff;
+    --warn:#a96a00; --warn-bg:#fdf5e6; --ok:#1f8a4c;
+    --shadow:0 1px 2px #10121a14, 0 1px 1px #10121a0f;
+  }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   /* The composer's colour, so the strip under the home indicator reads as
      part of it rather than as a black gap below the page. */
   html { height:100%; overflow:hidden; background:var(--surface); }
   body {
-    /* 100% is the *large* viewport on iOS: with Safari's bars showing, the
-       page runs off the bottom and the composer sits below the fold. dvh is
-       what is actually visible, and it follows the bars as they hide. */
-    height:100vh; height:100dvh; overflow:hidden;
+    /* Pinned to the viewport's edges rather than sized in vh: with
+       `viewport-fit=cover` the containing block is the whole screen, so this
+       reaches the bottom even where the viewport units do not. dvh is the
+       fallback for anything that ignores the inset. */
+    position:fixed; inset:0; height:100dvh; overflow:hidden;
     margin:0; background:var(--bg); color:var(--fg);
     display:flex; flex-direction:column;
     font:15px/1.5 -apple-system,ui-sans-serif,system-ui,"Segoe UI",sans-serif;
@@ -204,7 +226,7 @@ pub const HTML: &str = r##"<!doctype html>
     font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--dim);
     margin:16px 18px 6px; font-weight:700;
   }
-  .tree { overflow-y:auto; padding-bottom:calc(20px + env(safe-area-inset-bottom)); }
+  .tree { flex:1; overflow-y:auto; padding-bottom:8px; }
   .proj, .agent {
     display:flex; align-items:center; gap:10px; width:100%; text-align:left;
     background:none; border:0; padding:12px 16px;
@@ -226,7 +248,26 @@ pub const HTML: &str = r##"<!doctype html>
     flex:1; font-size:13px; padding:8px; border-radius:10px;
     border:1px dashed var(--line); background:none; color:var(--dim);
   }
+  .theme {
+    flex:none; display:flex; gap:2px; margin:8px 16px;
+    margin-bottom:calc(16px + env(safe-area-inset-bottom));
+    padding:3px; border-radius:11px; background:var(--bg); border:1px solid var(--line);
+  }
+  .theme button {
+    flex:1; padding:8px 0; border:0; border-radius:8px; background:none;
+    color:var(--dim); font-size:13px; font-weight:600;
+  }
+  .theme button.on { background:var(--surface); color:var(--fg); box-shadow:var(--shadow); }
 </style>
+<script>
+  /* Before the first paint, so a chosen theme never flashes the other one. */
+  (function () {
+    var picked = localStorage.getItem("theme");
+    if (picked === "light" || picked === "dark") {
+      document.documentElement.setAttribute("data-theme", picked);
+    }
+  })();
+</script>
 </head>
 <body>
 <header>
@@ -251,6 +292,11 @@ pub const HTML: &str = r##"<!doctype html>
 <aside id="drawer">
   <h2>projects</h2>
   <div class="tree" id="tree"></div>
+  <div class="theme" id="theme">
+    <button onclick="setTheme('system')">Auto</button>
+    <button onclick="setTheme('light')">Light</button>
+    <button onclick="setTheme('dark')">Dark</button>
+  </div>
 </aside>
 
 <script>
@@ -394,6 +440,25 @@ function toggleMic() {
 function setListening(on) {
   listening = on;
   document.getElementById("mic").classList.toggle("on", on);
+}
+
+/* ---- theme ------------------------------------------------------------ */
+
+/* "system" follows the phone; the other two override it until you say
+   otherwise. The status bar is told separately: on iOS it is chrome, not
+   page, and only `theme-color` reaches it. */
+function setTheme(mode) {
+  if (mode === "system") localStorage.removeItem("theme");
+  else localStorage.setItem("theme", mode);
+
+  if (mode === "system") document.documentElement.removeAttribute("data-theme");
+  else document.documentElement.setAttribute("data-theme", mode);
+
+  const surface = getComputedStyle(document.documentElement).getPropertyValue("--surface").trim();
+  document.querySelector('meta[name="theme-color"]').setAttribute("content", surface);
+
+  const buttons = document.querySelectorAll("#theme button");
+  ["system", "light", "dark"].forEach((name, i) => buttons[i].classList.toggle("on", name === mode));
 }
 
 let drawerOpen = false;
@@ -570,6 +635,7 @@ async function refresh() {
   render();
 }
 
+setTheme(localStorage.getItem("theme") || "system");
 if (current) post("/api/focus", { agent: current });
 refresh();
 setInterval(refresh, 1000);
