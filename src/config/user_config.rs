@@ -4,13 +4,15 @@ use std::fs;
 use std::path::PathBuf;
 
 // Global hotkeys are swallowed before the focused agent ever sees them, so
-// they have to stay off keys Claude/Codex need. Alt+arrows are free at the
-// macOS level (unlike Ctrl+arrows, which switch Spaces) and inside workbench
-// (Shift+arrows already move pane focus and scroll output). The one thing
-// they cost is Option+←/→ word-jump inside an agent's composer.
+// they have to stay off keys Claude/Codex need. Everything lives on the
+// vertical Alt+arrow axis (Shift = wider scope: agent → workspace): both are
+// clean CSI encodings in every terminal, free at the macOS level (unlike
+// Ctrl+arrows, which switch Spaces), and they deliberately leave Option+←/→
+// alone — macOS terminals encode those as the readline word-motions ESC b /
+// ESC f, which agents need for word-jump inside their composers.
 const GLOBAL_HOTKEY_DEFAULTS: [(&str, &str); 8] = [
-    ("CyclePrevWorkspace", "Alt-Left"),
-    ("CycleNextWorkspace", "Alt-Right"),
+    ("CyclePrevWorkspace", "Alt-Shift-Up"),
+    ("CycleNextWorkspace", "Alt-Shift-Down"),
     ("CyclePrevSession", "Alt-Up"),
     ("CycleNextSession", "Alt-Down"),
     ("InitiateQuit", "Ctrl-q"),
@@ -22,16 +24,20 @@ const GLOBAL_HOTKEY_DEFAULTS: [(&str, &str); 8] = [
 /// Older defaults, moved forward so a saved config keeps working. Each entry
 /// points at the *current* binding rather than the next one in the chain, so
 /// the order of this table never matters.
-const LEGACY_GLOBAL_HOTKEY_MIGRATIONS: [(&str, &str, &str); 9] = [
-    ("CycleNextWorkspace", "Ctrl-z", "Alt-Right"),
-    ("CyclePrevWorkspace", "Ctrl-Shift-z", "Alt-Left"),
+const LEGACY_GLOBAL_HOTKEY_MIGRATIONS: [(&str, &str, &str); 11] = [
+    ("CycleNextWorkspace", "Ctrl-z", "Alt-Shift-Down"),
+    ("CyclePrevWorkspace", "Ctrl-Shift-z", "Alt-Shift-Up"),
     ("CycleNextSession", "Ctrl-x", "Alt-Down"),
     ("CycleNextSession", "Ctrl-s", "Alt-Down"),
     ("CyclePrevSession", "Ctrl-Shift-s", "Alt-Up"),
-    ("CyclePrevWorkspace", "F6", "Alt-Left"),
-    ("CycleNextWorkspace", "F7", "Alt-Right"),
+    ("CyclePrevWorkspace", "F6", "Alt-Shift-Up"),
+    ("CycleNextWorkspace", "F7", "Alt-Shift-Down"),
     ("CyclePrevSession", "F8", "Alt-Up"),
     ("CycleNextSession", "F9", "Alt-Down"),
+    // Alt+Left/Right never arrived from macOS terminals (they encode
+    // Option+arrows as ESC b / ESC f), and are now left to the agents.
+    ("CyclePrevWorkspace", "Alt-Left", "Alt-Shift-Up"),
+    ("CycleNextWorkspace", "Alt-Right", "Alt-Shift-Down"),
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -314,11 +320,11 @@ mod tests {
 
         assert_eq!(
             hotkeys.get("CyclePrevWorkspace"),
-            Some(&"Alt-Left".to_string())
+            Some(&"Alt-Shift-Up".to_string())
         );
         assert_eq!(
             hotkeys.get("CycleNextWorkspace"),
-            Some(&"Alt-Right".to_string())
+            Some(&"Alt-Shift-Down".to_string())
         );
         assert_eq!(hotkeys.get("CyclePrevSession"), Some(&"Alt-Up".to_string()));
         assert_eq!(
@@ -341,11 +347,11 @@ mod tests {
 
         assert_eq!(
             hotkeys.get("CyclePrevWorkspace"),
-            Some(&"Alt-Left".to_string())
+            Some(&"Alt-Shift-Up".to_string())
         );
         assert_eq!(
             hotkeys.get("CycleNextWorkspace"),
-            Some(&"Alt-Right".to_string())
+            Some(&"Alt-Shift-Down".to_string())
         );
         assert_eq!(hotkeys.get("CyclePrevSession"), Some(&"Alt-Up".to_string()));
         assert_eq!(
@@ -367,13 +373,13 @@ mod tests {
     #[test]
     fn normalize_global_hotkeys_clears_duplicates_deterministically() {
         let mut hotkeys = default_global_hotkeys();
-        hotkeys.insert("CyclePrevSession".to_string(), "Alt-Right".to_string());
+        hotkeys.insert("CyclePrevSession".to_string(), "Alt-Shift-Down".to_string());
 
         normalize_global_hotkeys(&mut hotkeys);
 
         assert_eq!(
             hotkeys.get("CycleNextWorkspace"),
-            Some(&"Alt-Right".to_string())
+            Some(&"Alt-Shift-Down".to_string())
         );
         assert_eq!(hotkeys.get("CyclePrevSession"), Some(&String::new()));
     }

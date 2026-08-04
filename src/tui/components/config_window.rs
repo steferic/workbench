@@ -136,7 +136,7 @@ fn render_quickref_tab(frame: &mut Frame, area: Rect, state: &AppState) {
         Span::raw("Previous/next agent (works while typing)"),
     ]));
     lines.push(Line::from(vec![
-        Span::styled("  Alt+Left/Right     ", key_style),
+        Span::styled("  Alt+Shift+Up/Down  ", key_style),
         Span::raw("Previous/next project (works while typing)"),
     ]));
     lines.push(Line::from(vec![

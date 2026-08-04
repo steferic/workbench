@@ -96,10 +96,65 @@ fn config_to_agent_type(agent: &crate::config::user_config::AgentConfig) -> Agen
 
 #[cfg(test)]
 mod tests {
-    use super::agent_shortcut;
-    use crate::config::user_config::AgentConfig;
+    use super::{agent_shortcut, check_global_keys};
+    use crate::app::Action;
+    use crate::config::user_config::{AgentConfig, UserConfig};
     use crate::models::AgentType;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    /// Workspace cycling lives on Alt+Shift+Up/Down (clean CSI encodings in
+    /// every terminal); Alt+b / Alt+f — what macOS terminals send for
+    /// Option+Left/Right — must pass through untouched so agents keep their
+    /// word-jump.
+    #[test]
+    fn vertical_axis_cycles_and_option_left_right_passes_through() {
+        let config = UserConfig::default();
+
+        let alt_shift_up = KeyEvent::new(KeyCode::Up, KeyModifiers::ALT | KeyModifiers::SHIFT);
+        let alt_shift_down = KeyEvent::new(KeyCode::Down, KeyModifiers::ALT | KeyModifiers::SHIFT);
+        assert!(matches!(
+            check_global_keys(&alt_shift_up, &config),
+            Some(Action::CyclePrevWorkspace)
+        ));
+        assert!(matches!(
+            check_global_keys(&alt_shift_down, &config),
+            Some(Action::CycleNextWorkspace)
+        ));
+
+        let alt_up = KeyEvent::new(KeyCode::Up, KeyModifiers::ALT);
+        assert!(matches!(
+            check_global_keys(&alt_up, &config),
+            Some(Action::CyclePrevSession)
+        ));
+
+        // Option+Left/Right (as terminals actually send them) go to the agent.
+        let alt_b = KeyEvent::new(KeyCode::Char('b'), KeyModifiers::ALT);
+        let alt_f = KeyEvent::new(KeyCode::Char('f'), KeyModifiers::ALT);
+        assert!(check_global_keys(&alt_b, &config).is_none());
+        assert!(check_global_keys(&alt_f, &config).is_none());
+
+        // Plain Shift+Up (output scroll) must not cycle workspaces.
+        let shift_up = KeyEvent::new(KeyCode::Up, KeyModifiers::SHIFT);
+        assert!(check_global_keys(&shift_up, &config).is_none());
+    }
+
+    /// Saved configs with the old Alt-Left/Right workspace bindings migrate
+    /// to the new vertical pair on load.
+    #[test]
+    fn alt_left_right_configs_migrate_to_alt_shift_vertical() {
+        let mut hotkeys = std::collections::HashMap::new();
+        hotkeys.insert("CyclePrevWorkspace".to_string(), "Alt-Left".to_string());
+        hotkeys.insert("CycleNextWorkspace".to_string(), "Alt-Right".to_string());
+        crate::config::user_config::normalize_global_hotkeys(&mut hotkeys);
+        assert_eq!(
+            hotkeys.get("CyclePrevWorkspace").map(String::as_str),
+            Some("Alt-Shift-Up")
+        );
+        assert_eq!(
+            hotkeys.get("CycleNextWorkspace").map(String::as_str),
+            Some("Alt-Shift-Down")
+        );
+    }
 
     fn agent(hotkey: &str) -> AgentConfig {
         AgentConfig {
