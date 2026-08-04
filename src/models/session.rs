@@ -45,6 +45,12 @@ pub struct Session {
     /// the directory, which collides when a project runs several agents.
     #[serde(default)]
     pub provider_session_id: Option<String>,
+    /// Where that conversation is journalled. Only *running* sessions are
+    /// resolved to a store (see `handler::plan_task_refresh`), so without
+    /// remembering the path a stopped agent's history becomes unreadable the
+    /// moment workbench restarts — though the file is still sitting there.
+    #[serde(default)]
+    pub journal_path: Option<std::path::PathBuf>,
     /// Work queued for this agent, dispatched one item at a time as its turns
     /// end (see `app::todo_dispatch`). Workbench's own state, unlike the
     /// mirrored task list the agent maintains for itself.
@@ -73,6 +79,7 @@ impl Session {
             worktree_viewer_for: None,
             alias: None,
             provider_session_id: None,
+            journal_path: None,
             todo_queue: super::TodoQueue::default(),
         }
     }
@@ -99,6 +106,7 @@ impl Session {
             worktree_viewer_for: None,
             alias: None,
             provider_session_id: None,
+            journal_path: None,
             todo_queue: super::TodoQueue::default(),
         }
     }
@@ -126,6 +134,7 @@ impl Session {
             worktree_viewer_for: None,
             alias: None,
             provider_session_id: None,
+            journal_path: None,
             todo_queue: super::TodoQueue::default(),
         }
     }
@@ -147,6 +156,7 @@ impl Session {
             worktree_viewer_for: Some(viewing_session_id),
             alias: None,
             provider_session_id: None,
+            journal_path: None,
             todo_queue: super::TodoQueue::default(),
         }
     }

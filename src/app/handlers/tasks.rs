@@ -206,12 +206,22 @@ fn record_provider_session_ids(
 ) {
     let mut changed = false;
     for (session_id, tracker) in trackers {
+        // The journal is worth remembering even when the id is not readable:
+        // it is what lets a stopped agent still be read (see `remote`).
+        let journal = match tracker.source() {
+            Some(crate::agent_tasks::Source::File(path)) => Some(path.clone()),
+            _ => None,
+        };
         let Some(id) = tracker.provider_session_id() else {
             continue;
         };
         if let Some(session) = state.get_session_mut(*session_id) {
             if session.provider_session_id.as_deref() != Some(id.as_str()) {
                 session.provider_session_id = Some(id);
+                changed = true;
+            }
+            if journal.is_some() && session.journal_path != journal {
+                session.journal_path = journal;
                 changed = true;
             }
         }

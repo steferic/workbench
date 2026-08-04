@@ -653,6 +653,9 @@ pub struct ThreadCache {
     pub path: std::path::PathBuf,
     pub cursor: crate::remote::Cursor,
     pub messages: Vec<crate::remote::Message>,
+    /// Messages ever read, including any since trimmed off the front — the
+    /// name the phone uses to say how much of the conversation it holds.
+    pub total: usize,
 }
 
 impl SystemState {

@@ -161,10 +161,7 @@ fn handle(
 
     match (request.method().as_str(), path) {
         ("GET", "/") => html(page::HTML),
-        ("GET", "/api/state") => match shared.lock() {
-            Ok(snapshot) => json(serde_json::to_string(&*snapshot).unwrap_or_default()),
-            Err(_) => status(500, "state unavailable"),
-        },
+        ("GET", "/api/state") => state_body(request, &query_params(query), shared),
         ("POST", "/api/todo") => command_from(request, commands, |agent, text| {
             (!text.is_empty()).then_some(RemoteCommand::Todo { agent, text })
         }),
@@ -182,6 +179,57 @@ fn handle(
         }),
         _ => status(404, "not found"),
     }
+}
+
+/// The snapshot, minus whatever the caller already has.
+///
+/// Two savings, and the phone is polling once a second on a cellular radio, so
+/// both are worth having: `?have=` drops the messages it already holds, and an
+/// ETag turns a tick where nothing at all moved into a 304 with no body.
+fn state_body(
+    request: &tiny_http::Request,
+    params: &[(String, String)],
+    shared: &Shared,
+) -> Response<std::io::Cursor<Vec<u8>>> {
+    let have = params
+        .iter()
+        .find(|(key, _)| key == "have")
+        .and_then(|(_, value)| value.parse::<usize>().ok());
+
+    let body = {
+        let Ok(snapshot) = shared.lock() else {
+            return status(500, "state unavailable");
+        };
+        match have {
+            Some(have) => serde_json::to_string(&super::since(&snapshot, have)),
+            None => serde_json::to_string(&*snapshot),
+        }
+        .unwrap_or_default()
+    };
+
+    let tag = etag(&body);
+    let known = request
+        .headers()
+        .iter()
+        .find(|header| header.field.equiv("If-None-Match"))
+        .map(|header| header.value.as_str().to_string());
+    if known.as_deref() == Some(tag.as_str()) {
+        return Response::from_string(String::new())
+            .with_status_code(304)
+            .with_header(header("ETag", &tag));
+    }
+    json(body).with_header(header("ETag", &tag))
+}
+
+fn etag(body: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    body.hash(&mut hasher);
+    format!("\"{:x}\"", hasher.finish())
+}
+
+fn header(field: &str, value: &str) -> Header {
+    Header::from_bytes(field.as_bytes(), value.as_bytes()).expect("well-formed header")
 }
 
 /// The token may travel in the bookmark's query string or a header. Both are

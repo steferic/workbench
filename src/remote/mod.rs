@@ -27,6 +27,7 @@ pub use server::{new_token, Remote, RemoteCommand};
 pub use thread::{Cursor, Message};
 
 use serde::Serialize;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
@@ -84,7 +85,20 @@ pub struct AgentView {
     pub prompt: Option<prompt::Prompt>,
     /// The conversation, for the agent you have open. Read from the agent's
     /// own journal, so it is speech rather than terminal chrome.
+    ///
+    /// A request that says what it already has (`?have=`) gets only the newer
+    /// ones; the phone appends them.
     pub messages: Vec<Message>,
+    /// How many messages this conversation has produced in total, ever. The
+    /// phone sends it back as `have`, and the difference is what it is owed.
+    /// Counting rather than indexing means trimming the front of the held
+    /// window cannot shift what a message is called.
+    #[serde(default)]
+    pub msg_total: usize,
+    /// The phone is further behind than the window we hold, so what it got is
+    /// a replacement rather than a continuation.
+    #[serde(default)]
+    pub msg_reset: bool,
     /// Screen lines, for an agent whose journal workbench cannot read. Worse
     /// than `messages`, and only ever used instead of it.
     pub tail: Vec<String>,
@@ -110,18 +124,56 @@ pub fn publish(state: &mut AppState, shared: &Shared) {
     publish_with(state, shared, open);
 }
 
+/// The snapshot as it should go to a client that already has `have` messages
+/// of the open conversation.
+///
+/// Sending all eighty every second is what a phone notices: measured at 36 KB
+/// a tick, which is two megabytes a minute of cellular radio to say almost
+/// nothing. Usually the answer here is "none, you are up to date".
+pub fn since(snapshot: &Snapshot, have: usize) -> Snapshot {
+    let mut trimmed = snapshot.clone();
+    for agent in &mut trimmed.agents {
+        if agent.messages.is_empty() {
+            continue;
+        }
+        let owed = agent.msg_total.saturating_sub(have);
+        if owed >= agent.messages.len() {
+            // Further behind than the window we keep — or a client that has
+            // nothing. Everything we hold, as a replacement.
+            agent.msg_reset = true;
+        } else {
+            let drop = agent.messages.len() - owed;
+            agent.messages.drain(..drop);
+        }
+    }
+    trimmed
+}
+
+/// Which file holds a session's conversation, and how to read it.
+///
+/// A live tracker knows; a stopped session has none, because only running ones
+/// are resolved to a store. So the path is remembered on the session, and a
+/// finished agent stays readable — the journal outlives the process, and being
+/// unable to read what an agent did once it stopped is a poor reason to have
+/// walked to the desk.
+fn journal(state: &AppState, session_id: Uuid) -> Option<(crate::agent_tasks::Provider, PathBuf)> {
+    if let Some(tracker) = state.system.agent_tasks.get(&session_id) {
+        if let Some(Source::File(path)) = tracker.source() {
+            return Some((tracker.provider(), path.clone()));
+        }
+    }
+    let session = state.get_session(session_id)?;
+    let provider = crate::agent_tasks::Provider::for_agent(&session.agent_type)?;
+    Some((provider, session.journal_path.clone()?))
+}
+
 /// The focused agent's conversation, reading only what the agent has appended
 /// since the last tick.
 ///
 /// `None` for a provider with no journal we can read; the caller falls back to
 /// the terminal.
-fn conversation(state: &mut AppState, session_id: Uuid) -> Option<Vec<Message>> {
-    let tracker = state.system.agent_tasks.get(&session_id)?;
-    let provider = tracker.provider();
-    let Source::File(path) = tracker.source()? else {
-        return None;
-    };
-    let path = path.clone();
+fn conversation(state: &mut AppState, session_id: Uuid) -> Option<(Vec<Message>, usize)> {
+    let (provider, path) = journal(state, session_id)?;
 
     // A cache for another session, or another of its journals, is of no use.
     let mut cache = match state.system.remote_thread.take() {
@@ -131,19 +183,22 @@ fn conversation(state: &mut AppState, session_id: Uuid) -> Option<Vec<Message>> 
             path: path.clone(),
             cursor: Default::default(),
             messages: Vec::new(),
+            total: 0,
         },
     };
+    let before = cache.messages.len();
     cache.cursor = thread::read_more(&path, provider, cache.cursor, &mut cache.messages);
+    cache.total += cache.messages.len() - before;
     if cache.messages.len() > MAX_MESSAGES {
         cache.messages.drain(..cache.messages.len() - MAX_MESSAGES);
     }
 
-    let messages = cache.messages.clone();
+    let read = (cache.messages.clone(), cache.total);
     state.system.remote_thread = Some(cache);
-    Some(messages)
+    Some(read)
 }
 
-fn publish_with(state: &AppState, shared: &Shared, open: Option<Vec<Message>>) {
+fn publish_with(state: &AppState, shared: &Shared, open: Option<(Vec<Message>, usize)>) {
     let mut agents = Vec::new();
     let projects: Vec<ProjectView> = state
         .data
@@ -225,14 +280,19 @@ fn publish_with(state: &AppState, shared: &Shared, open: Option<Vec<Message>>) {
                 // Only the conversation you have open travels, so the snapshot
                 // stays phone-sized however many agents are running.
                 messages: match state.system.remote_focus == Some(session.id) {
-                    true => open.clone().unwrap_or_default(),
+                    true => open.clone().map(|(msgs, _)| msgs).unwrap_or_default(),
                     false => Vec::new(),
                 },
+                msg_total: match state.system.remote_focus == Some(session.id) {
+                    true => open.as_ref().map(|(_, total)| *total).unwrap_or(0),
+                    false => 0,
+                },
+                msg_reset: false,
                 // Also the fallback for a session whose journal exists but has
                 // nothing in it yet: an agent still booting has said nothing,
                 // and an empty screen would look like a broken page.
                 tail: match state.system.remote_focus == Some(session.id)
-                    && open.as_ref().map(Vec::is_empty).unwrap_or(true)
+                    && open.as_ref().map(|(msgs, _)| msgs.is_empty()).unwrap_or(true)
                 {
                     true => output_tail(state, session.id, FALLBACK_TAIL),
                     false => Vec::new(),
@@ -460,6 +520,134 @@ mod tests {
             "the phone has to show what it is agreeing to: {:?}",
             prompt.lines
         );
+    }
+
+    /// The failure this guards: a stopped agent's history is on disk, but only
+    /// running sessions are resolved to a store — so after a workbench restart
+    /// the phone offered "this agent is stopped" and nothing else.
+    #[test]
+    fn a_stopped_agent_still_reads_back_from_its_journal() {
+        use std::io::Write;
+
+        let (mut state, busy, _blocked) = state_with_agents();
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            r#"{{"type":"user","message":{{"role":"user","content":"ship the migration"}}}}"#
+        )
+        .unwrap();
+        file.flush().unwrap();
+
+        {
+            let session = state.get_session_mut(busy).unwrap();
+            session.status = SessionStatus::Stopped;
+            session.journal_path = Some(file.path().to_path_buf());
+        }
+        state.system.remote_focus = Some(busy);
+
+        let shared: Shared = Default::default();
+        publish(&mut state, &shared);
+
+        let snapshot = shared.lock().unwrap();
+        let short = state.get_session(busy).unwrap().short_id();
+        let stopped = snapshot.agents.iter().find(|a| a.id == short).unwrap();
+        assert_eq!(stopped.status, "stopped");
+        assert_eq!(
+            stopped.messages.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(),
+            vec!["ship the migration"],
+            "the journal outlives the process, so the conversation should too"
+        );
+    }
+
+    /// A phone polls once a second on a cellular radio. Re-sending eighty
+    /// messages each time to say nothing new is the difference between two
+    /// megabytes a minute and almost none.
+    #[test]
+    fn a_client_is_sent_only_the_messages_it_does_not_have() {
+        let mut snapshot = Snapshot::default();
+        let say = |text: &str| Message {
+            role: crate::remote::thread::Role::Agent,
+            text: text.into(),
+            at: None,
+        };
+        snapshot.agents.push(AgentView {
+            id: "ab12cd34".into(),
+            project: "workbench".into(),
+            project_id: "p".into(),
+            provider: "Claude".into(),
+            status: "working".into(),
+            reason: None,
+            running: None,
+            steps: Vec::new(),
+            queued: Vec::new(),
+            paused: false,
+            holding: None,
+            prompt: None,
+            messages: vec![say("one"), say("two"), say("three")],
+            msg_total: 3,
+            msg_reset: false,
+            tail: Vec::new(),
+        });
+
+        // Up to date: nothing owed.
+        let caught_up = since(&snapshot, 3);
+        assert!(caught_up.agents[0].messages.is_empty());
+        assert!(!caught_up.agents[0].msg_reset);
+
+        // Two behind: the last two, to be appended.
+        let behind = since(&snapshot, 1);
+        assert_eq!(
+            behind.agents[0].messages.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(),
+            vec!["two", "three"]
+        );
+        assert!(!behind.agents[0].msg_reset);
+
+        // Nothing at all, or further behind than the window we keep: take
+        // ours wholesale rather than splicing onto a gap.
+        let fresh = since(&snapshot, 0);
+        assert_eq!(fresh.agents[0].messages.len(), 3);
+        assert!(fresh.agents[0].msg_reset);
+    }
+
+    /// The window is trimmed from the front once it is full, so a message's
+    /// position in it changes while `msg_total` does not — which is the whole
+    /// reason the phone counts rather than indexes.
+    #[test]
+    fn trimming_the_window_does_not_disturb_the_count() {
+        let (mut state, busy, _blocked) = state_with_agents();
+        use std::io::Write;
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        for i in 0..MAX_MESSAGES + 5 {
+            writeln!(
+                file,
+                r#"{{"type":"user","message":{{"role":"user","content":"m{i}"}}}}"#
+            )
+            .unwrap();
+        }
+        file.flush().unwrap();
+        state.get_session_mut(busy).unwrap().journal_path = Some(file.path().to_path_buf());
+        state.system.remote_focus = Some(busy);
+
+        let shared: Shared = Default::default();
+        publish(&mut state, &shared);
+        let snapshot = shared.lock().unwrap().clone();
+        let agent = &snapshot.agents.iter().find(|a| a.msg_total > 0).unwrap();
+
+        assert_eq!(agent.messages.len(), MAX_MESSAGES, "the window is capped");
+        assert_eq!(agent.msg_total, MAX_MESSAGES + 5, "the count is not");
+        assert_eq!(agent.messages.last().unwrap().text, format!("m{}", MAX_MESSAGES + 4));
+
+        // A phone holding all of them is owed nothing, even though the five
+        // it holds from the start are no longer in the window.
+        let short = agent.id.clone();
+        let caught_up = since(&snapshot, MAX_MESSAGES + 5);
+        let same = caught_up.agents.iter().find(|a| a.id == short).unwrap();
+        assert!(same.messages.is_empty() && !same.msg_reset);
+
+        // One behind gets exactly one, not the window.
+        let behind = since(&snapshot, MAX_MESSAGES + 4);
+        let same = behind.agents.iter().find(|a| a.id == short).unwrap();
+        assert_eq!(same.messages.len(), 1);
     }
 
     #[test]

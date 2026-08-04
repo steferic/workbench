@@ -309,10 +309,13 @@ const store = {
 };
 
 let data = null;                        // last snapshot
+let thread = [];                        // the open conversation, accumulated
+let have = 0;                           // how much of it we hold (see msg_total)
 let current = store.get("agent", null); // the conversation on screen
 let sent = [];                          // your messages, until the journal catches up
 let busy = false;
 let signature = "";                     // what the log currently shows
+let tag = null;                         // ETag of the last snapshot we took
 
 async function post(path, body) {
   busy = true;
@@ -337,14 +340,34 @@ function note(text) {
 
 function agent(id) { return (data?.agents || []).find(a => a.id === id) || null; }
 
+/* Fold a response into the conversation we hold. The server sends only what
+   we said we were missing, so this is normally a no-op — and when we are
+   further behind than its window, it says so and we take its copy instead.
+
+   Only ever the agent on screen: a snapshot fetched in the moment between
+   asking for a different conversation and the desktop switching to it still
+   describes the old one. */
+function merge(a) {
+  if (!a) return;
+  if (a.msg_reset) thread = a.messages;
+  else if (a.messages.length) thread = thread.concat(a.messages);
+  if (a.msg_total) have = a.msg_total;
+}
+
 function pick(id) {
   current = id;
   store.set("agent", id);
   sent = [];
+  thread = [];
+  have = 0;
+  // The ETag says "same as the body you already folded in". Having just
+  // thrown that away, a 304 would leave the log empty.
+  tag = null;
   signature = "";
   post("/api/focus", { agent: id });   // only the open conversation is published
   if (drawerOpen) toggleDrawer();
   render();
+  refresh();                           // don't sit on an empty log for a tick
 }
 
 /* Next agent in the same project, wrapping — for flicking between the two or
@@ -496,7 +519,7 @@ const clock = at => {
 function messagesHtml(a) {
   const parts = [];
   let last = null;
-  for (const m of a.messages) {
+  for (const m of thread) {
     // A gap means the conversation was picked up later; say when.
     const at = m.at ? new Date(m.at) : null;
     if (at && (!last || at - last > 10 * 60 * 1000)) parts.push('<div class="when">' + clock(m.at) + "</div>");
@@ -511,7 +534,7 @@ function messagesHtml(a) {
                  '<div class="msg">' + markdown(m.text) + "</div></div>");
     }
   }
-  if (!a.messages.length && a.tail.length) {
+  if (!thread.length && a.tail.length) {
     // No journal we can read: the terminal is all there is.
     parts.push('<div class="raw">' + esc(a.tail.join("\n")) + "</div>");
   }
@@ -601,8 +624,8 @@ function render() {
 
   // Redraw only when there is something new: rewriting the log every second
   // fights your scrolling and drops any text you had selected.
-  const last = a.messages[a.messages.length - 1];
-  const next = [current, a.status, a.messages.length, last?.text.length || 0,
+  const last = thread[thread.length - 1];
+  const next = [current, a.status, thread.length, last?.text.length || 0,
                 a.tail.length, sent.length].join("|");
   if (next !== signature) {
     signature = next;
@@ -622,15 +645,23 @@ async function refresh() {
   // anything it was protecting against.
   if (busy) return;
   try {
-    const res = await fetch(q("/api/state"), { cache: "no-store" });
+    // `have` asks for only the messages we do not hold; the ETag turns a
+    // tick where nothing moved at all into an empty 304.
+    const res = await fetch(q("/api/state?have=" + have), {
+      cache: "no-store",
+      headers: tag ? { "If-None-Match": tag } : {},
+    });
+    if (res.status === 304) return;
     if (!res.ok) throw new Error(res.status === 401 ? "bad or missing token" : await res.text());
+    tag = res.headers.get("ETag");
     data = await res.json();
   } catch (err) {
     document.getElementById("hwhat").textContent = "offline";
     return;
   }
+  merge(agent(current));
   // Drop the local echo once the agent's journal has your message in it.
-  const said = (agent(current)?.messages || []).filter(m => m.role === "you").map(m => m.text);
+  const said = thread.filter(m => m.role === "you").map(m => m.text);
   sent = sent.filter(t => !said.some(s => s.startsWith(t.slice(0, 40))));
   render();
 }
