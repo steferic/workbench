@@ -179,6 +179,29 @@ pub const HTML: &str = r##"<!doctype html>
     --field:#0000001f; --edge:#00000030; --chrome:#c3c0c6;
   }
 
+  /* 濡羽色 → 銀朱. The first dark gradient here, which inverts the surface
+     model wholesale: every other gradient theme washes its cards with black
+     over a light page, and this one washes with white over a dark one.
+     
+     Cinnabar is the constraint, not the black — white on it is 5.9:1, fine
+     for the text but leaving almost nothing underneath, so the muted tier
+     could barely dim before failing. A 20% black veil takes it to 8.2:1 and
+     gives the tiers somewhere to go, the same move dusk makes in the other
+     direction. */
+  :root[data-theme="cinnabar"], .t-cinnabar {
+    color-scheme:dark;
+    --bg:#0c1021; --page:var(--bg);
+    --stops:#0c1021 0%,#4a1220 55%,#bc2d29 100%;
+    --veil:#00000033;
+    --surface:#ffffff14; --raised:#ffffff21; --line:#ffffff3d;
+    --fg:#fff; --dim:hsl(6 25% 90%); --faint:hsl(6 20% 84%);
+    --accent:#bc2d29; --on-accent:#fff;
+    --warn:hsl(40 95% 72%); --warn-bg:#ffffff14; --ok:hsl(150 60% 68%);
+    --busy:hsl(200 95% 72%);
+    --shadow:0 1px 3px #00000066;
+    --field:#ffffff1a; --edge:#ffffff2e; --chrome:#161a2c;
+  }
+
   /* 青竹色 → 卯の花色. The first of these that is not warm, which mostly
      shows up in how little else had to change: the mechanism is the same
      linear ramp with washes over it, and only the numbers moved.
@@ -419,9 +442,17 @@ pub const HTML: &str = r##"<!doctype html>
   @keyframes rise {
     from { opacity:0; transform:translateY(7px) scale(.985); }
   }
-  /* No bubbles: the text sits on the page. Which leaves alignment as the only
-     cue for who said what, so your own turns are also set in a heavier weight
-     — a cue that survives every theme, where a colour would not. */
+  /* No bubbles by default: the text sits on the page, and alignment plus a
+     heavier weight say who spoke — cues that survive every theme, where a
+     colour would not. Turned on, your own turns take the theme's accent at
+     80%, so the page still shows through and the bubble belongs to the
+     palette rather than sitting on top of it. */
+  :root[data-bubbles="on"] .row.you .msg {
+    background:color-mix(in srgb, var(--accent) 80%, transparent);
+    color:var(--on-accent); padding:7px 11px;
+    border-radius:12px 12px 3px 12px;
+  }
+  :root[data-bubbles="on"] .row.you .msg code { background:#ffffff2e; }
   .msg {
     max-width:88%; min-width:0; white-space:pre-wrap; overflow-wrap:anywhere;
   }
@@ -737,6 +768,11 @@ pub const HTML: &str = r##"<!doctype html>
   <div class="theme" id="theme"></div>
   <h2>gradient</h2>
   <div class="forms" id="forms"></div>
+  <h2>your messages</h2>
+  <div class="forms" id="bubbles">
+    <button onclick="setBubbles('off')" data-bubbles="off">Plain</button>
+    <button onclick="setBubbles('on')" data-bubbles="on">Bubble</button>
+  </div>
   <h2>blur <span id="blurValue"></span></h2>
   <input type="range" id="blur" min="0" max="240" step="10" oninput="setBlur(this.value)">
 </section>
@@ -1165,7 +1201,8 @@ function markPush(on) {
 const THEMES = [
   ["system", "Auto"], ["light", "Light"], ["dark", "Dark"],
   ["gamboge", "Gamboge"], ["dawn", "Dawn"], ["milk", "Milk"], ["dusk", "Dusk"],
-  ["haze", "Haze"], ["silk", "Silk"], ["bamboo", "Bamboo"], ["indigo", "Indigo"],
+  ["haze", "Haze"], ["silk", "Silk"], ["bamboo", "Bamboo"],
+  ["cinnabar", "Cinnabar"], ["indigo", "Indigo"],
 ];
 
 document.getElementById("theme").innerHTML = THEMES.map(([name, label]) =>
@@ -1212,6 +1249,13 @@ function setForm(name) {
   document.documentElement.setAttribute("data-gradient", name);
   document.querySelectorAll("#forms button").forEach(button =>
     button.classList.toggle("on", button.dataset.form === name));
+}
+
+function setBubbles(mode) {
+  store.set("bubbles", mode);
+  document.documentElement.setAttribute("data-bubbles", mode);
+  document.querySelectorAll("#bubbles button").forEach(button =>
+    button.classList.toggle("on", button.dataset.bubbles === mode));
 }
 
 function setBlur(px) {
@@ -1431,6 +1475,7 @@ async function refresh() {
 }
 
 setForm(store.get("gradient", "linear"));
+setBubbles(store.get("bubbles", "off"));
 setBlur(store.get("blur", "100"));
 setTheme(localStorage.getItem("theme") || "system");
 markPush(store.get("push", "") === "on");
