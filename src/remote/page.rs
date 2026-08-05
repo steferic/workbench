@@ -43,7 +43,7 @@ pub const HTML: &str = r##"<!doctype html>
     --shadow:0 1px 2px #0000004d;
     /* Fields and code wells recede from the surface they sit on. Which
        direction that is depends on the theme, so it cannot be derived. */
-    --field:#0c0e13;
+    --field:#0c0e13; --edge:#2b313d; --chrome:#12151b;
   }
   @media (prefers-color-scheme: light) {
     :root:not([data-theme="dark"]) {
@@ -53,7 +53,7 @@ pub const HTML: &str = r##"<!doctype html>
       --accent:#3355e8; --on-accent:#fff;
       --warn:#a96a00; --warn-bg:#fdf5e6; --ok:#1f8a4c;
       --shadow:0 1px 2px #10121a14, 0 1px 1px #10121a0f;
-      --field:#f2f3f7;
+      --field:#f2f3f7; --edge:#e6e9ef; --chrome:#fbfbfd;
     }
   }
   :root[data-theme="light"] {
@@ -70,17 +70,25 @@ pub const HTML: &str = r##"<!doctype html>
      hsl() of the same angle as the colour it is named for, so a shade is a
      step rather than a guess. */
 
-  /* #F19072 at hsl(14 82% 70%), with black on it: 8.97:1, so the page can be
-     the colour itself and surfaces lift *toward white* as they come forward. */
+  /* Differentiated by *saturation*, which took three goes to arrive at.
+     Lifting surfaces toward white went pastel — the colour stopped being the
+     colour. Darkening them held the mood but ate the contrast black needs:
+     by the time a card was clearly a card it was down to 3.8:1.
+     
+     Chroma is the axis with room in it. The page stays the saturated
+     vermillion; cards are the same hue muted to clay, near enough in
+     lightness to keep black at 6.9:1 and far enough in colour to read as
+     different material. The accent goes the other way — deep and saturated —
+     so your own messages are the one thing that leaps off it. */
   :root[data-theme="vermillion"] {
     color-scheme:light;
     --bg:#f19072;
-    --surface:hsl(14 85% 81%); --raised:hsl(14 88% 88%); --line:hsl(14 45% 60%);
-    --fg:hsl(14 60% 9%); --dim:hsl(14 30% 27%); --faint:hsl(14 22% 42%);
-    --accent:hsl(14 68% 36%); --on-accent:#fff;
-    --warn:hsl(32 90% 24%); --warn-bg:hsl(32 85% 86%); --ok:hsl(150 60% 24%);
-    --shadow:0 1px 2px hsl(14 50% 25% / .22);
-    --field:hsl(14 90% 93%);
+    --surface:hsl(14 40% 64%); --raised:hsl(14 34% 58%); --line:hsl(14 35% 40%);
+    --fg:hsl(14 55% 8%); --dim:hsl(14 40% 20%); --faint:hsl(14 38% 24%);
+    --accent:hsl(14 78% 26%); --on-accent:#fff;
+    --warn:hsl(35 95% 16%); --warn-bg:hsl(35 45% 62%); --ok:hsl(150 55% 18%);
+    --shadow:0 1px 3px hsl(14 55% 20% / .3);
+    --field:hsl(14 30% 55%); --edge:hsl(14 34% 48%); --chrome:hsl(14 33% 57%);
   }
 
   /* #4D80E6 is hsl(220 75% 60%), where white measures 3.79:1 — enough for a
@@ -95,13 +103,14 @@ pub const HTML: &str = r##"<!doctype html>
     --accent:hsl(220 72% 30%); --on-accent:#fff;
     --warn:hsl(42 100% 76%); --warn-bg:hsl(220 72% 38%); --ok:hsl(150 65% 70%);
     --shadow:0 1px 3px hsl(220 60% 18% / .3);
-    --field:hsl(220 72% 42%);
+    --field:hsl(220 72% 42%); --edge:hsl(220 60% 44%); --chrome:hsl(220 72% 47%);
     --busy:hsl(196 100% 72%);
   }
   /* Motion, as three durations and two curves. Naming them is the whole
      discipline: every transition below picks from this list, so nothing drifts
      into feeling different for no reason. */
   :root {
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
     --dur-fast:.12s; --dur:.22s; --dur-slow:.34s;
     --ease:cubic-bezier(.32,.72,0,1);          /* quick out, gentle in */
     --ease-spring:cubic-bezier(.34,1.35,.64,1); /* the same, with a nudge past */
@@ -116,6 +125,19 @@ pub const HTML: &str = r##"<!doctype html>
   }
 
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  /* Selection and focus in the theme's own colours: the browser defaults are
+     the one place a themed page reverts to somebody else's blue. */
+  ::selection { background:var(--accent); color:var(--on-accent); }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  /* A scrollbar the width of a hairline, in the palette. Desktop only —
+     touch has none — but this is a page that gets opened on a laptop too. */
+  #log::-webkit-scrollbar, .tree::-webkit-scrollbar, .ask .body::-webkit-scrollbar {
+    width:5px;
+  }
+  #log::-webkit-scrollbar-thumb, .tree::-webkit-scrollbar-thumb,
+  .ask .body::-webkit-scrollbar-thumb {
+    background:var(--line); border-radius:3px;
+  }
   /* The composer's colour, so the strip under the home indicator reads as
      part of it rather than as a black gap below the page. */
   html { height:100%; overflow:hidden; background:var(--surface); }
@@ -134,7 +156,12 @@ pub const HTML: &str = r##"<!doctype html>
     position:fixed; inset:0; overflow:hidden;
     margin:0; background:var(--bg); color:var(--fg);
     display:flex; flex-direction:column;
-    font:15px/1.5 -apple-system,ui-sans-serif,system-ui,"Segoe UI",sans-serif;
+    /* Monospace throughout. It is what the thing being read *is* — terminal
+       output, paths, commands — and a proportional face spent every line
+       pretending otherwise. Slightly smaller and slightly tighter than the
+       sans it replaces, because mono runs wide. */
+    font:13.5px/1.55 var(--mono);
+    letter-spacing:-.01em;
     -webkit-font-smoothing:antialiased;
   }
   button, a { font:inherit; color:inherit; }
@@ -158,12 +185,12 @@ pub const HTML: &str = r##"<!doctype html>
   header {
     flex:none; display:flex; align-items:center; gap:11px;
     padding:max(9px,env(safe-area-inset-top)) 10px 9px 14px;
-    background:var(--surface); border-bottom:1px solid var(--line);
+    background:var(--chrome); border-bottom:1px solid var(--line);
   }
   .who { display:flex; flex-direction:column; min-width:0; flex:1; gap:1px; }
-  .who b { font-size:16px; font-weight:650; letter-spacing:-.01em; }
+  .who b { font-size:15px; font-weight:700; letter-spacing:-.02em; }
   .who span {
-    font-size:12.5px; color:var(--dim);
+    font-size:11.5px; color:var(--dim);
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
   }
   .dot { width:9px; height:9px; border-radius:50%; background:var(--faint); flex:none; }
@@ -176,11 +203,11 @@ pub const HTML: &str = r##"<!doctype html>
   @keyframes pulse { 50% { opacity:.3; } }
 
   .icon {
-    flex:none; width:38px; height:38px; border-radius:11px; position:relative;
+    flex:none; width:38px; height:38px; border-radius:9px; position:relative;
     display:grid; place-items:center; font-size:16px;
     background:none; border:1px solid transparent;
   }
-  .icon:active { background:var(--raised); }
+  .icon:active { background:var(--surface); }
   .icon .badge {
     position:absolute; top:2px; right:1px; min-width:16px; height:16px; padding:0 4px;
     background:var(--warn); color:#1a1305; border-radius:999px;
@@ -201,24 +228,24 @@ pub const HTML: &str = r##"<!doctype html>
     from { opacity:0; transform:translateY(7px) scale(.985); }
   }
   .msg {
-    max-width:86%; min-width:0; padding:9px 13px;
-    border-radius:19px 19px 19px 6px; box-shadow:var(--shadow);
-    background:var(--surface); white-space:pre-wrap; overflow-wrap:anywhere;
+    max-width:88%; min-width:0; padding:9px 12px;
+    border-radius:12px 12px 12px 3px;
+    background:var(--surface); border:1px solid var(--edge);
+    white-space:pre-wrap; overflow-wrap:anywhere;
   }
   .row.you .msg {
-    background:var(--accent); color:var(--on-accent);
-    border-radius:19px 19px 6px 19px;
+    background:var(--accent); color:var(--on-accent); border-color:var(--accent);
+    border-radius:12px 12px 3px 12px;
   }
   .row.pending .msg { opacity:.55; }
-  .msg code {
-    font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;
-    background:#8b93a426; border-radius:5px; padding:1px 4px;
-  }
+  /* Already monospace, so inline code is marked by weight and a wash rather
+     than by changing face — which now would not read as anything. */
+  .msg code { background:#8b93a426; border-radius:4px; padding:1px 4px; font-weight:600; }
   .msg pre {
-    margin:7px 0 3px; padding:9px 11px; border-radius:11px; background:var(--field);
+    margin:7px 0 3px; padding:9px 11px; border-radius:8px; background:var(--field);
     max-width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch;
   }
-  .msg pre code { background:none; padding:0; font-size:12px; }
+  .msg pre code { background:none; padding:0; font-weight:400; font-size:12.5px; }
   .row.you .msg pre { background:#0000002e; }
 
   /* A tool call is not speech: one dim line, so the conversation does not
@@ -229,12 +256,16 @@ pub const HTML: &str = r##"<!doctype html>
   }
   .tool .n { font-weight:600; flex:none; }
   .tool .d {
-    font:11.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--faint);
+    font-size:11.5px; color:var(--faint);
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0;
   }
-  .when { text-align:center; color:var(--faint); font-size:11.5px; margin:12px 0 10px; }
+  .when {
+    display:flex; align-items:center; gap:10px; margin:15px 2px 12px;
+    color:var(--faint); font-size:10.5px; letter-spacing:.06em;
+  }
+  .when::before, .when::after { content:""; flex:1; height:1px; background:var(--line); opacity:.55; }
   .raw {
-    font:11px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--dim);
+    font-size:11px; line-height:1.4; color:var(--dim);
     white-space:pre-wrap; overflow-wrap:anywhere;
   }
   .typing { display:flex; gap:4px; padding:11px 14px 4px; }
@@ -262,7 +293,7 @@ pub const HTML: &str = r##"<!doctype html>
   /* ---- the question an agent is stopped on ----------------------------- */
   .ask {
     flex:none; margin:0 10px 8px; padding:12px 13px 11px;
-    background:var(--warn-bg); border:1px solid var(--warn); border-radius:16px;
+    background:var(--warn-bg); border:1px solid var(--warn); border-radius:12px;
   }
   .ask h3 {
     margin:0 0 8px; font-size:11px; font-weight:700; letter-spacing:.12em;
@@ -275,7 +306,7 @@ pub const HTML: &str = r##"<!doctype html>
   }
   .ask button {
     display:block; width:100%; text-align:left; margin-top:7px; padding:11px 13px;
-    border-radius:12px; border:1px solid var(--line); background:var(--surface);
+    border-radius:9px; border:1px solid var(--line); background:var(--surface);
     font-size:14px; line-height:1.35;
   }
   .ask button.first { background:var(--accent); border-color:var(--accent); color:var(--on-accent); font-weight:600; }
@@ -286,14 +317,14 @@ pub const HTML: &str = r##"<!doctype html>
   .composer {
     flex:none; display:flex; gap:8px; align-items:flex-end;
     padding:8px 10px calc(8px + env(safe-area-inset-bottom));
-    background:var(--surface); border-top:1px solid var(--line);
+    background:var(--chrome); border-top:1px solid var(--line);
   }
   textarea {
     flex:1; min-width:0; resize:none; max-height:132px;
-    padding:9px 14px; border-radius:20px; border:1px solid var(--line);
+    padding:9px 13px; border-radius:14px; border:1px solid var(--line);
     background:var(--field); color:var(--fg);
     /* 16px keeps iOS from zooming the page when the field takes focus. */
-    font-family:inherit; font-size:16px; line-height:1.4;
+    font-family:var(--mono); font-size:16px; line-height:1.4; letter-spacing:-.01em;
   }
   textarea:focus { outline:none; border-color:var(--accent); }
   textarea::placeholder { color:var(--faint); }
@@ -323,7 +354,7 @@ pub const HTML: &str = r##"<!doctype html>
   }
   .sheet.open { max-height:220px; opacity:1; transform:none; padding:0 10px 8px; }
   .sheet button {
-    padding:12px; border-radius:12px; font-size:14.5px; font-weight:600;
+    padding:12px; border-radius:10px; font-size:13.5px; font-weight:600;
     border:1px solid var(--line); background:var(--surface); color:var(--fg);
   }
   .sheet button.cancel { font-weight:400; color:var(--dim); }
@@ -332,7 +363,7 @@ pub const HTML: &str = r##"<!doctype html>
   #attached:not(:empty) { padding-bottom:8px; }
   .chip {
     display:flex; align-items:center; gap:7px; max-width:100%;
-    padding:6px 8px 6px 10px; border-radius:10px;
+    padding:6px 8px 6px 10px; border-radius:8px;
     background:var(--surface); border:1px solid var(--line); font-size:12.5px;
   }
   .chip { animation:rise var(--dur) var(--ease-spring) both; }
@@ -348,14 +379,14 @@ pub const HTML: &str = r##"<!doctype html>
   .scrim.open { opacity:1; pointer-events:auto; }
   aside {
     position:fixed; top:0; right:0; bottom:0; width:min(87vw,352px);
-    background:var(--surface); border-left:1px solid var(--line);
+    background:var(--chrome); border-left:1px solid var(--line);
     transform:translateX(100%); transition:transform var(--dur-slow) var(--ease);
     display:flex; flex-direction:column; padding-top:env(safe-area-inset-top);
   }
   aside.open { transform:none; }
   aside h2 {
-    font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--dim);
-    margin:16px 18px 6px; font-weight:700;
+    font-size:10px; letter-spacing:.18em; text-transform:uppercase; color:var(--faint);
+    margin:16px 18px 7px; font-weight:700;
   }
   .tree { flex:1; overflow-y:auto; padding-bottom:8px; }
   .proj, .agent {
@@ -380,7 +411,7 @@ pub const HTML: &str = r##"<!doctype html>
     text-decoration:none;
   }
   .server .port {
-    font:12px/1 ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--accent);
+    font-size:12px; line-height:1; color:var(--accent);
     font-weight:600; flex:none;
   }
   .server .cmd { color:var(--dim); font-size:12px; margin-left:auto; flex:none; }
@@ -434,7 +465,7 @@ pub const HTML: &str = r##"<!doctype html>
   .debug {
     position:fixed; left:8px; bottom:8px; z-index:99; margin:0;
     background:#000000d9; color:#7CFF9B; border-radius:8px; padding:7px 9px;
-    font:10px/1.35 ui-monospace,SFMono-Regular,Menlo,monospace; white-space:pre;
+    font-size:10px; line-height:1.35; white-space:pre;
     pointer-events:none;
   }
 </style>
