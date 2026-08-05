@@ -310,7 +310,7 @@ pub const HTML: &str = r##"<!doctype html>
        output, paths, commands — and a proportional face spent every line
        pretending otherwise. Slightly smaller and slightly tighter than the
        sans it replaces, because mono runs wide. */
-    font:13.5px/1.55 var(--mono);
+    font:11.5px/1.42 var(--mono);
     letter-spacing:-.035em;
     -webkit-font-smoothing:antialiased;
   }
@@ -340,9 +340,9 @@ pub const HTML: &str = r##"<!doctype html>
     background:transparent; border-bottom:1px solid var(--line);
   }
   .who { display:flex; flex-direction:column; min-width:0; flex:1; gap:1px; }
-  .who b { font-size:15px; font-weight:500; letter-spacing:-.045em; }
+  .who b { font-size:13px; font-weight:500; letter-spacing:-.045em; }
   .who span {
-    font-size:11.5px; color:var(--dim);
+    font-size:9.5px; color:var(--dim);
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
   }
   .dot { width:9px; height:9px; border-radius:50%; background:var(--faint); flex:none; }
@@ -356,22 +356,22 @@ pub const HTML: &str = r##"<!doctype html>
 
   .icon {
     flex:none; width:38px; height:38px; border-radius:9px; position:relative;
-    display:grid; place-items:center; font-size:16px;
+    display:grid; place-items:center; font-size:14px;
     background:none; border:1px solid transparent;
   }
   .icon:active { background:var(--surface); }
   .icon .badge {
     position:absolute; top:2px; right:1px; min-width:16px; height:16px; padding:0 4px;
     background:var(--warn); color:#1a1305; border-radius:999px;
-    font-size:10px; font-weight:500; line-height:16px; text-align:center;
+    font-size:8px; font-weight:500; line-height:16px; text-align:center;
   }
 
   /* ---- conversation ---------------------------------------------------- */
-  #log { flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:14px 14px 6px; }
+  #log { flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:12px 14px 6px; }
   /* A flex row per message, so a bubble hugs its text but a wide code block
      inside one cannot shrink it to a column of single letters. */
   /* Without boxes, the space between turns is what separates them. */
-  .row { display:flex; margin-bottom:14px; }
+  .row { display:flex; margin-bottom:11px; }
   .row.you { justify-content:flex-end; }
   /* Only rows that are new carry `fresh`. The log is rebuilt whole on every
      change, so animating all of it would re-play the entire conversation each
@@ -402,28 +402,28 @@ pub const HTML: &str = r##"<!doctype html>
   }
   /* Code keeps its natural advance: tracking is what makes a monospace
      column line up, and this is the one place that matters. */
-  .msg pre code { background:none; padding:0; font-weight:400; font-size:12.5px;
+  .msg pre code { background:none; padding:0; font-weight:400; font-size:10.5px;
                   letter-spacing:normal; }
   .row.you .msg pre { background:#0000002e; }
 
   /* A tool call is not speech: one dim line, so the conversation does not
      look like it skipped a beat. */
   .tool {
-    display:flex; align-items:baseline; gap:7px; margin:0 0 12px; color:var(--dim);
-    font-size:12.5px; min-width:0;
+    display:flex; align-items:baseline; gap:7px; margin:0 0 9px; color:var(--dim);
+    font-size:10.5px; min-width:0;
   }
   .tool .n { font-weight:500; flex:none; }
   .tool .d {
-    font-size:11.5px; color:var(--faint);
+    font-size:9.5px; color:var(--faint);
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0;
   }
   .when {
-    display:flex; align-items:center; gap:10px; margin:15px 2px 12px;
-    color:var(--faint); font-size:10.5px; letter-spacing:.06em;
+    display:flex; align-items:center; gap:10px; margin:12px 2px 10px;
+    color:var(--faint); font-size:8.5px; letter-spacing:.06em;
   }
   .when::before, .when::after { content:""; flex:1; height:1px; background:var(--line); opacity:.55; }
   .raw {
-    font-size:11px; line-height:1.4; color:var(--dim); letter-spacing:normal;
+    font-size:9px; line-height:1.3; color:var(--dim); letter-spacing:normal;
     white-space:pre-wrap; overflow-wrap:anywhere;
   }
   .typing { display:flex; gap:4px; padding:11px 14px 4px; }
@@ -434,7 +434,7 @@ pub const HTML: &str = r##"<!doctype html>
   .typing i:nth-child(2) { animation-delay:.18s; }
   .typing i:nth-child(3) { animation-delay:.36s; }
   @keyframes blink { 0%,60%,100% { opacity:.25; } 30% { opacity:1; } }
-  .empty { color:var(--dim); text-align:center; padding:48px 20px; font-size:14px; }
+  .empty { color:var(--dim); text-align:center; padding:48px 20px; font-size:12px; }
   /* Shaped like the conversation that is about to replace it, so the first
      paint is not a blank page with a word in the middle. */
   .skeleton { padding:4px 0; }
@@ -454,18 +454,18 @@ pub const HTML: &str = r##"<!doctype html>
     background:var(--warn-bg); border:1px solid var(--warn); border-radius:12px;
   }
   .ask h3 {
-    margin:0 0 8px; font-size:11px; font-weight:500; letter-spacing:.12em;
+    margin:0 0 8px; font-size:9px; font-weight:500; letter-spacing:.12em;
     text-transform:uppercase; color:var(--warn);
   }
   .ask .body {
-    font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--fg);
+    font:10px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--fg);
     white-space:pre-wrap; overflow-wrap:anywhere; max-height:33vh; overflow-y:auto;
     margin-bottom:11px;
   }
   .ask button {
     display:block; width:100%; text-align:left; margin-top:7px; padding:11px 13px;
     border-radius:9px; border:1px solid var(--line); background:var(--surface);
-    font-size:14px; line-height:1.35;
+    font-size:12px; line-height:1.25;
   }
   .ask button.first { background:var(--accent); border-color:var(--accent); color:var(--on-accent); font-weight:500; }
   .ask button:active { transform:scale(.985); }
@@ -482,19 +482,19 @@ pub const HTML: &str = r##"<!doctype html>
     padding:9px 13px; border-radius:14px; border:1px solid var(--line);
     background:var(--field); color:var(--fg);
     /* 16px keeps iOS from zooming the page when the field takes focus. */
-    font-family:var(--mono); font-size:16px; line-height:1.4; letter-spacing:-.03em;
+    font-family:var(--mono); font-size:16px; line-height:1.3; letter-spacing:-.03em;
   }
   textarea:focus { outline:none; border-color:var(--accent); }
   textarea::placeholder { color:var(--faint); }
   .act {
     flex:none; width:40px; height:40px; border-radius:50%; border:1px solid var(--line);
-    background:var(--field); display:grid; place-items:center; font-size:16px;
+    background:var(--field); display:grid; place-items:center; font-size:14px;
   }
-  .act.send { background:var(--accent); border-color:var(--accent); color:var(--on-accent); font-size:19px; }
+  .act.send { background:var(--accent); border-color:var(--accent); color:var(--on-accent); font-size:17px; }
   .act.send:disabled { opacity:.3; transform:scale(.92); }
   .act.on { background:var(--warn); border-color:var(--warn); color:#1a1305; }
   .note {
-    flex:none; color:var(--dim); font-size:12.5px; text-align:center;
+    flex:none; color:var(--dim); font-size:10.5px; text-align:center;
     padding:0 14px 7px;
   }
 
@@ -512,7 +512,7 @@ pub const HTML: &str = r##"<!doctype html>
   }
   .sheet.open { max-height:220px; opacity:1; transform:none; padding:0 10px 8px; }
   .sheet button {
-    padding:12px; border-radius:10px; font-size:13.5px; font-weight:500;
+    padding:12px; border-radius:10px; font-size:11.5px; font-weight:500;
     border:1px solid var(--line); background:var(--surface); color:var(--fg);
   }
   .sheet button.cancel { font-weight:400; color:var(--dim); }
@@ -522,12 +522,12 @@ pub const HTML: &str = r##"<!doctype html>
   .chip {
     display:flex; align-items:center; gap:7px; max-width:100%;
     padding:6px 8px 6px 10px; border-radius:8px;
-    background:var(--surface); border:1px solid var(--line); font-size:12.5px;
+    background:var(--surface); border:1px solid var(--line); font-size:10.5px;
   }
   .chip { animation:rise var(--dur) var(--ease-spring) both; }
   .chip img { width:26px; height:26px; border-radius:5px; object-fit:cover; }
   .chip span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .chip button { border:0; background:none; color:var(--dim); font-size:15px; padding:0 2px; }
+  .chip button { border:0; background:none; color:var(--dim); font-size:13px; padding:0 2px; }
 
   /* ---- drawer ---------------------------------------------------------- */
   .scrim {
@@ -543,7 +543,7 @@ pub const HTML: &str = r##"<!doctype html>
   }
   aside.open { transform:none; }
   aside h2 {
-    font-size:10px; letter-spacing:.18em; text-transform:uppercase; color:var(--faint);
+    font-size:8px; letter-spacing:.18em; text-transform:uppercase; color:var(--faint);
     margin:16px 18px 7px; font-weight:500;
   }
   .tree { flex:1; overflow-y:auto; padding-bottom:8px; }
@@ -552,36 +552,36 @@ pub const HTML: &str = r##"<!doctype html>
     background:none; border:0; padding:12px 16px;
   }
   .proj { font-weight:500; }
-  .proj .caret { color:var(--faint); font-size:10px; width:10px; }
+  .proj .caret { color:var(--faint); font-size:8px; width:10px; }
   .proj .name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .proj .n { margin-left:auto; color:var(--faint); font-size:12px; font-weight:400; }
+  .proj .n { margin-left:auto; color:var(--faint); font-size:10px; font-weight:400; }
   .agent { padding:10px 16px 10px 38px; }
   .agent .label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .agent.current { background:var(--raised); }
-  .agent .what { color:var(--dim); font-size:12px; margin-left:auto; flex:none; }
+  .agent .what { color:var(--dim); font-size:10px; margin-left:auto; flex:none; }
   .pill {
     background:var(--warn); color:#1a1305; border-radius:999px;
-    font-size:10px; font-weight:500; padding:1px 6px;
+    font-size:8px; font-weight:500; padding:1px 6px;
   }
   .server {
     display:flex; align-items:center; gap:9px; width:100%; text-align:left;
-    padding:8px 16px 8px 38px; color:var(--fg); font-size:14px;
+    padding:8px 16px 8px 38px; color:var(--fg); font-size:12px;
     text-decoration:none;
   }
   .server .port {
-    font-size:12px; line-height:1; color:var(--accent);
+    font-size:10px; line-height:1; color:var(--accent);
     font-weight:500; flex:none;
   }
-  .server .cmd { color:var(--dim); font-size:12px; margin-left:auto; flex:none; }
+  .server .cmd { color:var(--dim); font-size:10px; margin-left:auto; flex:none; }
   .new { display:flex; gap:8px; padding:2px 16px 12px 38px; }
   .new button {
-    flex:1; font-size:13px; padding:8px; border-radius:10px;
+    flex:1; font-size:11px; padding:8px; border-radius:10px;
     border:1px dashed var(--line); background:none; color:var(--dim);
   }
   .notify {
     flex:none; margin:8px 16px 0; padding:11px 13px; text-align:left;
     border:1px solid var(--line); border-radius:11px; background:var(--bg);
-    color:var(--fg); font-size:13.5px; line-height:1.35;
+    color:var(--fg); font-size:11.5px; line-height:1.3;
   }
   .notify.on { border-color:var(--ok); color:var(--dim); }
   /* Five themes will not fit a segmented control, so each is a swatch of the
@@ -593,7 +593,7 @@ pub const HTML: &str = r##"<!doctype html>
   .theme button {
     display:flex; align-items:center; gap:7px; padding:7px 11px 7px 8px;
     border:1px solid var(--line); border-radius:999px; background:none;
-    color:var(--dim); font-size:12.5px; font-weight:500;
+    color:var(--dim); font-size:10.5px; font-weight:500;
   }
   .theme button i {
     width:15px; height:15px; border-radius:50%; flex:none;
@@ -620,11 +620,11 @@ pub const HTML: &str = r##"<!doctype html>
   #stale {
     flex:none; margin:0 10px 8px; padding:11px 13px; border-radius:14px;
     background:var(--warn-bg); border:1px solid var(--warn);
-    font-size:13px; line-height:1.4;
+    font-size:11px; line-height:1.3;
   }
   #stale b { display:block; color:var(--warn); margin-bottom:3px; font-weight:500; }
   #stale button {
-    margin-top:8px; padding:7px 11px; border-radius:9px; font-size:13px;
+    margin-top:8px; padding:7px 11px; border-radius:9px; font-size:11px;
     border:1px solid var(--line); background:var(--surface); color:var(--fg);
   }
 
@@ -632,7 +632,7 @@ pub const HTML: &str = r##"<!doctype html>
   .debug {
     position:fixed; left:8px; bottom:8px; z-index:99; margin:0;
     background:#000000d9; color:#7CFF9B; border-radius:8px; padding:7px 9px;
-    font-size:10px; line-height:1.35; white-space:pre;
+    font-size:8px; line-height:1.3; white-space:pre;
     pointer-events:none;
   }
 </style>
