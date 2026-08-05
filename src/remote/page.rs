@@ -448,7 +448,7 @@ pub const HTML: &str = r##"<!doctype html>
      80%, so the page still shows through and the bubble belongs to the
      palette rather than sitting on top of it. */
   :root[data-bubbles="on"] .row.you .msg {
-    background:color-mix(in srgb, var(--accent) 80%, transparent);
+    background:color-mix(in srgb, var(--accent) var(--bubble-opacity,80%), transparent);
     color:var(--on-accent); padding:7px 11px;
     border-radius:12px 12px 3px 12px;
   }
@@ -768,11 +768,9 @@ pub const HTML: &str = r##"<!doctype html>
   <div class="theme" id="theme"></div>
   <h2>gradient</h2>
   <div class="forms" id="forms"></div>
-  <h2>your messages</h2>
-  <div class="forms" id="bubbles">
-    <button onclick="setBubbles('off')" data-bubbles="off">Plain</button>
-    <button onclick="setBubbles('on')" data-bubbles="on">Bubble</button>
-  </div>
+  <h2>your messages <span id="bubbleValue"></span></h2>
+  <input type="range" id="bubbles" min="0" max="100" step="5"
+         oninput="setBubbles(this.value)">
   <h2>blur <span id="blurValue"></span></h2>
   <input type="range" id="blur" min="0" max="240" step="10" oninput="setBlur(this.value)">
 </section>
@@ -1251,11 +1249,16 @@ function setForm(name) {
     button.classList.toggle("on", button.dataset.form === name));
 }
 
-function setBubbles(mode) {
-  store.set("bubbles", mode);
-  document.documentElement.setAttribute("data-bubbles", mode);
-  document.querySelectorAll("#bubbles button").forEach(button =>
-    button.classList.toggle("on", button.dataset.bubbles === mode));
+/* Zero is not "a bubble you cannot see" — it is no bubble, so the padding and
+   the corners go with it. Everything above zero is a fill at that strength. */
+function setBubbles(percent) {
+  percent = Number(percent) || 0;
+  store.set("bubbles", percent);
+  const root = document.documentElement;
+  root.style.setProperty("--bubble-opacity", percent + "%");
+  root.setAttribute("data-bubbles", percent > 0 ? "on" : "off");
+  document.getElementById("bubbles").value = percent;
+  document.getElementById("bubbleValue").textContent = percent ? percent + "%" : "plain";
 }
 
 function setBlur(px) {
@@ -1475,7 +1478,8 @@ async function refresh() {
 }
 
 setForm(store.get("gradient", "linear"));
-setBubbles(store.get("bubbles", "off"));
+const bubbleSetting = store.get("bubbles", "0");
+setBubbles(bubbleSetting === "on" ? 80 : bubbleSetting === "off" ? 0 : bubbleSetting);
 setBlur(store.get("blur", "100"));
 setTheme(localStorage.getItem("theme") || "system");
 markPush(store.get("push", "") === "on");
