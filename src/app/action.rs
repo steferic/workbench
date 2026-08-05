@@ -186,6 +186,13 @@ pub enum Action {
     ClearCompletedTodos,
     /// Off-thread scan for listening dev servers finished.
     PortsScanned(Vec<crate::ports::DevServer>),
+    /// Durable scrollback parsed from an agent's session log (off-thread).
+    ScrollbackLoaded {
+        session_id: Uuid,
+        lines: Vec<crate::app::TranscriptLine>,
+        log_size: u64,
+        cols: u16,
+    },
     /// Off-thread re-read of the agent session logs finished.
     AgentTasksRefreshed(HashMap<Uuid, crate::agent_tasks::TaskTracker>),
 

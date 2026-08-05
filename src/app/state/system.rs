@@ -250,6 +250,12 @@ impl TranscriptLine {
         }
     }
 
+    /// Build a line from pre-styled spans (used by log-derived history, which
+    /// styles by role because the log carries no ANSI of its own).
+    pub fn from_styled_spans(spans: Vec<TranscriptSpan>) -> Self {
+        Self::from_spans(spans)
+    }
+
     fn from_spans(spans: Vec<TranscriptSpan>) -> Self {
         let text = spans.iter().map(|span| span.text.as_str()).collect();
         Self { text, spans }
@@ -267,9 +273,6 @@ impl TranscriptLine {
         self.text.is_empty()
     }
 
-    fn same_text(&self, other: &TranscriptLine) -> bool {
-        self.text == other.text
-    }
 }
 
 /// Append-only history reconstructed from a redraw-style agent (Claude, Codex).
@@ -289,6 +292,10 @@ pub struct TranscriptBuffer {
     visible: Vec<TranscriptLine>,
     /// Full-height previous frame; its top rows become committed on scroll.
     prev_frame: Vec<TranscriptLine>,
+    /// Durable history read from the agent's own session log. When present it
+    /// *replaces* the frame-diff reconstruction for display: the log is the
+    /// deterministic record, the frame differ only a stand-in until it loads.
+    log_history: Option<Vec<TranscriptLine>>,
     max_lines: usize,
     pub generation: u64,
 }
@@ -299,26 +306,43 @@ impl TranscriptBuffer {
             lines: VecDeque::new(),
             visible: Vec::new(),
             prev_frame: Vec::new(),
+            log_history: None,
             max_lines: max_lines.max(1),
             generation: 0,
         }
     }
 
     pub fn len(&self) -> usize {
-        self.lines.len() + self.visible.len()
+        self.history().len() + self.visible.len()
+    }
+
+    /// Committed history: the session log when we have it, otherwise whatever
+    /// the frame differ could prove.
+    fn history(&self) -> &[TranscriptLine] {
+        match self.log_history.as_deref() {
+            Some(log) => log,
+            None => self.lines.as_slices().0,
+        }
+    }
+
+    /// Install (or clear) history parsed from the agent's session log.
+    pub fn set_log_history(&mut self, lines: Option<Vec<TranscriptLine>>) {
+        if self.log_history.as_deref().map(<[_]>::len) != lines.as_deref().map(<[_]>::len) {
+            self.generation = self.generation.wrapping_add(1);
+        }
+        self.log_history = lines;
     }
 
     pub fn is_empty(&self) -> bool {
-        self.lines.is_empty() && self.visible.is_empty()
+        self.history().is_empty() && self.visible.is_empty()
     }
 
     /// Index across committed history followed by the current visible frame.
     fn get(&self, index: usize) -> Option<&TranscriptLine> {
-        let committed = self.lines.len();
-        if index < committed {
-            self.lines.get(index)
-        } else {
-            self.visible.get(index - committed)
+        let history = self.history();
+        match history.get(index) {
+            Some(line) => Some(line),
+            None => self.visible.get(index - history.len()),
         }
     }
 
@@ -383,37 +407,12 @@ impl TranscriptBuffer {
     /// Infer how far the scrolling content region moved up between the previous
     /// and current frame, and commit the lines that left the top.
     fn ingest_aligned_frame(&mut self, frame: Vec<TranscriptLine>) -> bool {
-        // The pinned bottom (input box / footer / trailing blanks) is the longest
-        // common suffix; the content region is everything above it.
-        let pinned = pinned_bottom(&self.prev_frame, &frame);
-        let limit = self.prev_frame.len().min(frame.len()).saturating_sub(pinned);
-
-        let commit_n = match align_shift(&self.prev_frame, &frame, limit) {
-            // Frames overlap: commit the `s` rows that scrolled off the top.
-            Some(s) => s,
-            // No overlap: the content jumped by more than a viewport (a fast
-            // burst), so the previous content region scrolled off entirely.
-            // Commit it (trailing blanks trimmed) rather than losing it — but
-            // not during the sparse "thinking…" spinner phase (1-3 volatile
-            // lines), whose frames never align and would spam history. Real
-            // content with paragraph spacing can sit well under 50% fill, so
-            // gate on an absolute minimum of content lines rather than a
-            // fill ratio.
-            None => {
-                let mut content_end = limit;
-                while content_end > 0 && self.prev_frame[content_end - 1].is_empty() {
-                    content_end -= 1;
-                }
-                let filled = (0..content_end)
-                    .filter(|&i| !self.prev_frame[i].is_empty())
-                    .count();
-                if content_end > 0 && (filled >= 4 || filled * 2 >= limit) {
-                    content_end
-                } else {
-                    0
-                }
-            }
-        };
+        // Commit exactly the rows that provably left the top, and nothing on a
+        // guess: an unresolved frame pair contributes no history (durable
+        // history comes from the agent's session log — see `crate::scrollback`).
+        let commit_n = align_shift(&self.prev_frame, &frame)
+            .map(|shift| shift.max(0) as usize)
+            .unwrap_or(0);
         self.commit_top_and_show(commit_n, frame)
     }
 
@@ -423,8 +422,8 @@ impl TranscriptBuffer {
     fn commit_top_and_show(&mut self, commit_n: usize, frame: Vec<TranscriptLine>) -> bool {
         let mut changed = false;
 
-        if commit_n > 0 {
-            let take = commit_n.min(self.prev_frame.len());
+        let take = commit_n.min(self.prev_frame.len());
+        if take > 0 {
             for line in self.prev_frame.iter().take(take) {
                 self.lines.push_back(line.clone());
             }
@@ -514,46 +513,67 @@ fn trim_trailing_span_spaces(spans: &mut Vec<TranscriptSpan>) {
     }
 }
 
-/// Number of rows pinned at the bottom of the viewport (codex's input box,
-/// footer, and trailing blanks): the longest common suffix, compared by text, of
-/// the previous and current frame.
-fn pinned_bottom(prev: &[TranscriptLine], cur: &[TranscriptLine]) -> usize {
-    let n = prev.len().min(cur.len());
-    let mut b = 0;
-    while b < n && prev[prev.len() - 1 - b].same_text(&cur[cur.len() - 1 - b]) {
-        b += 1;
-    }
-    b
-}
-
-/// How far the scrolling content region `[0, limit)` moved up between the
-/// previous and current frame.
+/// How far the content moved between the previous and current frame: positive
+/// = scrolled up by `n` rows (so `n` rows left the top and are final), negative
+/// = pushed down (nothing left), `0` = static.
 ///
-/// `Some(s)` means the frames overlap: anchoring on the first run of real
-/// content in `cur`, that anchor is found `s` rows lower in `prev` (so `prev`
-/// scrolled up by `s`). Searching for the anchor *anywhere* in `prev` (rather
-/// than requiring a top-aligned match) makes this robust to large jumps and to
-/// the volatile status/spinner region below the content. `None` means no
-/// overlap at all — `cur`'s content does not appear in `prev`, i.e. the content
-/// advanced by more than a viewport (a fast burst) and everything in `prev`
-/// scrolled off.
-fn align_shift(prev: &[TranscriptLine], cur: &[TranscriptLine], limit: usize) -> Option<usize> {
-    const ANCHOR: usize = 3;
-    // First non-blank line of cur within the content region — the anchor start.
-    let a = (0..limit).find(|&i| !cur[i].is_empty())?;
-    let alen = (limit - a).min(ANCHOR);
-    // Need at least one real line to anchor on.
-    if (a..a + alen).all(|i| cur[i].is_empty()) {
+/// Anchors on lines that occur **exactly once in each frame with identical
+/// text** — the patience-diff idea. Such a pair is unambiguous, so the offset
+/// it implies is a measurement rather than a guess, and a rigid scroll makes
+/// every anchor agree on one offset.
+///
+/// The awkward rows disqualify themselves, which is why this needs no
+/// thresholds: a ticking `Cogitated for 2s`, a token counter and a draft being
+/// typed never anchor because their text differs between frames, and blank rows
+/// or repeated box borders never anchor because they are not unique —
+/// correctly so, since a row appearing twice says nothing about position.
+///
+/// `None` means no anchor survived: the screen was replaced outright and
+/// nothing can be *proven* to have scrolled off, so nothing is committed.
+/// Durable history for those agents comes from their session log instead (see
+/// [`crate::scrollback`]).
+fn align_shift(prev: &[TranscriptLine], cur: &[TranscriptLine]) -> Option<isize> {
+    use std::collections::BTreeMap;
+
+    /// Text -> its only row index, for texts appearing exactly once.
+    fn unique_rows(frame: &[TranscriptLine]) -> HashMap<&str, usize> {
+        let mut seen: HashMap<&str, (usize, usize)> = HashMap::new();
+        for (idx, line) in frame.iter().enumerate() {
+            if line.is_empty() {
+                continue;
+            }
+            let entry = seen.entry(line.text()).or_insert((0, idx));
+            entry.0 += 1;
+            entry.1 = idx;
+        }
+        seen.into_iter()
+            .filter(|(_, (count, _))| *count == 1)
+            .map(|(text, (_, idx))| (text, idx))
+            .collect()
+    }
+
+    let prev_unique = unique_rows(prev);
+    if prev_unique.is_empty() {
         return None;
     }
-    // Find the anchor block `cur[a..a+alen]` at row `p >= a` in prev; the
-    // smallest such p gives the least (most recent) shift `s = p - a`.
-    for p in a..=prev.len().saturating_sub(alen) {
-        if (0..alen).all(|j| prev[p + j].same_text(&cur[a + j])) {
-            return Some(p - a);
+    let cur_unique = unique_rows(cur);
+
+    // BTreeMap keeps the tally ordered, so ties resolve identically every run.
+    let mut offsets: BTreeMap<isize, usize> = BTreeMap::new();
+    for (text, prev_idx) in &prev_unique {
+        if let Some(cur_idx) = cur_unique.get(text) {
+            *offsets
+                .entry(*prev_idx as isize - *cur_idx as isize)
+                .or_insert(0) += 1;
         }
     }
-    None
+
+    // Most-supported offset wins; equal support favours the smaller movement,
+    // which commits less rather than more.
+    offsets
+        .into_iter()
+        .max_by(|a, b| a.1.cmp(&b.1).then(b.0.abs().cmp(&a.0.abs())))
+        .map(|(shift, _)| shift)
 }
 
 pub struct SystemState {
@@ -609,6 +629,12 @@ pub struct SystemState {
     pub last_task_refresh: Instant,
     /// A task-log refresh is running; don't start a second one.
     pub task_refresh_inflight: bool,
+    /// Per session, the (log size, pane width, theme) the scrollback was
+    /// parsed at, so an unchanged log is never re-read — and a resize or a
+    /// dark/light switch does force a re-wrap and re-style.
+    pub scrollback_state: HashMap<Uuid, (u64, u16, crate::theme::ThemeMode)>,
+    pub scrollback_inflight: bool,
+    pub last_scrollback_refresh: Instant,
     /// Git diff stats keyed by working directory path
     pub diff_stats: HashMap<PathBuf, DiffStat>,
     /// Last time diff stats were refreshed
@@ -698,6 +724,9 @@ impl SystemState {
             last_status_refresh: Instant::now(),
             last_task_refresh: Instant::now(),
             task_refresh_inflight: false,
+            scrollback_state: HashMap::new(),
+            scrollback_inflight: false,
+            last_scrollback_refresh: Instant::now(),
             diff_stats: HashMap::new(),
             last_diff_refresh: Instant::now(),
             user_config: crate::config::user_config::load_user_config(),
@@ -1005,43 +1034,235 @@ mod tests {
     }
 
     #[test]
-    fn frame_align_captures_content_when_frames_do_not_overlap() {
-        // Fast burst: content jumps by more than a viewport between frames, so
-        // there is no overlap. The previous content region must still be
-        // committed (not dropped) so history captures it instead of going blank.
+    fn frame_align_commits_nothing_when_frames_do_not_overlap() {
+        // A screen replaced outright shares no anchor with its predecessor, so
+        // nothing can be *proven* to have scrolled off. Guessing here is what
+        // used to sweep a whole viewport into history on every frame; durable
+        // history for these agents comes from their session log instead.
         let mut transcript = TranscriptBuffer::new(50);
         transcript.ingest_aligned_frame(snapshot(&["1", "2", "3", "4", "5", "6", "", "> "]));
-        // Jump to 20-25 — no overlap with 1-6.
         transcript.ingest_aligned_frame(snapshot(&["20", "21", "22", "23", "24", "25", "", "> "]));
 
-        assert_eq!(transcript.line(0), Some("1"));
-        assert!((0..transcript.len()).any(|i| transcript.line(i) == Some("6")));
+        assert_eq!(transcript.lines.len(), 0, "an unprovable jump commits nothing");
+        // The replacement screen is still shown live.
         assert!((0..transcript.len()).any(|i| transcript.line(i) == Some("20")));
-        let ones = (0..transcript.len())
-            .filter(|&i| transcript.line(i) == Some("1"))
+    }
+
+    /// The reported bug: a settled Claude screen still repaints every frame,
+    /// with an elapsed-time line at the top of the content and an input box
+    /// that redraws (cursor, token counter). Nothing has scrolled, so nothing
+    /// may be committed — the old exact-anchor alignment found no match, called
+    /// it a burst, and appended the whole viewport (input box included) on
+    /// every single frame.
+    #[test]
+    fn settled_screen_with_volatile_status_and_input_box_never_repeats() {
+        let mut transcript = TranscriptBuffer::new(5000);
+
+        let frame = |elapsed: u32, tokens: u32, draft: &str| {
+            let mut rows = vec![format!("✻ Cogitated for {elapsed}s")];
+            for i in 1..=18 {
+                rows.push(format!("conversation line {i} — settled content"));
+            }
+            rows.push(String::new());
+            rows.push("╭──────────────────────────────╮".to_string());
+            rows.push(format!("│ > {draft}"));
+            rows.push("╰──────────────────────────────╯".to_string());
+            rows.push(format!("  {tokens} tokens · esc to interrupt"));
+            snapshot(&rows.iter().map(String::as_str).collect::<Vec<_>>())
+        };
+
+        transcript.ingest_aligned_frame(frame(1, 100, "_"));
+        for i in 2..12 {
+            transcript.ingest_aligned_frame(frame(i, 100 + i * 37, "hello_"));
+        }
+
+        // Nothing scrolled off, so nothing is final. (The live frame still
+        // shows the input box — that part is the screen, not history.)
+        assert_eq!(
+            transcript.lines.len(),
+            0,
+            "a screen that only redraws must not commit history"
+        );
+        let repeats = (0..transcript.len())
+            .filter(|&i| transcript.line(i) == Some("conversation line 7 — settled content"))
             .count();
-        assert_eq!(ones, 1, "no duplication across the jump");
+        assert_eq!(repeats, 1, "content must appear exactly once");
+        assert!(
+            !transcript
+                .lines
+                .iter()
+                .any(|l| l.text().contains("esc to interrupt") || l.text().starts_with("│ >")),
+            "the input box must never be committed to history"
+        );
+    }
+
+    /// Once the session log is parsed it *replaces* the frame-diff history:
+    /// the log is the deterministic record, the differ only a stand-in.
+    #[test]
+    fn log_history_replaces_the_frame_diff_reconstruction() {
+        let mut transcript = TranscriptBuffer::new(50);
+        transcript.ingest_aligned_frame(snapshot(&["a", "b", "c", "> "]));
+        transcript.ingest_aligned_frame(snapshot(&["b", "c", "d", "> "]));
+        assert_eq!(transcript.lines.len(), 1, "differ proved one row scrolled off");
+
+        transcript.set_log_history(Some(vec![
+            TranscriptLine::raw("logged 1".into()),
+            TranscriptLine::raw("logged 2".into()),
+        ]));
+        assert_eq!(transcript.line(0), Some("logged 1"));
+        assert_eq!(transcript.line(1), Some("logged 2"));
+        // Visible frame still follows the history.
+        assert_eq!(transcript.line(2), Some("b"));
+        assert_eq!(transcript.len(), 2 + transcript.visible.len());
+
+        // Clearing falls back to the differ's history.
+        transcript.set_log_history(None);
+        assert_eq!(transcript.line(0), Some("a"));
+    }
+
+    /// Replays the frame sequence a real redraw agent produces across a screen
+    /// replacement: a settled screen that only repaints, then a burst of
+    /// streaming output. Every content line must land in history exactly once,
+    /// and none of the bottom chrome may come with it.
+    #[test]
+    fn settled_then_streaming_commits_content_once_and_no_chrome() {
+        const ROWS: usize = 24;
+        let chrome = |draft: String, tokens: u32| {
+            vec![
+                String::new(),
+                ".------------.".to_string(),
+                format!("| > draft{draft}"),
+                String::new(),
+                format!("  {tokens} tokens . esc to interrupt"),
+            ]
+        };
+        let settled = |tick: u32| {
+            let mut rows = vec![format!("* Cogitated for {tick}s")];
+            for i in 2..=(ROWS - 6) {
+                rows.push(format!("STATIC {i:03} settled content row"));
+            }
+            rows.extend(chrome(".".repeat((tick % 4) as usize), 1000 + tick * 37));
+            rows
+        };
+        let streaming = |n: u32| {
+            let mut rows: Vec<String> = (0..(ROWS - 6) as u32)
+                .map(|i| format!("STREAM {:03} generated output line", n + i))
+                .collect();
+            rows.extend(chrome(String::new(), 2000 + n));
+            rows
+        };
+
+        let mut transcript = TranscriptBuffer::new(9000);
+        let mut ingest = |rows: Vec<String>| {
+            transcript.ingest_aligned_frame(snapshot(
+                &rows.iter().map(String::as_str).collect::<Vec<_>>(),
+            ));
+        };
+        for tick in 1..=15 {
+            ingest(settled(tick));
+        }
+        for n in 1..=60 {
+            ingest(streaming(n));
+        }
+
+        let committed: Vec<&str> = transcript.lines.iter().map(|l| l.text()).collect();
+        assert!(
+            !committed
+                .iter()
+                .any(|l| l.contains("esc to interrupt") || l.starts_with("| > draft")),
+            "bottom chrome leaked into history: {:?}",
+            committed
+                .iter()
+                .filter(|l| l.contains("esc to interrupt") || l.starts_with("| > draft"))
+                .collect::<Vec<_>>()
+        );
+
+        let mut counts: std::collections::HashMap<&str, usize> =
+            std::collections::HashMap::new();
+        for line in committed
+            .iter()
+            .filter(|l| l.starts_with("STREAM") || l.starts_with("STATIC"))
+        {
+            *counts.entry(line).or_default() += 1;
+        }
+        let dupes: Vec<_> = counts.iter().filter(|(_, &n)| n > 1).collect();
+        assert!(dupes.is_empty(), "content committed more than once: {dupes:?}");
+    }
+
+    /// Content pushed *down* (an input box growing as the user types a
+    /// multi-line draft) means nothing scrolled off. An unsigned alignment
+    /// cannot express that and would treat it as a burst.
+    #[test]
+    fn content_pushed_down_commits_nothing() {
+        let mut transcript = TranscriptBuffer::new(5000);
+        let body: Vec<String> = (1..=12).map(|i| format!("reply line {i}")).collect();
+
+        let frame = |offset: usize, draft_rows: usize| {
+            let mut rows: Vec<String> = std::iter::repeat_n(String::new(), offset).collect();
+            rows.extend(body.iter().cloned());
+            rows.push(String::new());
+            for d in 0..draft_rows {
+                rows.push(format!("│ > draft line {d}"));
+            }
+            snapshot(&rows.iter().map(String::as_str).collect::<Vec<_>>())
+        };
+
+        transcript.ingest_aligned_frame(frame(0, 1));
+        // Draft grows: content slides down the screen.
+        transcript.ingest_aligned_frame(frame(2, 3));
+        transcript.ingest_aligned_frame(frame(4, 5));
+
+        assert_eq!(
+            transcript.lines.len(),
+            0,
+            "downward movement commits nothing"
+        );
+        let repeats = (0..transcript.len())
+            .filter(|&i| transcript.line(i) == Some("reply line 5"))
+            .count();
+        assert_eq!(repeats, 1);
+    }
+
+    /// Streaming output still scrolls normally: each new line at the bottom
+    /// pushes exactly one line into history, once.
+    #[test]
+    fn streaming_output_commits_each_line_exactly_once() {
+        let mut transcript = TranscriptBuffer::new(5000);
+        const VIEW: usize = 20;
+
+        for last in VIEW..VIEW + 40 {
+            let rows: Vec<String> = ((last + 1 - VIEW)..=last)
+                .map(|i| format!("stream line {i}"))
+                .collect();
+            transcript.ingest_aligned_frame(snapshot(
+                &rows.iter().map(String::as_str).collect::<Vec<_>>(),
+            ));
+        }
+
+        for i in 1..=VIEW + 39 {
+            let needle = format!("stream line {i}");
+            let seen = (0..transcript.len())
+                .filter(|&idx| transcript.line(idx) == Some(needle.as_str()))
+                .count();
+            assert_eq!(seen, 1, "{needle} should appear exactly once");
+        }
     }
 
     #[test]
-    fn frame_align_commits_sparse_content_on_burst_jump() {
-        // Real Claude output has blank lines between paragraphs, so a content
-        // frame can sit well under 50% fill. A fast burst (no overlap) must
-        // still commit it — only the 1-3-line spinner phase may be dropped.
+    fn frame_align_commits_nothing_on_a_sparse_burst_jump() {
+        // Same contract for sparse content: no shared anchor, no commit. There
+        // is deliberately no fill-ratio judgement call any more.
         let mut transcript = TranscriptBuffer::new(50);
-        // 5 non-blank lines of 14 content rows (~36% fill).
         transcript.ingest_aligned_frame(snapshot(&[
             "para one", "", "para two", "", "para three", "", "para four", "", "para five", "",
             "", "", "", "", "> ",
         ]));
-        // Jump with no overlap.
         transcript.ingest_aligned_frame(snapshot(&[
             "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13",
             "x14", "> ",
         ]));
 
-        assert!((0..transcript.len()).any(|i| transcript.line(i) == Some("para one")));
-        assert!((0..transcript.len()).any(|i| transcript.line(i) == Some("para five")));
+        assert_eq!(transcript.lines.len(), 0);
     }
 
     #[test]
@@ -1062,7 +1283,7 @@ mod tests {
     }
 
     #[test]
-    fn frame_align_commits_content_scrolled_above_pinned_bottom() {
+    fn frame_align_commits_content_scrolled_above_a_static_footer() {
         let mut transcript = TranscriptBuffer::new(50);
 
         // Codex-style frames: content lines at the top, then a pinned bottom
@@ -1118,3 +1339,4 @@ mod tests {
         assert_eq!(frame[0].spans()[0].text, "red");
     }
 }
+

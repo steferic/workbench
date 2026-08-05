@@ -115,6 +115,7 @@ pub fn process_action(
             super::todo_dispatch::tick(state, action_tx);
             tasks::sync_selection(state);
             refresh_agent_tasks(state, action_tx);
+            refresh_scrollback(state, action_tx);
 
             scan_ports(state, action_tx);
 
@@ -173,6 +174,21 @@ pub fn process_action(
                 state.ui.utility_content = payload.content;
                 state.ui.pie_chart_data = payload.pie_chart_data;
                 state.ui.show_calendar = payload.show_calendar;
+            }
+        }
+        Action::ScrollbackLoaded {
+            session_id,
+            lines,
+            log_size,
+            cols,
+        } => {
+            state.system.scrollback_inflight = false;
+            state
+                .system
+                .scrollback_state
+                .insert(session_id, (log_size, cols, state.ui.theme_mode));
+            if let Some(transcript) = state.system.transcript_buffers.get_mut(&session_id) {
+                transcript.set_log_history(Some(lines));
             }
         }
         Action::DiffStatsUpdated(stats) => {
@@ -349,7 +365,7 @@ pub fn process_action(
                 // Global already handled
                 Action::Quit | Action::ConfirmQuit | Action::Tick | Action::Resize(_, _) |
                 Action::UtilityContentLoaded(_) | Action::DiffStatsUpdated(_) |
-                Action::PortsScanned(_) => {}
+                Action::PortsScanned(_) | Action::ScrollbackLoaded { .. } => {}
             }
 
             // A new project was just created or opened: select it and start its
@@ -370,6 +386,9 @@ pub fn process_action(
 /// is usually a stat per agent (nothing new to parse), so this is cheap; it
 /// still runs off-thread because locating a log can touch many directories.
 const TASK_REFRESH_INTERVAL: Duration = Duration::from_millis(1000);
+/// How often to look for growth in the agents' session logs. A polling rate,
+/// not a correctness knob — the parse itself is exact.
+const SCROLLBACK_REFRESH_INTERVAL: Duration = Duration::from_millis(1500);
 
 /// How often agent hook reports are re-read. Fast enough that a permission
 /// prompt surfaces while you are still looking at the pane, cheap enough to
@@ -784,6 +803,77 @@ fn plan_task_refresh(state: &AppState) -> TaskRefreshPlan {
 ///
 /// Trackers are cloned out, refreshed, and sent back whole: they carry their
 /// own file offsets, so a pass only parses bytes appended since the last one.
+/// Reload durable scrollback for any agent whose session log has grown (or
+/// whose pane changed width, since the log text is wrapped to fit).
+fn refresh_scrollback(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) {
+    use crate::scrollback::{log_path, LogFormat};
+
+    if state.system.scrollback_inflight
+        || state.system.last_scrollback_refresh.elapsed() < SCROLLBACK_REFRESH_INTERVAL
+    {
+        return;
+    }
+    state.system.last_scrollback_refresh = std::time::Instant::now();
+
+    let cols = state.output_pane_cols();
+    let theme_mode = state.ui.theme_mode;
+    let live: std::collections::HashSet<uuid::Uuid> = state
+        .data
+        .sessions
+        .values()
+        .flatten()
+        .map(|session| session.id)
+        .collect();
+    state
+        .system
+        .scrollback_state
+        .retain(|session_id, _| live.contains(session_id));
+
+    // The first session whose parsed history is out of date; one per tick
+    // keeps a big log from stalling the others behind it.
+    let stale = state
+        .data
+        .sessions
+        .values()
+        .flatten()
+        .filter_map(|session| {
+            let format = LogFormat::for_agent(&session.agent_type)?;
+            // The task tracker already resolves which log belongs to which
+            // session (it handles claiming and spawn order); fall back to a
+            // lookup by conversation id only if it has not got there yet.
+            let path = match session.journal_path.clone() {
+                Some(path) => path,
+                None => log_path(format, session.provider_session_id.as_deref()?)?,
+            };
+            let size = std::fs::metadata(&path).ok()?.len();
+            let current = state.system.scrollback_state.get(&session.id);
+            (current != Some(&(size, cols, theme_mode))).then_some((session.id, format, path, size))
+        })
+        .next();
+
+    let Some((session_id, format, path, size)) = stale else {
+        return;
+    };
+
+    // `theme::current()` is thread-local, so it has to be read here on the
+    // event loop — a worker thread would silently get the dark default.
+    let theme = crate::theme::current();
+    state.system.scrollback_inflight = true;
+    let tx = action_tx.clone();
+    tokio::task::spawn_blocking(move || {
+        let lines = crate::scrollback::history(format, &path, cols, theme);
+        dispatch_action(
+            &tx,
+            Action::ScrollbackLoaded {
+                session_id,
+                lines,
+                log_size: size,
+                cols,
+            },
+        );
+    });
+}
+
 fn refresh_agent_tasks(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) {
     use crate::agent_tasks::TaskTracker;
 

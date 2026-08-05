@@ -9,6 +9,7 @@ mod git;
 mod logger;
 mod models;
 mod persistence;
+mod scrollback;
 mod ports;
 mod pty;
 mod remote;
