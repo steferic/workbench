@@ -139,6 +139,34 @@ fn serve_on(
     Ok(())
 }
 
+/// IBM Plex Mono, compiled in rather than fetched from Google.
+///
+/// The usual way to use it is a stylesheet on `fonts.googleapis.com` pulling
+/// files from `fonts.gstatic.com`, which would make a page whose whole point
+/// is working over a private tailnet depend on the public internet to render
+/// its own text — and hand every load to a third party. The latin subsets are
+/// 9.8KB apiece, so there is nothing to weigh up: they ship in the binary.
+///
+/// SIL Open Font License 1.1. `assets/fonts/OFL.txt` travels with them, as
+/// the licence requires.
+const PLEX_MONO_400: &[u8] = include_bytes!("../../assets/fonts/ibm-plex-mono-400.woff2");
+const PLEX_MONO_500: &[u8] = include_bytes!("../../assets/fonts/ibm-plex-mono-500.woff2");
+
+fn font_for(path: &str) -> Option<&'static [u8]> {
+    match path {
+        "/font/ibm-plex-mono-400.woff2" => Some(PLEX_MONO_400),
+        "/font/ibm-plex-mono-500.woff2" => Some(PLEX_MONO_500),
+        _ => None,
+    }
+}
+
+/// A binary body, cached hard: these change only when the binary does.
+fn bytes(body: &'static [u8], content_type: &str) -> Response<std::io::Cursor<Vec<u8>>> {
+    Response::from_data(body)
+        .with_header(header("Content-Type", content_type))
+        .with_header(header("Cache-Control", "public, max-age=31536000, immutable"))
+}
+
 fn json(body: String) -> Response<std::io::Cursor<Vec<u8>>> {
     let header = Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
         .expect("static header parses");
@@ -172,6 +200,11 @@ fn handle(
     // hand. It names the app and nothing else.
     if path == "/manifest.webmanifest" {
         return with_type(page::MANIFEST, "application/manifest+json");
+    }
+    // Fonts likewise: a `src:` in a stylesheet is fetched without the query
+    // string that carries the token, and a typeface is not a secret.
+    if let Some(font) = font_for(path) {
+        return bytes(font, "font/woff2");
     }
     if !authorized(request, &query_params(query), token) {
         return status(401, "unauthorized");

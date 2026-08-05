@@ -31,6 +31,16 @@ pub const HTML: &str = r##"<!doctype html>
 <meta name="theme-color" content="#171a21">
 <title>workbench</title>
 <style>
+  /* Served from this binary, not from Google — see `server::font_for`. */
+  @font-face {
+    font-family:"IBM Plex Mono"; font-style:normal; font-weight:400;
+    font-display:swap; src:url("/font/ibm-plex-mono-400.woff2") format("woff2");
+  }
+  @font-face {
+    font-family:"IBM Plex Mono"; font-style:normal; font-weight:500;
+    font-display:swap; src:url("/font/ibm-plex-mono-500.woff2") format("woff2");
+  }
+
   /* One palette per line, twice over: CSS cannot name a set of custom
      properties and apply it from two selectors, and the toggle needs to beat
      the system preference in both directions. */
@@ -110,7 +120,7 @@ pub const HTML: &str = r##"<!doctype html>
      discipline: every transition below picks from this list, so nothing drifts
      into feeling different for no reason. */
   :root {
-    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;
     --dur-fast:.12s; --dur:.22s; --dur-slow:.34s;
     --ease:cubic-bezier(.32,.72,0,1);          /* quick out, gentle in */
     --ease-spring:cubic-bezier(.34,1.35,.64,1); /* the same, with a nudge past */
@@ -188,7 +198,7 @@ pub const HTML: &str = r##"<!doctype html>
     background:var(--chrome); border-bottom:1px solid var(--line);
   }
   .who { display:flex; flex-direction:column; min-width:0; flex:1; gap:1px; }
-  .who b { font-size:15px; font-weight:700; letter-spacing:-.02em; }
+  .who b { font-size:15px; font-weight:500; letter-spacing:-.02em; }
   .who span {
     font-size:11.5px; color:var(--dim);
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
@@ -211,7 +221,7 @@ pub const HTML: &str = r##"<!doctype html>
   .icon .badge {
     position:absolute; top:2px; right:1px; min-width:16px; height:16px; padding:0 4px;
     background:var(--warn); color:#1a1305; border-radius:999px;
-    font-size:10px; font-weight:700; line-height:16px; text-align:center;
+    font-size:10px; font-weight:500; line-height:16px; text-align:center;
   }
 
   /* ---- conversation ---------------------------------------------------- */
@@ -235,11 +245,11 @@ pub const HTML: &str = r##"<!doctype html>
     max-width:88%; min-width:0; white-space:pre-wrap; overflow-wrap:anywhere;
   }
   .row.you { padding-left:12%; }
-  .row.you .msg { font-weight:600; }
+  .row.you .msg { font-weight:500; }
   .row.pending .msg { opacity:.5; }
   /* Already monospace, so inline code is marked by weight and a wash rather
      than by changing face — which now would not read as anything. */
-  .msg code { background:#8b93a426; border-radius:4px; padding:1px 4px; font-weight:600; }
+  .msg code { background:#8b93a426; border-radius:4px; padding:1px 4px; font-weight:500; }
   /* On `--surface` rather than `--field`: with the bubbles gone this sits
      directly on the page, and in some themes a field *is* the page colour —
      it was only ever visible because a bubble was behind it. */
@@ -257,7 +267,7 @@ pub const HTML: &str = r##"<!doctype html>
     display:flex; align-items:baseline; gap:7px; margin:0 0 12px; color:var(--dim);
     font-size:12.5px; min-width:0;
   }
-  .tool .n { font-weight:600; flex:none; }
+  .tool .n { font-weight:500; flex:none; }
   .tool .d {
     font-size:11.5px; color:var(--faint);
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0;
@@ -299,7 +309,7 @@ pub const HTML: &str = r##"<!doctype html>
     background:var(--warn-bg); border:1px solid var(--warn); border-radius:12px;
   }
   .ask h3 {
-    margin:0 0 8px; font-size:11px; font-weight:700; letter-spacing:.12em;
+    margin:0 0 8px; font-size:11px; font-weight:500; letter-spacing:.12em;
     text-transform:uppercase; color:var(--warn);
   }
   .ask .body {
@@ -312,9 +322,9 @@ pub const HTML: &str = r##"<!doctype html>
     border-radius:9px; border:1px solid var(--line); background:var(--surface);
     font-size:14px; line-height:1.35;
   }
-  .ask button.first { background:var(--accent); border-color:var(--accent); color:var(--on-accent); font-weight:600; }
+  .ask button.first { background:var(--accent); border-color:var(--accent); color:var(--on-accent); font-weight:500; }
   .ask button:active { transform:scale(.985); }
-  .ask .key { opacity:.55; font-weight:600; margin-right:7px; }
+  .ask .key { opacity:.55; font-weight:500; margin-right:7px; }
 
   /* ---- composer -------------------------------------------------------- */
   .composer {
@@ -357,7 +367,7 @@ pub const HTML: &str = r##"<!doctype html>
   }
   .sheet.open { max-height:220px; opacity:1; transform:none; padding:0 10px 8px; }
   .sheet button {
-    padding:12px; border-radius:10px; font-size:13.5px; font-weight:600;
+    padding:12px; border-radius:10px; font-size:13.5px; font-weight:500;
     border:1px solid var(--line); background:var(--surface); color:var(--fg);
   }
   .sheet button.cancel { font-weight:400; color:var(--dim); }
@@ -389,14 +399,14 @@ pub const HTML: &str = r##"<!doctype html>
   aside.open { transform:none; }
   aside h2 {
     font-size:10px; letter-spacing:.18em; text-transform:uppercase; color:var(--faint);
-    margin:16px 18px 7px; font-weight:700;
+    margin:16px 18px 7px; font-weight:500;
   }
   .tree { flex:1; overflow-y:auto; padding-bottom:8px; }
   .proj, .agent {
     display:flex; align-items:center; gap:10px; width:100%; text-align:left;
     background:none; border:0; padding:12px 16px;
   }
-  .proj { font-weight:600; }
+  .proj { font-weight:500; }
   .proj .caret { color:var(--faint); font-size:10px; width:10px; }
   .proj .name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .proj .n { margin-left:auto; color:var(--faint); font-size:12px; font-weight:400; }
@@ -406,7 +416,7 @@ pub const HTML: &str = r##"<!doctype html>
   .agent .what { color:var(--dim); font-size:12px; margin-left:auto; flex:none; }
   .pill {
     background:var(--warn); color:#1a1305; border-radius:999px;
-    font-size:10px; font-weight:700; padding:1px 6px;
+    font-size:10px; font-weight:500; padding:1px 6px;
   }
   .server {
     display:flex; align-items:center; gap:9px; width:100%; text-align:left;
@@ -415,7 +425,7 @@ pub const HTML: &str = r##"<!doctype html>
   }
   .server .port {
     font-size:12px; line-height:1; color:var(--accent);
-    font-weight:600; flex:none;
+    font-weight:500; flex:none;
   }
   .server .cmd { color:var(--dim); font-size:12px; margin-left:auto; flex:none; }
   .new { display:flex; gap:8px; padding:2px 16px 12px 38px; }
@@ -438,7 +448,7 @@ pub const HTML: &str = r##"<!doctype html>
   .theme button {
     display:flex; align-items:center; gap:7px; padding:7px 11px 7px 8px;
     border:1px solid var(--line); border-radius:999px; background:none;
-    color:var(--dim); font-size:12.5px; font-weight:600;
+    color:var(--dim); font-size:12.5px; font-weight:500;
   }
   .theme button i {
     width:15px; height:15px; border-radius:50%; flex:none;
@@ -458,7 +468,7 @@ pub const HTML: &str = r##"<!doctype html>
     background:var(--warn-bg); border:1px solid var(--warn);
     font-size:13px; line-height:1.4;
   }
-  #stale b { display:block; color:var(--warn); margin-bottom:3px; }
+  #stale b { display:block; color:var(--warn); margin-bottom:3px; font-weight:500; }
   #stale button {
     margin-top:8px; padding:7px 11px; border-radius:9px; font-size:13px;
     border:1px solid var(--line); background:var(--surface); color:var(--fg);
