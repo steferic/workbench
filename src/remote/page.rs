@@ -51,6 +51,24 @@ pub const HTML: &str = r##"<!doctype html>
     --accent:#4361ee; --accent-2:hsl(228 18% 42%); --on-accent:#fff;
     --warn:hsl(20 88% 52%); --warn-bg:hsl(20 40% 13%); --ok:hsl(150 62% 40%);
     --shadow:0 1px 2px #0000004d;
+    /* Depth, in two pieces, shared by every palette.
+       `--hairline` is a 1px ring rather than a border, and it takes its ink
+       from `--fg`: that darkens a pale theme and lightens a dark one without
+       either having to name a colour, and it is why nothing wearing this may
+       also carry a border — the two together read as a doubled edge.
+       `--lift` is the ring over four shadow layers whose offset and opacity
+       both decay geometrically (×.54 a step, blur ≈1.33× the offset). That
+       curve is the whole trick: one flat layer reads as a grey rectangle
+       under the box, several stacked read as light falling away from it. The
+       ink stays black, so on a dark theme the layers vanish and the ring
+       carries the edge alone, which is all that is legible there anyway. */
+    --hairline:0 0 0 1px color-mix(in srgb, var(--fg) 8%, transparent);
+    --lift:
+      0 4px 5.3px #0000000a,
+      0 2.1px 2.9px #00000008,
+      0 1.2px 1.6px #00000005,
+      0 .6px .9px -1px #00000003,
+      var(--hairline);
     /* Fields and code wells recede from the surface they sit on. Which
        direction that is depends on the theme, so it cannot be derived. */
     --field:#0c0e13; --edge:#2b313d; --chrome:#12151b;
@@ -474,6 +492,7 @@ pub const HTML: &str = r##"<!doctype html>
     background:color-mix(in srgb, var(--accent) var(--bubble-opacity,40%), transparent);
     color:var(--on-bubble,var(--fg)); padding:7px 11px;
     border-radius:12px 12px 3px 12px;
+    box-shadow:var(--lift);
   }
   :root[data-bubbles="on"] .row.you .msg code { background:#ffffff2e; }
   /* The agent gets the palette's *other* colour — literally so where there is
@@ -484,6 +503,7 @@ pub const HTML: &str = r##"<!doctype html>
     background:color-mix(in srgb, var(--accent-2,var(--accent)) var(--bubble-opacity,40%), transparent);
     color:var(--on-bubble-2,var(--fg));
     padding:7px 11px; border-radius:12px 12px 12px 3px;
+    box-shadow:var(--lift);
   }
   .msg {
     max-width:88%; min-width:0; white-space:pre-wrap; overflow-wrap:anywhere;
@@ -497,9 +517,12 @@ pub const HTML: &str = r##"<!doctype html>
   /* On `--surface` rather than `--field`: with the bubbles gone this sits
      directly on the page, and in some themes a field *is* the page colour —
      it was only ever visible because a bubble was behind it. */
+  /* The ring in place of the border it used to have: this sits inside a
+     bubble that is already ringed, and two hard 1px edges a few pixels apart
+     is the one thing the layered treatment exists to avoid. */
   .msg pre {
     margin:8px 0 4px; padding:9px 11px; border-radius:8px;
-    background:var(--surface); border:1px solid var(--edge);
+    background:var(--surface); box-shadow:0 1px 2px #00000005, var(--hairline);
     max-width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch;
   }
   /* Code keeps its natural advance: tracking is what makes a monospace
