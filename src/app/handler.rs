@@ -582,10 +582,6 @@ fn expose_project_servers(state: &mut AppState) {
 /// exactly what it would see if it looked. The edge is what matters: an agent
 /// sits blocked for as long as it takes you to answer, and a notification a
 /// second is not a feature.
-/// A turn shorter than this finished before you could have looked away, so it
-/// is not news. Anything longer is the "it is done" you left the desk for.
-const WORTH_MENTIONING: Duration = Duration::from_secs(30);
-
 /// Poke subscribed devices when an agent changes to something you would want
 /// to know about: it stopped for you, or it finished a turn of real length.
 ///
@@ -593,7 +589,6 @@ const WORTH_MENTIONING: Duration = Duration::from_secs(30);
 /// tracked even with nobody subscribed, so turning notifications on does not
 /// immediately fire for everything already in progress.
 fn notify_phone(state: &mut AppState) -> Vec<String> {
-    let now = std::time::Instant::now();
     let statuses: Vec<(String, String)> = match state.system.remote_state.lock() {
         Ok(snapshot) => snapshot
             .agents
@@ -605,20 +600,15 @@ fn notify_phone(state: &mut AppState) -> Vec<String> {
 
     let mut news: Vec<String> = Vec::new();
     for (id, status) in &statuses {
-        let previous = state.system.remote_seen.get(id).cloned();
-        let changed = previous
-            .as_ref()
-            .map(|(was, _)| was != status)
-            .unwrap_or(true);
-
-        if let Some((was, since)) = &previous {
-            let held = now.saturating_duration_since(*since);
-            // It stopped and wants you.
+        // Only a change is news. An agent sits blocked until you answer it and
+        // idle until you give it something; saying so every second is not a
+        // feature. The first sighting of an agent says nothing either, so
+        // turning notifications on does not fire for everything already there.
+        if let Some(was) = state.system.remote_seen.get(id) {
             if status == "blocked" && was != "blocked" {
                 news.push(format!("{id} needs you"));
             }
-            // It finished something that took a while.
-            if status == "idle" && was == "working" && held >= WORTH_MENTIONING {
+            if status == "idle" && was == "working" {
                 state
                     .system
                     .remote_finished
@@ -626,15 +616,7 @@ fn notify_phone(state: &mut AppState) -> Vec<String> {
                 news.push(format!("{id} finished"));
             }
         }
-
-        let since = match (changed, previous) {
-            (false, Some((_, since))) => since,
-            _ => now,
-        };
-        state
-            .system
-            .remote_seen
-            .insert(id.clone(), (status.clone(), since));
+        state.system.remote_seen.insert(id.clone(), status.clone());
     }
 
     // Agents that have gone away entirely.
@@ -971,7 +953,7 @@ fn refresh_agent_tasks(state: &mut AppState, action_tx: &mpsc::UnboundedSender<A
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_remote, notify_phone, plan_task_refresh, process_action, WORTH_MENTIONING};
+    use super::{apply_remote, notify_phone, plan_task_refresh, process_action};
     use crate::models::{AgentType, Session, SessionStatus, Workspace};
     use chrono::{Duration as ChronoDuration, Utc};
 
@@ -1002,10 +984,10 @@ mod tests {
 
     /// The failure this fixes: notifications only ever fired on the edge into
     /// "blocked", but a ⚡ session skips permission prompts and so is almost
-    /// never blocked — meaning nothing ever fired. Finishing a turn of real
-    /// length is the event you actually left the desk for.
+    /// never blocked — meaning nothing ever fired. Finishing is the event you
+    /// left the desk for.
     #[test]
-    fn the_phone_is_told_when_a_long_turn_finishes() {
+    fn the_phone_is_told_every_time_a_turn_finishes() {
         let mut state = AppState::default();
         let workspace = Workspace::new("zeta".into(), std::path::PathBuf::from("/tmp/z"));
         let workspace_id = workspace.id;
@@ -1027,24 +1009,18 @@ mod tests {
         };
 
         set(&mut state, crate::agent_status::Activity::Working);
-        assert!(notify_phone(&mut state).is_empty());
+        assert!(notify_phone(&mut state).is_empty(), "starting is not news");
 
-        // A turn that ends the moment it began is not worth a notification.
         set(&mut state, crate::agent_status::Activity::Idle);
-        assert!(
-            notify_phone(&mut state).is_empty(),
-            "a turn shorter than a glance is not news"
+        assert_eq!(
+            notify_phone(&mut state),
+            vec![format!("{short} finished")],
+            "every finished turn is worth saying, however short"
         );
 
-        // Now one that actually took a while.
+        // And again next time round, not only the first.
         set(&mut state, crate::agent_status::Activity::Working);
         notify_phone(&mut state);
-        let long_ago = std::time::Instant::now() - WORTH_MENTIONING * 2;
-        state
-            .system
-            .remote_seen
-            .insert(short.clone(), ("working".into(), long_ago));
-
         set(&mut state, crate::agent_status::Activity::Idle);
         assert_eq!(notify_phone(&mut state), vec![format!("{short} finished")]);
 

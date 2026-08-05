@@ -35,6 +35,15 @@ use std::process::{Command, Stdio};
 /// than 24 hours out; this is signed per send, so it only has to outlive the
 /// request.
 const JWT_TTL_SECONDS: i64 = 60 * 60;
+
+/// Who is sending, which every push service wants a way to reach.
+///
+/// It has to be a URI a push service will accept, and Apple checks: a
+/// `mailto:` at `localhost` is refused outright with `BadJwtToken`, which is
+/// a 403 on every notification and no clue on the phone. Probed against the
+/// real service — `mailto:…@localhost` 403s where this, a real address, and
+/// `…@example.com` all return 201.
+const CONTACT: &str = "https://github.com/steferic/workbench";
 /// How long the push service should hold the message for a phone that is off.
 const TTL_SECONDS: u32 = 3600;
 
@@ -144,9 +153,7 @@ impl Push {
             serde_json::json!({
                 "aud": audience,
                 "exp": expiry,
-                // Push services want a way to contact whoever is sending.
-                // There is no server here to reach, so it names the tool.
-                "sub": "mailto:workbench@localhost",
+                "sub": CONTACT,
             })
             .to_string(),
         );
@@ -266,6 +273,7 @@ mod tests {
         let claims: serde_json::Value =
             serde_json::from_slice(&URL_SAFE_NO_PAD.decode(parts[1]).unwrap()).unwrap();
         assert_eq!(claims["aud"], "https://web.push.apple.com");
+        assert_eq!(claims["sub"], CONTACT);
         assert!(claims["exp"].as_i64().unwrap() > chrono::Utc::now().timestamp());
         // ES256 is a fixed-width r‖s pair, not a DER blob.
         assert_eq!(URL_SAFE_NO_PAD.decode(parts[2]).unwrap().len(), 64);
@@ -278,6 +286,19 @@ mod tests {
         assert!(verifying.verify(signed.as_bytes(), &signature).is_ok());
     }
 
+    /// The failure this guards is silent: Apple answers `BadJwtToken` with a
+    /// 403 and nothing reaches the phone, so a contact it will not accept
+    /// looks exactly like notifications being switched off.
+    #[test]
+    fn the_contact_is_one_a_push_service_will_accept() {
+        let (scheme, rest) = CONTACT.split_once(':').expect("a URI with a scheme");
+        assert!(matches!(scheme, "mailto" | "https"), "{scheme} is not a contact");
+        assert!(
+            !rest.contains("localhost") && !rest.contains("127.0.0.1"),
+            "a push service cannot reach {rest}, and Apple rejects it outright"
+        );
+    }
+
     #[test]
     fn a_device_is_remembered_once_however_often_it_asks() {
         let mut push = keyed();
@@ -288,4 +309,6 @@ mod tests {
         assert_eq!(push.subscriptions.len(), 2);
     }
 }
+
+
 

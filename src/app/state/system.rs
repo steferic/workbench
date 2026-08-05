@@ -676,9 +676,9 @@ pub struct SystemState {
     pub forwarded: std::collections::HashSet<u16>,
     pub last_port_scan: Option<Instant>,
     pub port_scan_inflight: bool,
-    /// What each agent was doing last tick, and since when — so the phone is
-    /// poked on a change rather than every tick a state persists.
-    pub remote_seen: HashMap<String, (String, Instant)>,
+    /// What each agent was doing last tick, so the phone is poked on a change
+    /// rather than every tick a state persists.
+    pub remote_seen: HashMap<String, String>,
     /// When each agent last finished a turn worth mentioning. Published so the
     /// service worker can say "finished" rather than guessing.
     pub remote_finished: HashMap<String, chrono::DateTime<chrono::Utc>>,
