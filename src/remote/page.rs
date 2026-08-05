@@ -80,25 +80,26 @@ pub const HTML: &str = r##"<!doctype html>
      hsl() of the same angle as the colour it is named for, so a shade is a
      step rather than a guess. */
 
-  /* Differentiated by *saturation*, which took three goes to arrive at.
-     Lifting surfaces toward white went pastel — the colour stopped being the
-     colour. Darkening them held the mood but ate the contrast black needs:
-     by the time a card was clearly a card it was down to 3.8:1.
-     
-     Chroma is the axis with room in it. The page stays the saturated
-     vermillion; cards are the same hue muted to clay, near enough in
-     lightness to keep black at 6.9:1 and far enough in colour to read as
-     different material. The accent goes the other way — deep and saturated —
-     so your own messages are the one thing that leaps off it. */
-  :root[data-theme="vermillion"] {
+  /* 藤黄 — #FFBA00 at hsl(44 100% 50%), and black on it is 12.3:1, the most
+     headroom any of these has. (White is 1.7:1, so black is not a preference
+     here; it is the only pairing that works.)
+
+     Differentiated by *saturation*, which the orange this replaces took three
+     goes to arrive at. Lifting surfaces toward white goes pastel and the
+     colour stops being the colour; darkening them holds the mood but eats the
+     contrast black needs. Chroma is the axis with room in it: the page stays
+     fully saturated, cards are the same hue muted to ochre — near enough in
+     lightness to keep black at 8.6:1, far enough in colour to read as a
+     different material. */
+  :root[data-theme="gamboge"] {
     color-scheme:light;
-    --bg:#f19072;
-    --surface:hsl(14 40% 64%); --raised:hsl(14 34% 58%); --line:hsl(14 35% 40%);
-    --fg:hsl(14 55% 8%); --dim:hsl(14 40% 20%); --faint:hsl(14 38% 24%);
-    --accent:hsl(14 78% 26%); --on-accent:#fff;
-    --warn:hsl(35 95% 16%); --warn-bg:hsl(35 45% 62%); --ok:hsl(150 55% 18%);
-    --shadow:0 1px 3px hsl(14 55% 20% / .3);
-    --field:hsl(14 30% 55%); --edge:hsl(14 34% 48%); --chrome:hsl(14 33% 57%);
+    --bg:#ffba00;
+    --surface:hsl(44 52% 52%); --raised:hsl(44 45% 46%); --line:hsl(44 45% 32%);
+    --fg:hsl(44 70% 7%); --dim:hsl(44 60% 16%); --faint:hsl(44 45% 24%);
+    --accent:hsl(44 95% 22%); --on-accent:#fff;
+    --warn:hsl(20 95% 22%); --warn-bg:hsl(44 55% 60%); --ok:hsl(150 60% 16%);
+    --shadow:0 1px 3px hsl(44 70% 12% / .3);
+    --field:hsl(44 42% 48%); --edge:hsl(44 42% 38%); --chrome:hsl(44 45% 50%);
   }
 
   /* #4D80E6 is hsl(220 75% 60%), where white measures 3.79:1 — enough for a
@@ -195,7 +196,9 @@ pub const HTML: &str = r##"<!doctype html>
   header {
     flex:none; display:flex; align-items:center; gap:11px;
     padding:max(9px,env(safe-area-inset-top)) 10px 9px 14px;
-    background:var(--chrome); border-bottom:1px solid var(--line);
+    /* The page colour, divided by a rule rather than a shade. A header in its
+       own tone is a second surface for no reason: nothing sits *on* it. */
+    background:var(--bg); border-bottom:1px solid var(--line);
   }
   .who { display:flex; flex-direction:column; min-width:0; flex:1; gap:1px; }
   .who b { font-size:15px; font-weight:500; letter-spacing:-.02em; }
@@ -330,7 +333,7 @@ pub const HTML: &str = r##"<!doctype html>
   .composer {
     flex:none; display:flex; gap:8px; align-items:flex-end;
     padding:8px 10px calc(8px + env(safe-area-inset-bottom));
-    background:var(--chrome); border-top:1px solid var(--line);
+    background:var(--bg); border-top:1px solid var(--line);
   }
   textarea {
     flex:1; min-width:0; resize:none; max-height:132px;
@@ -459,7 +462,7 @@ pub const HTML: &str = r##"<!doctype html>
   }
   .theme button[data-theme-name="light"] i { background:#f2f3f7; }
   .theme button[data-theme-name="dark"] i { background:#0c0e13; }
-  .theme button[data-theme-name="vermillion"] i { background:#f19072; }
+  .theme button[data-theme-name="gamboge"] i { background:#ffba00; }
   .theme button[data-theme-name="indigo"] i { background:#4d80e6; }
   .theme button.on { background:var(--raised); color:var(--fg); border-color:var(--fg); }
 
@@ -532,7 +535,7 @@ pub const HTML: &str = r##"<!doctype html>
     <button onclick="setTheme('system')" data-theme-name="system"><i></i>Auto</button>
     <button onclick="setTheme('light')" data-theme-name="light"><i></i>Light</button>
     <button onclick="setTheme('dark')" data-theme-name="dark"><i></i>Dark</button>
-    <button onclick="setTheme('vermillion')" data-theme-name="vermillion"><i></i>Vermillion</button>
+    <button onclick="setTheme('gamboge')" data-theme-name="gamboge"><i></i>Gamboge</button>
     <button onclick="setTheme('indigo')" data-theme-name="indigo"><i></i>Indigo</button>
   </div>
 </aside>
