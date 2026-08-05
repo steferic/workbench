@@ -41,6 +41,9 @@ pub const HTML: &str = r##"<!doctype html>
     --accent:#4361ee; --on-accent:#fff;
     --warn:#f0b429; --warn-bg:#2a2113; --ok:#57c785;
     --shadow:0 1px 2px #0000004d;
+    /* Fields and code wells recede from the surface they sit on. Which
+       direction that is depends on the theme, so it cannot be derived. */
+    --field:#0c0e13;
   }
   @media (prefers-color-scheme: light) {
     :root:not([data-theme="dark"]) {
@@ -50,6 +53,7 @@ pub const HTML: &str = r##"<!doctype html>
       --accent:#3355e8; --on-accent:#fff;
       --warn:#a96a00; --warn-bg:#fdf5e6; --ok:#1f8a4c;
       --shadow:0 1px 2px #10121a14, 0 1px 1px #10121a0f;
+      --field:#f2f3f7;
     }
   }
   :root[data-theme="light"] {
@@ -59,7 +63,58 @@ pub const HTML: &str = r##"<!doctype html>
     --accent:#3355e8; --on-accent:#fff;
     --warn:#a96a00; --warn-bg:#fdf5e6; --ok:#1f8a4c;
     --shadow:0 1px 2px #10121a14, 0 1px 1px #10121a0f;
+    --field:#f2f3f7;
   }
+
+  /* One hue throughout, differentiated by lightness. Everything below is
+     hsl() of the same angle as the colour it is named for, so a shade is a
+     step rather than a guess. */
+
+  /* #F19072 at hsl(14 82% 70%), with black on it: 8.97:1, so the page can be
+     the colour itself and surfaces lift *toward white* as they come forward. */
+  :root[data-theme="vermillion"] {
+    color-scheme:light;
+    --bg:#f19072;
+    --surface:hsl(14 85% 81%); --raised:hsl(14 88% 88%); --line:hsl(14 45% 60%);
+    --fg:hsl(14 60% 9%); --dim:hsl(14 30% 27%); --faint:hsl(14 22% 42%);
+    --accent:hsl(14 68% 36%); --on-accent:#fff;
+    --warn:hsl(32 90% 24%); --warn-bg:hsl(32 85% 86%); --ok:hsl(150 60% 24%);
+    --shadow:0 1px 2px hsl(14 50% 25% / .22);
+    --field:hsl(14 90% 93%);
+  }
+
+  /* #4D80E6 is hsl(220 75% 60%), where white measures 3.79:1 — enough for a
+     heading, not for a conversation. So the colour is the page, and every
+     surface that carries text is a *deeper* step of the same blue: bubbles at
+     5.1:1, your own at 10.7:1. Differentiation and legibility from one move. */
+  :root[data-theme="indigo"] {
+    color-scheme:dark;
+    --bg:#4d80e6;
+    --surface:hsl(220 72% 52%); --raised:hsl(220 72% 46%); --line:hsl(220 60% 68%);
+    --fg:#fff; --dim:hsl(220 70% 90%); --faint:hsl(220 45% 80%);
+    --accent:hsl(220 72% 30%); --on-accent:#fff;
+    --warn:hsl(42 100% 76%); --warn-bg:hsl(220 72% 38%); --ok:hsl(150 65% 70%);
+    --shadow:0 1px 3px hsl(220 60% 18% / .3);
+    --field:hsl(220 72% 42%);
+    --busy:hsl(196 100% 72%);
+  }
+  /* Motion, as three durations and two curves. Naming them is the whole
+     discipline: every transition below picks from this list, so nothing drifts
+     into feeling different for no reason. */
+  :root {
+    --dur-fast:.12s; --dur:.22s; --dur-slow:.34s;
+    --ease:cubic-bezier(.32,.72,0,1);          /* quick out, gentle in */
+    --ease-spring:cubic-bezier(.34,1.35,.64,1); /* the same, with a nudge past */
+  }
+  /* Motion is decoration. Anyone who has asked their system to stop it gets
+     the end state immediately, not a faster version of the journey. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration:.01ms !important; animation-iteration-count:1 !important;
+      transition-duration:.01ms !important;
+    }
+  }
+
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   /* The composer's colour, so the strip under the home indicator reads as
      part of it rather than as a black gap below the page. */
@@ -82,7 +137,22 @@ pub const HTML: &str = r##"<!doctype html>
     font:15px/1.5 -apple-system,ui-sans-serif,system-ui,"Segoe UI",sans-serif;
     -webkit-font-smoothing:antialiased;
   }
-  button { font:inherit; color:inherit; }
+  button, a { font:inherit; color:inherit; }
+  /* Everything tappable answers the finger. Without this the page is correct
+     and feels dead: on a touch screen the press *is* the feedback, because
+     there is no cursor and no hover to tell you the thing is live. */
+  .icon, .act, .proj, .agent, .server, .new button, .theme button,
+  .ask button, .sheet button, .chip button, #stale button {
+    transition: transform var(--dur-fast) var(--ease),
+                background-color var(--dur-fast) var(--ease),
+                opacity var(--dur-fast) var(--ease);
+  }
+  .icon:active, .act:active, .new button:active, .theme button:active,
+  .ask button:active, .sheet button:active, #stale button:active {
+    transform:scale(.94);
+  }
+  /* Full-width rows scale less: the same 6% reads as a lurch across 340px. */
+  .proj:active, .agent:active, .server:active { transform:scale(.985); }
 
   /* ---- header ---------------------------------------------------------- */
   header {
@@ -98,7 +168,10 @@ pub const HTML: &str = r##"<!doctype html>
   }
   .dot { width:9px; height:9px; border-radius:50%; background:var(--faint); flex:none; }
   .dot.blocked { background:var(--warn); box-shadow:0 0 0 3px #f0b4292e; }
-  .dot.working { background:var(--accent); animation:pulse 1.5s ease-in-out infinite; }
+  /* The accent doubles as the busy dot, which works until the accent *is* a
+     shade of the background — then it disappears into it. Themes that need a
+     different colour say so. */
+  .dot.working { background:var(--busy,var(--accent)); animation:pulse 1.5s ease-in-out infinite; }
   .dot.idle { background:var(--ok); }
   @keyframes pulse { 50% { opacity:.3; } }
 
@@ -120,6 +193,13 @@ pub const HTML: &str = r##"<!doctype html>
      inside one cannot shrink it to a column of single letters. */
   .row { display:flex; margin-bottom:9px; }
   .row.you { justify-content:flex-end; }
+  /* Only rows that are new carry `fresh`. The log is rebuilt whole on every
+     change, so animating all of it would re-play the entire conversation each
+     time a single line arrives. */
+  .row.fresh, .tool.fresh { animation:rise var(--dur) var(--ease) both; }
+  @keyframes rise {
+    from { opacity:0; transform:translateY(7px) scale(.985); }
+  }
   .msg {
     max-width:86%; min-width:0; padding:9px 13px;
     border-radius:19px 19px 19px 6px; box-shadow:var(--shadow);
@@ -135,7 +215,7 @@ pub const HTML: &str = r##"<!doctype html>
     background:#8b93a426; border-radius:5px; padding:1px 4px;
   }
   .msg pre {
-    margin:7px 0 3px; padding:9px 11px; border-radius:11px; background:var(--bg);
+    margin:7px 0 3px; padding:9px 11px; border-radius:11px; background:var(--field);
     max-width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch;
   }
   .msg pre code { background:none; padding:0; font-size:12px; }
@@ -166,6 +246,18 @@ pub const HTML: &str = r##"<!doctype html>
   .typing i:nth-child(3) { animation-delay:.36s; }
   @keyframes blink { 0%,60%,100% { opacity:.25; } 30% { opacity:1; } }
   .empty { color:var(--dim); text-align:center; padding:48px 20px; font-size:14px; }
+  /* Shaped like the conversation that is about to replace it, so the first
+     paint is not a blank page with a word in the middle. */
+  .skeleton { padding:4px 0; }
+  .skeleton div {
+    height:44px; border-radius:19px; margin-bottom:9px; background:var(--surface);
+    animation:breathe 1.6s var(--ease) infinite;
+  }
+  .skeleton div:nth-child(1) { width:62%; }
+  .skeleton div:nth-child(2) { width:80%; animation-delay:.15s; }
+  .skeleton div:nth-child(3) { width:45%; margin-left:auto; animation-delay:.3s;
+                               background:var(--accent); opacity:.5; }
+  @keyframes breathe { 50% { opacity:.45; } }
 
   /* ---- the question an agent is stopped on ----------------------------- */
   .ask {
@@ -199,17 +291,18 @@ pub const HTML: &str = r##"<!doctype html>
   textarea {
     flex:1; min-width:0; resize:none; max-height:132px;
     padding:9px 14px; border-radius:20px; border:1px solid var(--line);
-    background:var(--bg); color:var(--fg);
+    background:var(--field); color:var(--fg);
     /* 16px keeps iOS from zooming the page when the field takes focus. */
     font-family:inherit; font-size:16px; line-height:1.4;
   }
   textarea:focus { outline:none; border-color:var(--accent); }
+  textarea::placeholder { color:var(--faint); }
   .act {
     flex:none; width:40px; height:40px; border-radius:50%; border:1px solid var(--line);
-    background:var(--bg); display:grid; place-items:center; font-size:16px;
+    background:var(--field); display:grid; place-items:center; font-size:16px;
   }
   .act.send { background:var(--accent); border-color:var(--accent); color:var(--on-accent); font-size:19px; }
-  .act.send:disabled { opacity:.35; }
+  .act.send:disabled { opacity:.3; transform:scale(.92); }
   .act.on { background:var(--warn); border-color:var(--warn); color:#1a1305; }
   .note {
     flex:none; color:var(--dim); font-size:12.5px; text-align:center;
@@ -219,7 +312,16 @@ pub const HTML: &str = r##"<!doctype html>
   /* What the + offers. A sheet rather than going straight to the picker,
      because queueing work was what this button did and losing it silently
      would be worse than one extra tap. */
-  .sheet { flex:none; display:flex; flex-direction:column; gap:6px; padding:0 10px 8px; }
+  /* Animated with max-height rather than `hidden`, because display:none has
+     no in-between for a transition to happen in. */
+  .sheet {
+    flex:none; display:flex; flex-direction:column; gap:6px;
+    padding:0 10px; max-height:0; opacity:0; overflow:hidden;
+    transform:translateY(6px);
+    transition: max-height var(--dur) var(--ease), opacity var(--dur) var(--ease),
+                transform var(--dur) var(--ease-spring), padding var(--dur) var(--ease);
+  }
+  .sheet.open { max-height:220px; opacity:1; transform:none; padding:0 10px 8px; }
   .sheet button {
     padding:12px; border-radius:12px; font-size:14.5px; font-weight:600;
     border:1px solid var(--line); background:var(--surface); color:var(--fg);
@@ -233,6 +335,7 @@ pub const HTML: &str = r##"<!doctype html>
     padding:6px 8px 6px 10px; border-radius:10px;
     background:var(--surface); border:1px solid var(--line); font-size:12.5px;
   }
+  .chip { animation:rise var(--dur) var(--ease-spring) both; }
   .chip img { width:26px; height:26px; border-radius:5px; object-fit:cover; }
   .chip span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .chip button { border:0; background:none; color:var(--dim); font-size:15px; padding:0 2px; }
@@ -240,13 +343,13 @@ pub const HTML: &str = r##"<!doctype html>
   /* ---- drawer ---------------------------------------------------------- */
   .scrim {
     position:fixed; inset:0; background:#00000073; opacity:0; pointer-events:none;
-    transition:opacity .2s ease; backdrop-filter:blur(1px);
+    transition:opacity var(--dur) var(--ease); backdrop-filter:blur(1px);
   }
   .scrim.open { opacity:1; pointer-events:auto; }
   aside {
     position:fixed; top:0; right:0; bottom:0; width:min(87vw,352px);
     background:var(--surface); border-left:1px solid var(--line);
-    transform:translateX(100%); transition:transform .22s cubic-bezier(.32,.72,0,1);
+    transform:translateX(100%); transition:transform var(--dur-slow) var(--ease);
     display:flex; flex-direction:column; padding-top:env(safe-area-inset-top);
   }
   aside.open { transform:none; }
@@ -292,16 +395,29 @@ pub const HTML: &str = r##"<!doctype html>
     color:var(--fg); font-size:13.5px; line-height:1.35;
   }
   .notify.on { border-color:var(--ok); color:var(--dim); }
+  /* Five themes will not fit a segmented control, so each is a swatch of the
+     colour it actually is — which says more than its name does anyway. */
   .theme {
-    flex:none; display:flex; gap:2px; margin:8px 16px;
+    flex:none; display:flex; flex-wrap:wrap; gap:6px; margin:0 16px;
     margin-bottom:calc(16px + env(safe-area-inset-bottom));
-    padding:3px; border-radius:11px; background:var(--bg); border:1px solid var(--line);
   }
   .theme button {
-    flex:1; padding:8px 0; border:0; border-radius:8px; background:none;
-    color:var(--dim); font-size:13px; font-weight:600;
+    display:flex; align-items:center; gap:7px; padding:7px 11px 7px 8px;
+    border:1px solid var(--line); border-radius:999px; background:none;
+    color:var(--dim); font-size:12.5px; font-weight:600;
   }
-  .theme button.on { background:var(--surface); color:var(--fg); box-shadow:var(--shadow); }
+  .theme button i {
+    width:15px; height:15px; border-radius:50%; flex:none;
+    border:1px solid #0000002e; background:var(--swatch, var(--fg));
+  }
+  .theme button[data-theme-name="system"] i {
+    background:linear-gradient(105deg, #f2f3f7 50%, #0c0e13 50%);
+  }
+  .theme button[data-theme-name="light"] i { background:#f2f3f7; }
+  .theme button[data-theme-name="dark"] i { background:#0c0e13; }
+  .theme button[data-theme-name="vermillion"] i { background:#f19072; }
+  .theme button[data-theme-name="indigo"] i { background:#4d80e6; }
+  .theme button.on { background:var(--raised); color:var(--fg); border-color:var(--fg); }
 
   #stale {
     flex:none; margin:0 10px 8px; padding:11px 13px; border-radius:14px;
@@ -340,12 +456,12 @@ pub const HTML: &str = r##"<!doctype html>
   <button class="icon" onclick="toggleDrawer()" title="projects">☰<span class="badge" id="hbadge" hidden></span></button>
 </header>
 
-<div id="log"><div class="empty">connecting…</div></div>
+<div id="log"><div class="skeleton"><div></div><div></div><div></div></div></div>
 <div id="stale" hidden></div>
 <div id="ask"></div>
 <div class="note" id="note" hidden></div>
 
-<div class="sheet" id="sheet" hidden>
+<div class="sheet" id="sheet">
   <button onclick="pickFile()">Photo or file</button>
   <button onclick="hideSheet(); queueMessage()">Queue as a TODO</button>
   <button class="cancel" onclick="hideSheet()">Cancel</button>
@@ -367,10 +483,13 @@ pub const HTML: &str = r##"<!doctype html>
   <button class="notify" id="notify" onclick="enablePush()">
     <span>Notify me when an agent is blocked</span>
   </button>
+  <h2>theme</h2>
   <div class="theme" id="theme">
-    <button onclick="setTheme('system')">Auto</button>
-    <button onclick="setTheme('light')">Light</button>
-    <button onclick="setTheme('dark')">Dark</button>
+    <button onclick="setTheme('system')" data-theme-name="system"><i></i>Auto</button>
+    <button onclick="setTheme('light')" data-theme-name="light"><i></i>Light</button>
+    <button onclick="setTheme('dark')" data-theme-name="dark"><i></i>Dark</button>
+    <button onclick="setTheme('vermillion')" data-theme-name="vermillion"><i></i>Vermillion</button>
+    <button onclick="setTheme('indigo')" data-theme-name="indigo"><i></i>Indigo</button>
   </div>
 </aside>
 
@@ -437,6 +556,7 @@ function pick(id) {
   renderAttached();
   hideSheet();
   thread = [];
+  drawn = 0;
   have = 0;
   // The ETag says "same as the body you already folded in". Having just
   // thrown that away, a 304 would leave the log empty.
@@ -495,11 +615,10 @@ function sendMessage() {
 let attached = [];
 
 function toggleSheet() {
-  const sheet = document.getElementById("sheet");
-  sheet.hidden = !sheet.hidden;
+  document.getElementById("sheet").classList.toggle("open");
 }
 
-function hideSheet() { document.getElementById("sheet").hidden = true; }
+function hideSheet() { document.getElementById("sheet").classList.remove("open"); }
 
 function pickFile() {
   hideSheet();
@@ -794,11 +913,14 @@ function setTheme(mode) {
   if (mode === "system") document.documentElement.removeAttribute("data-theme");
   else document.documentElement.setAttribute("data-theme", mode);
 
+  // The status bar is chrome, not page: only `theme-color` reaches it, and it
+  // has to be told again whenever the palette moves under it.
   const surface = getComputedStyle(document.documentElement).getPropertyValue("--surface").trim();
   document.querySelector('meta[name="theme-color"]').setAttribute("content", surface);
 
-  const buttons = document.querySelectorAll("#theme button");
-  ["system", "light", "dark"].forEach((name, i) => buttons[i].classList.toggle("on", name === mode));
+  document.querySelectorAll("#theme button").forEach(button => {
+    button.classList.toggle("on", button.dataset.themeName === mode);
+  });
 }
 
 let drawerOpen = false;
@@ -833,10 +955,21 @@ const clock = at => {
   return isNaN(d) ? "" : d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 };
 
+/* How much of the conversation had already been drawn last time, so what is
+   drawn now can tell arriving from re-rendering. */
+let drawn = 0;
+
 function messagesHtml(a) {
   const parts = [];
   let last = null;
+  let index = 0;
+  // A first load animates as a short cascade; after that only the new line
+  // moves, and it does not wait its turn behind the ones already on screen.
+  const cascade = drawn === 0;
   for (const m of thread) {
+    const fresh = index++ >= drawn ? " fresh" : "";
+    const delay = cascade && fresh
+      ? ` style="animation-delay:${Math.min(index * 28, 340)}ms"` : "";
     // A gap means the conversation was picked up later; say when.
     const at = m.at ? new Date(m.at) : null;
     if (at && (!last || at - last > 10 * 60 * 1000)) parts.push('<div class="when">' + clock(m.at) + "</div>");
@@ -844,10 +977,10 @@ function messagesHtml(a) {
 
     if (m.role === "tool") {
       const [name, detail] = m.text.split(" · ");
-      parts.push('<div class="tool"><span class="n">' + esc(name) + '</span>' +
+      parts.push('<div class="tool' + fresh + '"' + delay + '><span class="n">' + esc(name) + "</span>" +
                  '<span class="d">' + esc(detail || "") + "</span></div>");
     } else {
-      parts.push('<div class="row ' + (m.role === "you" ? "you" : "") + '">' +
+      parts.push('<div class="row' + fresh + " " + (m.role === "you" ? "you" : "") + '"' + delay + '>' +
                  '<div class="msg">' + markdown(m.text) + "</div></div>");
     }
   }
@@ -855,8 +988,9 @@ function messagesHtml(a) {
     // No journal we can read: the terminal is all there is.
     parts.push('<div class="raw">' + esc(a.tail.join("\n")) + "</div>");
   }
-  for (const t of sent) parts.push('<div class="row you pending"><div class="msg">' + esc(t) + "</div></div>");
+  for (const t of sent) parts.push('<div class="row you pending fresh"><div class="msg">' + esc(t) + "</div></div>");
   if (a.status === "working") parts.push('<div class="typing"><i></i><i></i><i></i></div>');
+  drawn = thread.length;
   if (!parts.length) {
     parts.push('<div class="empty">' +
       (a.status === "stopped" ? "This agent is stopped. Send a message to wake it."
