@@ -180,6 +180,26 @@ pub const HTML: &str = r##"<!doctype html>
     --field:#0000001f; --edge:#00000030; --chrome:#c3c0c6;
   }
 
+  /* 珊瑚絹 → 象牙色. Both stops are pale — luminance 0.62 to 0.83 — which
+     makes this the least demanding of them: black runs 13.5:1 to 17.6:1 and
+     the muted tier has room to be genuinely muted rather than nearly black,
+     which is the compromise every darker background here has forced.
+     
+     Nearest neighbour is the dawn theme, and the difference is the point of
+     it: dawn opens on a saturated salmon and has somewhere to fall to. This
+     one starts pale and stays there. */
+  :root[data-theme="silk"] {
+    color-scheme:light;
+    --bg:#eac8b8;
+    --page:linear-gradient(180deg,#eac8b8 0%,#eddbcd 46%,#f3ead7 100%);
+    --surface:#00000012; --raised:#0000001c; --line:#00000030;
+    --fg:hsl(20 40% 11%); --dim:hsl(20 30% 26%); --faint:hsl(20 25% 32%);
+    --accent:hsl(14 55% 30%); --on-accent:#fff;
+    --warn:hsl(20 85% 26%); --warn-bg:#00000012; --ok:hsl(150 55% 20%);
+    --shadow:0 1px 3px hsl(20 40% 25% / .18);
+    --field:#00000017; --edge:#00000024; --chrome:#f0e2d6;
+  }
+
   /* A warm halo over white — the shadcn neutral palette with the light
      switched on above it.
      
@@ -587,6 +607,7 @@ pub const HTML: &str = r##"<!doctype html>
   .theme button[data-theme-name="gamboge"] i { background:#ffba00; }
   .theme button[data-theme-name="dawn"] i { background:linear-gradient(160deg,#fa7b62 40%,#f3ead7); }
   .theme button[data-theme-name="milk"] i { background:linear-gradient(160deg,#ffba00 30%,#f3ead7 65%,#f3f3f3); }
+  .theme button[data-theme-name="silk"] i { background:linear-gradient(160deg,#eac8b8 35%,#f3ead7); }
   .theme button[data-theme-name="haze"] i {
     background:radial-gradient(at 50% 15%, rgb(236,226,208) 0%, #fff 75%);
   }
@@ -670,6 +691,7 @@ pub const HTML: &str = r##"<!doctype html>
     <button onclick="setTheme('milk')" data-theme-name="milk"><i></i>Milk</button>
     <button onclick="setTheme('dusk')" data-theme-name="dusk"><i></i>Dusk</button>
     <button onclick="setTheme('haze')" data-theme-name="haze"><i></i>Haze</button>
+    <button onclick="setTheme('silk')" data-theme-name="silk"><i></i>Silk</button>
     <button onclick="setTheme('indigo')" data-theme-name="indigo"><i></i>Indigo</button>
   </div>
 </aside>
