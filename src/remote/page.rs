@@ -179,6 +179,29 @@ pub const HTML: &str = r##"<!doctype html>
     --field:#0000001f; --edge:#00000030; --chrome:#c3c0c6;
   }
 
+  /* 鳶色 / 薄紫鼠 / 退紅 / 生成色 — four stops, and the widest span of any of
+     them: 0.09 luminance at the kite brown to 0.77 at the unbleached cream.
+     
+     Neither text colour survives that raw. Black fails on the brown at
+     2.9:1, white fails on everything else — 1.3:1 on the cream. So this one
+     needs the heaviest veil here, 42% white, which lifts the brown to 6.7:1
+     for the body and leaves the muted tiers somewhere to sit (5.6 and 4.7).
+     The light stops barely move under it — the cream goes 0.77 to 0.82 — so
+     what the veil actually costs is the depth of the brown, and what it buys
+     is the other three stops being usable at all. */
+  :root[data-theme="kite"], .t-kite {
+    color-scheme:light;
+    --bg:#7d483e; --page:var(--bg);
+    --stops:#7d483e 0%,#a098a8 38%,#ffb3a7 70%,#ece2d0 100%;
+    --veil:#ffffff6b;
+    --surface:#00000012; --raised:#0000001c; --line:#00000033;
+    --fg:hsl(15 48% 8%); --dim:hsl(15 34% 15%); --faint:hsl(15 28% 20%);
+    --accent:hsl(12 60% 26%); --accent-2:hsl(280 18% 46%); --on-accent:#fff;
+    --warn:hsl(350 88% 30%); --warn-bg:#00000012; --ok:hsl(150 62% 20%);
+    --shadow:0 1px 3px hsl(15 40% 22% / .2);
+    --field:#00000017; --edge:#00000026; --chrome:#e4d9d2;
+  }
+
   /* 濡羽色 → 銀朱. The first dark gradient here, which inverts the surface
      model wholesale: every other gradient theme washes its cards with black
      over a light page, and this one washes with white over a dark one.
@@ -1209,7 +1232,7 @@ const THEMES = [
   ["system", "Auto"], ["light", "Light"], ["dark", "Dark"],
   ["gamboge", "Gamboge"], ["dawn", "Dawn"], ["milk", "Milk"], ["dusk", "Dusk"],
   ["haze", "Haze"], ["silk", "Silk"], ["bamboo", "Bamboo"],
-  ["cinnabar", "Cinnabar"], ["indigo", "Indigo"],
+  ["cinnabar", "Cinnabar"], ["kite", "Kite"], ["indigo", "Indigo"],
 ];
 
 document.getElementById("theme").innerHTML = THEMES.map(([name, label]) =>
