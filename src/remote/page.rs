@@ -127,6 +127,30 @@ pub const HTML: &str = r##"<!doctype html>
     --field:#0000001f; --edge:#0000002e; --chrome:#f7e7da;
   }
 
+  /* 藤黄 → 象牙色 → 乳白色: light draining out of the page from top to bottom.
+     
+     Three stops rather than two, which mostly changes where the constraint
+     sits. The gamboge end is the darkest thing here at 0.56 luminance and the
+     milk white end is 0.90, so black is measured against the top and is
+     comfortable everywhere below it by definition — 12.3:1 at the worst
+     point, 18.9:1 at the best. Washes again for the surfaces, for the same
+     reason as the dawn theme: no single card colour is right across a span
+     that wide.
+     
+     This is the solid gamboge with the light let out of it. Both are kept
+     because they are not the same room. */
+  :root[data-theme="milk"] {
+    color-scheme:light;
+    --bg:#ffba00;
+    --page:linear-gradient(180deg,#ffba00 0%,#f3ead7 52%,#f3f3f3 100%);
+    --surface:#00000014; --raised:#00000021; --line:#00000038;
+    --fg:hsl(44 70% 7%); --dim:hsl(44 55% 16%); --faint:hsl(44 45% 21%);
+    --accent:hsl(40 95% 24%); --on-accent:#fff;
+    --warn:hsl(20 95% 22%); --warn-bg:#0000000f; --ok:hsl(150 60% 16%);
+    --shadow:0 1px 3px hsl(44 70% 12% / .2);
+    --field:#0000001a; --edge:#00000029; --chrome:#f7f1e6;
+  }
+
   /* #4D80E6 is hsl(220 75% 60%), where white measures 3.79:1 — enough for a
      heading, not for a conversation. So the colour is the page, and every
      surface that carries text is a *deeper* step of the same blue: bubbles at
@@ -498,6 +522,7 @@ pub const HTML: &str = r##"<!doctype html>
   .theme button[data-theme-name="dark"] i { background:#0c0e13; }
   .theme button[data-theme-name="gamboge"] i { background:#ffba00; }
   .theme button[data-theme-name="dawn"] i { background:linear-gradient(160deg,#fa7b62 40%,#f3ead7); }
+  .theme button[data-theme-name="milk"] i { background:linear-gradient(160deg,#ffba00 30%,#f3ead7 65%,#f3f3f3); }
   .theme button[data-theme-name="indigo"] i { background:#4d80e6; }
   .theme button.on { background:var(--raised); color:var(--fg); border-color:var(--fg); }
 
@@ -572,6 +597,7 @@ pub const HTML: &str = r##"<!doctype html>
     <button onclick="setTheme('dark')" data-theme-name="dark"><i></i>Dark</button>
     <button onclick="setTheme('gamboge')" data-theme-name="gamboge"><i></i>Gamboge</button>
     <button onclick="setTheme('dawn')" data-theme-name="dawn"><i></i>Dawn</button>
+    <button onclick="setTheme('milk')" data-theme-name="milk"><i></i>Milk</button>
     <button onclick="setTheme('indigo')" data-theme-name="indigo"><i></i>Indigo</button>
   </div>
 </aside>
