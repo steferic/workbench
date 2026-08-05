@@ -49,7 +49,7 @@ pub const HTML: &str = r##"<!doctype html>
     --bg:#0c0e13; --surface:#171a21; --raised:#1e222b; --line:#272c37;
     --fg:#e8eaf0; --dim:#8b93a4; --faint:#5d6575;
     --accent:#4361ee; --on-accent:#fff;
-    --warn:#f0b429; --warn-bg:#2a2113; --ok:#57c785;
+    --warn:hsl(20 88% 52%); --warn-bg:hsl(20 40% 13%); --ok:hsl(150 62% 40%);
     --shadow:0 1px 2px #0000004d;
     /* Fields and code wells recede from the surface they sit on. Which
        direction that is depends on the theme, so it cannot be derived. */
@@ -61,14 +61,14 @@ pub const HTML: &str = r##"<!doctype html>
       --bg:#f2f3f7; --surface:#fff; --raised:#fff; --line:#e3e6ec;
       --fg:#14161b; --dim:#5f6779; --faint:#98a0b0;
       --accent:#3355e8; --on-accent:#fff;
-      --warn:#a96a00; --warn-bg:#fdf5e6; --ok:#1f8a4c;
+      --warn:hsl(20 88% 34%); --warn-bg:hsl(38 80% 94%); --ok:hsl(150 62% 26%);
       --shadow:0 1px 2px #10121a14, 0 1px 1px #10121a0f;
       --field:#f2f3f7; --edge:#e6e9ef; --chrome:#fbfbfd;
     }
   }
   :root[data-theme="light"], .t-light {
     color-scheme:light;
-    --bg:#f2f3f7; --page:var(--bg); --surface:#fff; --raised:#fff; --line:#e3e6ec;
+    --bg:#f2f3f7; --page:var(--bg); --stops:var(--no-stops); --surface:#fff; --raised:#fff; --line:#e3e6ec;
     --fg:#14161b; --dim:#5f6779; --faint:#98a0b0;
     --accent:#3355e8; --on-accent:#fff;
     --warn:#a96a00; --warn-bg:#fdf5e6; --ok:#1f8a4c;
@@ -93,11 +93,11 @@ pub const HTML: &str = r##"<!doctype html>
      different material. */
   :root[data-theme="gamboge"], .t-gamboge {
     color-scheme:light;
-    --bg:#ffba00; --page:var(--bg);
+    --bg:#ffba00; --page:var(--bg); --stops:var(--no-stops);
     --surface:hsl(44 52% 52%); --raised:hsl(44 45% 46%); --line:hsl(44 45% 32%);
     --fg:hsl(44 70% 7%); --dim:hsl(44 60% 16%); --faint:hsl(44 45% 24%);
     --accent:hsl(44 95% 22%); --on-accent:#fff;
-    --warn:hsl(20 95% 22%); --warn-bg:hsl(44 55% 60%); --ok:hsl(150 60% 16%);
+    --warn:hsl(350 88% 28%); --warn-bg:hsl(44 45% 62%); --ok:hsl(150 62% 18%);
     --shadow:0 1px 3px hsl(44 70% 12% / .3);
     --field:hsl(44 42% 48%); --edge:hsl(44 42% 38%); --chrome:hsl(44 45% 50%);
   }
@@ -117,12 +117,12 @@ pub const HTML: &str = r##"<!doctype html>
      show the conversation through it. */
   :root[data-theme="dawn"], .t-dawn {
     color-scheme:light;
-    --bg:#fa7b62;
-    --page:linear-gradient(180deg,#fa7b62 0%,#f6a88f 42%,#f3ead7 100%);
+    --bg:#fa7b62; --page:var(--bg);
+    --stops:#fa7b62 0%,#f6a88f 42%,#f3ead7 100%;
     --surface:#0000001a; --raised:#00000026; --line:#0000003d;
     --fg:hsl(12 50% 9%); --dim:hsl(12 38% 18%); --faint:hsl(12 32% 19%);
     --accent:hsl(9 65% 32%); --on-accent:#fff;
-    --warn:hsl(20 90% 22%); --warn-bg:#00000014; --ok:hsl(150 60% 18%);
+    --warn:hsl(350 88% 16%); --warn-bg:#00000014; --ok:hsl(150 62% 10%);
     --shadow:0 1px 3px hsl(12 50% 20% / .22);
     --field:#0000001f; --edge:#0000002e; --chrome:#f7e7da;
   }
@@ -141,12 +141,12 @@ pub const HTML: &str = r##"<!doctype html>
      because they are not the same room. */
   :root[data-theme="milk"], .t-milk {
     color-scheme:light;
-    --bg:#ffba00;
-    --page:linear-gradient(180deg,#ffba00 0%,#f3ead7 52%,#f3f3f3 100%);
+    --bg:#ffba00; --page:var(--bg);
+    --stops:#ffba00 0%,#f3ead7 52%,#f3f3f3 100%;
     --surface:#00000014; --raised:#00000021; --line:#00000038;
     --fg:hsl(44 70% 7%); --dim:hsl(44 55% 16%); --faint:hsl(44 45% 21%);
     --accent:hsl(40 95% 24%); --on-accent:#fff;
-    --warn:hsl(20 95% 22%); --warn-bg:#0000000f; --ok:hsl(150 60% 16%);
+    --warn:hsl(350 88% 28%); --warn-bg:#0000000f; --ok:hsl(150 62% 18%);
     --shadow:0 1px 3px hsl(44 70% 12% / .2);
     --field:#0000001a; --edge:#00000029; --chrome:#f7f1e6;
   }
@@ -166,16 +166,15 @@ pub const HTML: &str = r##"<!doctype html>
      is the same move as the washes elsewhere, pointed the other way. */
   :root[data-theme="dusk"], .t-dusk {
     color-scheme:light;
+    --bg:#a9a3ab; --page:var(--bg);
     --bg:#a9a3ab;
-    --page:#a9a3ab;
-    --wash:
-      linear-gradient(#ffffff38,#ffffff38),
-      conic-gradient(from 0deg at 43% 52%,
-        #c89888 0deg, #c89888 95deg, #4b80ea 185deg, #6a7a88 285deg, #c89888 360deg);
+    --stops:#c89888 0%,#c89888 26%,#4b80ea 52%,#6a7a88 80%,#c89888 100%;
+    --veil:#ffffff38;
+    --gradient-default:angular;
     --surface:#0000001a; --raised:#00000026; --line:#00000042;
     --fg:hsl(215 40% 8%); --dim:hsl(215 28% 16%); --faint:hsl(215 22% 21%);
     --accent:hsl(219 70% 30%); --on-accent:#fff;
-    --warn:hsl(20 90% 22%); --warn-bg:#00000014; --ok:hsl(150 55% 16%);
+    --warn:hsl(20 88% 14%); --warn-bg:#00000014; --ok:hsl(150 62% 12%);
     --shadow:0 1px 3px hsl(215 40% 15% / .25);
     --field:#0000001f; --edge:#00000030; --chrome:#c3c0c6;
   }
@@ -189,12 +188,12 @@ pub const HTML: &str = r##"<!doctype html>
      `--fg` than it would like. */
   :root[data-theme="bamboo"], .t-bamboo {
     color-scheme:light;
-    --bg:#6fb98f;
-    --page:linear-gradient(180deg,#6fb98f 0%,#b4d8c2 48%,#f7f7f7 100%);
+    --bg:#6fb98f; --page:var(--bg);
+    --stops:#6fb98f 0%,#b4d8c2 48%,#f7f7f7 100%;
     --surface:#00000014; --raised:#00000021; --line:#00000038;
     --fg:hsl(150 45% 8%); --dim:hsl(150 32% 17%); --faint:hsl(150 26% 21%);
     --accent:hsl(155 55% 22%); --on-accent:#fff;
-    --warn:hsl(20 90% 24%); --warn-bg:#00000014; --ok:hsl(150 60% 18%);
+    --warn:hsl(20 88% 16%); --warn-bg:#00000014; --ok:hsl(190 62% 14%);
     --shadow:0 1px 3px hsl(150 40% 15% / .22);
     --field:#0000001a; --edge:#00000029; --chrome:#dfeee6;
   }
@@ -209,12 +208,12 @@ pub const HTML: &str = r##"<!doctype html>
      one starts pale and stays there. */
   :root[data-theme="silk"], .t-silk {
     color-scheme:light;
-    --bg:#eac8b8;
-    --page:linear-gradient(180deg,#eac8b8 0%,#eddbcd 46%,#f3ead7 100%);
+    --bg:#eac8b8; --page:var(--bg);
+    --stops:#eac8b8 0%,#eddbcd 46%,#f3ead7 100%;
     --surface:#00000012; --raised:#0000001c; --line:#00000030;
     --fg:hsl(20 40% 11%); --dim:hsl(20 30% 26%); --faint:hsl(20 25% 32%);
     --accent:hsl(14 55% 30%); --on-accent:#fff;
-    --warn:hsl(20 85% 26%); --warn-bg:#00000012; --ok:hsl(150 55% 20%);
+    --warn:hsl(350 88% 30%); --warn-bg:#00000012; --ok:hsl(150 62% 20%);
     --shadow:0 1px 3px hsl(20 40% 25% / .18);
     --field:#00000017; --edge:#00000024; --chrome:#f0e2d6;
   }
@@ -231,14 +230,13 @@ pub const HTML: &str = r##"<!doctype html>
      the neutrals can be exactly the ones the component ships with. */
   :root[data-theme="haze"], .t-haze {
     color-scheme:light;
-    --bg:#fff;
-    --page:#fff;
-    --wash:radial-gradient(at 48% 4%, rgb(236,226,208) 0%, transparent 70%);
-    --wash-blur:190px; --wash-inset:-380px;
+    --bg:#fff; --page:var(--bg);
+    --stops:rgb(236,226,208) 0%,#fff 70%;
+    --gradient-default:circular;
     --surface:hsl(0 0% 96.1%); --raised:hsl(0 0% 93%); --line:hsl(0 0% 89.8%);
     --fg:hsl(0 0% 3.9%); --dim:hsl(0 0% 38%); --faint:hsl(0 0% 46%);
     --accent:hsl(0 0% 9%); --on-accent:hsl(0 0% 98%);
-    --warn:hsl(25 90% 30%); --warn-bg:hsl(40 70% 94%); --ok:hsl(150 60% 24%);
+    --warn:hsl(20 88% 36%); --warn-bg:hsl(38 80% 94%); --ok:hsl(150 62% 28%);
     --shadow:0 1px 2px hsl(0 0% 0% / .08);
     --field:hsl(0 0% 96.1%); --edge:hsl(0 0% 91%); --chrome:hsl(0 0% 98%);
   }
@@ -249,11 +247,11 @@ pub const HTML: &str = r##"<!doctype html>
      5.1:1, your own at 10.7:1. Differentiation and legibility from one move. */
   :root[data-theme="indigo"], .t-indigo {
     color-scheme:dark;
-    --bg:#4d80e6; --page:var(--bg);
+    --bg:#4d80e6; --page:var(--bg); --stops:var(--no-stops);
     --surface:hsl(220 72% 52%); --raised:hsl(220 72% 46%); --line:hsl(220 60% 68%);
     --fg:#fff; --dim:hsl(220 70% 90%); --faint:hsl(220 45% 80%);
     --accent:hsl(220 72% 30%); --on-accent:#fff;
-    --warn:hsl(42 100% 76%); --warn-bg:hsl(220 72% 38%); --ok:hsl(150 65% 70%);
+    --warn:hsl(40 95% 88%); --warn-bg:hsl(220 72% 38%); --ok:hsl(150 65% 88%);
     --shadow:0 1px 3px hsl(220 60% 18% / .3);
     --field:hsl(220 72% 42%); --edge:hsl(220 60% 44%); --chrome:hsl(220 72% 47%);
     --busy:hsl(196 100% 72%);
@@ -263,13 +261,19 @@ pub const HTML: &str = r##"<!doctype html>
      into feeling different for no reason. */
   :root {
     --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;
-    /* What the page is made of: a colour for most themes, a gradient or a
-       blurred sweep for others, so it is a `background` value rather than a
-       colour token. Each palette resolves its own — a custom property
-       inherits the value it was *already* resolved to, so one declared here
-       against `--bg` would be fixed to whichever theme happened to be active
-       and every swatch would paint that instead of itself. */
+    /* A palette supplies `--stops`; this decides the shape they are drawn in,
+       so form and colour are independent and any theme can be seen three
+       ways. A palette with no stops collapses to transparent and its `--bg`
+       shows through unchanged.
+       
+       The overhang is tied to the blur rather than fixed: at 100px the layer
+       needs room for the blur to pull from, and at 0px it must be exactly the
+       viewport or the outer stops fall off the screen. */
+    --gradient-blur:100px;
     --page:var(--bg);
+    --no-stops:transparent 0%,transparent 100%;
+    --stops:var(--no-stops);
+    --wash:linear-gradient(180deg,var(--stops,var(--no-stops)));
     --dur-fast:.12s; --dur:.22s; --dur-slow:.34s;
     --ease:cubic-bezier(.32,.72,0,1);          /* quick out, gentle in */
     --ease-spring:cubic-bezier(.34,1.35,.64,1); /* the same, with a nudge past */
@@ -297,15 +301,22 @@ pub const HTML: &str = r##"<!doctype html>
   .ask .body::-webkit-scrollbar-thumb {
     background:var(--line); border-radius:3px;
   }
-  /* A theme may hang a blurred layer behind everything by setting `--wash`.
-     Oversized on every side so the blur's own faded edges fall outside the
-     screen rather than showing as a vignette, and clipped back by the body's
-     `overflow:hidden`. Fixed and static, so it composites once and the log
-     scrolls over it without repainting. */
+  :root[data-gradient="circular"] {
+    --wash:radial-gradient(125% 92% at 50% 0%,var(--stops,var(--no-stops)));
+  }
+  :root[data-gradient="angular"] {
+    --wash:conic-gradient(from 195deg at 48% 46%,var(--stops,var(--no-stops)));
+  }
+
+  /* The gradient lives on its own layer so it can be blurred without blurring
+     the conversation with it. Fixed and static, so it composites once and the
+     log scrolls over it. A theme may lay a veil over the top — see dusk, where
+     the colours are too mid-toned to take text without one. */
   body::before {
-    content:""; position:fixed; inset:var(--wash-inset,-180px); z-index:-1;
-    pointer-events:none; background:var(--wash,none);
-    filter:blur(var(--wash-blur,100px));
+    content:""; position:fixed; z-index:-1; pointer-events:none;
+    inset:calc(-1.8 * var(--gradient-blur));
+    background:linear-gradient(var(--veil,transparent),var(--veil,transparent)), var(--wash);
+    filter:blur(var(--gradient-blur));
   }
 
   /* The page is painted here and nowhere else. Everything structural above it
@@ -369,7 +380,12 @@ pub const HTML: &str = r##"<!doctype html>
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
   }
   .dot { width:9px; height:9px; border-radius:50%; background:var(--faint); flex:none; }
-  .dot.blocked { background:var(--warn); box-shadow:0 0 0 3px #f0b4292e; }
+  /* Alert colours are chosen per theme to differ from the page in hue, not
+     just in lightness — an amber warning on an amber page is the page. As
+     fills for a dot or a badge they answer to the 3:1 rule for graphics; the
+     one theme that cannot clear 4.5 either way (indigo, a saturated mid-blue)
+     uses them only that way. */
+  .dot.blocked { background:var(--warn); box-shadow:0 0 0 3px color-mix(in srgb,var(--warn) 18%,transparent); }
   /* The accent doubles as the busy dot, which works until the accent *is* a
      shade of the background — then it disappears into it. Themes that need a
      different colour say so. */
@@ -552,6 +568,32 @@ pub const HTML: &str = r##"<!doctype html>
   .chip span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .chip button { border:0; background:none; color:var(--dim); font-size:13px; padding:0 2px; }
 
+  /* The palette panel: everything about how the page looks, in one place,
+     one tap from the header rather than buried in the projects drawer. */
+  .palette {
+    position:fixed; left:0; right:0; bottom:0; z-index:5;
+    transform:translateY(101%); transition:transform var(--dur-slow) var(--ease);
+    background:var(--chrome); border-top:1px solid var(--line);
+    border-radius:16px 16px 0 0;
+    padding:4px 16px calc(18px + env(safe-area-inset-bottom));
+    max-height:76vh; overflow-y:auto;
+  }
+  .palette.open { transform:none; }
+  .palette h2 {
+    font-size:8px; letter-spacing:.18em; text-transform:uppercase;
+    color:var(--faint); margin:16px 0 8px; font-weight:500;
+  }
+  .palette h2 span { letter-spacing:0; text-transform:none; }
+  .forms { display:flex; gap:6px; }
+  .forms button {
+    flex:1; padding:9px 0; border-radius:9px; font-size:10.5px; font-weight:500;
+    border:1px solid var(--line); background:none; color:var(--dim);
+  }
+  .forms button.on { background:var(--raised); color:var(--fg); border-color:var(--fg); }
+  .palette input[type=range] {
+    width:100%; margin:2px 0 0; accent-color:var(--accent); background:none;
+  }
+
   /* ---- drawer ---------------------------------------------------------- */
   .scrim {
     position:fixed; inset:0; background:#00000073; opacity:0; pointer-events:none;
@@ -609,10 +651,7 @@ pub const HTML: &str = r##"<!doctype html>
   .notify.on { border-color:var(--ok); color:var(--dim); }
   /* Five themes will not fit a segmented control, so each is a swatch of the
      colour it actually is — which says more than its name does anyway. */
-  .theme {
-    flex:none; display:flex; flex-wrap:wrap; gap:6px; margin:0 16px;
-    margin-bottom:calc(16px + env(safe-area-inset-bottom));
-  }
+  .theme { display:flex; flex-wrap:wrap; gap:6px; }
   .theme button {
     display:flex; align-items:center; gap:7px; padding:7px 11px 7px 8px;
     border:1px solid var(--line); border-radius:999px; background:none;
@@ -624,13 +663,14 @@ pub const HTML: &str = r##"<!doctype html>
   .theme button i {
     width:15px; height:15px; border-radius:50%; flex:none;
     border:1px solid #0000002e;
-    background:var(--wash,none), var(--page);
+    background:linear-gradient(155deg,var(--stops,var(--no-stops))), var(--page);
     background-size:cover;
   }
-  .t-system { --page:linear-gradient(105deg,#f2f3f7 50%,#0c0e13 50%); }
+  .t-system { --page:linear-gradient(105deg,#f2f3f7 50%,#0c0e13 50%);
+               --stops:var(--no-stops); }
   /* Dark is the base palette rather than an override, so it has no block of
      its own to borrow; its swatch needs the one value it would have taken. */
-  .t-dark { --bg:#0c0e13; --page:var(--bg); }
+  .t-dark { --bg:#0c0e13; --page:var(--bg); --stops:var(--no-stops); }
   .theme button.on { background:var(--raised); color:var(--fg); border-color:var(--fg); }
 
   #stale {
@@ -667,6 +707,7 @@ pub const HTML: &str = r##"<!doctype html>
   <span class="dot" id="hdot"></span>
   <span class="who"><b id="hname">—</b><span id="hwhat"></span></span>
   <button class="icon" id="cycle" onclick="cycleAgent()" title="next agent here" hidden>⇄</button>
+  <button class="icon" onclick="togglePalette()" title="theme">◑</button>
   <button class="icon" onclick="toggleDrawer()" title="projects">☰<span class="badge" id="hbadge" hidden></span></button>
 </header>
 
@@ -690,6 +731,16 @@ pub const HTML: &str = r##"<!doctype html>
   <button class="act send" id="send" onclick="sendMessage()" disabled>↑</button>
 </div>
 
+<div class="scrim" id="paletteScrim" onclick="togglePalette()"></div>
+<section class="palette" id="palette">
+  <h2>theme</h2>
+  <div class="theme" id="theme"></div>
+  <h2>gradient</h2>
+  <div class="forms" id="forms"></div>
+  <h2>blur <span id="blurValue"></span></h2>
+  <input type="range" id="blur" min="0" max="240" step="10" oninput="setBlur(this.value)">
+</section>
+
 <div class="scrim" id="scrim" onclick="toggleDrawer()"></div>
 <aside id="drawer">
   <h2>projects</h2>
@@ -697,8 +748,6 @@ pub const HTML: &str = r##"<!doctype html>
   <button class="notify" id="notify" onclick="enablePush()">
     <span>Notify me when an agent is blocked</span>
   </button>
-  <h2>theme</h2>
-  <div class="theme" id="theme"></div>
 </aside>
 
 <script>
@@ -1141,6 +1190,42 @@ function setTheme(mode) {
   document.querySelectorAll("#theme button").forEach(button => {
     button.classList.toggle("on", button.dataset.themeName === mode);
   });
+
+  // A palette may have been designed around one shape — dusk is a sweep, haze
+  // is a glow. Offer it the first time that theme is picked; after that the
+  // choice on screen is yours.
+  const wants = getComputedStyle(document.documentElement)
+    .getPropertyValue("--gradient-default").trim();
+  if (wants && !store.get("gradient", "")) setForm(wants);
+}
+
+/* Which shape the stops are drawn in, and how far it is blurred. Both are
+   about the page rather than about a theme, so they persist across themes —
+   picking a new palette should not silently undo how you like to see it. */
+const FORMS = [["linear", "Linear"], ["circular", "Circular"], ["angular", "Angular"]];
+
+document.getElementById("forms").innerHTML = FORMS.map(([name, label]) =>
+  `<button onclick="setForm('${name}')" data-form="${name}">${label}</button>`).join("");
+
+function setForm(name) {
+  store.set("gradient", name);
+  document.documentElement.setAttribute("data-gradient", name);
+  document.querySelectorAll("#forms button").forEach(button =>
+    button.classList.toggle("on", button.dataset.form === name));
+}
+
+function setBlur(px) {
+  store.set("blur", px);
+  document.documentElement.style.setProperty("--gradient-blur", px + "px");
+  document.getElementById("blurValue").textContent = px + "px";
+  document.getElementById("blur").value = px;
+}
+
+let paletteOpen = false;
+function togglePalette() {
+  paletteOpen = !paletteOpen;
+  document.getElementById("palette").classList.toggle("open", paletteOpen);
+  document.getElementById("paletteScrim").classList.toggle("open", paletteOpen);
 }
 
 let drawerOpen = false;
@@ -1345,6 +1430,8 @@ async function refresh() {
   render();
 }
 
+setForm(store.get("gradient", "linear"));
+setBlur(store.get("blur", "100"));
 setTheme(localStorage.getItem("theme") || "system");
 markPush(store.get("push", "") === "on");
 showDebug();
