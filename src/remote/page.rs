@@ -216,6 +216,27 @@ pub const HTML: &str = r##"<!doctype html>
     padding:0 14px 7px;
   }
 
+  /* What the + offers. A sheet rather than going straight to the picker,
+     because queueing work was what this button did and losing it silently
+     would be worse than one extra tap. */
+  .sheet { flex:none; display:flex; flex-direction:column; gap:6px; padding:0 10px 8px; }
+  .sheet button {
+    padding:12px; border-radius:12px; font-size:14.5px; font-weight:600;
+    border:1px solid var(--line); background:var(--surface); color:var(--fg);
+  }
+  .sheet button.cancel { font-weight:400; color:var(--dim); }
+
+  #attached { flex:none; display:flex; flex-wrap:wrap; gap:6px; padding:0 10px; }
+  #attached:not(:empty) { padding-bottom:8px; }
+  .chip {
+    display:flex; align-items:center; gap:7px; max-width:100%;
+    padding:6px 8px 6px 10px; border-radius:10px;
+    background:var(--surface); border:1px solid var(--line); font-size:12.5px;
+  }
+  .chip img { width:26px; height:26px; border-radius:5px; object-fit:cover; }
+  .chip span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .chip button { border:0; background:none; color:var(--dim); font-size:15px; padding:0 2px; }
+
   /* ---- drawer ---------------------------------------------------------- */
   .scrim {
     position:fixed; inset:0; background:#00000073; opacity:0; pointer-events:none;
@@ -324,8 +345,16 @@ pub const HTML: &str = r##"<!doctype html>
 <div id="ask"></div>
 <div class="note" id="note" hidden></div>
 
+<div class="sheet" id="sheet" hidden>
+  <button onclick="pickFile()">Photo or file</button>
+  <button onclick="hideSheet(); queueMessage()">Queue as a TODO</button>
+  <button class="cancel" onclick="hideSheet()">Cancel</button>
+</div>
+<div id="attached"></div>
+
 <div class="composer">
-  <button class="act" id="queue" onclick="queueMessage()" title="add to this agent's queue">＋</button>
+  <input type="file" id="file" accept="image/*,text/*,.pdf,.log,.json" multiple hidden>
+  <button class="act" id="queue" onclick="toggleSheet()" title="attach or queue">＋</button>
   <textarea id="msg" rows="1" placeholder="Message"></textarea>
   <button class="act" id="mic" onclick="toggleMic()" title="dictate">🎤</button>
   <button class="act send" id="send" onclick="sendMessage()" disabled>↑</button>
@@ -404,6 +433,9 @@ function pick(id) {
   current = id;
   store.set("agent", id);
   sent = [];
+  attached = [];
+  renderAttached();
+  hideSheet();
   thread = [];
   have = 0;
   // The ETag says "same as the body you already folded in". Having just
@@ -444,11 +476,76 @@ function take() {
 }
 
 function sendMessage() {
-  const text = take();
-  if (!text) return;
+  const typed = take();
+  // An attachment on its own is a message: "look at this" is implied.
+  if (!typed && !attached.length) return;
+  const text = [typed, ...attached.map(a => a.path)].filter(Boolean).join("\n");
+  attached = [];
+  renderAttached();
   sent.push(text);                      // appears immediately, like a chat app
   render();
   post("/api/reply", { agent: current, text });
+}
+
+/* ---- attachments ------------------------------------------------------- */
+
+/* Files land on the desktop and the agent is handed the path, which is how
+   both Claude and Codex take an image. Nothing is sent until you do, so a
+   photo can have a caption. */
+let attached = [];
+
+function toggleSheet() {
+  const sheet = document.getElementById("sheet");
+  sheet.hidden = !sheet.hidden;
+}
+
+function hideSheet() { document.getElementById("sheet").hidden = true; }
+
+function pickFile() {
+  hideSheet();
+  document.getElementById("file").click();
+}
+
+document.getElementById("file").addEventListener("change", async event => {
+  const files = [...event.target.files];
+  event.target.value = "";               // so the same photo can be picked twice
+  for (const file of files) {
+    note("sending " + file.name + "…");
+    try {
+      const res = await fetch(
+        q("/api/upload?agent=" + encodeURIComponent(current) +
+          "&name=" + encodeURIComponent(file.name)),
+        { method: "POST", body: file });
+      if (!res.ok) throw new Error(await res.text());
+      const { path } = await res.json();
+      attached.push({
+        path,
+        name: file.name,
+        preview: file.type.startsWith("image/") ? URL.createObjectURL(file) : null,
+      });
+      note("");
+      renderAttached();
+    } catch (err) {
+      note("could not send " + file.name + ": " + err.message);
+    }
+  }
+});
+
+function removeAttached(index) {
+  const [gone] = attached.splice(index, 1);
+  if (gone?.preview) URL.revokeObjectURL(gone.preview);
+  renderAttached();
+}
+
+function renderAttached() {
+  document.getElementById("attached").innerHTML = attached.map((a, i) => `
+    <span class="chip">
+      ${a.preview ? '<img src="' + a.preview + '" alt="">' : ""}
+      <span>${esc(a.name)}</span>
+      <button onclick="removeAttached(${i})" aria-label="remove">×</button>
+    </span>`).join("");
+  document.getElementById("send").disabled =
+    !attached.length && !document.getElementById("msg").value.trim();
 }
 
 /* The queue is the other way to give an agent work: it waits for the turn in
@@ -469,7 +566,7 @@ const box = document.getElementById("msg");
 box.addEventListener("input", e => {
   e.target.style.height = "auto";
   e.target.style.height = Math.min(e.target.scrollHeight, 132) + "px";
-  document.getElementById("send").disabled = !e.target.value.trim();
+  document.getElementById("send").disabled = !e.target.value.trim() && !attached.length;
 });
 
 /* dictation — needs a secure context, so say so rather than failing quietly */

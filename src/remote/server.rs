@@ -186,6 +186,7 @@ fn handle(
         ("POST", "/api/subscribe") => command_from(request, commands, |_, endpoint| {
             (!endpoint.is_empty()).then_some(RemoteCommand::Subscribe { endpoint })
         }),
+        ("POST", "/api/upload") => upload(request, &query_params(query)),
         ("GET", "/api/state") => state_body(request, &query_params(query), shared),
         ("POST", "/api/todo") => command_from(request, commands, |agent, text| {
             (!text.is_empty()).then_some(RemoteCommand::Todo { agent, text })
@@ -302,6 +303,100 @@ fn percent_decode(value: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// A phone photo is a few megabytes; anything much past that is not a
+/// screenshot of a bug and should not be quietly written to disk.
+const MAX_UPLOAD: usize = 25 * 1024 * 1024;
+
+/// Take a file from the phone and put it somewhere the agent can read.
+///
+/// Agents take images by path — Claude's Read renders one, and Codex has its
+/// own viewer — so the useful thing to hand back is the path, which the page
+/// then attaches to whatever you type. Raw bytes rather than base64 or
+/// multipart: the name and owner ride in the query, and a photo is large
+/// enough that a third more of it is worth avoiding.
+fn upload(
+    request: &mut tiny_http::Request,
+    params: &[(String, String)],
+) -> Response<std::io::Cursor<Vec<u8>>> {
+    let value = |key: &str| {
+        params
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default()
+    };
+    let agent = value("agent");
+    if agent.is_empty() {
+        return status(400, "which agent is this for?");
+    }
+    if request.body_length().unwrap_or(0) > MAX_UPLOAD {
+        return status(413, "that file is too large to send this way");
+    }
+
+    let mut bytes = Vec::new();
+    let mut capped = std::io::Read::take(request.as_reader(), MAX_UPLOAD as u64);
+    if std::io::Read::read_to_end(&mut capped, &mut bytes).is_err() {
+        return status(400, "could not read the file");
+    }
+    if bytes.is_empty() {
+        return status(400, "empty file");
+    }
+
+    match store_upload(&agent, &value("name"), &bytes) {
+        Ok(path) => {
+            crate::logger::info(format!("phone sent {} a file: {}", agent, path.display()));
+            json(serde_json::json!({ "path": path.to_string_lossy() }).to_string())
+        }
+        Err(err) => {
+            crate::logger::warn(format!("could not store an upload: {err}"));
+            status(500, "could not store the file")
+        }
+    }
+}
+
+/// Write it beside the other cross-process state, under the agent it is for.
+///
+/// The name is rebuilt rather than trusted: it arrives from a phone and ends
+/// up as a path an agent is told to open, so only the stem and a known
+/// extension survive.
+fn store_upload(agent: &str, name: &str, bytes: &[u8]) -> Result<std::path::PathBuf> {
+    let dir = crate::comms::comms_root()?
+        .join("uploads")
+        .join(safe_part(agent));
+    std::fs::create_dir_all(&dir)?;
+
+    let name = std::path::Path::new(name);
+    let stem = name
+        .file_stem()
+        .map(|s| safe_part(&s.to_string_lossy()))
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "upload".to_string());
+    let extension = name
+        .extension()
+        .map(|e| safe_part(&e.to_string_lossy()))
+        .filter(|e| !e.is_empty())
+        .unwrap_or_else(|| "bin".to_string());
+
+    // Stamped, so two photos taken a second apart do not become one file.
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let path = dir.join(format!("{stamp}-{stem}.{extension}"));
+    std::fs::write(&path, bytes)?;
+    Ok(path)
+}
+
+/// Letters, digits, dot, dash and underscore. Everything else — separators,
+/// `..`, spaces, anything exotic — becomes a dash.
+fn safe_part(raw: &str) -> String {
+    raw.chars()
+        .map(|c| match c {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '.' | '-' | '_' => c,
+            _ => '-',
+        })
+        .take(60)
+        .collect::<String>()
+        .replace("..", "-")
+}
+
 fn command_from(
     request: &mut tiny_http::Request,
     commands: &mpsc::UnboundedSender<RemoteCommand>,
@@ -367,6 +462,44 @@ mod tests {
         assert_eq!(params[0], ("t".to_string(), "abc-def".to_string()));
         assert_eq!(params[1], ("x".to_string(), "1".to_string()));
         assert!(query_params("").is_empty());
+    }
+
+    /// The name comes from a phone and ends up as a path an agent is told to
+    /// open, so nothing of the original survives except a stem and a suffix.
+    #[test]
+    fn an_uploaded_name_cannot_escape_its_directory() {
+        // An ordinary name survives intact; that is the whole point.
+        assert_eq!(safe_part("IMG_0348.PNG"), "IMG_0348.PNG");
+        assert_eq!(safe_part("a name with spaces"), "a-name-with-spaces");
+
+        // Anything that could steer a path does not. Asserted as properties
+        // rather than exact output — the guarantee is "no separator and no
+        // parent", not one particular arrangement of dashes.
+        for hostile in ["../../etc/passwd", "..", "/etc/passwd", "x/../..", "\\\\server\\share"] {
+            let safe = safe_part(hostile);
+            assert!(!safe.contains('/'), "{hostile} -> {safe}");
+            assert!(!safe.contains('\\'), "{hostile} -> {safe}");
+            assert!(!safe.contains(".."), "{hostile} -> {safe}");
+        }
+        // Long enough to be a nuisance is cut, not rejected.
+        assert!(safe_part(&"x".repeat(200)).len() <= 60);
+    }
+
+    #[test]
+    fn an_upload_is_written_under_the_agent_it_is_for() {
+        let name = "../../../sneaky photo.PNG";
+        let path = store_upload("ab12cd34", name, b"not really a png").unwrap();
+
+        let file = path.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(file.ends_with(".PNG"), "the suffix is kept: {file}");
+        assert!(!file.contains('/') && !file.contains(".."), "{file}");
+        assert_eq!(
+            path.parent().unwrap().file_name().unwrap(),
+            "ab12cd34",
+            "filed under the agent"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), b"not really a png");
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
