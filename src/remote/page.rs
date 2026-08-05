@@ -63,12 +63,15 @@ pub const HTML: &str = r##"<!doctype html>
        ink stays black, so on a dark theme the layers vanish and the ring
        carries the edge alone, which is all that is legible there anyway. */
     --hairline:0 0 0 1px color-mix(in srgb, var(--fg) 8%, transparent);
-    --lift:
+    --depth:
       0 4px 5.3px #0000000a,
       0 2.1px 2.9px #00000008,
       0 1.2px 1.6px #00000005,
-      0 .6px .9px -1px #00000003,
-      var(--hairline);
+      0 .6px .9px -1px #00000003;
+    --lift:var(--depth), var(--hairline);
+    /* Selected, for the controls that used to say so with a `--fg` border:
+       the same depth under a ring dark enough to read as a choice. */
+    --lift-on:var(--depth), 0 0 0 1px color-mix(in srgb, var(--fg) 45%, transparent);
     /* Fields and code wells recede from the surface they sit on. Which
        direction that is depends on the theme, so it cannot be derived. */
     --field:#0c0e13; --edge:#2b313d; --chrome:#12151b;
@@ -416,13 +419,13 @@ pub const HTML: &str = r##"<!doctype html>
   /* Everything tappable answers the finger. Without this the page is correct
      and feels dead: on a touch screen the press *is* the feedback, because
      there is no cursor and no hover to tell you the thing is live. */
-  .icon, .act, .proj, .agent, .server, .new button, .theme button,
+  .icon, .proj, .agent, .server, .new button, .theme button,
   .ask button, .sheet button, .chip button, #stale button {
     transition: transform var(--dur-fast) var(--ease),
                 background-color var(--dur-fast) var(--ease),
                 opacity var(--dur-fast) var(--ease);
   }
-  .icon:active, .act:active, .new button:active, .theme button:active,
+  .icon:active, .new button:active, .theme button:active,
   .ask button:active, .sheet button:active, #stale button:active {
     transform:scale(.94);
   }
@@ -589,49 +592,79 @@ pub const HTML: &str = r##"<!doctype html>
   }
   .ask button {
     display:block; width:100%; text-align:left; margin-top:7px; padding:11px 13px;
-    border-radius:9px; border:1px solid var(--line); background:var(--surface);
-    font-size:12px; line-height:1.25;
+    border-radius:9px; border:0; background:var(--surface);
+    font-size:12px; line-height:1.25; box-shadow:var(--lift);
   }
-  .ask button.first { background:var(--accent); border-color:var(--accent); color:var(--on-accent); font-weight:500; }
+  .ask button.first { background:var(--accent); color:var(--on-accent); font-weight:500; }
   .ask button:active { transform:scale(.985); }
   .ask .key { opacity:.55; font-weight:500; margin-right:7px; }
 
   /* ---- composer -------------------------------------------------------- */
+  /* One floating card rather than a bar: the field and everything that acts
+     on it belong to the same object, and a card can sit over the conversation
+     instead of cutting it off with a rule. The padding still resolves the
+     safe area, which is what keeps it against the bottom edge. */
   .composer {
-    flex:none; display:flex; gap:8px; align-items:flex-end;
-    padding:8px 10px calc(8px + env(safe-area-inset-bottom));
-    background:transparent; border-top:1px solid var(--line);
+    flex:none; padding:6px 10px calc(8px + env(safe-area-inset-bottom));
+    background:transparent;
   }
+  /* Glassy: a fill that lets the wash through, blurred behind so the card
+     reads as a pane over the page rather than a patch of a different colour.
+     `backdrop-filter` is the whole effect, so the fill stays translucent. */
+  .dock {
+    border-radius:22px; padding:4px 6px 6px;
+    background:color-mix(in srgb, var(--surface) 62%, transparent);
+    backdrop-filter:blur(18px) saturate(150%);
+    -webkit-backdrop-filter:blur(18px) saturate(150%);
+    box-shadow:var(--lift);
+  }
+  /* The tools sit under the field, as a row of their own — where a phone's
+     thumb is, and out of the way of the text as it grows. */
+  .tools { display:flex; align-items:center; gap:8px; padding:0 2px; }
+  .tools .gap { flex:1; }
+  .tool {
+    position:relative; flex:none; width:36px; height:36px; border:0; padding:0;
+    border-radius:50%; background:none; color:var(--fg);
+    display:grid; place-items:center;
+    transition:background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease),
+               opacity var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+  }
+  /* 36px is the circle; the touch target is 44px, and the 8px gaps mean two
+     of them meet without ever overlapping. */
+  .tool::after { content:""; position:absolute; inset:-4px; border-radius:50%; }
+  .tool:active { transform:scale(.94); }
+  #mic { background:color-mix(in srgb, var(--fg) 8%, transparent); }
+  #mic.on { background:color-mix(in srgb, var(--warn) 20%, transparent); color:var(--warn); }
+  .tool.send { background:var(--accent); color:var(--on-accent); }
+  .tool.send:disabled { opacity:.35; }
+  /* Which agent this box talks to, in the place the Claude app puts the
+     model — the one choice you make about a message that is not its text. */
+  .picker {
+    display:flex; align-items:baseline; gap:6px; min-width:0; max-width:62%;
+    padding:8px 12px; border-radius:999px; border:0;
+    background:color-mix(in srgb, var(--fg) 8%, transparent);
+    color:var(--fg); font-size:11px; font-weight:500; line-height:1;
+    transition:background var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+  }
+  .picker span {
+    color:var(--dim); font-weight:400; min-width:0;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .picker:active { transform:scale(.97); }
   /* The mic rides inside the field rather than beside it: dictation is a way
      of filling this box, not a third peer of send and attach, and one fewer
      circle in the row is one fewer thing to read. */
-  .field { flex:1; min-width:0; position:relative; display:flex; }
+  /* No box of its own: the card is the box. The field is just the top of it,
+     so it carries no fill, no edge and no focus ring — focus is already
+     obvious from the caret and the keyboard. */
   textarea {
-    flex:1; min-width:0; resize:none; max-height:132px;
-    padding:9px 38px 9px 13px; border-radius:14px; border:1px solid var(--line);
-    background:var(--field); color:var(--fg);
+    display:block; width:100%; resize:none; max-height:118px;
+    padding:9px 8px 7px; border:0; background:none; color:var(--fg);
     /* 16px keeps iOS from zooming the page when the field takes focus. */
-    font-family:var(--mono); font-size:16px; line-height:1.3; letter-spacing:-.03em;
+    font-family:var(--mono); font-size:16px; line-height:1.35; letter-spacing:-.03em;
   }
-  textarea:focus { outline:none; border-color:var(--accent); }
+  textarea:focus { outline:none; }
   textarea::placeholder { color:var(--faint); }
-  /* Pinned to the bottom, so it stays put as the field grows into its lines. */
-  .mic {
-    position:absolute; right:5px; bottom:5px; width:30px; height:30px;
-    border:0; background:none; border-radius:50%; color:var(--dim);
-    display:grid; place-items:center; padding:0;
-    transition:color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
-  }
-  .mic.on { color:var(--warn); background:color-mix(in srgb, var(--warn) 16%, transparent); }
-  .act {
-    flex:none; width:40px; height:40px; border-radius:50%; border:1px solid var(--line);
-    background:var(--field); display:grid; place-items:center; font-size:14px;
-  }
-  /* No edge on the +: it opens a sheet rather than committing anything, and
-     the send button beside it should be the only ring in the row. */
-  #queue { border:0; color:var(--dim); font-size:17px; }
-  .act.send { background:var(--accent); border-color:var(--accent); color:var(--on-accent); font-size:17px; }
-  .act.send:disabled { opacity:.3; transform:scale(.92); }
   .note {
     flex:none; color:var(--dim); font-size:10.5px; text-align:center;
     padding:0 14px 7px;
@@ -652,16 +685,18 @@ pub const HTML: &str = r##"<!doctype html>
   .sheet.open { max-height:220px; opacity:1; transform:none; padding:0 10px 8px; }
   .sheet button {
     padding:12px; border-radius:10px; font-size:11.5px; font-weight:500;
-    border:1px solid var(--line); background:var(--surface); color:var(--fg);
+    border:0; background:var(--surface); color:var(--fg); box-shadow:var(--lift);
   }
   .sheet button.cancel { font-weight:400; color:var(--dim); }
 
-  #attached { flex:none; display:flex; flex-wrap:wrap; gap:6px; padding:0 10px; }
-  #attached:not(:empty) { padding-bottom:8px; }
+  /* Inside the card, above the field — the attachment belongs to the message
+     being written, so it travels with the box rather than floating over it. */
+  #attached { display:flex; flex-wrap:wrap; gap:6px; padding:0 2px; }
+  #attached:not(:empty) { padding:4px 2px 2px; }
   .chip {
     display:flex; align-items:center; gap:7px; max-width:100%;
     padding:6px 8px 6px 10px; border-radius:8px;
-    background:var(--surface); border:1px solid var(--line); font-size:10.5px;
+    background:var(--surface); border:0; box-shadow:var(--lift); font-size:10.5px;
   }
   .chip { animation:rise var(--dur) var(--ease-spring) both; }
   .chip img { width:26px; height:26px; border-radius:5px; object-fit:cover; }
@@ -687,9 +722,9 @@ pub const HTML: &str = r##"<!doctype html>
   .forms { display:flex; gap:6px; }
   .forms button {
     flex:1; padding:9px 0; border-radius:9px; font-size:10.5px; font-weight:500;
-    border:1px solid var(--line); background:none; color:var(--dim);
+    border:0; background:none; color:var(--dim); box-shadow:var(--lift);
   }
-  .forms button.on { background:var(--raised); color:var(--fg); border-color:var(--fg); }
+  .forms button.on { background:var(--raised); color:var(--fg); box-shadow:var(--lift-on); }
   .palette input[type=range] {
     width:100%; margin:2px 0 0; accent-color:var(--accent); background:none;
   }
@@ -739,23 +774,25 @@ pub const HTML: &str = r##"<!doctype html>
   }
   .server .cmd { color:var(--dim); font-size:10px; margin-left:auto; flex:none; }
   .new { display:flex; gap:8px; padding:2px 16px 12px 38px; }
+  /* Was dashed, to say "this makes a new one". The dash cannot survive next
+     to the ring without doubling the edge, so the dim label carries it. */
   .new button {
     flex:1; font-size:11px; padding:8px; border-radius:10px;
-    border:1px dashed var(--line); background:none; color:var(--dim);
+    border:0; background:none; color:var(--dim); box-shadow:var(--lift);
   }
   .notify {
     flex:none; margin:8px 16px 0; padding:11px 13px; text-align:left;
-    border:1px solid var(--line); border-radius:11px; background:var(--bg);
-    color:var(--fg); font-size:11.5px; line-height:1.3;
+    border:0; border-radius:11px; background:var(--bg);
+    color:var(--fg); font-size:11.5px; line-height:1.3; box-shadow:var(--lift);
   }
-  .notify.on { border-color:var(--ok); color:var(--dim); }
+  .notify.on { box-shadow:var(--depth), 0 0 0 1px var(--ok); color:var(--dim); }
   /* Five themes will not fit a segmented control, so each is a swatch of the
      colour it actually is — which says more than its name does anyway. */
   .theme { display:flex; flex-wrap:wrap; gap:6px; }
   .theme button {
     display:flex; align-items:center; gap:7px; padding:7px 11px 7px 8px;
-    border:1px solid var(--line); border-radius:999px; background:none;
-    color:var(--dim); font-size:10.5px; font-weight:500;
+    border:0; border-radius:999px; background:none;
+    color:var(--dim); font-size:10.5px; font-weight:500; box-shadow:var(--lift);
   }
   /* Painted from the palette the swatch is named for — `--wash` over
      `--page`, the same two layers the page itself is built from. A swatch
@@ -771,7 +808,7 @@ pub const HTML: &str = r##"<!doctype html>
   /* Dark is the base palette rather than an override, so it has no block of
      its own to borrow; its swatch needs the one value it would have taken. */
   .t-dark { --bg:#0c0e13; --page:var(--bg); --stops:var(--no-stops); }
-  .theme button.on { background:var(--raised); color:var(--fg); border-color:var(--fg); }
+  .theme button.on { background:var(--raised); color:var(--fg); box-shadow:var(--lift-on); }
 
   #stale {
     flex:none; margin:0 10px 8px; padding:11px 13px; border-radius:14px;
@@ -781,7 +818,7 @@ pub const HTML: &str = r##"<!doctype html>
   #stale b { display:block; color:var(--warn); margin-bottom:3px; font-weight:500; }
   #stale button {
     margin-top:8px; padding:7px 11px; border-radius:9px; font-size:11px;
-    border:1px solid var(--line); background:var(--surface); color:var(--fg);
+    border:0; background:var(--surface); color:var(--fg); box-shadow:var(--lift);
   }
 
   /* ?debug=1 — what the browser thinks the viewport is. */
@@ -821,23 +858,38 @@ pub const HTML: &str = r##"<!doctype html>
   <button onclick="hideSheet(); queueMessage()">Queue as a TODO</button>
   <button class="cancel" onclick="hideSheet()">Cancel</button>
 </div>
-<div id="attached"></div>
-
 <div class="composer">
   <input type="file" id="file" accept="image/*,text/*,.pdf,.log,.json" multiple hidden>
-  <button class="act" id="queue" onclick="toggleSheet()" title="attach or queue">＋</button>
-  <div class="field">
+  <div class="dock">
+    <div id="attached"></div>
     <textarea id="msg" rows="1" placeholder="Message"></textarea>
-    <button class="mic" id="mic" onclick="toggleMic()" title="dictate" aria-label="dictate">
-      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
-           stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <rect x="9" y="2.5" width="6" height="11" rx="3"/>
-        <path d="M5.5 11a6.5 6.5 0 0 0 13 0"/>
-        <path d="M12 17.5V21"/>
-      </svg>
-    </button>
+    <div class="tools">
+      <button class="tool" id="queue" onclick="toggleSheet()" title="attach or queue" aria-label="attach or queue">
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor"
+             stroke-width="1.9" stroke-linecap="round" aria-hidden="true">
+          <path d="M12 5v14M5 12h14"/>
+        </svg>
+      </button>
+      <button class="picker" id="who" onclick="toggleDrawer()" title="switch agent">
+        <b id="pname">—</b><span id="pwhat"></span>
+      </button>
+      <span class="gap"></span>
+      <button class="tool" id="mic" onclick="toggleMic()" title="dictate" aria-label="dictate">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+             stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="9" y="2.5" width="6" height="11" rx="3"/>
+          <path d="M5.5 11a6.5 6.5 0 0 0 13 0"/>
+          <path d="M12 17.5V21"/>
+        </svg>
+      </button>
+      <button class="tool send" id="send" onclick="sendMessage()" disabled aria-label="send">
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor"
+             stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/>
+        </svg>
+      </button>
+    </div>
   </div>
-  <button class="act send" id="send" onclick="sendMessage()" disabled>↑</button>
 </div>
 
 <div class="scrim" id="paletteScrim" onclick="togglePalette()"></div>
@@ -1551,6 +1603,11 @@ function render() {
   document.getElementById("hdot").className = "dot " + a.status;
   document.getElementById("cycle").hidden =
     data.agents.filter(x => x.project_id === a.project_id).length < 2;
+  // The composer's pill says who the message is going to. Provider and
+  // project only: what the agent is *doing* belongs in the header, not on a
+  // control you are about to press.
+  document.getElementById("pname").textContent = a.provider;
+  document.getElementById("pwhat").textContent = a.project;
 
   // Redraw only when there is something new: rewriting the log every second
   // fights your scrolling and drops any text you had selected.
