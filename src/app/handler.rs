@@ -116,6 +116,8 @@ pub fn process_action(
             tasks::sync_selection(state);
             refresh_agent_tasks(state, action_tx);
 
+            scan_ports(state, action_tx);
+
             // Refresh diff stats every 5 seconds
             if state.system.last_diff_refresh.elapsed() >= Duration::from_secs(5) {
                 state.system.last_diff_refresh = std::time::Instant::now();
@@ -175,6 +177,11 @@ pub fn process_action(
         }
         Action::DiffStatsUpdated(stats) => {
             state.system.diff_stats = stats;
+        }
+        Action::PortsScanned(servers) => {
+            state.system.dev_servers = servers;
+            state.system.port_scan_inflight = false;
+            expose_project_servers(state);
         }
         Action::Resize(w, h) => {
             state.system.terminal_size = (w, h);
@@ -341,7 +348,8 @@ pub fn process_action(
 
                 // Global already handled
                 Action::Quit | Action::ConfirmQuit | Action::Tick | Action::Resize(_, _) |
-                Action::UtilityContentLoaded(_) | Action::DiffStatsUpdated(_) => {}
+                Action::UtilityContentLoaded(_) | Action::DiffStatsUpdated(_) |
+                Action::PortsScanned(_) => {}
             }
 
             // A new project was just created or opened: select it and start its
@@ -471,6 +479,81 @@ fn remote_tick(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) 
     }
     for command in pending {
         apply_remote(state, command, action_tx);
+    }
+}
+
+/// How often to look for dev servers. Two `lsof` calls, so not every tick —
+/// and a dev server you have just started is worth waiting a moment for.
+const PORT_SCAN_EVERY: Duration = Duration::from_secs(5);
+
+/// Look for listening dev servers, off the event loop.
+fn scan_ports(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) {
+    if !state.system.user_config.expose_dev_servers || state.system.port_scan_inflight {
+        return;
+    }
+    let due = state
+        .system
+        .last_port_scan
+        .map(|at| at.elapsed() >= PORT_SCAN_EVERY)
+        .unwrap_or(true);
+    if !due {
+        return;
+    }
+    state.system.last_port_scan = Some(std::time::Instant::now());
+    state.system.port_scan_inflight = true;
+
+    let tx = action_tx.clone();
+    tokio::task::spawn_blocking(move || {
+        dispatch_action(&tx, Action::PortsScanned(crate::ports::scan()));
+    });
+}
+
+/// Splice each project's dev servers onto the tailnet address.
+///
+/// Only what runs inside a project, and only what binds loopback — a server
+/// already on every interface is reachable as it is. Forwarders are additive:
+/// see `SystemState::forwarded` for why none is ever taken down.
+fn expose_project_servers(state: &mut AppState) {
+    let Some(tailnet) = state.system.remote.as_ref().map(|r| r.config.addr.ip()) else {
+        return;
+    };
+    let phone_port = state.system.user_config.remote_port;
+
+    let mut roots: Vec<(std::path::PathBuf, uuid::Uuid)> = Vec::new();
+    for workspace in &state.data.workspaces {
+        roots.push((workspace.path.clone(), workspace.id));
+        for session in state.data.sessions.get(&workspace.id).into_iter().flatten() {
+            if let Some(worktree) = &session.worktree_path {
+                roots.push((worktree.clone(), workspace.id));
+            }
+        }
+    }
+
+    let wanted: Vec<u16> = crate::ports::owned_by(&state.system.dev_servers, &roots)
+        .into_iter()
+        .filter(|(server, _)| server.loopback_only && server.port != phone_port)
+        .map(|(server, _)| server.port)
+        .collect();
+
+    for port in wanted {
+        if state.system.forwarded.contains(&port) {
+            continue;
+        }
+        let bind = std::net::SocketAddr::new(tailnet, port);
+        let upstream = std::net::SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), port);
+        match crate::ports::expose(bind, upstream) {
+            Ok(_) => {
+                crate::logger::info(format!("dev server on {port} is now reachable from the phone"));
+                state.system.forwarded.insert(port);
+            }
+            // Almost always "address in use" — something else already has that
+            // port on the tailnet address. Remember it either way, so we do not
+            // try again every five seconds.
+            Err(err) => {
+                crate::logger::warn(format!("could not forward port {port}: {err}"));
+                state.system.forwarded.insert(port);
+            }
+        }
     }
 }
 

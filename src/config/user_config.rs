@@ -71,6 +71,12 @@ pub struct UserConfig {
     /// bookmark survives restarts; delete the line to rotate it.
     #[serde(default)]
     pub remote_token: String,
+    /// Make each project's dev servers reachable from the phone, on the
+    /// tailnet address and their own port number (see `crate::ports`). Only
+    /// processes running inside a project are ever forwarded, so databases and
+    /// the like are left alone. Set to false to forward nothing.
+    #[serde(default = "default_true")]
+    pub expose_dev_servers: bool,
     #[serde(default = "default_true")]
     pub use_alternate_screen: bool,
 
@@ -247,6 +253,7 @@ impl Default for UserConfig {
             scrollback_mb: default_scrollback_mb(),
             remote_port: default_remote_port(),
             remote_token: String::new(),
+            expose_dev_servers: true,
             use_alternate_screen: default_true(),
             scrollback_buffer_kb: 0,
             replay_parser_rows: 0,

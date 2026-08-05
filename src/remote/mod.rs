@@ -60,6 +60,18 @@ pub struct Snapshot {
 pub struct ProjectView {
     pub id: String,
     pub name: String,
+    /// Dev servers running in this project, reachable from the phone.
+    pub servers: Vec<ServerView>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ServerView {
+    pub port: u16,
+    /// The program listening, as the OS names it.
+    pub command: String,
+    /// Where to tap. The tailnet host with the dev server's own port, so it
+    /// is the URL already in your browser with the host swapped.
+    pub url: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -151,6 +163,44 @@ pub fn since(snapshot: &Snapshot, have: usize) -> Snapshot {
     trimmed
 }
 
+/// The dev servers the phone can reach, per project.
+///
+/// A server bound to every interface needs no forwarder and is listed anyway —
+/// it is reachable, which is all the phone cares about. One that binds
+/// loopback is listed once it has actually been spliced, so a link never
+/// points at something that will not answer.
+fn dev_servers(state: &AppState) -> std::collections::HashMap<Uuid, Vec<ServerView>> {
+    let mut by_project: std::collections::HashMap<Uuid, Vec<ServerView>> = Default::default();
+    let Some(host) = state.system.remote.as_ref().map(|r| r.config.addr.ip()) else {
+        return by_project;
+    };
+
+    let mut roots: Vec<(PathBuf, Uuid)> = Vec::new();
+    for workspace in &state.data.workspaces {
+        roots.push((workspace.path.clone(), workspace.id));
+        for session in state.data.sessions.get(&workspace.id).into_iter().flatten() {
+            if let Some(worktree) = &session.worktree_path {
+                roots.push((worktree.clone(), workspace.id));
+            }
+        }
+    }
+
+    for (server, project) in crate::ports::owned_by(&state.system.dev_servers, &roots) {
+        if server.port == state.system.user_config.remote_port {
+            continue;
+        }
+        if server.loopback_only && !state.system.forwarded.contains(&server.port) {
+            continue;
+        }
+        by_project.entry(project).or_default().push(ServerView {
+            port: server.port,
+            command: server.command.clone(),
+            url: format!("http://{host}:{}", server.port),
+        });
+    }
+    by_project
+}
+
 /// Which file holds a session's conversation, and how to read it.
 ///
 /// A live tracker knows; a stopped session has none, because only running ones
@@ -202,6 +252,7 @@ fn conversation(state: &mut AppState, session_id: Uuid) -> Option<(Vec<Message>,
 
 fn publish_with(state: &AppState, shared: &Shared, open: Option<(Vec<Message>, usize)>) {
     let mut agents = Vec::new();
+    let servers = dev_servers(state);
     let projects: Vec<ProjectView> = state
         .data
         .workspaces
@@ -209,6 +260,7 @@ fn publish_with(state: &AppState, shared: &Shared, open: Option<(Vec<Message>, u
         .map(|workspace| ProjectView {
             id: workspace.id.to_string(),
             name: workspace.name.clone(),
+            servers: servers.get(&workspace.id).cloned().unwrap_or_default(),
         })
         .collect();
 

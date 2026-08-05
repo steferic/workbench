@@ -243,6 +243,16 @@ pub const HTML: &str = r##"<!doctype html>
     background:var(--warn); color:#1a1305; border-radius:999px;
     font-size:10px; font-weight:700; padding:1px 6px;
   }
+  .server {
+    display:flex; align-items:center; gap:9px; width:100%; text-align:left;
+    padding:8px 16px 8px 38px; color:var(--fg); font-size:14px;
+    text-decoration:none;
+  }
+  .server .port {
+    font:12px/1 ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--accent);
+    font-weight:600; flex:none;
+  }
+  .server .cmd { color:var(--dim); font-size:12px; margin-left:auto; flex:none; }
   .new { display:flex; gap:8px; padding:2px 16px 12px 38px; }
   .new button {
     flex:1; font-size:13px; padding:8px; border-radius:10px;
@@ -642,6 +652,14 @@ function renderTree() {
         <span class="what">${a.status === "blocked" ? "needs you"
           : a.queued.length ? a.queued.length + " queued" : a.status}</span>
       </button>`).join("") : "";
+    // Dev servers running in this project, reachable on the tailnet at the
+    // same port they use locally.
+    const servers = open ? p.servers.map(s => `
+      <a class="server" href="${esc(s.url)}" target="_blank" rel="noopener">
+        <span class="port">:${s.port}</span>
+        <span>${esc(s.url.replace(/^https?:\/\//, ""))}</span>
+        <span class="cmd">${esc(s.command)}</span>
+      </a>`).join("") : "";
     const add = open ? `
       <div class="new">
         <button onclick="newAgent('${p.id}','claude')">+ Claude</button>
@@ -653,7 +671,7 @@ function renderTree() {
         <span class="name">${esc(p.name)}</span>
         ${blocked ? '<span class="pill">' + blocked + "</span>" : ""}
         <span class="n">${p.agents.length}</span>
-      </button>${rows}${add}`;
+      </button>${rows}${servers}${add}`;
   }).join("") || '<div class="empty">no projects</div>';
 }
 

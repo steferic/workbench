@@ -184,6 +184,8 @@ pub enum Action {
     ToggleTodoQueuePaused,
     /// Drop the items that have already run.
     ClearCompletedTodos,
+    /// Off-thread scan for listening dev servers finished.
+    PortsScanned(Vec<crate::ports::DevServer>),
     /// Off-thread re-read of the agent session logs finished.
     AgentTasksRefreshed(HashMap<Uuid, crate::agent_tasks::TaskTracker>),
 

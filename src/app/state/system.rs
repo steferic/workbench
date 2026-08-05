@@ -641,6 +641,15 @@ pub struct SystemState {
     pub remote_focus: Option<Uuid>,
     /// Push keypair and the devices listening (see `crate::remote::push`).
     pub push: crate::remote::Push,
+    /// Dev servers found listening, refreshed on a slow timer (`crate::ports`).
+    pub dev_servers: Vec<crate::ports::DevServer>,
+    /// Ports already spliced to the tailnet. Forwarders are never taken down:
+    /// a dev server that restarts on the same port is picked up again with no
+    /// bookkeeping, and one that is gone refuses the dial exactly as it would
+    /// locally.
+    pub forwarded: std::collections::HashSet<u16>,
+    pub last_port_scan: Option<Instant>,
+    pub port_scan_inflight: bool,
     /// Agents already notified about, so a phone is poked when one *becomes*
     /// blocked rather than every tick it stays blocked.
     pub remote_notified: std::collections::HashSet<String>,
@@ -704,6 +713,10 @@ impl SystemState {
             remote_focus: None,
             remote_thread: None,
             push: Default::default(),
+            dev_servers: Vec::new(),
+            forwarded: Default::default(),
+            last_port_scan: None,
+            port_scan_inflight: false,
             remote_notified: Default::default(),
         }
     }

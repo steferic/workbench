@@ -9,6 +9,7 @@ mod git;
 mod logger;
 mod models;
 mod persistence;
+mod ports;
 mod pty;
 mod remote;
 mod theme;
