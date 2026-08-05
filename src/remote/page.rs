@@ -602,22 +602,36 @@ pub const HTML: &str = r##"<!doctype html>
     padding:8px 10px calc(8px + env(safe-area-inset-bottom));
     background:transparent; border-top:1px solid var(--line);
   }
+  /* The mic rides inside the field rather than beside it: dictation is a way
+     of filling this box, not a third peer of send and attach, and one fewer
+     circle in the row is one fewer thing to read. */
+  .field { flex:1; min-width:0; position:relative; display:flex; }
   textarea {
     flex:1; min-width:0; resize:none; max-height:132px;
-    padding:9px 13px; border-radius:14px; border:1px solid var(--line);
+    padding:9px 38px 9px 13px; border-radius:14px; border:1px solid var(--line);
     background:var(--field); color:var(--fg);
     /* 16px keeps iOS from zooming the page when the field takes focus. */
     font-family:var(--mono); font-size:16px; line-height:1.3; letter-spacing:-.03em;
   }
   textarea:focus { outline:none; border-color:var(--accent); }
   textarea::placeholder { color:var(--faint); }
+  /* Pinned to the bottom, so it stays put as the field grows into its lines. */
+  .mic {
+    position:absolute; right:5px; bottom:5px; width:30px; height:30px;
+    border:0; background:none; border-radius:50%; color:var(--dim);
+    display:grid; place-items:center; padding:0;
+    transition:color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+  }
+  .mic.on { color:var(--warn); background:color-mix(in srgb, var(--warn) 16%, transparent); }
   .act {
     flex:none; width:40px; height:40px; border-radius:50%; border:1px solid var(--line);
     background:var(--field); display:grid; place-items:center; font-size:14px;
   }
+  /* No edge on the +: it opens a sheet rather than committing anything, and
+     the send button beside it should be the only ring in the row. */
+  #queue { border:0; color:var(--dim); font-size:17px; }
   .act.send { background:var(--accent); border-color:var(--accent); color:var(--on-accent); font-size:17px; }
   .act.send:disabled { opacity:.3; transform:scale(.92); }
-  .act.on { background:var(--warn); border-color:var(--warn); color:#1a1305; }
   .note {
     flex:none; color:var(--dim); font-size:10.5px; text-align:center;
     padding:0 14px 7px;
@@ -812,8 +826,17 @@ pub const HTML: &str = r##"<!doctype html>
 <div class="composer">
   <input type="file" id="file" accept="image/*,text/*,.pdf,.log,.json" multiple hidden>
   <button class="act" id="queue" onclick="toggleSheet()" title="attach or queue">＋</button>
-  <textarea id="msg" rows="1" placeholder="Message"></textarea>
-  <button class="act" id="mic" onclick="toggleMic()" title="dictate">🎤</button>
+  <div class="field">
+    <textarea id="msg" rows="1" placeholder="Message"></textarea>
+    <button class="mic" id="mic" onclick="toggleMic()" title="dictate" aria-label="dictate">
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+           stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="9" y="2.5" width="6" height="11" rx="3"/>
+        <path d="M5.5 11a6.5 6.5 0 0 0 13 0"/>
+        <path d="M12 17.5V21"/>
+      </svg>
+    </button>
+  </div>
   <button class="act send" id="send" onclick="sendMessage()" disabled>↑</button>
 </div>
 
