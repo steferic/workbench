@@ -480,9 +480,13 @@ pub const HTML: &str = r##"<!doctype html>
   header {
     flex:none; display:flex; align-items:center; gap:11px;
     padding:max(9px,env(safe-area-inset-top)) 10px 9px 14px;
-    /* The page itself, divided by a rule rather than a shade. A header in its
-       own tone is a second surface for no reason: nothing sits *on* it. */
-    background:transparent; border-bottom:1px solid var(--line);
+    /* Still the page rather than a tone of its own — nothing sits *on* a
+       header — but divided by the same falloff every other surface here uses
+       instead of a rule. `--depth` without the ring: the ring would draw a
+       box around all four sides, and only the underside of this one is an
+       edge. A shadow casts as if the box were opaque, so it reads even though
+       there is nothing to see above it. */
+    background:transparent; border-bottom:0; box-shadow:var(--depth);
   }
   .who { display:flex; flex-direction:column; min-width:0; flex:1; gap:1px; }
   .who b { font-size:13px; font-weight:500; letter-spacing:-.045em; }
@@ -665,7 +669,12 @@ pub const HTML: &str = r##"<!doctype html>
     position:relative; border-radius:22px; padding:4px 6px 6px;
     backdrop-filter:blur(18px) saturate(150%);
     -webkit-backdrop-filter:blur(18px) saturate(150%);
-    box-shadow:var(--lift);
+    /* The ring drops out of `--lift` here: the glass edge below is the edge,
+       and a hairline under a specular one is the double edge again. */
+    box-shadow:var(--depth);
+    /* Measured against what the card actually composites to at this strength,
+       not assumed from the page — see cardInk(). */
+    color:var(--on-card,var(--fg));
   }
   /* The fill is a layer of its own so the strength can be an opacity rather
      than a mix. It has to be: `--surface` is an opaque colour on the solid
@@ -691,13 +700,33 @@ pub const HTML: &str = r##"<!doctype html>
     background:linear-gradient(var(--surface),var(--surface)), var(--chrome);
     opacity:var(--bubble-alpha,.4);
   }
+  /* The glass edge. Real glass catches light on the rim that faces it and
+     lets a little back on the far one, which is why this is a gradient and
+     not a border: bright at the top left, gone by the middle, a fainter
+     return along the bottom. Drawn as a ring by masking the fill out of its
+     own padding box — `xor` leaves exactly the 1px frame.
+
+     White at both ends whatever the palette: a reflection is the colour of
+     the light, not of the thing reflecting it, so it stays subtle on a pale
+     card and reads clearly on a dark one, which is how glass behaves. */
+  .dock::after {
+    content:""; position:absolute; inset:0; border-radius:inherit;
+    pointer-events:none; padding:1px;
+    background:linear-gradient(150deg,
+      #ffffffa8 0%, #ffffff38 22%, #ffffff0f 42%,
+      transparent 58%, #ffffff1f 88%, #ffffff4d 100%);
+    -webkit-mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite:xor;
+    mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask-composite:exclude;
+  }
   /* The tools sit under the field, as a row of their own — where a phone's
      thumb is, and out of the way of the text as it grows. */
   .tools { display:flex; align-items:center; gap:8px; padding:0 2px; }
   .tools .gap { flex:1; }
   .tool {
     position:relative; flex:none; width:36px; height:36px; border:0; padding:0;
-    border-radius:50%; background:none; color:var(--fg);
+    border-radius:50%; background:none; color:var(--on-card,var(--fg));
     display:grid; place-items:center;
     transition:background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease),
                opacity var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
@@ -706,7 +735,7 @@ pub const HTML: &str = r##"<!doctype html>
      of them meet without ever overlapping. */
   .tool::after { content:""; position:absolute; inset:-4px; border-radius:50%; }
   .tool:active { transform:scale(.94); }
-  #mic { background:color-mix(in srgb, var(--fg) 8%, transparent); }
+  #mic { background:color-mix(in srgb, var(--on-card,var(--fg)) 10%, transparent); }
   #mic.on { background:color-mix(in srgb, var(--warn) 20%, transparent); color:var(--warn); }
   .tool.send { background:var(--accent); color:var(--on-accent); }
   .tool.send:disabled { opacity:.35; }
@@ -715,12 +744,13 @@ pub const HTML: &str = r##"<!doctype html>
   .picker {
     display:flex; align-items:baseline; gap:6px; min-width:0; max-width:62%;
     padding:8px 12px; border-radius:999px; border:0;
-    background:color-mix(in srgb, var(--fg) 8%, transparent);
-    color:var(--fg); font-size:11px; font-weight:500; line-height:1;
+    background:color-mix(in srgb, var(--on-card,var(--fg)) 10%, transparent);
+    color:var(--on-card,var(--fg)); font-size:11px; font-weight:500; line-height:1;
     transition:background var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
   }
   .picker span {
-    color:var(--dim); font-weight:400; min-width:0;
+    color:color-mix(in srgb, var(--on-card,var(--fg)) 62%, transparent);
+    font-weight:400; min-width:0;
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
   }
   .picker:active { transform:scale(.97); }
@@ -732,12 +762,12 @@ pub const HTML: &str = r##"<!doctype html>
      obvious from the caret and the keyboard. */
   textarea {
     display:block; width:100%; resize:none; max-height:118px;
-    padding:9px 8px 7px; border:0; background:none; color:var(--fg);
+    padding:9px 8px 7px; border:0; background:none; color:var(--on-card,var(--fg));
     /* 16px keeps iOS from zooming the page when the field takes focus. */
     font-family:var(--mono); font-size:16px; line-height:1.35; letter-spacing:-.03em;
   }
   textarea:focus { outline:none; }
-  textarea::placeholder { color:var(--faint); }
+  textarea::placeholder { color:color-mix(in srgb, var(--on-card,var(--fg)) 42%, transparent); }
   .note {
     flex:none; color:var(--dim); font-size:10.5px; text-align:center;
     padding:0 14px 7px;
@@ -1456,6 +1486,9 @@ function setForm(name) {
   document.documentElement.setAttribute("data-gradient", name);
   document.querySelectorAll("#forms button").forEach(button =>
     button.classList.toggle("on", button.dataset.form === name));
+  // The shape decides which stop lands under the composer, so the ink that
+  // reads on it can change without a single colour having changed.
+  if (typeof setBubbles === "function") setBubbles(store.get("bubbles", "40"));
 }
 
 /* A translucent fill has no fixed foreground. At 40% it is a wash and the
@@ -1485,6 +1518,72 @@ function contrast(a, b) {
   return (hi + 0.05) / (lo + 0.05);
 }
 
+/* The colour of the wash where the composer sits.
+   Not "the last stop": that is only true of the shapes that run downward.
+   Linear sweeps top to bottom, circular is centred on the top edge, and a
+   conic from 195° reaches ~96% of its sweep at the bottom of the page — all
+   three leave their final stop down here. Air does not: it anchors its glow
+   at 4% 72%, so the card sits on the *first* stop, the darkest one on most
+   palettes, which is the case where dark body text stopped being readable.
+
+   Holding the ink to every stop instead would be worse than guessing: kite
+   runs from dark brown to cream, and no single colour clears a useful bar
+   against both ends. A theme with no gradient leaves `--stops` transparent,
+   and then the page is simply the page. */
+function washUnderCard(styles) {
+  const stops = styles.getPropertyValue("--stops").trim().split(",")
+    .map(stop => toRgb(stop.trim().split(/\s+/)[0]))
+    .filter(rgba => rgba.length >= 3 && !(rgba.length === 4 && rgba[3] === 0))
+    .map(rgba => rgba.slice(0, 3));
+  if (!stops.length) return toRgb(styles.getPropertyValue("--bg")).slice(0, 3);
+  const form = document.documentElement.getAttribute("data-gradient") || "linear";
+  return form === "air" ? stops[0] : stops[stops.length - 1];
+}
+
+/* The ink for the composer's card, shifted to suit what it sits on.
+   `--fg` is picked to read on the *page*, and the card is only the page while
+   the slider is low: wound up it becomes its own material, and under some
+   gradient shapes it lands on the dark end of the wash, where a near-black
+   body colour is exactly the wrong choice. So work out what the card comes to
+   at this strength, and if `--fg` cannot clear the bar on it, walk `--fg`
+   toward white or black — whichever way the surface is not — until it does.
+   It comes back untouched when it is already fine, which is most palettes. */
+const CARD_CONTRAST = 7;
+
+function cardInk(alpha) {
+  const styles = getComputedStyle(document.documentElement);
+  const surface = toRgb(styles.getPropertyValue("--surface"));
+  const chrome = toRgb(styles.getPropertyValue("--chrome")).slice(0, 3);
+  // `--surface` is an ink on some palettes and a colour on others, so lay it
+  // over `--chrome` first — the same material the card paints.
+  const own = surface.length === 4 ? surface[3] : 1;
+  const material = chrome.map((c, i) => surface[i] * own + c * (1 - own));
+  const behind = washUnderCard(styles);
+  const card = material.map((c, i) => c * alpha + behind[i] * (1 - alpha));
+
+  const base = toRgb(styles.getPropertyValue("--fg")).slice(0, 3);
+  if (contrast(base, card) >= CARD_CONTRAST) return "var(--fg)";
+
+  // Further from the card, never across it. Letting the walk pick whichever
+  // direction scored higher is what a first pass did, and it inverted two
+  // palettes: indigo's white body colour went black on its blue, which is a
+  // theme built around white text, and kite on air went white — the model
+  // says that corner is dark brown, the blur says otherwise, and white text
+  // on a pale card is a worse answer than the one being fixed. Staying on the
+  // side `--fg` already sits makes the worst case "no change", which is what
+  // a correction working off an estimate should degrade to.
+  const toward = relativeLuminance(base) > relativeLuminance(card)
+    ? [255, 255, 255] : [0, 0, 0];
+  let ink = base;
+  for (let step = 0.1; step <= 1.0001; step += 0.1) {
+    const tried = base.map((c, i) => Math.round(c + (toward[i] - c) * step));
+    if (contrast(tried, card) <= contrast(ink, card)) break;
+    ink = tried;
+    if (contrast(ink, card) >= CARD_CONTRAST) break;
+  }
+  return "rgb(" + ink.join(",") + ")";
+}
+
 function readableOn(token, alpha) {
   const styles = getComputedStyle(document.documentElement);
   const page = toRgb(styles.getPropertyValue("--bg"));
@@ -1508,6 +1607,7 @@ function setBubbles(percent) {
   root.style.setProperty("--bubble-alpha", percent / 100);
   root.style.setProperty("--on-bubble", readableOn("--accent", percent / 100));
   root.style.setProperty("--on-bubble-2", readableOn("--accent-2", percent / 100));
+  root.style.setProperty("--on-card", cardInk(percent / 100));
   root.setAttribute("data-bubbles", percent > 0 ? "on" : "off");
   document.getElementById("bubbles").value = percent;
   document.getElementById("bubbleValue").textContent = percent ? percent + "%" : "plain";
