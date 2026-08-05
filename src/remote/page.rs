@@ -66,9 +66,9 @@ pub const HTML: &str = r##"<!doctype html>
       --field:#f2f3f7; --edge:#e6e9ef; --chrome:#fbfbfd;
     }
   }
-  :root[data-theme="light"] {
+  :root[data-theme="light"], .t-light {
     color-scheme:light;
-    --bg:#f2f3f7; --surface:#fff; --raised:#fff; --line:#e3e6ec;
+    --bg:#f2f3f7; --page:var(--bg); --surface:#fff; --raised:#fff; --line:#e3e6ec;
     --fg:#14161b; --dim:#5f6779; --faint:#98a0b0;
     --accent:#3355e8; --on-accent:#fff;
     --warn:#a96a00; --warn-bg:#fdf5e6; --ok:#1f8a4c;
@@ -91,9 +91,9 @@ pub const HTML: &str = r##"<!doctype html>
      fully saturated, cards are the same hue muted to ochre — near enough in
      lightness to keep black at 8.6:1, far enough in colour to read as a
      different material. */
-  :root[data-theme="gamboge"] {
+  :root[data-theme="gamboge"], .t-gamboge {
     color-scheme:light;
-    --bg:#ffba00;
+    --bg:#ffba00; --page:var(--bg);
     --surface:hsl(44 52% 52%); --raised:hsl(44 45% 46%); --line:hsl(44 45% 32%);
     --fg:hsl(44 70% 7%); --dim:hsl(44 60% 16%); --faint:hsl(44 45% 24%);
     --accent:hsl(44 95% 22%); --on-accent:#fff;
@@ -115,7 +115,7 @@ pub const HTML: &str = r##"<!doctype html>
      comfortable throughout. White would be 2.6:1 at its best, so it is not a
      choice. The drawer is opaque: it slides over the page, and a wash would
      show the conversation through it. */
-  :root[data-theme="dawn"] {
+  :root[data-theme="dawn"], .t-dawn {
     color-scheme:light;
     --bg:#fa7b62;
     --page:linear-gradient(180deg,#fa7b62 0%,#f6a88f 42%,#f3ead7 100%);
@@ -139,7 +139,7 @@ pub const HTML: &str = r##"<!doctype html>
      
      This is the solid gamboge with the light let out of it. Both are kept
      because they are not the same room. */
-  :root[data-theme="milk"] {
+  :root[data-theme="milk"], .t-milk {
     color-scheme:light;
     --bg:#ffba00;
     --page:linear-gradient(180deg,#ffba00 0%,#f3ead7 52%,#f3f3f3 100%);
@@ -164,7 +164,7 @@ pub const HTML: &str = r##"<!doctype html>
      corner from 4.8:1 to 7.1:1, which buys back the room the text scale needs
      while leaving all three colours plainly themselves — silk stays silk. It
      is the same move as the washes elsewhere, pointed the other way. */
-  :root[data-theme="dusk"] {
+  :root[data-theme="dusk"], .t-dusk {
     color-scheme:light;
     --bg:#a9a3ab;
     --page:#a9a3ab;
@@ -180,6 +180,25 @@ pub const HTML: &str = r##"<!doctype html>
     --field:#0000001f; --edge:#00000030; --chrome:#c3c0c6;
   }
 
+  /* 青竹色 → 卯の花色. The first of these that is not warm, which mostly
+     shows up in how little else had to change: the mechanism is the same
+     linear ramp with washes over it, and only the numbers moved.
+     
+     Bamboo is the constraint at 0.40 luminance — black clears it at 9:1 but
+     the muted tier has to sit lower than the pale themes allow, closer to
+     `--fg` than it would like. */
+  :root[data-theme="bamboo"], .t-bamboo {
+    color-scheme:light;
+    --bg:#6fb98f;
+    --page:linear-gradient(180deg,#6fb98f 0%,#b4d8c2 48%,#f7f7f7 100%);
+    --surface:#00000014; --raised:#00000021; --line:#00000038;
+    --fg:hsl(150 45% 8%); --dim:hsl(150 32% 17%); --faint:hsl(150 26% 21%);
+    --accent:hsl(155 55% 22%); --on-accent:#fff;
+    --warn:hsl(20 90% 24%); --warn-bg:#00000014; --ok:hsl(150 60% 18%);
+    --shadow:0 1px 3px hsl(150 40% 15% / .22);
+    --field:#0000001a; --edge:#00000029; --chrome:#dfeee6;
+  }
+
   /* 珊瑚絹 → 象牙色. Both stops are pale — luminance 0.62 to 0.83 — which
      makes this the least demanding of them: black runs 13.5:1 to 17.6:1 and
      the muted tier has room to be genuinely muted rather than nearly black,
@@ -188,7 +207,7 @@ pub const HTML: &str = r##"<!doctype html>
      Nearest neighbour is the dawn theme, and the difference is the point of
      it: dawn opens on a saturated salmon and has somewhere to fall to. This
      one starts pale and stays there. */
-  :root[data-theme="silk"] {
+  :root[data-theme="silk"], .t-silk {
     color-scheme:light;
     --bg:#eac8b8;
     --page:linear-gradient(180deg,#eac8b8 0%,#eddbcd 46%,#f3ead7 100%);
@@ -210,7 +229,7 @@ pub const HTML: &str = r##"<!doctype html>
      
      Contrast is a non-issue for once: cream on white, nothing below 15:1, so
      the neutrals can be exactly the ones the component ships with. */
-  :root[data-theme="haze"] {
+  :root[data-theme="haze"], .t-haze {
     color-scheme:light;
     --bg:#fff;
     --page:#fff;
@@ -228,9 +247,9 @@ pub const HTML: &str = r##"<!doctype html>
      heading, not for a conversation. So the colour is the page, and every
      surface that carries text is a *deeper* step of the same blue: bubbles at
      5.1:1, your own at 10.7:1. Differentiation and legibility from one move. */
-  :root[data-theme="indigo"] {
+  :root[data-theme="indigo"], .t-indigo {
     color-scheme:dark;
-    --bg:#4d80e6;
+    --bg:#4d80e6; --page:var(--bg);
     --surface:hsl(220 72% 52%); --raised:hsl(220 72% 46%); --line:hsl(220 60% 68%);
     --fg:#fff; --dim:hsl(220 70% 90%); --faint:hsl(220 45% 80%);
     --accent:hsl(220 72% 30%); --on-accent:#fff;
@@ -244,8 +263,12 @@ pub const HTML: &str = r##"<!doctype html>
      into feeling different for no reason. */
   :root {
     --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;
-    /* What the page is made of. A colour for most themes, a gradient for one,
-       so it is a `background` value rather than a colour token. */
+    /* What the page is made of: a colour for most themes, a gradient or a
+       blurred sweep for others, so it is a `background` value rather than a
+       colour token. Each palette resolves its own — a custom property
+       inherits the value it was *already* resolved to, so one declared here
+       against `--bg` would be fixed to whichever theme happened to be active
+       and every swatch would paint that instead of itself. */
     --page:var(--bg);
     --dur-fast:.12s; --dur:.22s; --dur-slow:.34s;
     --ease:cubic-bezier(.32,.72,0,1);          /* quick out, gentle in */
@@ -595,26 +618,19 @@ pub const HTML: &str = r##"<!doctype html>
     border:1px solid var(--line); border-radius:999px; background:none;
     color:var(--dim); font-size:10.5px; font-weight:500;
   }
+  /* Painted from the palette the swatch is named for — `--wash` over
+     `--page`, the same two layers the page itself is built from. A swatch
+     cannot fall out of step with its theme when it *is* the theme. */
   .theme button i {
     width:15px; height:15px; border-radius:50%; flex:none;
-    border:1px solid #0000002e; background:var(--swatch, var(--fg));
+    border:1px solid #0000002e;
+    background:var(--wash,none), var(--page);
+    background-size:cover;
   }
-  .theme button[data-theme-name="system"] i {
-    background:linear-gradient(105deg, #f2f3f7 50%, #0c0e13 50%);
-  }
-  .theme button[data-theme-name="light"] i { background:#f2f3f7; }
-  .theme button[data-theme-name="dark"] i { background:#0c0e13; }
-  .theme button[data-theme-name="gamboge"] i { background:#ffba00; }
-  .theme button[data-theme-name="dawn"] i { background:linear-gradient(160deg,#fa7b62 40%,#f3ead7); }
-  .theme button[data-theme-name="milk"] i { background:linear-gradient(160deg,#ffba00 30%,#f3ead7 65%,#f3f3f3); }
-  .theme button[data-theme-name="silk"] i { background:linear-gradient(160deg,#eac8b8 35%,#f3ead7); }
-  .theme button[data-theme-name="haze"] i {
-    background:radial-gradient(at 50% 15%, rgb(236,226,208) 0%, #fff 75%);
-  }
-  .theme button[data-theme-name="dusk"] i {
-    background:conic-gradient(from 0deg at 45% 50%,#c89888 0deg 95deg,#4b80ea 185deg,#6a7a88 285deg,#c89888 360deg);
-  }
-  .theme button[data-theme-name="indigo"] i { background:#4d80e6; }
+  .t-system { --page:linear-gradient(105deg,#f2f3f7 50%,#0c0e13 50%); }
+  /* Dark is the base palette rather than an override, so it has no block of
+     its own to borrow; its swatch needs the one value it would have taken. */
+  .t-dark { --bg:#0c0e13; --page:var(--bg); }
   .theme button.on { background:var(--raised); color:var(--fg); border-color:var(--fg); }
 
   #stale {
@@ -682,18 +698,7 @@ pub const HTML: &str = r##"<!doctype html>
     <span>Notify me when an agent is blocked</span>
   </button>
   <h2>theme</h2>
-  <div class="theme" id="theme">
-    <button onclick="setTheme('system')" data-theme-name="system"><i></i>Auto</button>
-    <button onclick="setTheme('light')" data-theme-name="light"><i></i>Light</button>
-    <button onclick="setTheme('dark')" data-theme-name="dark"><i></i>Dark</button>
-    <button onclick="setTheme('gamboge')" data-theme-name="gamboge"><i></i>Gamboge</button>
-    <button onclick="setTheme('dawn')" data-theme-name="dawn"><i></i>Dawn</button>
-    <button onclick="setTheme('milk')" data-theme-name="milk"><i></i>Milk</button>
-    <button onclick="setTheme('dusk')" data-theme-name="dusk"><i></i>Dusk</button>
-    <button onclick="setTheme('haze')" data-theme-name="haze"><i></i>Haze</button>
-    <button onclick="setTheme('silk')" data-theme-name="silk"><i></i>Silk</button>
-    <button onclick="setTheme('indigo')" data-theme-name="indigo"><i></i>Indigo</button>
-  </div>
+  <div class="theme" id="theme"></div>
 </aside>
 
 <script>
@@ -1105,6 +1110,18 @@ function markPush(on) {
 }
 
 /* ---- theme ------------------------------------------------------------ */
+
+/* Adding a theme is a palette in the stylesheet and a line here. The swatch
+   draws itself from the palette, so there is no third place to keep in step. */
+const THEMES = [
+  ["system", "Auto"], ["light", "Light"], ["dark", "Dark"],
+  ["gamboge", "Gamboge"], ["dawn", "Dawn"], ["milk", "Milk"], ["dusk", "Dusk"],
+  ["haze", "Haze"], ["silk", "Silk"], ["bamboo", "Bamboo"], ["indigo", "Indigo"],
+];
+
+document.getElementById("theme").innerHTML = THEMES.map(([name, label]) =>
+  `<button onclick="setTheme('${name}')" data-theme-name="${name}">` +
+  `<i class="t-${name}"></i>${label}</button>`).join("");
 
 /* "system" follows the phone; the other two override it until you say
    otherwise. The status bar is told separately: on iOS it is chrome, not
