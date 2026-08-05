@@ -69,6 +69,17 @@ pub const HTML: &str = r##"<!doctype html>
       0 1.2px 1.6px #00000005,
       0 .6px .9px -1px #00000003;
     --lift:var(--depth), var(--hairline);
+    /* The same curve, further off the page — for the one thing here that is
+       genuinely floating rather than merely raised. `--depth` is scaled for a
+       bubble sitting in the text; under a card held above the whole
+       conversation it barely registers. Offsets ~3.5× and the ink about
+       double, decay untouched. */
+    --float:
+      0 14px 18.7px #00000014,
+      0 7.5px 10px #0000000f,
+      0 4.2px 5.6px #0000000b,
+      0 2.2px 3px -2px #00000008,
+      0 .9px 1.2px #00000008;
     /* Selected, for the controls that used to say so with a `--fg` border:
        the same depth under a ring dark enough to read as a choice. */
     --lift-on:var(--depth), 0 0 0 1px color-mix(in srgb, var(--fg) 45%, transparent);
@@ -257,6 +268,85 @@ pub const HTML: &str = r##"<!doctype html>
     --field:#00000017; --edge:#00000026; --chrome:#dde7ea;
   }
 
+  /* 峰鼠 → 濃藍 → 二藍 → 鳥の子色. Three quarters of this palette is dark —
+     charcoal, then indigo, then a purple — and only the last stop is warm.
+     Left alone that is a dark theme, but a dark theme cannot take a cream
+     bottom, which is where the composer sits. So the veil does the work
+     instead: at 56% white the charcoal lifts to a mid grey that dark text
+     clears comfortably, and what survives is the muted version of this
+     palette rather than its full-strength one — which is what it looks like
+     blurred anyway. */
+  :root[data-theme="lacquer"], .t-lacquer {
+    color-scheme:light;
+    --bg:#282828; --page:var(--bg);
+    --stops:#282828 0%,#283c58 32%,#614e6e 62%,#fff1cf 100%;
+    --veil:#ffffff8f;
+    --surface:#00000012; --raised:#0000001c; --line:#00000030;
+    --fg:hsl(260 20% 9%); --dim:hsl(260 14% 20%); --faint:hsl(260 12% 30%);
+    --accent:hsl(258 26% 30%); --accent-2:hsl(215 40% 28%); --on-accent:#fff;
+    --warn:hsl(350 82% 30%); --warn-bg:#00000012; --ok:hsl(150 62% 20%);
+    --shadow:0 1px 3px hsl(260 24% 15% / .22);
+    --field:#00000017; --edge:#00000026; --chrome:#ece7dc;
+  }
+
+  /* 栗梅 → 樺茶色 → 萌黄春 → 月白. Two earths into a green so pale it reads
+     as a grey, and then white — the widest jump in lightness of any palette
+     here, which is why it needs a veil at all: the chestnut end is otherwise
+     too deep for the ink the other three want. */
+  :root[data-theme="chestnut"], .t-chestnut {
+    color-scheme:light;
+    --bg:#8b352d; --page:var(--bg);
+    --stops:#8b352d 0%,#b4631d 34%,#d4dcc8 68%,#f0f4f8 100%;
+    --veil:#ffffff73;
+    --surface:#00000012; --raised:#0000001c; --line:#00000030;
+    --fg:hsl(10 40% 9%); --dim:hsl(10 30% 15%); --faint:hsl(10 24% 24%);
+    --accent:hsl(8 54% 28%); --accent-2:hsl(28 72% 30%); --on-accent:#fff;
+    --warn:hsl(350 82% 30%); --warn-bg:#00000012; --ok:hsl(150 62% 20%);
+    --shadow:0 1px 3px hsl(10 40% 18% / .2);
+    --field:#00000017; --edge:#00000026; --chrome:#e6e9e4;
+  }
+
+  /* 紫苑色 → 柑子色 → 白茶 → 薄卵色. Purple straight into mandarin, which is
+     the sharpest turn in the set — and then it settles, twice, into two warm
+     neutrals a shade apart. The orange is the loudest colour anywhere here,
+     so the veil is light: dimming it would waste the palette. */
+  :root[data-theme="aster"], .t-aster {
+    color-scheme:light;
+    --bg:#976e9a; --page:var(--bg);
+    --stops:#976e9a 0%,#f08300 34%,#e6d3b1 68%,#fff5e8 100%;
+    --veil:#ffffff45;
+    --surface:#00000012; --raised:#0000001c; --line:#00000030;
+    --fg:hsl(285 28% 10%); --dim:hsl(285 18% 20%); --faint:hsl(285 14% 30%);
+    --accent:hsl(288 28% 30%); --accent-2:hsl(32 82% 30%); --on-accent:#fff;
+    --warn:hsl(350 82% 30%); --warn-bg:#00000012; --ok:hsl(150 62% 20%);
+    --shadow:0 1px 3px hsl(285 26% 18% / .2);
+    --field:#00000017; --edge:#00000026; --chrome:#efe6db;
+  }
+
+  /* 藍御納戸 → 浅葱色 → 露草色 → 桃色. The one palette that does not finish
+     on a near-white: it ends on a peach, so the foot of the page carries as
+     much colour as the head of it. Everything is mid-toned, which is the
+     easier problem — one ink reads across the lot once the slate end is
+     lifted. */
+  :root[data-theme="asagi"], .t-asagi {
+    color-scheme:light;
+    --bg:#3d5a6c; --page:var(--bg);
+    /* The peach lands at 86%, not 100%. The wash layer is inset by 1.8× the
+       blur on every side, so the gradient is taller than the screen and its
+       two ends fall outside it — a stop at 100% is never seen. It does not
+       show on the palettes that finish on a near-white, where the last two
+       stops are near enough the same. Here it cost the one colour that makes
+       this palette what it is. */
+    --stops:#3d5a6c 0%,#00a3a3 28%,#38a1db 58%,#f47983 86%;
+    --veil:#ffffff6b;
+    --surface:#00000012; --raised:#0000001c; --line:#00000030;
+    --fg:hsl(200 40% 10%); --dim:hsl(200 26% 20%); --faint:hsl(200 20% 30%);
+    --accent:hsl(200 62% 24%); --accent-2:hsl(180 100% 20%); --on-accent:#fff;
+    --warn:hsl(350 82% 30%); --warn-bg:#00000012; --ok:hsl(150 62% 20%);
+    --shadow:0 1px 3px hsl(200 40% 18% / .2);
+    --field:#00000017; --edge:#00000026; --chrome:#dfe6ea;
+  }
+
   /* 濡羽色 → 銀朱. The first dark gradient here, which inverts the surface
      model wholesale: every other gradient theme washes its cards with black
      over a light page, and this one washes with white over a dark one.
@@ -332,7 +422,10 @@ pub const HTML: &str = r##"<!doctype html>
   :root[data-theme="haze"], .t-haze {
     color-scheme:light;
     --bg:#fff; --page:var(--bg);
-    --stops:rgb(236,226,208) 0%,#fff 70%;
+    /* Hex, not the `rgb(236,226,208)` this was lifted from: the commas inside
+       a colour function are indistinguishable from the ones between stops for
+       anything reading this list, and something does now. */
+    --stops:#ece2d0 0%,#fff 70%;
     --gradient-default:circular;
     --surface:hsl(0 0% 96.1%); --raised:hsl(0 0% 93%); --line:hsl(0 0% 89.8%);
     --fg:hsl(0 0% 3.9%); --dim:hsl(0 0% 38%); --faint:hsl(0 0% 46%);
@@ -671,7 +764,7 @@ pub const HTML: &str = r##"<!doctype html>
     -webkit-backdrop-filter:blur(18px) saturate(150%);
     /* The ring drops out of `--lift` here: the glass edge below is the edge,
        and a hairline under a specular one is the double edge again. */
-    box-shadow:var(--depth);
+    box-shadow:var(--float);
     /* Measured against what the card actually composites to at this strength,
        not assumed from the page — see cardInk(). */
     color:var(--on-card,var(--fg));
@@ -1434,7 +1527,8 @@ const THEMES = [
   ["gamboge", "Gamboge"], ["dawn", "Dawn"], ["milk", "Milk"], ["dusk", "Dusk"],
   ["haze", "Haze"], ["silk", "Silk"], ["bamboo", "Bamboo"],
   ["cinnabar", "Cinnabar"], ["kite", "Kite"], ["porcelain", "Porcelain"],
-  ["dayflower", "Dayflower"], ["indigo", "Indigo"],
+  ["dayflower", "Dayflower"], ["lacquer", "Lacquer"], ["chestnut", "Chestnut"],
+  ["aster", "Aster"], ["asagi", "Asagi"], ["indigo", "Indigo"],
 ];
 
 document.getElementById("theme").innerHTML = THEMES.map(([name, label]) =>
@@ -1531,13 +1625,33 @@ function contrast(a, b) {
    against both ends. A theme with no gradient leaves `--stops` transparent,
    and then the page is simply the page. */
 function washUnderCard(styles) {
+  // Checked before it is read: `toRgb` cannot fail — handed something that is
+  // not a colour it quietly returns the probe's inherited one, so a stop this
+  // could not parse would come back as the body text and be taken for the
+  // page. `CSS.supports` is the only way to tell the two apart.
+  const colour = token => CSS.supports("color", token) ? toRgb(token) : [];
   const stops = styles.getPropertyValue("--stops").trim().split(",")
-    .map(stop => toRgb(stop.trim().split(/\s+/)[0]))
+    .map(stop => colour(stop.trim().split(/\s+/)[0]))
     .filter(rgba => rgba.length >= 3 && !(rgba.length === 4 && rgba[3] === 0))
     .map(rgba => rgba.slice(0, 3));
   if (!stops.length) return toRgb(styles.getPropertyValue("--bg")).slice(0, 3);
   const form = document.documentElement.getAttribute("data-gradient") || "linear";
-  return form === "air" ? stops[0] : stops[stops.length - 1];
+  const stop = form === "air" ? stops[0] : stops[stops.length - 1];
+  // A theme may lay a veil over the whole wash — lacquer's charcoal end only
+  // takes dark text because 56% white is sitting on it. Reading the stop raw
+  // would judge the ink against a page nobody sees.
+  //
+  // The empty check is not a formality: most themes declare no veil, and
+  // `toRgb("")` does not fail — it resets the probe and hands back whatever
+  // colour it inherits, which is the body text. Passing that through would
+  // have told every unveiled theme that its page was the colour of its own
+  // ink, and the contrast pass that found this reported a flat 1:1.
+  const declared = styles.getPropertyValue("--veil").trim();
+  if (!declared || !CSS.supports("color", declared)) return stop;
+  const veil = toRgb(declared);
+  const over = veil.length === 4 ? veil[3] : 1;
+  if (veil.length < 3 || over === 0) return stop;
+  return stop.map((c, i) => veil[i] * over + c * (1 - over));
 }
 
 /* The ink for the composer's card, shifted to suit what it sits on.
