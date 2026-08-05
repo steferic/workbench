@@ -215,10 +215,11 @@ pub const HTML: &str = r##"<!doctype html>
   }
 
   /* ---- conversation ---------------------------------------------------- */
-  #log { flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:14px 12px 6px; }
+  #log { flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:14px 14px 6px; }
   /* A flex row per message, so a bubble hugs its text but a wide code block
      inside one cannot shrink it to a column of single letters. */
-  .row { display:flex; margin-bottom:9px; }
+  /* Without boxes, the space between turns is what separates them. */
+  .row { display:flex; margin-bottom:14px; }
   .row.you { justify-content:flex-end; }
   /* Only rows that are new carry `fresh`. The log is rebuilt whole on every
      change, so animating all of it would re-play the entire conversation each
@@ -227,22 +228,24 @@ pub const HTML: &str = r##"<!doctype html>
   @keyframes rise {
     from { opacity:0; transform:translateY(7px) scale(.985); }
   }
+  /* No bubbles: the text sits on the page. Which leaves alignment as the only
+     cue for who said what, so your own turns are also set in a heavier weight
+     — a cue that survives every theme, where a colour would not. */
   .msg {
-    max-width:88%; min-width:0; padding:9px 12px;
-    border-radius:12px 12px 12px 3px;
-    background:var(--surface); border:1px solid var(--edge);
-    white-space:pre-wrap; overflow-wrap:anywhere;
+    max-width:88%; min-width:0; white-space:pre-wrap; overflow-wrap:anywhere;
   }
-  .row.you .msg {
-    background:var(--accent); color:var(--on-accent); border-color:var(--accent);
-    border-radius:12px 12px 3px 12px;
-  }
-  .row.pending .msg { opacity:.55; }
+  .row.you { padding-left:12%; }
+  .row.you .msg { font-weight:600; }
+  .row.pending .msg { opacity:.5; }
   /* Already monospace, so inline code is marked by weight and a wash rather
      than by changing face — which now would not read as anything. */
   .msg code { background:#8b93a426; border-radius:4px; padding:1px 4px; font-weight:600; }
+  /* On `--surface` rather than `--field`: with the bubbles gone this sits
+     directly on the page, and in some themes a field *is* the page colour —
+     it was only ever visible because a bubble was behind it. */
   .msg pre {
-    margin:7px 0 3px; padding:9px 11px; border-radius:8px; background:var(--field);
+    margin:8px 0 4px; padding:9px 11px; border-radius:8px;
+    background:var(--surface); border:1px solid var(--edge);
     max-width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch;
   }
   .msg pre code { background:none; padding:0; font-weight:400; font-size:12.5px; }
@@ -251,7 +254,7 @@ pub const HTML: &str = r##"<!doctype html>
   /* A tool call is not speech: one dim line, so the conversation does not
      look like it skipped a beat. */
   .tool {
-    display:flex; align-items:baseline; gap:7px; margin:0 2px 7px; color:var(--dim);
+    display:flex; align-items:baseline; gap:7px; margin:0 0 12px; color:var(--dim);
     font-size:12.5px; min-width:0;
   }
   .tool .n { font-weight:600; flex:none; }
