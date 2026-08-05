@@ -223,6 +223,40 @@ pub const HTML: &str = r##"<!doctype html>
     --field:#00000017; --edge:#00000026; --chrome:#e4d9d2;
   }
 
+  /* 黄丹 → 水緑 → 青白磁 → 月白. Warm to cool across the whole page: a
+     yellow-red that only touches the top, two greens that carry most of it,
+     and a moonlit white at the foot. The span is wide enough that the mid
+     tones do the work, so the ink is a near-black green rather than the
+     orange's complement — matched to where the text actually sits. */
+  :root[data-theme="porcelain"], .t-porcelain {
+    color-scheme:light;
+    --bg:#f05e1c; --page:var(--bg);
+    --stops:#f05e1c 0%,#98b8b0 34%,#b8d5d3 66%,#f0f4f8 100%;
+    --veil:#ffffff40;
+    --surface:#00000012; --raised:#0000001c; --line:#00000030;
+    --fg:hsl(170 30% 8%); --dim:hsl(170 20% 17%); --faint:hsl(170 16% 26%);
+    --accent:hsl(18 78% 32%); --accent-2:hsl(172 22% 38%); --on-accent:#fff;
+    --warn:hsl(350 82% 30%); --warn-bg:#00000012; --ok:hsl(150 62% 20%);
+    --shadow:0 1px 3px hsl(170 30% 15% / .2);
+    --field:#00000017; --edge:#00000026; --chrome:#dce6e4;
+  }
+
+  /* 露草色 → 黄金色 → 薄水色 → 乳白色. The one palette here that turns back
+     on itself: blue, then gold, then blue again, paler. Gold in the middle is
+     what keeps the two blues from reading as one long fade. */
+  :root[data-theme="dayflower"], .t-dayflower {
+    color-scheme:light;
+    --bg:#38a1db; --page:var(--bg);
+    --stops:#38a1db 0%,#e2be86 36%,#bee6eb 70%,#f3f3f3 100%;
+    --veil:#ffffff40;
+    --surface:#00000012; --raised:#0000001c; --line:#00000030;
+    --fg:hsl(205 42% 10%); --dim:hsl(205 26% 19%); --faint:hsl(205 20% 28%);
+    --accent:hsl(203 70% 28%); --accent-2:hsl(36 52% 34%); --on-accent:#fff;
+    --warn:hsl(350 82% 30%); --warn-bg:#00000012; --ok:hsl(150 62% 20%);
+    --shadow:0 1px 3px hsl(205 40% 18% / .2);
+    --field:#00000017; --edge:#00000026; --chrome:#dde7ea;
+  }
+
   /* 濡羽色 → 銀朱. The first dark gradient here, which inverts the surface
      model wholesale: every other gradient theme washes its cards with black
      over a light page, and this one washes with white over a dark one.
@@ -373,6 +407,16 @@ pub const HTML: &str = r##"<!doctype html>
   }
   :root[data-gradient="angular"] {
     --wash:conic-gradient(from 195deg at 48% 46%,var(--stops,var(--no-stops)));
+  }
+  /* The other three sweep the whole page. This one leans in from one corner:
+     the ending shape stops at roughly three quarters of the box from low on
+     the left, and a radial holds its last stop past that — so the palette
+     crowds into that corner and the pale end it finishes on fills everything
+     else. Blurred, it reads as light leaking in rather than as a gradient,
+     which is the point. Sized rather than cut to transparent: `--stops` ends
+     on its own `100%`, and a position after it would collide. */
+  :root[data-gradient="air"] {
+    --wash:radial-gradient(78% 68% at 4% 72%,var(--stops,var(--no-stops)));
   }
 
   /* The gradient lives on its own layer so it can be blurred without blurring
@@ -610,13 +654,42 @@ pub const HTML: &str = r##"<!doctype html>
   }
   /* Glassy: a fill that lets the wash through, blurred behind so the card
      reads as a pane over the page rather than a patch of a different colour.
-     `backdrop-filter` is the whole effect, so the fill stays translucent. */
+     `backdrop-filter` is the whole effect, so the fill stays translucent.
+
+     It takes the same strength as the bubbles, because it is the same
+     question — how much of the page shows through what sits on it — and two
+     sliders that disagree would just be a way to get it wrong. At zero the
+     fill goes with them and the card is pure blur inside its ring, which is
+     what "plain" should mean here too. */
   .dock {
-    border-radius:22px; padding:4px 6px 6px;
-    background:color-mix(in srgb, var(--surface) 62%, transparent);
+    position:relative; border-radius:22px; padding:4px 6px 6px;
     backdrop-filter:blur(18px) saturate(150%);
     -webkit-backdrop-filter:blur(18px) saturate(150%);
     box-shadow:var(--lift);
+  }
+  /* The fill is a layer of its own so the strength can be an opacity rather
+     than a mix. It has to be: `--surface` is an opaque colour on the solid
+     themes and an ~8% ink meant to be laid over the wash on the gradient
+     ones, so mixing it toward transparent would scale a pane on half the
+     palettes and halve an already-faint tint on the other half. Painted over
+     an opaque base it is one material everywhere, and the slider then means
+     the same thing on every palette.
+
+     The base is `--chrome`, not `--bg`. `--bg` is the *first* stop of a
+     gradient theme's wash, and this card sits at the far end of it — on
+     porcelain that made a salmon pane at the foot of a page that had long
+     since turned pale green. `--chrome` is each theme's bar material, which
+     is what this is, so it lands where the page actually is and `--fg` stays
+     readable on it right up to a fully solid card.
+
+     Behind the content but inside the card: `backdrop-filter` gives .dock a
+     stacking context, so `z-index:-1` reaches the bottom of the card and no
+     further, and it is not itself blurred — a backdrop is what lies under an
+     element, not what it contains. */
+  .dock::before {
+    content:""; position:absolute; inset:0; z-index:-1; border-radius:inherit;
+    background:linear-gradient(var(--surface),var(--surface)), var(--chrome);
+    opacity:var(--bubble-alpha,.4);
   }
   /* The tools sit under the field, as a row of their own — where a phone's
      thumb is, and out of the way of the text as it grows. */
@@ -898,7 +971,7 @@ pub const HTML: &str = r##"<!doctype html>
   <div class="theme" id="theme"></div>
   <h2>gradient</h2>
   <div class="forms" id="forms"></div>
-  <h2>your messages <span id="bubbleValue"></span></h2>
+  <h2>surfaces <span id="bubbleValue"></span></h2>
   <input type="range" id="bubbles" min="0" max="100" step="5"
          oninput="setBubbles(this.value)">
   <h2>blur <span id="blurValue"></span></h2>
@@ -1330,7 +1403,8 @@ const THEMES = [
   ["system", "Auto"], ["light", "Light"], ["dark", "Dark"],
   ["gamboge", "Gamboge"], ["dawn", "Dawn"], ["milk", "Milk"], ["dusk", "Dusk"],
   ["haze", "Haze"], ["silk", "Silk"], ["bamboo", "Bamboo"],
-  ["cinnabar", "Cinnabar"], ["kite", "Kite"], ["indigo", "Indigo"],
+  ["cinnabar", "Cinnabar"], ["kite", "Kite"], ["porcelain", "Porcelain"],
+  ["dayflower", "Dayflower"], ["indigo", "Indigo"],
 ];
 
 document.getElementById("theme").innerHTML = THEMES.map(([name, label]) =>
@@ -1370,7 +1444,9 @@ function setTheme(mode) {
 /* Which shape the stops are drawn in, and how far it is blurred. Both are
    about the page rather than about a theme, so they persist across themes —
    picking a new palette should not silently undo how you like to see it. */
-const FORMS = [["linear", "Linear"], ["circular", "Circular"], ["angular", "Angular"]];
+const FORMS = [
+  ["linear", "Linear"], ["circular", "Circular"], ["angular", "Angular"], ["air", "Air"],
+];
 
 document.getElementById("forms").innerHTML = FORMS.map(([name, label]) =>
   `<button onclick="setForm('${name}')" data-form="${name}">${label}</button>`).join("");
@@ -1418,13 +1494,18 @@ function readableOn(token, alpha) {
   return contrast(own, tint) > contrast(body, tint) ? "var(--on-accent)" : "var(--fg)";
 }
 
-/* Zero is not "a bubble you cannot see" — it is no bubble, so the padding and
-   the corners go with it. Everything above zero is a fill at that strength. */
+/* How solid everything laid over the page is: both speakers' bubbles and the
+   composer's card. Zero is not "a bubble you cannot see" — it is no bubble, so
+   the padding and the corners go with it. Everything above is a fill at that
+   strength. */
 function setBubbles(percent) {
   percent = Number(percent) || 0;
   store.set("bubbles", percent);
   const root = document.documentElement;
   root.style.setProperty("--bubble-opacity", percent + "%");
+  // The same strength as a number, for the composer card — which scales a
+  // whole layer's opacity rather than mixing one colour toward transparent.
+  root.style.setProperty("--bubble-alpha", percent / 100);
   root.style.setProperty("--on-bubble", readableOn("--accent", percent / 100));
   root.style.setProperty("--on-bubble-2", readableOn("--accent-2", percent / 100));
   root.setAttribute("data-bubbles", percent > 0 ? "on" : "off");
