@@ -102,6 +102,31 @@ pub const HTML: &str = r##"<!doctype html>
     --field:hsl(44 42% 48%); --edge:hsl(44 42% 38%); --chrome:hsl(44 45% 50%);
   }
 
+  /* 曙色 into 象牙色 — dawn falling to ivory down the page.
+     
+     A gradient breaks the assumption every other theme rests on: that a
+     surface can be a colour. Luminance runs 0.35 at the top to 0.83 at the
+     bottom, a 2.3x span, so a card mixed to look right on the salmon is wrong
+     by the time it reaches the ivory. The surfaces here are *washes* instead
+     — black at a few percent — so each one tints whatever it happens to be
+     sitting on and holds the same relationship all the way down.
+     
+     Black text spans 8.1:1 at the top to 17.6:1 at the bottom, so it is
+     comfortable throughout. White would be 2.6:1 at its best, so it is not a
+     choice. The drawer is opaque: it slides over the page, and a wash would
+     show the conversation through it. */
+  :root[data-theme="dawn"] {
+    color-scheme:light;
+    --bg:#fa7b62;
+    --page:linear-gradient(180deg,#fa7b62 0%,#f6a88f 42%,#f3ead7 100%);
+    --surface:#0000001a; --raised:#00000026; --line:#0000003d;
+    --fg:hsl(12 50% 9%); --dim:hsl(12 38% 18%); --faint:hsl(12 32% 24%);
+    --accent:hsl(9 65% 32%); --on-accent:#fff;
+    --warn:hsl(20 90% 22%); --warn-bg:#00000014; --ok:hsl(150 60% 18%);
+    --shadow:0 1px 3px hsl(12 50% 20% / .22);
+    --field:#0000001f; --edge:#0000002e; --chrome:#f7e7da;
+  }
+
   /* #4D80E6 is hsl(220 75% 60%), where white measures 3.79:1 — enough for a
      heading, not for a conversation. So the colour is the page, and every
      surface that carries text is a *deeper* step of the same blue: bubbles at
@@ -122,6 +147,9 @@ pub const HTML: &str = r##"<!doctype html>
      into feeling different for no reason. */
   :root {
     --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;
+    /* What the page is made of. A colour for most themes, a gradient for one,
+       so it is a `background` value rather than a colour token. */
+    --page:var(--bg);
     --dur-fast:.12s; --dur:.22s; --dur-slow:.34s;
     --ease:cubic-bezier(.32,.72,0,1);          /* quick out, gentle in */
     --ease-spring:cubic-bezier(.34,1.35,.64,1); /* the same, with a nudge past */
@@ -149,9 +177,12 @@ pub const HTML: &str = r##"<!doctype html>
   .ask .body::-webkit-scrollbar-thumb {
     background:var(--line); border-radius:3px;
   }
-  /* The composer's colour, so the strip under the home indicator reads as
-     part of it rather than as a black gap below the page. */
-  html { height:100%; overflow:hidden; background:var(--surface); }
+  /* The page is painted here and nowhere else. Everything structural above it
+     is transparent, so a gradient stays one continuous wash from the status
+     bar to the composer instead of each bar restating it inside its own box.
+     It also means the strip beyond the body on iOS is the page, not a guess
+     at which surface ought to stand in for it. */
+  html { height:100%; overflow:hidden; background:var(--page); }
   body {
     /* Pinned to the viewport's edges, and *only* that. There is deliberately
        no height here: with `top`, `bottom` and `height` all set, CSS drops
@@ -165,7 +196,7 @@ pub const HTML: &str = r##"<!doctype html>
        without it the containing block is the web view, which already excludes
        the status bar. Either way the composer reaches the bottom edge. */
     position:fixed; inset:0; overflow:hidden;
-    margin:0; background:var(--bg); color:var(--fg);
+    margin:0; background:transparent; color:var(--fg);
     display:flex; flex-direction:column;
     /* Monospace throughout. It is what the thing being read *is* — terminal
        output, paths, commands — and a proportional face spent every line
@@ -196,9 +227,9 @@ pub const HTML: &str = r##"<!doctype html>
   header {
     flex:none; display:flex; align-items:center; gap:11px;
     padding:max(9px,env(safe-area-inset-top)) 10px 9px 14px;
-    /* The page colour, divided by a rule rather than a shade. A header in its
+    /* The page itself, divided by a rule rather than a shade. A header in its
        own tone is a second surface for no reason: nothing sits *on* it. */
-    background:var(--bg); border-bottom:1px solid var(--line);
+    background:transparent; border-bottom:1px solid var(--line);
   }
   .who { display:flex; flex-direction:column; min-width:0; flex:1; gap:1px; }
   .who b { font-size:15px; font-weight:500; letter-spacing:-.02em; }
@@ -333,7 +364,7 @@ pub const HTML: &str = r##"<!doctype html>
   .composer {
     flex:none; display:flex; gap:8px; align-items:flex-end;
     padding:8px 10px calc(8px + env(safe-area-inset-bottom));
-    background:var(--bg); border-top:1px solid var(--line);
+    background:transparent; border-top:1px solid var(--line);
   }
   textarea {
     flex:1; min-width:0; resize:none; max-height:132px;
@@ -463,6 +494,7 @@ pub const HTML: &str = r##"<!doctype html>
   .theme button[data-theme-name="light"] i { background:#f2f3f7; }
   .theme button[data-theme-name="dark"] i { background:#0c0e13; }
   .theme button[data-theme-name="gamboge"] i { background:#ffba00; }
+  .theme button[data-theme-name="dawn"] i { background:linear-gradient(160deg,#fa7b62 40%,#f3ead7); }
   .theme button[data-theme-name="indigo"] i { background:#4d80e6; }
   .theme button.on { background:var(--raised); color:var(--fg); border-color:var(--fg); }
 
@@ -536,6 +568,7 @@ pub const HTML: &str = r##"<!doctype html>
     <button onclick="setTheme('light')" data-theme-name="light"><i></i>Light</button>
     <button onclick="setTheme('dark')" data-theme-name="dark"><i></i>Dark</button>
     <button onclick="setTheme('gamboge')" data-theme-name="gamboge"><i></i>Gamboge</button>
+    <button onclick="setTheme('dawn')" data-theme-name="dawn"><i></i>Dawn</button>
     <button onclick="setTheme('indigo')" data-theme-name="indigo"><i></i>Indigo</button>
   </div>
 </aside>
@@ -962,8 +995,8 @@ function setTheme(mode) {
 
   // The status bar is chrome, not page: only `theme-color` reaches it, and it
   // has to be told again whenever the palette moves under it.
-  const surface = getComputedStyle(document.documentElement).getPropertyValue("--surface").trim();
-  document.querySelector('meta[name="theme-color"]').setAttribute("content", surface);
+  const top = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim();
+  document.querySelector('meta[name="theme-color"]').setAttribute("content", top);
 
   document.querySelectorAll("#theme button").forEach(button => {
     button.classList.toggle("on", button.dataset.themeName === mode);
