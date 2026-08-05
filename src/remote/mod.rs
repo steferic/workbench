@@ -116,6 +116,10 @@ pub struct AgentView {
     /// Screen lines, for an agent whose journal workbench cannot read. Worse
     /// than `messages`, and only ever used instead of it.
     pub tail: Vec<String>,
+    /// Seconds since this agent last finished a turn worth mentioning, if it
+    /// was recent. The service worker reads it to tell "finished" apart from
+    /// "needs you" — the push itself carries no payload to say which.
+    pub finished_ago: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -351,6 +355,11 @@ fn publish_with(state: &AppState, shared: &Shared, open: Option<(Vec<Message>, u
                     true => output_tail(state, session.id, FALLBACK_TAIL),
                     false => Vec::new(),
                 },
+                finished_ago: state
+                    .system
+                    .remote_finished
+                    .get(&session.short_id())
+                    .map(|at| (chrono::Utc::now() - *at).num_seconds()),
             });
         }
     }
@@ -641,6 +650,7 @@ mod tests {
             msg_total: 3,
             msg_reset: false,
             tail: Vec::new(),
+            finished_ago: None,
         });
 
         // Up to date: nothing owed.

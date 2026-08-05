@@ -21,14 +21,37 @@ use crate::app::Action;
 pub const SUBMIT_DELAY: Duration = Duration::from_millis(150);
 
 /// Type `text` into a session and submit it.
+///
+/// Sent as a bracketed paste, which is the terminal's way of saying "this is
+/// content, not keys". Without it a message is fed to the agent one keystroke
+/// at a time, and a leading character the agent has bound to something else
+/// never reaches the composer at all: a bare `?` opens Claude's shortcuts
+/// overlay and is swallowed, so the Enter that follows submits nothing. `/`,
+/// `!` and `#` are the same story. Verified against Claude 2.1.220 and Codex
+/// 0.146 — `?` typed raw disappears, `?` pasted is answered.
 pub fn submit_text(action_tx: &mpsc::UnboundedSender<Action>, session_id: Uuid, text: &str) {
     if action_tx
-        .send(Action::SendInput(session_id, text.as_bytes().to_vec()))
+        .send(Action::SendInput(session_id, bracketed(text)))
         .is_err()
     {
         return;
     }
     submit(action_tx, session_id);
+}
+
+/// Wrap text in the paste markers, with any end-marker inside it removed —
+/// otherwise a message could close its own paste and have the rest read as
+/// keystrokes.
+fn bracketed(text: &str) -> Vec<u8> {
+    const START: &[u8] = b"\x1b[200~";
+    const END: &[u8] = b"\x1b[201~";
+
+    let cleaned = text.replace("\x1b[201~", "");
+    let mut out = Vec::with_capacity(cleaned.len() + START.len() + END.len());
+    out.extend_from_slice(START);
+    out.extend_from_slice(cleaned.as_bytes());
+    out.extend_from_slice(END);
+    out
 }
 
 /// Press Enter on a session, after the pause that makes it register.
@@ -73,7 +96,10 @@ mod tests {
         // in the composer, because the agent reads it as a pasted newline.
         match rx.try_recv().unwrap() {
             Action::SendInput(_, bytes) => {
-                assert_eq!(String::from_utf8(bytes).unwrap(), "fix the redirect");
+                assert_eq!(
+                    String::from_utf8(bytes).unwrap(),
+                    "\x1b[200~fix the redirect\x1b[201~"
+                );
             }
             other => panic!("expected the text first, got {other:?}"),
         }
@@ -81,6 +107,26 @@ mod tests {
             Action::SendInput(_, bytes) => assert_eq!(bytes, vec![b'\r']),
             other => panic!("expected Enter on its own, got {other:?}"),
         }
+    }
+
+    /// The failure this guards: typed one key at a time, a leading `?` is
+    /// eaten by Claude's shortcuts overlay and never reaches the composer, so
+    /// the Enter after it submits an empty prompt and the message is simply
+    /// lost. A paste is content, and arrives whole.
+    #[test]
+    fn a_message_that_starts_with_a_hotkey_still_arrives() {
+        for text in ["?", "/status", "!ls", "#remember this"] {
+            let wrapped = String::from_utf8(bracketed(text)).unwrap();
+            assert_eq!(wrapped, format!("\x1b[200~{text}\x1b[201~"));
+        }
+    }
+
+    #[test]
+    fn a_message_cannot_close_its_own_paste() {
+        let sneaky = "innocent\x1b[201~?then keys";
+        let wrapped = String::from_utf8(bracketed(sneaky)).unwrap();
+        assert_eq!(wrapped, "\x1b[200~innocent?then keys\x1b[201~");
+        assert_eq!(wrapped.matches("\x1b[201~").count(), 1, "one end marker only");
     }
 
     #[tokio::test]

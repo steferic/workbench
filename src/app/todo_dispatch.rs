@@ -234,11 +234,14 @@ mod tests {
         tick(&mut state, &tx);
 
         assert_eq!(queue(&state, id).running().unwrap().text, "fix the redirect");
-        // Text, then Enter.
+        // Text as a paste, then Enter (see `agent_input`).
         match rx.try_recv().unwrap() {
             Action::SendInput(sent_to, bytes) => {
                 assert_eq!(sent_to, id);
-                assert_eq!(String::from_utf8(bytes).unwrap(), "fix the redirect");
+                assert_eq!(
+                    String::from_utf8(bytes).unwrap(),
+                    "\x1b[200~fix the redirect\x1b[201~"
+                );
             }
             other => panic!("expected input, got {other:?}"),
         }

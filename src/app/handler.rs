@@ -488,7 +488,7 @@ fn remote_tick(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) 
     }
 
     crate::remote::publish(state, &state.system.remote_state.clone());
-    notify_newly_blocked(state);
+    notify_phone(state);
 
     let mut pending = Vec::new();
     if let Some(rx) = state.system.remote_commands.as_mut() {
@@ -582,34 +582,72 @@ fn expose_project_servers(state: &mut AppState) {
 /// exactly what it would see if it looked. The edge is what matters: an agent
 /// sits blocked for as long as it takes you to answer, and a notification a
 /// second is not a feature.
-/// Returns the agents it told the phone about, which is what the tests read.
+/// A turn shorter than this finished before you could have looked away, so it
+/// is not news. Anything longer is the "it is done" you left the desk for.
+const WORTH_MENTIONING: Duration = Duration::from_secs(30);
+
+/// Poke subscribed devices when an agent changes to something you would want
+/// to know about: it stopped for you, or it finished a turn of real length.
 ///
-/// The set is kept up to date even with nobody subscribed, so turning
-/// notifications on does not immediately fire for every agent that was already
-/// waiting — you are told about what blocks from then on.
-fn notify_newly_blocked(state: &mut AppState) -> Vec<String> {
-    let blocked: std::collections::HashSet<String> = match state.system.remote_state.lock() {
+/// Returns what it told the phone, which is what the tests read. The state is
+/// tracked even with nobody subscribed, so turning notifications on does not
+/// immediately fire for everything already in progress.
+fn notify_phone(state: &mut AppState) -> Vec<String> {
+    let now = std::time::Instant::now();
+    let statuses: Vec<(String, String)> = match state.system.remote_state.lock() {
         Ok(snapshot) => snapshot
             .agents
             .iter()
-            .filter(|agent| agent.status == "blocked")
-            .map(|agent| agent.id.clone())
+            .map(|agent| (agent.id.clone(), agent.status.clone()))
             .collect(),
         Err(_) => return Vec::new(),
     };
 
-    let mut fresh: Vec<String> = blocked
-        .difference(&state.system.remote_notified)
-        .cloned()
-        .collect();
-    fresh.sort();
-    state.system.remote_notified = blocked;
+    let mut news: Vec<String> = Vec::new();
+    for (id, status) in &statuses {
+        let previous = state.system.remote_seen.get(id).cloned();
+        let changed = previous
+            .as_ref()
+            .map(|(was, _)| was != status)
+            .unwrap_or(true);
 
-    if !fresh.is_empty() && !state.system.push.is_empty() {
-        crate::logger::info(format!("telling the phone about {}", fresh.join(", ")));
+        if let Some((was, since)) = &previous {
+            let held = now.saturating_duration_since(*since);
+            // It stopped and wants you.
+            if status == "blocked" && was != "blocked" {
+                news.push(format!("{id} needs you"));
+            }
+            // It finished something that took a while.
+            if status == "idle" && was == "working" && held >= WORTH_MENTIONING {
+                state
+                    .system
+                    .remote_finished
+                    .insert(id.clone(), chrono::Utc::now());
+                news.push(format!("{id} finished"));
+            }
+        }
+
+        let since = match (changed, previous) {
+            (false, Some((_, since))) => since,
+            _ => now,
+        };
+        state
+            .system
+            .remote_seen
+            .insert(id.clone(), (status.clone(), since));
+    }
+
+    // Agents that have gone away entirely.
+    state
+        .system
+        .remote_seen
+        .retain(|id, _| statuses.iter().any(|(seen, _)| seen == id));
+
+    if !news.is_empty() && !state.system.push.is_empty() {
+        crate::logger::info(format!("telling the phone: {}", news.join(", ")));
         state.system.push.notify();
     }
-    fresh
+    news
 }
 
 /// Everything the phone can ask for, in terms of what the keyboard could do.
@@ -933,7 +971,7 @@ fn refresh_agent_tasks(state: &mut AppState, action_tx: &mpsc::UnboundedSender<A
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_remote, notify_newly_blocked, plan_task_refresh, process_action};
+    use super::{apply_remote, notify_phone, plan_task_refresh, process_action, WORTH_MENTIONING};
     use crate::models::{AgentType, Session, SessionStatus, Workspace};
     use chrono::{Duration as ChronoDuration, Utc};
 
@@ -960,6 +998,66 @@ mod tests {
                 .insert(id, Utc::now() - ChronoDuration::seconds(secs));
         }
         id
+    }
+
+    /// The failure this fixes: notifications only ever fired on the edge into
+    /// "blocked", but a ⚡ session skips permission prompts and so is almost
+    /// never blocked — meaning nothing ever fired. Finishing a turn of real
+    /// length is the event you actually left the desk for.
+    #[test]
+    fn the_phone_is_told_when_a_long_turn_finishes() {
+        let mut state = AppState::default();
+        let workspace = Workspace::new("zeta".into(), std::path::PathBuf::from("/tmp/z"));
+        let workspace_id = workspace.id;
+        state.data.workspaces.push(workspace);
+        let agent = add_agent(&mut state, workspace_id, SessionStatus::Running, Some(30));
+        let short = crate::models::Session::short_id_of(agent);
+
+        let set = |state: &mut AppState, activity| {
+            state.system.agent_status.insert(
+                agent,
+                crate::agent_status::AgentStatus {
+                    activity,
+                    reason: String::new(),
+                    at: Utc::now(),
+                    event: "Stop".into(),
+                },
+            );
+            crate::remote::publish(state, &state.system.remote_state.clone());
+        };
+
+        set(&mut state, crate::agent_status::Activity::Working);
+        assert!(notify_phone(&mut state).is_empty());
+
+        // A turn that ends the moment it began is not worth a notification.
+        set(&mut state, crate::agent_status::Activity::Idle);
+        assert!(
+            notify_phone(&mut state).is_empty(),
+            "a turn shorter than a glance is not news"
+        );
+
+        // Now one that actually took a while.
+        set(&mut state, crate::agent_status::Activity::Working);
+        notify_phone(&mut state);
+        let long_ago = std::time::Instant::now() - WORTH_MENTIONING * 2;
+        state
+            .system
+            .remote_seen
+            .insert(short.clone(), ("working".into(), long_ago));
+
+        set(&mut state, crate::agent_status::Activity::Idle);
+        assert_eq!(notify_phone(&mut state), vec![format!("{short} finished")]);
+
+        // And the phone can tell which kind of news it was.
+        let shared = state.system.remote_state.clone();
+        crate::remote::publish(&mut state, &shared);
+        let snapshot = shared.lock().unwrap();
+        let view = snapshot.agents.iter().find(|a| a.id == short).unwrap();
+        assert!(view.finished_ago.is_some_and(|ago| ago < 5));
+
+        // Staying idle is not news again.
+        drop(snapshot);
+        assert!(notify_phone(&mut state).is_empty());
     }
 
     /// A blocked agent stays blocked until you answer it. The phone should
@@ -994,21 +1092,21 @@ mod tests {
         };
 
         block(&mut state, false);
-        assert!(notify_newly_blocked(&mut state).is_empty(), "working is not news");
+        assert!(notify_phone(&mut state).is_empty(), "working is not news");
 
         block(&mut state, true);
-        assert_eq!(notify_newly_blocked(&mut state), vec![short.clone()]);
+        assert_eq!(notify_phone(&mut state), vec![format!("{short} needs you")]);
         block(&mut state, true);
         assert!(
-            notify_newly_blocked(&mut state).is_empty(),
+            notify_phone(&mut state).is_empty(),
             "still blocked is not a new thing to say"
         );
 
         // Answered, then blocked again: that is news a second time.
         block(&mut state, false);
-        assert!(notify_newly_blocked(&mut state).is_empty());
+        assert!(notify_phone(&mut state).is_empty());
         block(&mut state, true);
-        assert_eq!(notify_newly_blocked(&mut state), vec![short]);
+        assert_eq!(notify_phone(&mut state), vec![format!("{short} needs you")]);
     }
 
     fn state_with_workspace() -> (AppState, uuid::Uuid) {
@@ -1119,7 +1217,10 @@ mod tests {
         assert!(state.get_session(id).unwrap().todo_queue.is_empty());
         assert!(matches!(
             rx.try_recv(),
-            Ok(Action::SendInput(target, bytes)) if target == id && bytes == b"hello".to_vec()
+            // Bracketed, so a message that starts with one of the agent's own
+            // hotkeys still reaches the composer (see `agent_input`).
+            Ok(Action::SendInput(target, bytes))
+                if target == id && bytes == b"\x1b[200~hello\x1b[201~".to_vec()
         ));
     }
 

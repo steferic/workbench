@@ -676,9 +676,12 @@ pub struct SystemState {
     pub forwarded: std::collections::HashSet<u16>,
     pub last_port_scan: Option<Instant>,
     pub port_scan_inflight: bool,
-    /// Agents already notified about, so a phone is poked when one *becomes*
-    /// blocked rather than every tick it stays blocked.
-    pub remote_notified: std::collections::HashSet<String>,
+    /// What each agent was doing last tick, and since when — so the phone is
+    /// poked on a change rather than every tick a state persists.
+    pub remote_seen: HashMap<String, (String, Instant)>,
+    /// When each agent last finished a turn worth mentioning. Published so the
+    /// service worker can say "finished" rather than guessing.
+    pub remote_finished: HashMap<String, chrono::DateTime<chrono::Utc>>,
     /// That conversation as last read off disk. Agent journals reach tens of
     /// megabytes; re-parsing one every tick to find nothing new is the kind of
     /// waste that shows up as a warm laptop.
@@ -746,7 +749,8 @@ impl SystemState {
             forwarded: Default::default(),
             last_port_scan: None,
             port_scan_inflight: false,
-            remote_notified: Default::default(),
+            remote_seen: Default::default(),
+            remote_finished: Default::default(),
         }
     }
 

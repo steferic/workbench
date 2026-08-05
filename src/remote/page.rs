@@ -791,13 +791,20 @@ self.addEventListener("push", event => {
   event.waitUntil((async () => {
     let title = "An agent needs you";
     let body = "Open workbench to see which.";
+    let tag = "workbench";
     try {
       // `have` is nonsense on purpose: we want statuses, not the conversation.
       const res = await fetch(url("/api/state?have=999999999"), { cache: "no-store" });
       if (res.ok) {
-        const blocked = (await res.json()).agents.filter(a => a.status === "blocked");
+        const agents = (await res.json()).agents;
+        const blocked = agents.filter(a => a.status === "blocked");
+        // The push carries no payload, so which kind of news this is has to be
+        // read back off the state. A recent finish is the only other reason.
+        const finished = agents.filter(a => a.finished_ago !== null && a.finished_ago < 180);
+
         if (blocked.length === 1) {
           const a = blocked[0];
+          tag = "workbench-blocked";
           title = a.provider + " · " + a.project;
           // The whole question, flattened. The useful part is usually the
           // command it wants to run, not the "do you want to proceed?" — so
@@ -806,10 +813,22 @@ self.addEventListener("push", event => {
             ? a.prompt.lines.map(l => l.trim()).filter(Boolean).join(" · ").slice(0, 180)
             : (a.reason || "is waiting for you");
         } else if (blocked.length > 1) {
+          tag = "workbench-blocked";
           title = blocked.length + " agents need you";
           body = blocked.map(a => a.provider + " · " + a.project).join(", ");
+        } else if (finished.length === 1) {
+          const a = finished[0];
+          tag = "workbench-finished";
+          title = a.provider + " · " + a.project;
+          body = "Finished" + (a.running ? ": " + a.running : "") +
+                 (a.queued.length ? " · " + a.queued.length + " still queued" : "");
+        } else if (finished.length > 1) {
+          tag = "workbench-finished";
+          title = finished.length + " agents finished";
+          body = finished.map(a => a.provider + " · " + a.project).join(", ");
         } else {
-          // Answered at the desk between the poke and its delivery.
+          // Answered or picked up again at the desk between the poke and its
+          // delivery — there is nothing left to say.
           return;
         }
       }
@@ -818,7 +837,7 @@ self.addEventListener("push", event => {
     }
     await self.registration.showNotification(title, {
       body,
-      tag: "workbench-blocked",   // one notification, replaced, not a pile
+      tag,           // one notification per kind, replaced rather than piled up
       renotify: true,
     });
   })());
