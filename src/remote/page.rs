@@ -282,6 +282,17 @@ pub const HTML: &str = r##"<!doctype html>
   }
   .theme button.on { background:var(--surface); color:var(--fg); box-shadow:var(--shadow); }
 
+  #stale {
+    flex:none; margin:0 10px 8px; padding:11px 13px; border-radius:14px;
+    background:var(--warn-bg); border:1px solid var(--warn);
+    font-size:13px; line-height:1.4;
+  }
+  #stale b { display:block; color:var(--warn); margin-bottom:3px; }
+  #stale button {
+    margin-top:8px; padding:7px 11px; border-radius:9px; font-size:13px;
+    border:1px solid var(--line); background:var(--surface); color:var(--fg);
+  }
+
   /* ?debug=1 — what the browser thinks the viewport is. */
   .debug {
     position:fixed; left:8px; bottom:8px; z-index:99; margin:0;
@@ -309,6 +320,7 @@ pub const HTML: &str = r##"<!doctype html>
 </header>
 
 <div id="log"><div class="empty">connecting…</div></div>
+<div id="stale" hidden></div>
 <div id="ask"></div>
 <div class="note" id="note" hidden></div>
 
@@ -497,6 +509,49 @@ function toggleMic() {
 function setListening(on) {
   listening = on;
   document.getElementById("mic").classList.toggle("on", on);
+}
+
+/* iOS copies `apple-mobile-web-app-*` into the web clip when you add the app
+   to the home screen, and never reads them again. An icon added before those
+   metas changed still runs under the old ones.
+
+   That matters here because under `black-translucent` iOS hands out a web
+   view the height of the screen *minus* the status bar, pinned to the top —
+   so the last status-bar-height of the screen sits outside the page, and no
+   amount of CSS can reach it. It is the gap under the composer, and only
+   re-adding the icon clears it.
+
+   The signature is unambiguous: the page is short by exactly the inset it is
+   being told overlaps its top. Worth saying out loud, because from the inside
+   it looks like a layout bug and no amount of fixing the layout helps. */
+function checkStaleWebClip() {
+  const banner = document.getElementById("stale");
+  if (navigator.standalone !== true || store.get("staleDismissed", "") === "1") {
+    banner.hidden = true;
+    return;
+  }
+  const probe = document.createElement("div");
+  probe.style.cssText = "position:fixed;visibility:hidden;padding-top:env(safe-area-inset-top)";
+  document.body.appendChild(probe);
+  const insetTop = parseFloat(getComputedStyle(probe).paddingTop) || 0;
+  probe.remove();
+
+  const missing = screen.height - innerHeight;
+  const stale = insetTop > 0 && Math.abs(missing - insetTop) < 2;
+  banner.hidden = !stale;
+  if (stale && !banner.innerHTML) {
+    banner.innerHTML =
+      "<b>Re-add this app to your home screen</b>" +
+      "iOS kept the old settings from when this icon was added, which leaves " +
+      Math.round(missing) + "px of dead space below. Remove the icon, open the " +
+      "link in Safari, and Share → Add to Home Screen." +
+      '<button onclick="dismissStale()">Dismiss</button>';
+  }
+}
+
+function dismissStale() {
+  store.set("staleDismissed", "1");
+  document.getElementById("stale").hidden = true;
 }
 
 /* A readout of the viewport as the browser sees it.
@@ -842,7 +897,10 @@ async function refresh() {
 setTheme(localStorage.getItem("theme") || "system");
 markPush(store.get("push", "") === "on");
 showDebug();
-if (window.visualViewport) visualViewport.addEventListener("resize", showDebug);
+checkStaleWebClip();
+if (window.visualViewport) {
+  visualViewport.addEventListener("resize", () => { showDebug(); checkStaleWebClip(); });
+}
 setInterval(showDebug, 1000);
 if (current) post("/api/focus", { agent: current });
 refresh();
