@@ -65,11 +65,18 @@ pub const HTML: &str = r##"<!doctype html>
      part of it rather than as a black gap below the page. */
   html { height:100%; overflow:hidden; background:var(--surface); }
   body {
-    /* Pinned to the viewport's edges rather than sized in vh: with
-       `viewport-fit=cover` the containing block is the whole screen, so this
-       reaches the bottom even where the viewport units do not. dvh is the
-       fallback for anything that ignores the inset. */
-    position:fixed; inset:0; height:100dvh; overflow:hidden;
+    /* Pinned to the viewport's edges, and *only* that. There is deliberately
+       no height here: with `top`, `bottom` and `height` all set, CSS drops
+       `bottom` and the height wins — so the `height:100dvh` that used to sit
+       here as a "fallback" was silently cancelling the pinning, and the page
+       ended exactly one under-reported viewport short of the bottom. That was
+       the footer gap.
+
+       `inset:0` is right in both modes a home-screen app runs in: with
+       `viewport-fit=cover` the containing block is the whole screen, and
+       without it the containing block is the web view, which already excludes
+       the status bar. Either way the composer reaches the bottom edge. */
+    position:fixed; inset:0; overflow:hidden;
     margin:0; background:var(--bg); color:var(--fg);
     display:flex; flex-direction:column;
     font:15px/1.5 -apple-system,ui-sans-serif,system-ui,"Segoe UI",sans-serif;
@@ -274,6 +281,14 @@ pub const HTML: &str = r##"<!doctype html>
     color:var(--dim); font-size:13px; font-weight:600;
   }
   .theme button.on { background:var(--surface); color:var(--fg); box-shadow:var(--shadow); }
+
+  /* ?debug=1 — what the browser thinks the viewport is. */
+  .debug {
+    position:fixed; left:8px; bottom:8px; z-index:99; margin:0;
+    background:#000000d9; color:#7CFF9B; border-radius:8px; padding:7px 9px;
+    font:10px/1.35 ui-monospace,SFMono-Regular,Menlo,monospace; white-space:pre;
+    pointer-events:none;
+  }
 </style>
 <script>
   /* Before the first paint, so a chosen theme never flashes the other one. */
@@ -482,6 +497,43 @@ function toggleMic() {
 function setListening(on) {
   listening = on;
   document.getElementById("mic").classList.toggle("on", on);
+}
+
+/* Add ?debug=1 to the URL for a readout of the viewport as the browser sees
+   it. The gap between the composer and the bottom of the screen was chased
+   three times from screenshots alone; this turns the next round into one
+   picture that says which number is wrong. */
+function showDebug() {
+  if (new URLSearchParams(location.search).get("debug") !== "1") return;
+  let box = document.querySelector(".debug");
+  if (!box) {
+    box = document.createElement("pre");
+    box.className = "debug";
+    document.body.appendChild(box);
+  }
+  // env() is only readable through something that has been laid out with it.
+  const probe = document.createElement("div");
+  probe.style.cssText = "position:fixed;visibility:hidden;padding:" +
+    "env(safe-area-inset-top) env(safe-area-inset-right) " +
+    "env(safe-area-inset-bottom) env(safe-area-inset-left)";
+  document.body.appendChild(probe);
+  const inset = getComputedStyle(probe);
+  const body = document.body.getBoundingClientRect();
+  const composer = document.querySelector(".composer").getBoundingClientRect();
+
+  box.textContent = [
+    `screen     ${screen.width}x${screen.height}`,
+    `innerH     ${innerHeight}`,
+    `visualVP   ${Math.round(visualViewport ? visualViewport.height : 0)}`,
+    `docClient  ${document.documentElement.clientHeight}`,
+    `body       ${Math.round(body.height)} @top ${Math.round(body.top)}`,
+    `composer   ends ${Math.round(composer.bottom)}`,
+    `GAP        ${Math.round(innerHeight - composer.bottom)}`,
+    `safe-area  top ${inset.paddingTop} bottom ${inset.paddingBottom}`,
+    `standalone ${navigator.standalone === true}`,
+    `dvh        ${CSS.supports("height", "100dvh")}`,
+  ].join("\n");
+  probe.remove();
 }
 
 /* ---- notifications ---------------------------------------------------- */
@@ -751,6 +803,8 @@ async function refresh() {
 
 setTheme(localStorage.getItem("theme") || "system");
 markPush(store.get("push", "") === "on");
+showDebug();
+if (window.visualViewport) visualViewport.addEventListener("resize", showDebug);
 if (current) post("/api/focus", { agent: current });
 refresh();
 setInterval(refresh, 1000);
