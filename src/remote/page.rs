@@ -48,7 +48,7 @@ pub const HTML: &str = r##"<!doctype html>
     color-scheme:dark;
     --bg:#0c0e13; --surface:#171a21; --raised:#1e222b; --line:#272c37;
     --fg:#e8eaf0; --dim:#8b93a4; --faint:#5d6575;
-    --accent:#4361ee; --on-accent:#fff;
+    --accent:#4361ee; --accent-2:hsl(228 18% 42%); --on-accent:#fff;
     --warn:hsl(20 88% 52%); --warn-bg:hsl(20 40% 13%); --ok:hsl(150 62% 40%);
     --shadow:0 1px 2px #0000004d;
     /* Fields and code wells recede from the surface they sit on. Which
@@ -60,7 +60,7 @@ pub const HTML: &str = r##"<!doctype html>
       color-scheme:light;
       --bg:#f2f3f7; --surface:#fff; --raised:#fff; --line:#e3e6ec;
       --fg:#14161b; --dim:#5f6779; --faint:#98a0b0;
-      --accent:#3355e8; --on-accent:#fff;
+      --accent:#3355e8; --accent-2:hsl(228 22% 62%); --on-accent:#fff;
       --warn:hsl(20 88% 34%); --warn-bg:hsl(38 80% 94%); --ok:hsl(150 62% 26%);
       --shadow:0 1px 2px #10121a14, 0 1px 1px #10121a0f;
       --field:#f2f3f7; --edge:#e6e9ef; --chrome:#fbfbfd;
@@ -96,7 +96,7 @@ pub const HTML: &str = r##"<!doctype html>
     --bg:#ffba00; --page:var(--bg); --stops:var(--no-stops);
     --surface:hsl(44 52% 52%); --raised:hsl(44 45% 46%); --line:hsl(44 45% 32%);
     --fg:hsl(44 70% 7%); --dim:hsl(44 60% 16%); --faint:hsl(44 45% 24%);
-    --accent:hsl(44 95% 22%); --on-accent:#fff;
+    --accent:hsl(44 95% 22%); --accent-2:hsl(30 45% 52%); --on-accent:#fff;
     --warn:hsl(350 88% 28%); --warn-bg:hsl(44 45% 62%); --ok:hsl(150 62% 18%);
     --shadow:0 1px 3px hsl(44 70% 12% / .3);
     --field:hsl(44 42% 48%); --edge:hsl(44 42% 38%); --chrome:hsl(44 45% 50%);
@@ -121,7 +121,7 @@ pub const HTML: &str = r##"<!doctype html>
     --stops:#fa7b62 0%,#f6a88f 42%,#f3ead7 100%;
     --surface:#0000001a; --raised:#00000026; --line:#0000003d;
     --fg:hsl(12 50% 9%); --dim:hsl(12 38% 18%); --faint:hsl(12 32% 19%);
-    --accent:hsl(9 65% 32%); --on-accent:#fff;
+    --accent:hsl(9 65% 32%); --accent-2:hsl(30 50% 62%); --on-accent:#fff;
     --warn:hsl(350 88% 16%); --warn-bg:#00000014; --ok:hsl(150 62% 10%);
     --shadow:0 1px 3px hsl(12 50% 20% / .22);
     --field:#0000001f; --edge:#0000002e; --chrome:#f7e7da;
@@ -145,7 +145,7 @@ pub const HTML: &str = r##"<!doctype html>
     --stops:#ffba00 0%,#f3ead7 52%,#f3f3f3 100%;
     --surface:#00000014; --raised:#00000021; --line:#00000038;
     --fg:hsl(44 70% 7%); --dim:hsl(44 55% 16%); --faint:hsl(44 45% 21%);
-    --accent:hsl(40 95% 24%); --on-accent:#fff;
+    --accent:hsl(40 95% 24%); --accent-2:hsl(38 45% 58%); --on-accent:#fff;
     --warn:hsl(350 88% 28%); --warn-bg:#0000000f; --ok:hsl(150 62% 18%);
     --shadow:0 1px 3px hsl(44 70% 12% / .2);
     --field:#0000001a; --edge:#00000029; --chrome:#f7f1e6;
@@ -173,7 +173,7 @@ pub const HTML: &str = r##"<!doctype html>
     --gradient-default:angular;
     --surface:#0000001a; --raised:#00000026; --line:#00000042;
     --fg:hsl(215 40% 8%); --dim:hsl(215 28% 16%); --faint:hsl(215 22% 21%);
-    --accent:hsl(219 70% 30%); --on-accent:#fff;
+    --accent:hsl(219 78% 22%); --accent-2:hsl(20 35% 62%); --on-accent:#fff;
     --warn:hsl(20 88% 14%); --warn-bg:#00000014; --ok:hsl(150 62% 12%);
     --shadow:0 1px 3px hsl(215 40% 15% / .25);
     --field:#0000001f; --edge:#00000030; --chrome:#c3c0c6;
@@ -195,7 +195,7 @@ pub const HTML: &str = r##"<!doctype html>
     --veil:#00000033;
     --surface:#ffffff14; --raised:#ffffff21; --line:#ffffff3d;
     --fg:#fff; --dim:hsl(6 25% 90%); --faint:hsl(6 20% 84%);
-    --accent:#bc2d29; --on-accent:#fff;
+    --accent:#bc2d29; --accent-2:hsl(228 45% 38%); --on-accent:#fff;
     --warn:hsl(40 95% 72%); --warn-bg:#ffffff14; --ok:hsl(150 60% 68%);
     --busy:hsl(200 95% 72%);
     --shadow:0 1px 3px #00000066;
@@ -215,7 +215,7 @@ pub const HTML: &str = r##"<!doctype html>
     --stops:#6fb98f 0%,#b4d8c2 48%,#f7f7f7 100%;
     --surface:#00000014; --raised:#00000021; --line:#00000038;
     --fg:hsl(150 45% 8%); --dim:hsl(150 32% 17%); --faint:hsl(150 26% 21%);
-    --accent:hsl(155 55% 22%); --on-accent:#fff;
+    --accent:hsl(155 55% 22%); --accent-2:hsl(150 26% 58%); --on-accent:#fff;
     --warn:hsl(20 88% 16%); --warn-bg:#00000014; --ok:hsl(190 62% 14%);
     --shadow:0 1px 3px hsl(150 40% 15% / .22);
     --field:#0000001a; --edge:#00000029; --chrome:#dfeee6;
@@ -235,7 +235,7 @@ pub const HTML: &str = r##"<!doctype html>
     --stops:#eac8b8 0%,#eddbcd 46%,#f3ead7 100%;
     --surface:#00000012; --raised:#0000001c; --line:#00000030;
     --fg:hsl(20 40% 11%); --dim:hsl(20 30% 26%); --faint:hsl(20 25% 32%);
-    --accent:hsl(14 55% 30%); --on-accent:#fff;
+    --accent:hsl(14 55% 30%); --accent-2:hsl(28 40% 64%); --on-accent:#fff;
     --warn:hsl(350 88% 30%); --warn-bg:#00000012; --ok:hsl(150 62% 20%);
     --shadow:0 1px 3px hsl(20 40% 25% / .18);
     --field:#00000017; --edge:#00000024; --chrome:#f0e2d6;
@@ -258,7 +258,7 @@ pub const HTML: &str = r##"<!doctype html>
     --gradient-default:circular;
     --surface:hsl(0 0% 96.1%); --raised:hsl(0 0% 93%); --line:hsl(0 0% 89.8%);
     --fg:hsl(0 0% 3.9%); --dim:hsl(0 0% 38%); --faint:hsl(0 0% 46%);
-    --accent:hsl(0 0% 9%); --on-accent:hsl(0 0% 98%);
+    --accent:hsl(0 0% 9%); --accent-2:hsl(40 40% 68%); --on-accent:hsl(0 0% 98%);
     --warn:hsl(20 88% 36%); --warn-bg:hsl(38 80% 94%); --ok:hsl(150 62% 28%);
     --shadow:0 1px 2px hsl(0 0% 0% / .08);
     --field:hsl(0 0% 96.1%); --edge:hsl(0 0% 91%); --chrome:hsl(0 0% 98%);
@@ -273,7 +273,7 @@ pub const HTML: &str = r##"<!doctype html>
     --bg:#4d80e6; --page:var(--bg); --stops:var(--no-stops);
     --surface:hsl(220 72% 52%); --raised:hsl(220 72% 46%); --line:hsl(220 60% 68%);
     --fg:#fff; --dim:hsl(220 70% 90%); --faint:hsl(220 45% 80%);
-    --accent:hsl(220 72% 30%); --on-accent:#fff;
+    --accent:hsl(220 72% 30%); --accent-2:hsl(216 40% 26%); --on-accent:#fff;
     --warn:hsl(40 95% 88%); --warn-bg:hsl(220 72% 38%); --ok:hsl(150 65% 88%);
     --shadow:0 1px 3px hsl(220 60% 18% / .3);
     --field:hsl(220 72% 42%); --edge:hsl(220 60% 44%); --chrome:hsl(220 72% 47%);
@@ -448,11 +448,20 @@ pub const HTML: &str = r##"<!doctype html>
      80%, so the page still shows through and the bubble belongs to the
      palette rather than sitting on top of it. */
   :root[data-bubbles="on"] .row.you .msg {
-    background:color-mix(in srgb, var(--accent) var(--bubble-opacity,80%), transparent);
-    color:var(--on-accent); padding:7px 11px;
+    background:color-mix(in srgb, var(--accent) var(--bubble-opacity,40%), transparent);
+    color:var(--on-bubble,var(--fg)); padding:7px 11px;
     border-radius:12px 12px 3px 12px;
   }
   :root[data-bubbles="on"] .row.you .msg code { background:#ffffff2e; }
+  /* The agent gets the palette's *other* colour — literally so where there is
+     one, as with cinnabar's raven or dusk's silk. It keeps `--fg` rather than
+     taking a foreground of its own: this is the body of the conversation, and
+     a tint behind it should not also restate what colour it is written in. */
+  :root[data-bubbles="on"] .row:not(.you) .msg {
+    background:color-mix(in srgb, var(--accent-2,var(--accent)) var(--bubble-opacity,40%), transparent);
+    color:var(--on-bubble-2,var(--fg));
+    padding:7px 11px; border-radius:12px 12px 12px 3px;
+  }
   .msg {
     max-width:88%; min-width:0; white-space:pre-wrap; overflow-wrap:anywhere;
   }
@@ -1232,6 +1241,9 @@ function setTheme(mode) {
   const wants = getComputedStyle(document.documentElement)
     .getPropertyValue("--gradient-default").trim();
   if (wants && !store.get("gradient", "")) setForm(wants);
+
+  // The fills just changed colour, so what reads on them may have too.
+  if (typeof setBubbles === "function") setBubbles(store.get("bubbles", "40"));
 }
 
 /* Which shape the stops are drawn in, and how far it is blurred. Both are
@@ -1249,6 +1261,42 @@ function setForm(name) {
     button.classList.toggle("on", button.dataset.form === name));
 }
 
+/* A translucent fill has no fixed foreground. At 40% it is a wash and the
+   body colour reads over it; near 100% it is the accent itself and wants the
+   accent's own. Where that crossover falls is different in every palette, so
+   it is measured rather than guessed at with a threshold.
+
+   Against `--bg` — the top of the page. On a gradient the fill actually sits
+   on something between the stops, so this is the darkest reading for a light
+   theme and the lightest for a dark one: the safe end either way. */
+const swatchProbe = document.createElement("span");
+swatchProbe.style.display = "none";
+document.body.appendChild(swatchProbe);
+
+function toRgb(value) {
+  swatchProbe.style.color = value;
+  return (getComputedStyle(swatchProbe).color.match(/[\d.]+/g) || [0, 0, 0]).map(Number);
+}
+
+function relativeLuminance([r, g, b]) {
+  const channel = v => (v /= 255) <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+}
+
+function contrast(a, b) {
+  const [hi, lo] = [relativeLuminance(a), relativeLuminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+function readableOn(token, alpha) {
+  const styles = getComputedStyle(document.documentElement);
+  const page = toRgb(styles.getPropertyValue("--bg"));
+  const tint = toRgb(styles.getPropertyValue(token)).map((c, i) => c * alpha + page[i] * (1 - alpha));
+  const body = toRgb(styles.getPropertyValue("--fg"));
+  const own = toRgb(styles.getPropertyValue("--on-accent"));
+  return contrast(own, tint) > contrast(body, tint) ? "var(--on-accent)" : "var(--fg)";
+}
+
 /* Zero is not "a bubble you cannot see" — it is no bubble, so the padding and
    the corners go with it. Everything above zero is a fill at that strength. */
 function setBubbles(percent) {
@@ -1256,6 +1304,8 @@ function setBubbles(percent) {
   store.set("bubbles", percent);
   const root = document.documentElement;
   root.style.setProperty("--bubble-opacity", percent + "%");
+  root.style.setProperty("--on-bubble", readableOn("--accent", percent / 100));
+  root.style.setProperty("--on-bubble-2", readableOn("--accent-2", percent / 100));
   root.setAttribute("data-bubbles", percent > 0 ? "on" : "off");
   document.getElementById("bubbles").value = percent;
   document.getElementById("bubbleValue").textContent = percent ? percent + "%" : "plain";
@@ -1478,8 +1528,8 @@ async function refresh() {
 }
 
 setForm(store.get("gradient", "linear"));
-const bubbleSetting = store.get("bubbles", "0");
-setBubbles(bubbleSetting === "on" ? 80 : bubbleSetting === "off" ? 0 : bubbleSetting);
+const bubbleSetting = store.get("bubbles", "40");
+setBubbles(bubbleSetting === "on" ? 40 : bubbleSetting === "off" ? 0 : bubbleSetting);
 setBlur(store.get("blur", "100"));
 setTheme(localStorage.getItem("theme") || "system");
 markPush(store.get("push", "") === "on");
