@@ -347,6 +347,142 @@ pub const HTML: &str = r##"<!doctype html>
     --field:#00000017; --edge:#00000026; --chrome:#dfe6ea;
   }
 
+  /* 薄墨色 → 退紅 → 表萌黄絹 → 桜色. The only palette here that needs no veil
+     at all: nothing in it is darker than a mid grey, so the ink clears 7.2:1
+     on the worst of the four untouched. Grey into pink into a sage and back
+     to pink — it holds together because the two pinks bracket the green. */
+  :root[data-theme="blossom"], .t-blossom {
+    color-scheme:light;
+    --bg:#a3a3a3; --page:var(--bg);
+    --stops:#a3a3a3 0%,#f3a6b1 30%,#c8d0b8 60%,#fcc9b9 88%;
+    --surface:#00000012; --raised:#0000001c; --line:#00000030;
+    --fg:hsl(350 18% 9%); --dim:hsl(350 12% 19%); --faint:hsl(350 10% 28%);
+    --accent:hsl(350 44% 32%); --accent-2:hsl(95 18% 32%); --on-accent:#fff;
+    --warn:hsl(350 82% 30%); --warn-bg:#00000012; --ok:hsl(150 62% 20%);
+    --shadow:0 1px 3px hsl(350 18% 18% / .2);
+    --field:#00000017; --edge:#00000026; --chrome:#eadedb;
+  }
+
+  /* 鉄色 → 空色 → 朝鼠 → 桜色. Iron straight into a sky, which is the largest
+     single jump in the set — 0.035 to 0.44 in luminance between two adjacent
+     stops. The 48% veil is set by the iron alone; everything after it was
+     already light enough. */
+  :root[data-theme="iron"], .t-iron {
+    color-scheme:light;
+    --bg:#2b3733; --page:var(--bg);
+    --stops:#2b3733 0%,#7ec7d8 32%,#c0c0bc 62%,#fcc9b9 88%;
+    --veil:#ffffff7a;
+    --surface:#00000012; --raised:#0000001c; --line:#00000030;
+    --fg:hsl(190 26% 9%); --dim:hsl(190 20% 15%); --faint:hsl(190 16% 24%);
+    --accent:hsl(190 46% 28%); --accent-2:hsl(15 48% 34%); --on-accent:#fff;
+    --warn:hsl(350 82% 30%); --warn-bg:#00000012; --ok:hsl(150 62% 20%);
+    --shadow:0 1px 3px hsl(190 26% 16% / .2);
+    --field:#00000017; --edge:#00000026; --chrome:#e8dedb;
+  }
+
+  /* 茜色 → 照柿 → 柿秋 → 薄紅. Four reds and no relief anywhere: this is the
+     only palette with nothing pale in it at all.
+
+     Which settles which way it has to go. A white veil strong enough for dark
+     text takes the madder to a dusty pink and throws the palette away — the
+     whole point of it is the saturation. A black one keeps the reds red and
+     turns it into a dark theme: 35% puts white at 6.4:1 on the worst stop
+     against 3.1:1 untouched, and it stays recognisably 茜. Cinnabar's move,
+     for the same reason. */
+  :root[data-theme="akane"], .t-akane {
+    color-scheme:dark;
+    --bg:#b7282e; --page:var(--bg);
+    --stops:#b7282e 0%,#d34e36 32%,#c87840 62%,#f2666c 88%;
+    --veil:#00000059;
+    --surface:#ffffff14; --raised:#ffffff21; --line:#ffffff3d;
+    --fg:#fff; --dim:hsl(10 30% 90%); --faint:hsl(10 24% 84%);
+    --accent:#b7282e; --accent-2:hsl(25 55% 40%); --on-accent:#fff;
+    --warn:hsl(40 95% 72%); --warn-bg:#ffffff14; --ok:hsl(150 60% 68%);
+    --busy:hsl(200 95% 72%);
+    --shadow:0 1px 3px #00000066;
+    --field:#ffffff1a; --edge:#ffffff2e; --chrome:#3a1416;
+  }
+
+  /* 洗柿 → 錆鼠緑 → 鴇羽色 → 黄色. Ends on a full yellow rather than a
+     neutral, and needs no veil to do it — the washed persimmon it starts on
+     is already light enough to take the ink. Two warm stops with a rust green
+     wedged between them, which is what stops it reading as one long blush. */
+  :root[data-theme="persimmon"], .t-persimmon {
+    color-scheme:light;
+    --bg:#d3826e; --page:var(--bg);
+    --stops:#d3826e 0%,#88a8a0 30%,#f58f84 60%,#ffd700 88%;
+    --surface:#00000012; --raised:#0000001c; --line:#00000030;
+    --fg:hsl(15 30% 9%); --dim:hsl(15 20% 18%); --faint:hsl(15 16% 27%);
+    --accent:hsl(12 52% 32%); --accent-2:hsl(165 20% 30%); --on-accent:#fff;
+    --warn:hsl(350 82% 30%); --warn-bg:#00000012; --ok:hsl(150 62% 20%);
+    --shadow:0 1px 3px hsl(15 30% 18% / .2);
+    --field:#00000017; --edge:#00000026; --chrome:#f0e4c4;
+  }
+
+  /* 夕鼠 → 縹空 → 白. Three stops and no hue in the first or last — a grey
+     falling through one blue into white. The quietest thing here. */
+  :root[data-theme="twilight"], .t-twilight {
+    color-scheme:light;
+    --bg:#606060; --page:var(--bg);
+    --stops:#606060 0%,#7898b8 46%,#f2f2f0 88%;
+    --veil:#ffffff57;
+    --surface:#00000012; --raised:#0000001c; --line:#00000030;
+    --fg:hsl(215 20% 9%); --dim:hsl(215 12% 19%); --faint:hsl(215 10% 28%);
+    --accent:hsl(215 42% 32%); --accent-2:hsl(215 10% 34%); --on-accent:#fff;
+    --warn:hsl(350 82% 30%); --warn-bg:#00000012; --ok:hsl(150 62% 20%);
+    --shadow:0 1px 3px hsl(215 20% 18% / .2);
+    --field:#00000017; --edge:#00000026; --chrome:#e9e9e7;
+  }
+
+  /* 緑青色 → 薄水色 → 白練. One hue, three lightnesses — the verdigris of
+     weathered copper draining to the white of unbleached silk. A 12% veil is
+     the lightest here; only the first stop needed anything. */
+  :root[data-theme="verdigris"], .t-verdigris {
+    color-scheme:light;
+    --bg:#48929b; --page:var(--bg);
+    --stops:#48929b 0%,#bee6eb 46%,#fdfbf6 88%;
+    --veil:#ffffff1f;
+    --surface:#00000012; --raised:#0000001c; --line:#00000030;
+    --fg:hsl(188 32% 9%); --dim:hsl(188 26% 15%); --faint:hsl(188 20% 24%);
+    --accent:hsl(188 50% 26%); --accent-2:hsl(188 24% 40%); --on-accent:#fff;
+    --warn:hsl(350 82% 30%); --warn-bg:#00000012; --ok:hsl(150 62% 20%);
+    --shadow:0 1px 3px hsl(188 32% 16% / .2);
+    --field:#00000017; --edge:#00000026; --chrome:#e4eeef;
+  }
+
+  /* 夜木鼠 → 海松緑 → 鳥の子色. Two near-blacks a hue apart — one brown, one
+     green, close enough that the change between them is barely a change —
+     and then cream, all at once. Most of the drama is in the last stop. */
+  :root[data-theme="miru"], .t-miru {
+    color-scheme:light;
+    --bg:#504840; --page:var(--bg);
+    --stops:#504840 0%,#485848 44%,#fff1cf 88%;
+    --veil:#ffffff6b;
+    --surface:#00000012; --raised:#0000001c; --line:#00000030;
+    --fg:hsl(80 20% 9%); --dim:hsl(80 18% 14%); --faint:hsl(80 14% 23%);
+    --accent:hsl(95 30% 24%); --accent-2:hsl(35 26% 32%); --on-accent:#fff;
+    --warn:hsl(350 82% 30%); --warn-bg:#00000012; --ok:hsl(150 62% 20%);
+    --shadow:0 1px 3px hsl(80 22% 15% / .2);
+    --field:#00000017; --edge:#00000026; --chrome:#ece7d8;
+  }
+
+  /* 黒茶鼠 → 露草色 → 鴇羽色. Black tea, then a dayflower blue, then an ibis
+     pink — three stops that share nothing, which is the whole idea. The veil
+     is set by the tea and costs the other two some strength; there is no
+     version of this where all three keep everything. */
+  :root[data-theme="kurocha"], .t-kurocha {
+    color-scheme:light;
+    --bg:#403830; --page:var(--bg);
+    --stops:#403830 0%,#38a1db 46%,#f58f84 88%;
+    --veil:#ffffff75;
+    --surface:#00000012; --raised:#0000001c; --line:#00000030;
+    --fg:hsl(25 24% 9%); --dim:hsl(25 20% 15%); --faint:hsl(25 16% 24%);
+    --accent:hsl(203 56% 28%); --accent-2:hsl(28 30% 30%); --on-accent:#fff;
+    --warn:hsl(350 82% 30%); --warn-bg:#00000012; --ok:hsl(150 62% 20%);
+    --shadow:0 1px 3px hsl(25 24% 16% / .2);
+    --field:#00000017; --edge:#00000026; --chrome:#eae0dc;
+  }
+
   /* 濡羽色 → 銀朱. The first dark gradient here, which inverts the surface
      model wholesale: every other gradient theme washes its cards with black
      over a light page, and this one washes with white over a dark one.
@@ -1528,7 +1664,10 @@ const THEMES = [
   ["haze", "Haze"], ["silk", "Silk"], ["bamboo", "Bamboo"],
   ["cinnabar", "Cinnabar"], ["kite", "Kite"], ["porcelain", "Porcelain"],
   ["dayflower", "Dayflower"], ["lacquer", "Lacquer"], ["chestnut", "Chestnut"],
-  ["aster", "Aster"], ["asagi", "Asagi"], ["indigo", "Indigo"],
+  ["aster", "Aster"], ["asagi", "Asagi"], ["blossom", "Blossom"],
+  ["iron", "Iron"], ["akane", "Akane"], ["persimmon", "Persimmon"],
+  ["twilight", "Twilight"], ["verdigris", "Verdigris"], ["miru", "Miru"],
+  ["kurocha", "Kurocha"], ["indigo", "Indigo"],
 ];
 
 document.getElementById("theme").innerHTML = THEMES.map(([name, label]) =>
