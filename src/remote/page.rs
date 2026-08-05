@@ -180,6 +180,30 @@ pub const HTML: &str = r##"<!doctype html>
     --field:#0000001f; --edge:#00000030; --chrome:#c3c0c6;
   }
 
+  /* A warm halo over white — the shadcn neutral palette with the light
+     switched on above it.
+     
+     The glow is placed on the wash layer, which overhangs the screen by 380px,
+     so `at 48% 4%` puts its centre well above the top edge and only the lower
+     falloff is ever seen. That is what makes it read as light coming into the
+     page rather than as a circle drawn on it.
+     
+     Contrast is a non-issue for once: cream on white, nothing below 15:1, so
+     the neutrals can be exactly the ones the component ships with. */
+  :root[data-theme="haze"] {
+    color-scheme:light;
+    --bg:#fff;
+    --page:#fff;
+    --wash:radial-gradient(at 48% 4%, rgb(236,226,208) 0%, transparent 70%);
+    --wash-blur:190px; --wash-inset:-380px;
+    --surface:hsl(0 0% 96.1%); --raised:hsl(0 0% 93%); --line:hsl(0 0% 89.8%);
+    --fg:hsl(0 0% 3.9%); --dim:hsl(0 0% 38%); --faint:hsl(0 0% 46%);
+    --accent:hsl(0 0% 9%); --on-accent:hsl(0 0% 98%);
+    --warn:hsl(25 90% 30%); --warn-bg:hsl(40 70% 94%); --ok:hsl(150 60% 24%);
+    --shadow:0 1px 2px hsl(0 0% 0% / .08);
+    --field:hsl(0 0% 96.1%); --edge:hsl(0 0% 91%); --chrome:hsl(0 0% 98%);
+  }
+
   /* #4D80E6 is hsl(220 75% 60%), where white measures 3.79:1 — enough for a
      heading, not for a conversation. So the colour is the page, and every
      surface that carries text is a *deeper* step of the same blue: bubbles at
@@ -236,8 +260,9 @@ pub const HTML: &str = r##"<!doctype html>
      `overflow:hidden`. Fixed and static, so it composites once and the log
      scrolls over it without repainting. */
   body::before {
-    content:""; position:fixed; inset:-180px; z-index:-1; pointer-events:none;
-    background:var(--wash,none); filter:blur(100px);
+    content:""; position:fixed; inset:var(--wash-inset,-180px); z-index:-1;
+    pointer-events:none; background:var(--wash,none);
+    filter:blur(var(--wash-blur,100px));
   }
 
   /* The page is painted here and nowhere else. Everything structural above it
@@ -562,6 +587,9 @@ pub const HTML: &str = r##"<!doctype html>
   .theme button[data-theme-name="gamboge"] i { background:#ffba00; }
   .theme button[data-theme-name="dawn"] i { background:linear-gradient(160deg,#fa7b62 40%,#f3ead7); }
   .theme button[data-theme-name="milk"] i { background:linear-gradient(160deg,#ffba00 30%,#f3ead7 65%,#f3f3f3); }
+  .theme button[data-theme-name="haze"] i {
+    background:radial-gradient(at 50% 15%, rgb(236,226,208) 0%, #fff 75%);
+  }
   .theme button[data-theme-name="dusk"] i {
     background:conic-gradient(from 0deg at 45% 50%,#c89888 0deg 95deg,#4b80ea 185deg,#6a7a88 285deg,#c89888 360deg);
   }
@@ -641,6 +669,7 @@ pub const HTML: &str = r##"<!doctype html>
     <button onclick="setTheme('dawn')" data-theme-name="dawn"><i></i>Dawn</button>
     <button onclick="setTheme('milk')" data-theme-name="milk"><i></i>Milk</button>
     <button onclick="setTheme('dusk')" data-theme-name="dusk"><i></i>Dusk</button>
+    <button onclick="setTheme('haze')" data-theme-name="haze"><i></i>Haze</button>
     <button onclick="setTheme('indigo')" data-theme-name="indigo"><i></i>Indigo</button>
   </div>
 </aside>
