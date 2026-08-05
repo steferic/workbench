@@ -151,6 +151,35 @@ pub const HTML: &str = r##"<!doctype html>
     --field:#0000001a; --edge:#00000029; --chrome:#f7f1e6;
   }
 
+  /* 朱華絹 / 藍花鼠 / 冬暮鼠 — a conic gradient, blurred, which is the first
+     theme here whose background is not a ramp between two known ends.
+     
+     All three colours are mid-tone: luminance 0.19 to 0.37. Black clears
+     every one of them (4.8:1 at worst) but only just, and "only just" is the
+     problem — at 4.8:1 there is no room left underneath for a muted tier, so
+     `--dim` and `--faint` would have to be black too and stop being muted.
+     White is worse: 2.5:1 on the silk.
+     
+     Hence the scrim. A 22% white veil over the whole thing lifts the darkest
+     corner from 4.8:1 to 7.1:1, which buys back the room the text scale needs
+     while leaving all three colours plainly themselves — silk stays silk. It
+     is the same move as the washes elsewhere, pointed the other way. */
+  :root[data-theme="dusk"] {
+    color-scheme:light;
+    --bg:#a9a3ab;
+    --page:#a9a3ab;
+    --wash:
+      linear-gradient(#ffffff38,#ffffff38),
+      conic-gradient(from 0deg at 43% 52%,
+        #c89888 0deg, #c89888 95deg, #4b80ea 185deg, #6a7a88 285deg, #c89888 360deg);
+    --surface:#0000001a; --raised:#00000026; --line:#00000042;
+    --fg:hsl(215 40% 8%); --dim:hsl(215 28% 16%); --faint:hsl(215 22% 21%);
+    --accent:hsl(219 70% 30%); --on-accent:#fff;
+    --warn:hsl(20 90% 22%); --warn-bg:#00000014; --ok:hsl(150 55% 16%);
+    --shadow:0 1px 3px hsl(215 40% 15% / .25);
+    --field:#0000001f; --edge:#00000030; --chrome:#c3c0c6;
+  }
+
   /* #4D80E6 is hsl(220 75% 60%), where white measures 3.79:1 — enough for a
      heading, not for a conversation. So the colour is the page, and every
      surface that carries text is a *deeper* step of the same blue: bubbles at
@@ -201,6 +230,16 @@ pub const HTML: &str = r##"<!doctype html>
   .ask .body::-webkit-scrollbar-thumb {
     background:var(--line); border-radius:3px;
   }
+  /* A theme may hang a blurred layer behind everything by setting `--wash`.
+     Oversized on every side so the blur's own faded edges fall outside the
+     screen rather than showing as a vignette, and clipped back by the body's
+     `overflow:hidden`. Fixed and static, so it composites once and the log
+     scrolls over it without repainting. */
+  body::before {
+    content:""; position:fixed; inset:-180px; z-index:-1; pointer-events:none;
+    background:var(--wash,none); filter:blur(100px);
+  }
+
   /* The page is painted here and nowhere else. Everything structural above it
      is transparent, so a gradient stays one continuous wash from the status
      bar to the composer instead of each bar restating it inside its own box.
@@ -523,6 +562,9 @@ pub const HTML: &str = r##"<!doctype html>
   .theme button[data-theme-name="gamboge"] i { background:#ffba00; }
   .theme button[data-theme-name="dawn"] i { background:linear-gradient(160deg,#fa7b62 40%,#f3ead7); }
   .theme button[data-theme-name="milk"] i { background:linear-gradient(160deg,#ffba00 30%,#f3ead7 65%,#f3f3f3); }
+  .theme button[data-theme-name="dusk"] i {
+    background:conic-gradient(from 0deg at 45% 50%,#c89888 0deg 95deg,#4b80ea 185deg,#6a7a88 285deg,#c89888 360deg);
+  }
   .theme button[data-theme-name="indigo"] i { background:#4d80e6; }
   .theme button.on { background:var(--raised); color:var(--fg); border-color:var(--fg); }
 
@@ -598,6 +640,7 @@ pub const HTML: &str = r##"<!doctype html>
     <button onclick="setTheme('gamboge')" data-theme-name="gamboge"><i></i>Gamboge</button>
     <button onclick="setTheme('dawn')" data-theme-name="dawn"><i></i>Dawn</button>
     <button onclick="setTheme('milk')" data-theme-name="milk"><i></i>Milk</button>
+    <button onclick="setTheme('dusk')" data-theme-name="dusk"><i></i>Dusk</button>
     <button onclick="setTheme('indigo')" data-theme-name="indigo"><i></i>Indigo</button>
   </div>
 </aside>
