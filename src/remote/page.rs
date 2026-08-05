@@ -499,12 +499,34 @@ function setListening(on) {
   document.getElementById("mic").classList.toggle("on", on);
 }
 
-/* Add ?debug=1 to the URL for a readout of the viewport as the browser sees
-   it. The gap between the composer and the bottom of the screen was chased
-   three times from screenshots alone; this turns the next round into one
-   picture that says which number is wrong. */
+/* A readout of the viewport as the browser sees it.
+   
+   Reached by tapping the agent's name three times, *not* only by `?debug=1`:
+   an app on the home screen has no URL bar, so a query parameter is a
+   diagnostic you cannot get at from the one place the bug appears. */
+function debugOn() {
+  return new URLSearchParams(location.search).get("debug") === "1"
+      || store.get("debug", "") === "1";
+}
+
+function toggleDebug() {
+  const on = !debugOn();
+  store.set("debug", on ? "1" : "0");
+  if (!on) document.querySelector(".debug")?.remove();
+  showDebug();
+  note(on ? "viewport readout on — tap the name 3× to hide" : "readout off");
+}
+
+let taps = 0;
+let tapsExpire = null;
+document.querySelector("header .who").addEventListener("click", () => {
+  clearTimeout(tapsExpire);
+  tapsExpire = setTimeout(() => { taps = 0; }, 900);
+  if (++taps >= 3) { taps = 0; toggleDebug(); }
+});
+
 function showDebug() {
-  if (new URLSearchParams(location.search).get("debug") !== "1") return;
+  if (!debugOn()) return;
   let box = document.querySelector(".debug");
   if (!box) {
     box = document.createElement("pre");
@@ -519,21 +541,37 @@ function showDebug() {
   document.body.appendChild(probe);
   const inset = getComputedStyle(probe);
   const body = document.body.getBoundingClientRect();
+  const html = document.documentElement.getBoundingClientRect();
   const composer = document.querySelector(".composer").getBoundingClientRect();
+  const short = c => (c || "").replace(/rgba?\(|\)|\s/g, "");
 
   box.textContent = [
     `screen     ${screen.width}x${screen.height}`,
     `innerH     ${innerHeight}`,
     `visualVP   ${Math.round(visualViewport ? visualViewport.height : 0)}`,
     `docClient  ${document.documentElement.clientHeight}`,
+    `html       ${Math.round(html.height)} @top ${Math.round(html.top)}`,
     `body       ${Math.round(body.height)} @top ${Math.round(body.top)}`,
     `composer   ends ${Math.round(composer.bottom)}`,
     `GAP        ${Math.round(innerHeight - composer.bottom)}`,
+    // Which element is painting the strip below the composer settles whether
+    // the body is short or the composer is not at its bottom.
+    `paints     html ${short(getComputedStyle(document.documentElement).backgroundColor)}`,
+    `           body ${short(getComputedStyle(document.body).backgroundColor)}`,
+    `           at-gap ${short(atGap())}`,
     `safe-area  top ${inset.paddingTop} bottom ${inset.paddingBottom}`,
     `standalone ${navigator.standalone === true}`,
-    `dvh        ${CSS.supports("height", "100dvh")}`,
   ].join("\n");
   probe.remove();
+}
+
+/* What is actually underneath a point in the dead strip. */
+function atGap() {
+  const y = Math.round(innerHeight - 6);
+  const el = document.elementFromPoint(Math.round(innerWidth / 2), y);
+  if (!el) return "nothing (outside the page)";
+  return el.tagName.toLowerCase() + "." + (el.className || "-") + " " +
+         getComputedStyle(el).backgroundColor;
 }
 
 /* ---- notifications ---------------------------------------------------- */
@@ -805,6 +843,7 @@ setTheme(localStorage.getItem("theme") || "system");
 markPush(store.get("push", "") === "on");
 showDebug();
 if (window.visualViewport) visualViewport.addEventListener("resize", showDebug);
+setInterval(showDebug, 1000);
 if (current) post("/api/focus", { agent: current });
 refresh();
 setInterval(refresh, 1000);
