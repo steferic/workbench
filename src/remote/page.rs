@@ -120,7 +120,7 @@ pub const HTML: &str = r##"<!doctype html>
     --bg:#fa7b62;
     --page:linear-gradient(180deg,#fa7b62 0%,#f6a88f 42%,#f3ead7 100%);
     --surface:#0000001a; --raised:#00000026; --line:#0000003d;
-    --fg:hsl(12 50% 9%); --dim:hsl(12 38% 18%); --faint:hsl(12 32% 24%);
+    --fg:hsl(12 50% 9%); --dim:hsl(12 38% 18%); --faint:hsl(12 32% 19%);
     --accent:hsl(9 65% 32%); --on-accent:#fff;
     --warn:hsl(20 90% 22%); --warn-bg:#00000014; --ok:hsl(150 60% 18%);
     --shadow:0 1px 3px hsl(12 50% 20% / .22);
@@ -203,7 +203,7 @@ pub const HTML: &str = r##"<!doctype html>
        pretending otherwise. Slightly smaller and slightly tighter than the
        sans it replaces, because mono runs wide. */
     font:13.5px/1.55 var(--mono);
-    letter-spacing:-.01em;
+    letter-spacing:-.035em;
     -webkit-font-smoothing:antialiased;
   }
   button, a { font:inherit; color:inherit; }
@@ -232,7 +232,7 @@ pub const HTML: &str = r##"<!doctype html>
     background:transparent; border-bottom:1px solid var(--line);
   }
   .who { display:flex; flex-direction:column; min-width:0; flex:1; gap:1px; }
-  .who b { font-size:15px; font-weight:500; letter-spacing:-.02em; }
+  .who b { font-size:15px; font-weight:500; letter-spacing:-.045em; }
   .who span {
     font-size:11.5px; color:var(--dim);
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
@@ -292,7 +292,10 @@ pub const HTML: &str = r##"<!doctype html>
     background:var(--surface); border:1px solid var(--edge);
     max-width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch;
   }
-  .msg pre code { background:none; padding:0; font-weight:400; font-size:12.5px; }
+  /* Code keeps its natural advance: tracking is what makes a monospace
+     column line up, and this is the one place that matters. */
+  .msg pre code { background:none; padding:0; font-weight:400; font-size:12.5px;
+                  letter-spacing:normal; }
   .row.you .msg pre { background:#0000002e; }
 
   /* A tool call is not speech: one dim line, so the conversation does not
@@ -312,7 +315,7 @@ pub const HTML: &str = r##"<!doctype html>
   }
   .when::before, .when::after { content:""; flex:1; height:1px; background:var(--line); opacity:.55; }
   .raw {
-    font-size:11px; line-height:1.4; color:var(--dim);
+    font-size:11px; line-height:1.4; color:var(--dim); letter-spacing:normal;
     white-space:pre-wrap; overflow-wrap:anywhere;
   }
   .typing { display:flex; gap:4px; padding:11px 14px 4px; }
@@ -371,7 +374,7 @@ pub const HTML: &str = r##"<!doctype html>
     padding:9px 13px; border-radius:14px; border:1px solid var(--line);
     background:var(--field); color:var(--fg);
     /* 16px keeps iOS from zooming the page when the field takes focus. */
-    font-family:var(--mono); font-size:16px; line-height:1.4; letter-spacing:-.01em;
+    font-family:var(--mono); font-size:16px; line-height:1.4; letter-spacing:-.03em;
   }
   textarea:focus { outline:none; border-color:var(--accent); }
   textarea::placeholder { color:var(--faint); }
