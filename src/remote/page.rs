@@ -780,6 +780,12 @@ pub const HTML: &str = r##"<!doctype html>
   #log {
     flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch;
     padding:calc(var(--head,54px) + 12px) 14px calc(var(--foot,88px) + 6px);
+    /* Stated, not left to default. `overflow-y:auto` alone does not leave the
+       other axis `visible` — CSS computes it to `auto` too — so any element
+       that ends up wider than the log gives the whole conversation a
+       sideways scroll. Nothing here should ever move horizontally except a
+       code block, which does its own scrolling inside its own box. */
+    overflow-x:hidden;
   }
   /* A flex row per message, so a bubble hugs its text but a wide code block
      inside one cannot shrink it to a column of single letters. */
@@ -983,7 +989,10 @@ pub const HTML: &str = r##"<!doctype html>
      thumb is, and out of the way of the text as it grows. */
   .tools { display:flex; align-items:center; gap:8px; padding:0 2px; }
   .tools .gap { flex:1; }
-  .tool {
+  /* `.act`, not `.tool` — `.tool` is a tool-call line in the transcript, and
+     naming these that turned every one of them into a 36px circle with its
+     command overflowing sideways out of it. */
+  .act {
     position:relative; flex:none; width:36px; height:36px; border:0; padding:0;
     border-radius:50%; background:none; color:var(--on-card,var(--fg));
     display:grid; place-items:center;
@@ -992,12 +1001,12 @@ pub const HTML: &str = r##"<!doctype html>
   }
   /* 36px is the circle; the touch target is 44px, and the 8px gaps mean two
      of them meet without ever overlapping. */
-  .tool::after { content:""; position:absolute; inset:-4px; border-radius:50%; }
-  .tool:active { transform:scale(.94); }
+  .act::after { content:""; position:absolute; inset:-4px; border-radius:50%; }
+  .act:active { transform:scale(.94); }
   #mic { background:color-mix(in srgb, var(--on-card,var(--fg)) 10%, transparent); }
   #mic.on { background:color-mix(in srgb, var(--warn) 20%, transparent); color:var(--warn); }
-  .tool.send { background:var(--accent); color:var(--on-accent); }
-  .tool.send:disabled { opacity:.35; }
+  .act.send { background:var(--accent); color:var(--on-accent); }
+  .act.send:disabled { opacity:.35; }
   /* Which agent this box talks to, in the place the Claude app puts the
      model — the one choice you make about a message that is not its text. */
   .picker {
@@ -1230,7 +1239,7 @@ pub const HTML: &str = r##"<!doctype html>
     <div id="attached"></div>
     <textarea id="msg" rows="1" placeholder="Message"></textarea>
     <div class="tools">
-      <button class="tool" id="queue" onclick="toggleSheet()" title="attach or queue" aria-label="attach or queue">
+      <button class="act" id="queue" onclick="toggleSheet()" title="attach or queue" aria-label="attach or queue">
         <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor"
              stroke-width="1.9" stroke-linecap="round" aria-hidden="true">
           <path d="M12 5v14M5 12h14"/>
@@ -1240,7 +1249,7 @@ pub const HTML: &str = r##"<!doctype html>
         <b id="pname">—</b><span id="pwhat"></span>
       </button>
       <span class="gap"></span>
-      <button class="tool" id="mic" onclick="toggleMic()" title="dictate" aria-label="dictate">
+      <button class="act" id="mic" onclick="toggleMic()" title="dictate" aria-label="dictate">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
              stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <rect x="9" y="2.5" width="6" height="11" rx="3"/>
@@ -1248,7 +1257,7 @@ pub const HTML: &str = r##"<!doctype html>
           <path d="M12 17.5V21"/>
         </svg>
       </button>
-      <button class="tool send" id="send" onclick="sendMessage()" disabled aria-label="send">
+      <button class="act send" id="send" onclick="sendMessage()" disabled aria-label="send">
         <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor"
              stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/>
