@@ -706,21 +706,38 @@ pub const HTML: &str = r##"<!doctype html>
   .proj:active, .agent:active, .server:active { transform:scale(.985); }
 
   /* ---- header ---------------------------------------------------------- */
+  /* Lifted out of the column and laid over it, so the conversation runs
+     underneath instead of stopping short — which is the whole point of a
+     blurred bar. Nothing passes behind a bar that nothing can reach.
+
+     The blur is only visible because of the 60%: at full opacity there is
+     nothing to see through, and `backdrop-filter` would be doing work no one
+     could tell was happening. `--bg` is the tint because it is the top of the
+     wash, which is the part of the page this sits on. */
   header {
-    flex:none; display:flex; align-items:center; gap:11px;
+    position:absolute; top:0; left:0; right:0; z-index:4;
+    display:flex; align-items:center; gap:11px;
     padding:max(9px,env(safe-area-inset-top)) 10px 9px 14px;
-    /* Still the page rather than a tone of its own — nothing sits *on* a
-       header — but divided by the same falloff every other surface here uses
-       instead of a rule. `--depth` without the ring: the ring would draw a
-       box around all four sides, and only the underside of this one is an
-       edge. A shadow casts as if the box were opaque, so it reads even though
-       there is nothing to see above it. */
-    background:transparent; border-bottom:0; box-shadow:var(--depth);
+    background:color-mix(in srgb, var(--head-tint,var(--bg)) 60%, transparent);
+    backdrop-filter:blur(18px) saturate(150%);
+    -webkit-backdrop-filter:blur(18px) saturate(150%);
+    /* `--depth` without the ring: the ring would box all four sides, and only
+       the underside of a header is an edge. */
+    border-bottom:0; box-shadow:var(--depth);
+    color:var(--on-head,var(--fg));
+  }
+  /* The same for the bottom edge, and for the same reason — the composer's
+     `backdrop-filter` had nothing behind it to blur while the log ended above
+     it. `#ask` and the sheet ride along: they belong to the bottom of the
+     screen, not to a position in the transcript. */
+  .foot {
+    position:absolute; left:0; right:0; bottom:0; z-index:4;
+    display:flex; flex-direction:column;
   }
   .who { display:flex; flex-direction:column; min-width:0; flex:1; gap:1px; }
   .who b { font-size:13px; font-weight:500; letter-spacing:-.045em; }
   .who span {
-    font-size:9.5px; color:var(--dim);
+    font-size:9.5px; color:color-mix(in srgb, var(--on-head,var(--fg)) 66%, transparent);
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
   }
   .dot { width:9px; height:9px; border-radius:50%; background:var(--faint); flex:none; }
@@ -737,12 +754,17 @@ pub const HTML: &str = r##"<!doctype html>
   .dot.idle { background:var(--ok); }
   @keyframes pulse { 50% { opacity:.3; } }
 
+  /* 44px, which is the touch target rather than a size chosen by eye, and a
+     glyph big enough to be worth the target. The colour comes from the
+     header's own composite — see headInk(): these sit on a 60% tint over the
+     top of the wash, which is a different surface from the page the rest of
+     `--fg` was picked against. */
   .icon {
-    flex:none; width:38px; height:38px; border-radius:9px; position:relative;
-    display:grid; place-items:center; font-size:14px;
-    background:none; border:1px solid transparent;
+    flex:none; width:44px; height:44px; border-radius:11px; position:relative;
+    display:grid; place-items:center; font-size:19px;
+    background:none; border:0; color:var(--on-head,var(--fg));
   }
-  .icon:active { background:var(--surface); }
+  .icon:active { background:color-mix(in srgb, var(--on-head,var(--fg)) 10%, transparent); }
   .icon .badge {
     position:absolute; top:2px; right:1px; min-width:16px; height:16px; padding:0 4px;
     background:var(--warn); color:#1a1305; border-radius:999px;
@@ -750,7 +772,15 @@ pub const HTML: &str = r##"<!doctype html>
   }
 
   /* ---- conversation ---------------------------------------------------- */
-  #log { flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:12px 14px 6px; }
+  /* The only child still in the column, so it takes the whole height, and the
+     two floating stacks are held off by padding rather than by layout. Both
+     heights are measured — the header's grows with the safe area, and the
+     foot's with whatever the sheet, a prompt or an attachment adds to it. The
+     fallbacks are what they measure to on a phone with neither. */
+  #log {
+    flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch;
+    padding:calc(var(--head,54px) + 12px) 14px calc(var(--foot,88px) + 6px);
+  }
   /* A flex row per message, so a bubble hugs its text but a wide code block
      inside one cannot shrink it to a column of single letters. */
   /* Without boxes, the space between turns is what separates them. */
@@ -1181,6 +1211,10 @@ pub const HTML: &str = r##"<!doctype html>
 </header>
 
 <div id="log"><div class="skeleton"><div></div><div></div><div></div></div></div>
+
+<!-- Everything that lives at the bottom edge, in one stack: it floats over the
+     conversation rather than beside it, so the log can scroll underneath. -->
+<div class="foot">
 <div id="stale" hidden></div>
 <div id="ask"></div>
 <div class="note" id="note" hidden></div>
@@ -1222,6 +1256,7 @@ pub const HTML: &str = r##"<!doctype html>
       </button>
     </div>
   </div>
+</div>
 </div>
 
 <div class="scrim" id="paletteScrim" onclick="togglePalette()"></div>
@@ -1763,7 +1798,9 @@ function contrast(a, b) {
    runs from dark brown to cream, and no single colour clears a useful bar
    against both ends. A theme with no gradient leaves `--stops` transparent,
    and then the page is simply the page. */
-function washUnderCard(styles) {
+function washUnderCard(styles) { return washAt(styles, true); }
+
+function washAt(styles, atFoot) {
   // Checked before it is read: `toRgb` cannot fail — handed something that is
   // not a colour it quietly returns the probe's inherited one, so a stop this
   // could not parse would come back as the body text and be taken for the
@@ -1775,7 +1812,11 @@ function washUnderCard(styles) {
     .map(rgba => rgba.slice(0, 3));
   if (!stops.length) return toRgb(styles.getPropertyValue("--bg")).slice(0, 3);
   const form = document.documentElement.getAttribute("data-gradient") || "linear";
-  const stop = form === "air" ? stops[0] : stops[stops.length - 1];
+  // Air runs the other way round from the rest: its glow is anchored low and
+  // left, so the first stop is at the foot and the last is up by the header.
+  const last = form === "air" ? 0 : stops.length - 1;
+  const first = form === "air" ? stops.length - 1 : 0;
+  const stop = stops[atFoot ? last : first];
   // A theme may lay a veil over the whole wash — lacquer's charcoal end only
   // takes dark text because 56% white is sitting on it. Reading the stop raw
   // would judge the ink against a page nobody sees.
@@ -1803,6 +1844,44 @@ function washUnderCard(styles) {
    It comes back untouched when it is already fine, which is most palettes. */
 const CARD_CONTRAST = 7;
 
+/* Walk `base` away from `surface` until it clears the bar, or as far as it
+   gets. Never across: see cardInk() for what letting it cross cost. */
+function inkFor(surface, base) {
+  if (contrast(base, surface) >= CARD_CONTRAST) return null;
+  const toward = relativeLuminance(base) > relativeLuminance(surface)
+    ? [255, 255, 255] : [0, 0, 0];
+  let ink = base;
+  for (let step = 0.1; step <= 1.0001; step += 0.1) {
+    const tried = base.map((c, i) => Math.round(c + (toward[i] - c) * step));
+    if (contrast(tried, surface) <= contrast(ink, surface)) break;
+    ink = tried;
+    if (contrast(ink, surface) >= CARD_CONTRAST) break;
+  }
+  return "rgb(" + ink.join(",") + ")";
+}
+
+/* What the header tints itself with, and the ink that then reads on it.
+   Not `--bg`. That is the raw first stop, and on the palettes that open on
+   something dark — lacquer's charcoal, iron's 鉄色 — a bar of 60% raw stop is
+   far darker than the page under it, which is the same stop with a 40-56%
+   veil over it. Dark text on that fell to 2.6:1 on lacquer, a hole this
+   header dug for itself by picking the wrong colour to be.
+
+   The visible top of the wash is the right tint, so the bar reads as the page
+   thickened rather than as a slab, and `--fg` — chosen against exactly that —
+   almost always still fits. `inkFor` covers the rest. */
+function headSurface() {
+  const styles = getComputedStyle(document.documentElement);
+  const tint = washAt(styles, false);
+  document.documentElement.style.setProperty("--head-tint", "rgb(" + tint.join(",") + ")");
+  return { styles, tint };
+}
+
+function headInk() {
+  const { styles, tint } = headSurface();
+  return inkFor(tint, toRgb(styles.getPropertyValue("--fg")).slice(0, 3)) || "var(--fg)";
+}
+
 function cardInk(alpha) {
   const styles = getComputedStyle(document.documentElement);
   const surface = toRgb(styles.getPropertyValue("--surface"));
@@ -1814,9 +1893,6 @@ function cardInk(alpha) {
   const behind = washUnderCard(styles);
   const card = material.map((c, i) => c * alpha + behind[i] * (1 - alpha));
 
-  const base = toRgb(styles.getPropertyValue("--fg")).slice(0, 3);
-  if (contrast(base, card) >= CARD_CONTRAST) return "var(--fg)";
-
   // Further from the card, never across it. Letting the walk pick whichever
   // direction scored higher is what a first pass did, and it inverted two
   // palettes: indigo's white body colour went black on its blue, which is a
@@ -1825,16 +1901,8 @@ function cardInk(alpha) {
   // on a pale card is a worse answer than the one being fixed. Staying on the
   // side `--fg` already sits makes the worst case "no change", which is what
   // a correction working off an estimate should degrade to.
-  const toward = relativeLuminance(base) > relativeLuminance(card)
-    ? [255, 255, 255] : [0, 0, 0];
-  let ink = base;
-  for (let step = 0.1; step <= 1.0001; step += 0.1) {
-    const tried = base.map((c, i) => Math.round(c + (toward[i] - c) * step));
-    if (contrast(tried, card) <= contrast(ink, card)) break;
-    ink = tried;
-    if (contrast(ink, card) >= CARD_CONTRAST) break;
-  }
-  return "rgb(" + ink.join(",") + ")";
+  const base = toRgb(styles.getPropertyValue("--fg")).slice(0, 3);
+  return inkFor(card, base) || "var(--fg)";
 }
 
 function readableOn(token, alpha) {
@@ -1861,6 +1929,7 @@ function setBubbles(percent) {
   root.style.setProperty("--on-bubble", readableOn("--accent", percent / 100));
   root.style.setProperty("--on-bubble-2", readableOn("--accent-2", percent / 100));
   root.style.setProperty("--on-card", cardInk(percent / 100));
+  root.style.setProperty("--on-head", headInk());
   root.setAttribute("data-bubbles", percent > 0 ? "on" : "off");
   document.getElementById("bubbles").value = percent;
   document.getElementById("bubbleValue").textContent = percent ? percent + "%" : "plain";
@@ -2093,6 +2162,27 @@ setBubbles(bubbleSetting === "on" ? 40 : bubbleSetting === "off" ? 0 : bubbleSet
 setBlur(store.get("blur", "100"));
 setTheme(localStorage.getItem("theme") || "system");
 markPush(store.get("push", "") === "on");
+/* The header and the foot float over the log, so the log has to be told how
+   much of itself they are covering. Measured rather than assumed: the
+   header's height moves with the safe area, and the foot's with the sheet
+   opening, a prompt arriving, an attachment, or the field growing a line.
+   A watcher rather than a one-off for exactly those reasons. */
+(function trackEdges() {
+  const root = document.documentElement;
+  const parts = [["--head", document.querySelector("header")],
+                 ["--foot", document.querySelector(".foot")]];
+  const measure = () => {
+    for (const [name, el] of parts) {
+      if (el) root.style.setProperty(name, Math.round(el.getBoundingClientRect().height) + "px");
+    }
+  };
+  measure();
+  if (window.ResizeObserver) {
+    const watch = new ResizeObserver(measure);
+    for (const [, el] of parts) if (el) watch.observe(el);
+  }
+  addEventListener("resize", measure);
+})();
 showDebug();
 checkStaleWebClip();
 if (window.visualViewport) {
