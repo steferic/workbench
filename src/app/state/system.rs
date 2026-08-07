@@ -679,6 +679,11 @@ pub struct SystemState {
     /// What each agent was doing last tick, so the phone is poked on a change
     /// rather than every tick a state persists.
     pub remote_seen: HashMap<String, String>,
+    /// When each agent's current spell of work began, so a turn can be told
+    /// from a flicker. An idle agent that merely repaints its screen counts as
+    /// working for as long as output timing says so, and without this every
+    /// repaint reads as a turn beginning and ending.
+    pub remote_working_since: HashMap<String, Instant>,
     /// When each agent last finished a turn worth mentioning. Published so the
     /// service worker can say "finished" rather than guessing.
     pub remote_finished: HashMap<String, chrono::DateTime<chrono::Utc>>,
@@ -750,6 +755,7 @@ impl SystemState {
             last_port_scan: None,
             port_scan_inflight: false,
             remote_seen: Default::default(),
+            remote_working_since: Default::default(),
             remote_finished: Default::default(),
         }
     }

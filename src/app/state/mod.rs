@@ -645,6 +645,23 @@ impl AppState {
         }
     }
 
+    /// Whether `activity` is the agent's own report rather than an inference
+    /// from output timing. Mirrors the condition in `activity` exactly, so the
+    /// two cannot drift.
+    ///
+    /// The distinction matters where the two disagree about what silence
+    /// means: a hook knows a turn ended, while output timing only knows that
+    /// bytes stopped arriving — which a screen that merely repainted also
+    /// satisfies.
+    pub fn activity_is_reported(&self, session_id: Uuid) -> bool {
+        self.system
+            .agent_status
+            .get(&session_id)
+            .is_some_and(|status| {
+                status.is_fresh(chrono::Utc::now()) && status.activity != Activity::Exited
+            })
+    }
+
     /// The prose behind `activity`, when the agent supplied any.
     pub fn activity_reason(&self, session_id: Uuid) -> Option<&str> {
         let status = self.system.agent_status.get(&session_id)?;

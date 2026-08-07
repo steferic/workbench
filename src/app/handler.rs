@@ -3,7 +3,7 @@ use crate::git;
 use crate::pty::PtyManager;
 use anyhow::Result;
 use std::collections::HashMap;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 use super::handlers::{config, input, navigation, parallel, session, tasks, workspace};
@@ -576,14 +576,36 @@ fn expose_project_servers(state: &mut AppState) {
     }
 }
 
-/// Poke subscribed devices when an agent has *just* become blocked.
+/// How long an *inferred* spell of work has to last before its end counts as
+/// a turn ending.
+///
+/// Only inferred spells need a floor. Where a hook is talking, the agent says
+/// when it stopped and that is the end of it; where one is not — a provider
+/// without hooks, or a report gone stale after thirty minutes — all there is
+/// to go on is that bytes arrived recently, and a screen that merely repaints
+/// satisfies that as well as a screen that is thinking.
+///
+/// That is not hypothetical. Anything making every pane redraw at once, a
+/// terminal resize being the obvious one, did it to every agent at once, and
+/// the log shows the result: sixteen agents "finishing" in the same instant,
+/// then the same sixteen again five seconds later.
+///
+/// Such a blip lasts the output-timing window plus a tick, so about three
+/// seconds. Ten is clear of that and under any turn worth being told about.
+const TURN_FLOOR: Duration = Duration::from_secs(10);
+
+/// Poke subscribed devices when an agent stops for you.
 ///
 /// Read off the snapshot that was published a moment ago, so the phone is told
-/// exactly what it would see if it looked. The edge is what matters: an agent
-/// sits blocked for as long as it takes you to answer, and a notification a
-/// second is not a feature.
-/// Poke subscribed devices when an agent changes to something you would want
-/// to know about: it stopped for you, or it finished a turn of real length.
+/// exactly what it would see if it looked.
+///
+/// One poke per stop, whatever the stop turns out to be. An agent that halts
+/// at a permission prompt is often idle for a tick or two before the question
+/// is parsed off its screen, and Claude's own "waiting for input" hook fires a
+/// full minute after that — so a single stop used to arrive as "finished" and
+/// then "needs you", twice, up to a minute apart. Idle and blocked are both
+/// stopped; only the crossing into stopped is news, and the phone reads the
+/// live state to decide which of the two words to use.
 ///
 /// Returns what it told the phone, which is what the tests read. The state is
 /// tracked even with nobody subscribed, so turning notifications on does not
@@ -598,22 +620,52 @@ fn notify_phone(state: &mut AppState) -> Vec<String> {
         Err(_) => return Vec::new(),
     };
 
+    // Idle and blocked are the same thing to a notification: the agent has
+    // stopped and the next move is yours.
+    let stopped = |status: &str| status == "idle" || status == "blocked";
+
+    // The snapshot addresses agents by short id; asking whether a status was
+    // reported or inferred needs the session behind it.
+    let session_ids: HashMap<String, uuid::Uuid> = state
+        .data
+        .sessions
+        .values()
+        .flatten()
+        .map(|session| (session.short_id(), session.id))
+        .collect();
+
     let mut news: Vec<String> = Vec::new();
     for (id, status) in &statuses {
-        // Only a change is news. An agent sits blocked until you answer it and
-        // idle until you give it something; saying so every second is not a
-        // feature. The first sighting of an agent says nothing either, so
-        // turning notifications on does not fire for everything already there.
-        if let Some(was) = state.system.remote_seen.get(id) {
-            if status == "blocked" && was != "blocked" {
-                news.push(format!("{id} needs you"));
-            }
-            if status == "idle" && was == "working" {
+        let was = state.system.remote_seen.get(id).cloned();
+        // The first sighting of an agent says nothing, so turning
+        // notifications on does not fire for everything already running.
+        if let Some(was) = was.as_deref() {
+            if status == "working" && was != "working" {
                 state
                     .system
-                    .remote_finished
-                    .insert(id.clone(), chrono::Utc::now());
-                news.push(format!("{id} finished"));
+                    .remote_working_since
+                    .insert(id.clone(), Instant::now());
+            }
+            if stopped(status) && !stopped(was) {
+                // Either the agent said it stopped, or it was working for long
+                // enough that something other than a repaint was going on.
+                let worked = state
+                    .system
+                    .remote_working_since
+                    .get(id)
+                    .map(Instant::elapsed)
+                    .unwrap_or(Duration::ZERO);
+                let said_so = session_ids
+                    .get(id)
+                    .is_some_and(|id| state.activity_is_reported(*id));
+                if said_so || worked >= TURN_FLOOR {
+                    state
+                        .system
+                        .remote_finished
+                        .insert(id.clone(), chrono::Utc::now());
+                    news.push(format!("{id} stopped"));
+                }
+                state.system.remote_working_since.remove(id);
             }
         }
         state.system.remote_seen.insert(id.clone(), status.clone());
@@ -623,6 +675,10 @@ fn notify_phone(state: &mut AppState) -> Vec<String> {
     state
         .system
         .remote_seen
+        .retain(|id, _| statuses.iter().any(|(seen, _)| seen == id));
+    state
+        .system
+        .remote_working_since
         .retain(|id, _| statuses.iter().any(|(seen, _)| seen == id));
 
     if !news.is_empty() && !state.system.push.is_empty() {
@@ -1014,7 +1070,7 @@ mod tests {
         set(&mut state, crate::agent_status::Activity::Idle);
         assert_eq!(
             notify_phone(&mut state),
-            vec![format!("{short} finished")],
+            vec![format!("{short} stopped")],
             "every finished turn is worth saying, however short"
         );
 
@@ -1022,7 +1078,7 @@ mod tests {
         set(&mut state, crate::agent_status::Activity::Working);
         notify_phone(&mut state);
         set(&mut state, crate::agent_status::Activity::Idle);
-        assert_eq!(notify_phone(&mut state), vec![format!("{short} finished")]);
+        assert_eq!(notify_phone(&mut state), vec![format!("{short} stopped")]);
 
         // And the phone can tell which kind of news it was.
         let shared = state.system.remote_state.clone();
@@ -1071,7 +1127,7 @@ mod tests {
         assert!(notify_phone(&mut state).is_empty(), "working is not news");
 
         block(&mut state, true);
-        assert_eq!(notify_phone(&mut state), vec![format!("{short} needs you")]);
+        assert_eq!(notify_phone(&mut state), vec![format!("{short} stopped")]);
         block(&mut state, true);
         assert!(
             notify_phone(&mut state).is_empty(),
@@ -1082,7 +1138,117 @@ mod tests {
         block(&mut state, false);
         assert!(notify_phone(&mut state).is_empty());
         block(&mut state, true);
-        assert_eq!(notify_phone(&mut state), vec![format!("{short} needs you")]);
+        assert_eq!(notify_phone(&mut state), vec![format!("{short} stopped")]);
+    }
+
+    /// The bug: one stop arriving as two notifications.
+    ///
+    /// An agent that halts at a permission prompt is idle for a tick or two
+    /// before the question can be parsed off its screen, and Claude's own
+    /// "waiting for input" hook fires a full minute later. Both used to be
+    /// news, so a single stop buzzed the phone as "finished" and then again as
+    /// "needs you" — which is what the log showed, five to sixty seconds apart.
+    #[test]
+    fn one_stop_is_one_notification_however_it_settles() {
+        let mut state = AppState::default();
+        let workspace = Workspace::new("zeta".into(), std::path::PathBuf::from("/tmp/z"));
+        let workspace_id = workspace.id;
+        state.data.workspaces.push(workspace);
+        let agent = add_agent(&mut state, workspace_id, SessionStatus::Running, Some(30));
+        let short = crate::models::Session::short_id_of(agent);
+
+        let set = |state: &mut AppState, activity| {
+            state.system.agent_status.insert(
+                agent,
+                crate::agent_status::AgentStatus {
+                    activity,
+                    reason: String::new(),
+                    at: Utc::now(),
+                    event: "Stop".into(),
+                },
+            );
+            crate::remote::publish(state, &state.system.remote_state.clone());
+        };
+
+        set(&mut state, crate::agent_status::Activity::Working);
+        assert!(notify_phone(&mut state).is_empty());
+
+        // It stops. One poke.
+        set(&mut state, crate::agent_status::Activity::Idle);
+        assert_eq!(notify_phone(&mut state), vec![format!("{short} stopped")]);
+
+        // The question on its screen is read a tick later, and a minute after
+        // that the harness says it is waiting. Same stop; nothing new to say.
+        set(
+            &mut state,
+            crate::agent_status::Activity::NeedsAttention(
+                crate::agent_status::Attention::Permission,
+            ),
+        );
+        assert!(
+            notify_phone(&mut state).is_empty(),
+            "the phone was already told this agent stopped"
+        );
+
+        // Answer it, and the next stop is news again.
+        set(&mut state, crate::agent_status::Activity::Working);
+        assert!(notify_phone(&mut state).is_empty());
+        set(&mut state, crate::agent_status::Activity::Idle);
+        assert_eq!(notify_phone(&mut state), vec![format!("{short} stopped")]);
+    }
+
+    /// The other half of the bug, and the louder one: an idle agent whose
+    /// screen merely repaints looks like it worked for two seconds and then
+    /// finished. A terminal resize does that to every agent at once — the log
+    /// showed sixteen "finishing" in the same instant, then again five seconds
+    /// later.
+    ///
+    /// Nothing reported it, and nothing worked for long enough to have been a
+    /// turn, so there is nothing to say.
+    #[test]
+    fn a_screen_that_merely_repainted_did_not_finish_a_turn() {
+        let mut state = AppState::default();
+        let workspace = Workspace::new("zeta".into(), std::path::PathBuf::from("/tmp/z"));
+        let workspace_id = workspace.id;
+        state.data.workspaces.push(workspace);
+        let agent = add_agent(&mut state, workspace_id, SessionStatus::Running, Some(30));
+
+        // No hook has spoken for over half an hour, so activity is inferred
+        // from output timing alone — which is the only way this happens.
+        state.system.agent_status.insert(
+            agent,
+            crate::agent_status::AgentStatus {
+                activity: crate::agent_status::Activity::Idle,
+                reason: String::new(),
+                at: Utc::now() - ChronoDuration::minutes(45),
+                event: "Stop".into(),
+            },
+        );
+        let publish = |state: &mut AppState| {
+            crate::remote::publish(state, &state.system.remote_state.clone());
+        };
+
+        publish(&mut state);
+        assert!(notify_phone(&mut state).is_empty());
+
+        // A repaint: output lands, so it reads as working for a moment.
+        state
+            .data
+            .last_activity
+            .insert(agent, std::time::Instant::now());
+        publish(&mut state);
+        assert!(notify_phone(&mut state).is_empty(), "starting is not news");
+
+        // The window passes with no more output and it reads as idle again.
+        state.data.last_activity.insert(
+            agent,
+            std::time::Instant::now() - std::time::Duration::from_secs(5),
+        );
+        publish(&mut state);
+        assert!(
+            notify_phone(&mut state).is_empty(),
+            "two seconds of redraw is not a turn"
+        );
     }
 
     fn state_with_workspace() -> (AppState, uuid::Uuid) {
