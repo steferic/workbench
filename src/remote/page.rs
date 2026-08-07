@@ -1293,6 +1293,11 @@ pub const HTML: &str = r##"<!doctype html>
 <script>
 const token = new URLSearchParams(location.search).get("t") || "";
 const q = p => p + (p.includes("?") ? "&" : "?") + "t=" + encodeURIComponent(token);
+/* What to call an agent: the model it is answering with, or the agent it runs
+   in until it has said one. Both agents can change model mid-session, so this
+   is read off every snapshot rather than remembered. */
+const named = a => a.model || a.provider;
+
 const esc = s => (s||"").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const store = {
   get: (k, d) => { const v = localStorage.getItem(k); return v === null ? d : v; },
@@ -2059,7 +2064,7 @@ function renderTree() {
     const rows = open ? p.agents.map(a => `
       <button class="agent ${a.id === current ? "current" : ""}" onclick="pick('${a.id}')">
         <span class="dot ${a.status}"></span>
-        <span class="label">${esc(a.provider)}</span>
+        <span class="label">${esc(named(a))}</span>
         <span class="what">${a.status === "blocked" ? "needs you"
           : a.queued.length ? a.queued.length + " queued" : a.status}</span>
       </button>`).join("") : "";
@@ -2106,7 +2111,7 @@ function render() {
     return;
   }
 
-  document.getElementById("hname").textContent = a.provider;
+  document.getElementById("hname").textContent = named(a);
   document.getElementById("hwhat").textContent = [
     a.project,
     a.running || (a.queued.length ? a.queued.length + " queued" : null),
@@ -2115,10 +2120,10 @@ function render() {
   document.getElementById("hdot").className = "dot " + a.status;
   document.getElementById("cycle").hidden =
     data.agents.filter(x => x.project_id === a.project_id).length < 2;
-  // The composer's pill says who the message is going to. Provider and
-  // project only: what the agent is *doing* belongs in the header, not on a
-  // control you are about to press.
-  document.getElementById("pname").textContent = a.provider;
+  // The composer's pill says who the message is going to. Name and project
+  // only: what the agent is *doing* belongs in the header, not on a control
+  // you are about to press.
+  document.getElementById("pname").textContent = named(a);
   document.getElementById("pwhat").textContent = a.project;
 
   // Redraw only when there is something new: rewriting the log every second
@@ -2244,6 +2249,9 @@ self.addEventListener("push", event => {
       const res = await fetch(url("/api/state?have=999999999"), { cache: "no-store" });
       if (res.ok) {
         const agents = (await res.json()).agents;
+        // Its own copy of the rule in page.js: a service worker shares no
+        // scope with the page it woke.
+        const named = a => a.model || a.provider;
         const blocked = agents.filter(a => a.status === "blocked");
         // The push carries no payload, so which kind of news this is has to be
         // read back off the state. A recent finish is the only other reason.
@@ -2252,7 +2260,7 @@ self.addEventListener("push", event => {
         if (blocked.length === 1) {
           const a = blocked[0];
           tag = "workbench-blocked";
-          title = a.provider + " · " + a.project;
+          title = named(a) + " · " + a.project;
           // The whole question, flattened. The useful part is usually the
           // command it wants to run, not the "do you want to proceed?" — so
           // take the lot and let the notification truncate.
@@ -2262,17 +2270,17 @@ self.addEventListener("push", event => {
         } else if (blocked.length > 1) {
           tag = "workbench-blocked";
           title = blocked.length + " agents need you";
-          body = blocked.map(a => a.provider + " · " + a.project).join(", ");
+          body = blocked.map(a => named(a) + " · " + a.project).join(", ");
         } else if (finished.length === 1) {
           const a = finished[0];
           tag = "workbench-finished";
-          title = a.provider + " · " + a.project;
+          title = named(a) + " · " + a.project;
           body = "Finished" + (a.running ? ": " + a.running : "") +
                  (a.queued.length ? " · " + a.queued.length + " still queued" : "");
         } else if (finished.length > 1) {
           tag = "workbench-finished";
           title = finished.length + " agents finished";
-          body = finished.map(a => a.provider + " · " + a.project).join(", ");
+          body = finished.map(a => named(a) + " · " + a.project).join(", ");
         } else {
           // Answered or picked up again at the desk between the poke and its
           // delivery — there is nothing left to say.

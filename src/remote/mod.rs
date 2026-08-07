@@ -82,6 +82,12 @@ pub struct AgentView {
     /// Which project to start a sibling agent in.
     pub project_id: String,
     pub provider: String,
+    /// What the agent is actually answering with — "Opus 5" rather than
+    /// "Claude". `None` until it has journalled a turn, and always for a
+    /// provider whose store does not record one, so the page falls back to
+    /// `provider`. Both agents let you change model mid-session, so this can
+    /// change under a running conversation.
+    pub model: Option<String>,
     /// "blocked" | "working" | "idle" | "stopped"
     pub status: String,
     /// The agent's own words when it is blocked ("needs your permission to…").
@@ -322,6 +328,7 @@ fn publish_with(state: &AppState, shared: &Shared, open: Option<(Vec<Message>, u
                 project: workspace.name.clone(),
                 project_id: workspace.id.to_string(),
                 provider: session.agent_type.display_name(),
+                model: state.session_model(session.id),
                 status: status.to_string(),
                 reason: state.activity_reason(session.id).map(str::to_string),
                 running,
@@ -638,6 +645,7 @@ mod tests {
             project: "workbench".into(),
             project_id: "p".into(),
             provider: "Claude".into(),
+            model: Some("Opus 5".into()),
             status: "working".into(),
             reason: None,
             running: None,

@@ -166,6 +166,10 @@ pub struct TaskTracker {
     /// SQLite stores: cheap probe telling us whether anything changed.
     change_token: Option<String>,
     batches: BatchBuilder,
+    /// The model this session is answering with, as its own journal last
+    /// named it. Both agents let you change model mid-session and write the
+    /// new one on the next turn, so the last mention wins.
+    model: Option<String>,
 }
 
 impl TaskTracker {
@@ -176,6 +180,7 @@ impl TaskTracker {
             offset: 0,
             change_token: None,
             batches: BatchBuilder::default(),
+            model: None,
         }
     }
 
@@ -189,6 +194,12 @@ impl TaskTracker {
 
     pub fn provider(&self) -> Provider {
         self.provider
+    }
+
+    /// The raw model id, e.g. `claude-opus-5`. `None` until a turn has been
+    /// journalled, and always for a provider whose store does not record one.
+    pub fn model(&self) -> Option<&str> {
+        self.model.as_deref()
     }
 
     /// The agent's own conversation id, read off the store we resolved. This
@@ -220,6 +231,9 @@ impl TaskTracker {
     /// Feed one already-parsed log line, as `tail_file` would (tests).
     #[cfg(test)]
     fn ingest_line(&mut self, value: &Value) {
+        if let Some(model) = files::model_in(self.provider, value) {
+            self.model = Some(model);
+        }
         match self.provider {
             Provider::Claude => files::ingest_claude(&mut self.batches, value),
             Provider::Codex => files::ingest_codex(&mut self.batches, value),
@@ -255,6 +269,9 @@ impl TaskTracker {
         self.offset = 0;
         self.change_token = None;
         self.batches = BatchBuilder::default();
+        // The next store located may be a different conversation, and a model
+        // carried over from the last one would be a confident wrong answer.
+        self.model = None;
     }
 
     /// Parse the bytes appended since the last pass.
@@ -297,6 +314,9 @@ impl TaskTracker {
                     }
                     consumed += n as u64;
                     if let Ok(value) = serde_json::from_str::<Value>(line.trim_end()) {
+                        if let Some(model) = files::model_in(self.provider, &value) {
+                            self.model = Some(model);
+                        }
                         match self.provider {
                             Provider::Claude => files::ingest_claude(&mut self.batches, &value),
                             Provider::Codex => files::ingest_codex(&mut self.batches, &value),

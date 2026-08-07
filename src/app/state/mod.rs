@@ -592,6 +592,29 @@ impl AppState {
         }
     }
 
+    /// The model a session is answering with, ready to print — "Opus 5"
+    /// rather than "Claude".
+    ///
+    /// `None` until the agent has journalled a turn, and always for a provider
+    /// whose store does not record one, so every caller keeps the provider
+    /// name as its fallback. A fresh agent therefore reads as its provider for
+    /// a few seconds and then names itself, which is the honest order: nothing
+    /// knows the model until the model has answered.
+    pub fn session_model(&self, session_id: Uuid) -> Option<String> {
+        let raw = self.system.agent_tasks.get(&session_id)?.model()?;
+        Some(crate::models::model_label(raw))
+    }
+
+    /// What to call a session on screen: its model if it has named one, else
+    /// the agent it is running in.
+    pub fn session_label(&self, session_id: Uuid) -> String {
+        self.session_model(session_id).unwrap_or_else(|| {
+            self.get_session(session_id)
+                .map(|s| s.agent_type.display_name())
+                .unwrap_or_default()
+        })
+    }
+
     /// What a session is doing, preferring what the agent reported over what
     /// its output looks like.
     ///

@@ -29,7 +29,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
     let title = if let Some(session) = state.active_session() {
         format!(
             " {} - {} - {} ",
-            session.agent_type.display_name(),
+            state.session_label(session.id),
             session.short_id(),
             session.duration_string()
         )
@@ -143,7 +143,7 @@ fn render_session_output(
     // Show scroll indicator in title if scrolled
     let session = state.active_session();
     let display_name = session
-        .map(|s| s.agent_type.display_name())
+        .map(|s| state.session_label(s.id))
         .unwrap_or_else(|| "Session".to_string());
     let short_id = session.map(|s| s.short_id()).unwrap_or_default();
     let duration = session.map(|s| s.duration_string()).unwrap_or_default();

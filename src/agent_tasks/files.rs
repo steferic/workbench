@@ -21,6 +21,38 @@ pub(super) fn codex_sessions_root(home: &Path) -> PathBuf {
     home.join(".codex").join("sessions")
 }
 
+/// The model named by one journal line, if it names one.
+///
+/// Both agents record this per turn rather than once per session, which is
+/// what makes it worth reading every line: you can switch model mid-session
+/// in either, and the next turn says so. The caller keeps the last one seen.
+pub(super) fn model_in(provider: super::Provider, v: &Value) -> Option<String> {
+    let raw = match provider {
+        // Every assistant turn carries the model that produced it — except a
+        // subagent's, which shares the file and may be running a different one
+        // on the session's behalf. That is not what this session is answering
+        // with, so it does not count.
+        super::Provider::Claude => {
+            if v.get("isSidechain").and_then(Value::as_bool) == Some(true) {
+                return None;
+            }
+            v.pointer("/message/model")?.as_str()?
+        }
+        // Codex writes a `turn_context` ahead of each turn, so a switch shows
+        // up here before the first answer that used it.
+        super::Provider::Codex => {
+            if v.get("type").and_then(Value::as_str)? != "turn_context" {
+                return None;
+            }
+            v.pointer("/payload/model")?.as_str()?
+        }
+        _ => return None,
+    };
+    // Claude labels harness-generated turns `<synthetic>`. It is in the field
+    // where a model goes, but it is not one.
+    (!raw.is_empty() && !raw.starts_with('<')).then(|| raw.to_string())
+}
+
 // ---------------------------------------------------------------------------
 // Claude Code
 // ---------------------------------------------------------------------------

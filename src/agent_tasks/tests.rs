@@ -965,3 +965,151 @@ fn a_rollout_with_no_opening_timestamp_is_skipped_not_fatal() {
     assert_eq!(found.as_deref(), Some(good.as_path()));
 }
 
+
+// ---------------------------------------------------------------------------
+// Which model a session is answering with
+// ---------------------------------------------------------------------------
+
+/// Shapes taken from real journals: Claude puts the model on each assistant
+/// turn, Codex writes a `turn_context` before one.
+fn claude_assistant_with_model(model: &str) -> String {
+    serde_json::json!({
+        "type": "assistant",
+        "timestamp": "2026-07-25T10:00:00.000Z",
+        "message": {"model": model, "content": [{"type": "text", "text": "hi"}]}
+    })
+    .to_string()
+}
+
+fn codex_turn_context(model: &str) -> String {
+    serde_json::json!({
+        "type": "turn_context",
+        "timestamp": "2026-07-25T10:00:00.000Z",
+        "payload": {"model": model, "effort": "xhigh", "summary": "auto"}
+    })
+    .to_string()
+}
+
+#[test]
+fn a_session_reports_the_model_its_own_journal_names() {
+    let mut claude = TaskTracker::new(Provider::Claude);
+    assert_eq!(claude.model(), None, "nothing is known before a turn");
+    feed(
+        &mut claude,
+        &[&claude_assistant_with_model("claude-opus-5")],
+    );
+    assert_eq!(claude.model(), Some("claude-opus-5"));
+
+    let mut codex = TaskTracker::new(Provider::Codex);
+    feed(&mut codex, &[&codex_turn_context("gpt-5.6-sol")]);
+    assert_eq!(codex.model(), Some("gpt-5.6-sol"));
+}
+
+/// The point of reading this per line rather than once: both agents let you
+/// switch model without restarting, and both say so on the next turn.
+#[test]
+fn switching_model_mid_session_is_picked_up() {
+    let mut claude = TaskTracker::new(Provider::Claude);
+    feed(
+        &mut claude,
+        &[
+            &claude_assistant_with_model("claude-opus-5"),
+            &claude_user("now use something cheaper"),
+            &claude_assistant_with_model("claude-haiku-4-5"),
+        ],
+    );
+    assert_eq!(claude.model(), Some("claude-haiku-4-5"));
+
+    let mut codex = TaskTracker::new(Provider::Codex);
+    feed(
+        &mut codex,
+        &[
+            &codex_turn_context("gpt-5.6-sol"),
+            &codex_turn_context("gpt-5.6"),
+        ],
+    );
+    assert_eq!(codex.model(), Some("gpt-5.6"));
+}
+
+/// Two ways the field lies, both seen in real logs.
+#[test]
+fn what_sits_in_the_model_field_but_is_not_one_is_ignored() {
+    // Claude labels harness-generated turns `<synthetic>`.
+    let mut claude = TaskTracker::new(Provider::Claude);
+    feed(
+        &mut claude,
+        &[
+            &claude_assistant_with_model("claude-opus-5"),
+            &claude_assistant_with_model("<synthetic>"),
+        ],
+    );
+    assert_eq!(claude.model(), Some("claude-opus-5"));
+
+    // A subagent's transcript shares the file and may be running a different
+    // model on this session's behalf. That is not what *this* session answers
+    // with, so it must not overwrite it.
+    let mut sidechain = TaskTracker::new(Provider::Claude);
+    let sub = serde_json::json!({
+        "type": "assistant",
+        "isSidechain": true,
+        "message": {"model": "claude-haiku-4-5", "content": []}
+    })
+    .to_string();
+    feed(
+        &mut sidechain,
+        &[&claude_assistant_with_model("claude-opus-5"), &sub],
+    );
+    assert_eq!(sidechain.model(), Some("claude-opus-5"));
+}
+
+/// A model carried over from a conversation we no longer read would be a
+/// confident wrong answer, so relocating clears it.
+#[test]
+fn losing_the_store_forgets_the_model() {
+    let mut t = TaskTracker::new(Provider::Claude);
+    feed(&mut t, &[&claude_assistant_with_model("claude-opus-5")]);
+    assert_eq!(t.model(), Some("claude-opus-5"));
+    t.reset();
+    assert_eq!(t.model(), None);
+}
+
+/// The tests above drive `ingest_line`, which only exists for them. This one
+/// goes the way production does — bytes on disk, through `refresh` — because
+/// that is the path that has to work.
+#[test]
+fn the_model_is_read_by_the_same_pass_that_reads_the_tasks() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("session.jsonl");
+    fs::write(
+        &path,
+        format!(
+            "{}\n{}\n",
+            claude_user("go"),
+            claude_assistant_with_model("claude-opus-5")
+        ),
+    )
+    .unwrap();
+
+    let ctx = TaskSource {
+        provider: Provider::Claude,
+        session_uuid: "x".into(),
+        cwd: dir.path().to_path_buf(),
+        started_at: Utc::now(),
+        conversation: None,
+        spawned_at: None,
+    };
+    let mut t = TaskTracker::new(Provider::Claude);
+    t.source = Some(Source::File(path.clone()));
+    t.refresh(&ctx, &HashSet::new());
+    assert_eq!(t.model(), Some("claude-opus-5"));
+
+    // And the switch arrives with the bytes that announce it, not a pass later.
+    let mut appended = fs::read_to_string(&path).unwrap();
+    appended.push_str(&format!(
+        "{}\n",
+        claude_assistant_with_model("claude-sonnet-5")
+    ));
+    fs::write(&path, appended).unwrap();
+    t.refresh(&ctx, &HashSet::new());
+    assert_eq!(t.model(), Some("claude-sonnet-5"));
+}

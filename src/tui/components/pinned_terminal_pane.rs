@@ -24,9 +24,11 @@ pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index
     let title = state
         .pinned_terminal_session_at(pane_index)
         .map(|s| {
+            // A pinned pane is usually a shell, which has no model — and
+            // `session_label` gives back the terminal's own name for those.
             format!(
                 " {} [pinned {}] ",
-                s.agent_type.display_name(),
+                state.session_label(s.id),
                 pane_index + 1
             )
         })

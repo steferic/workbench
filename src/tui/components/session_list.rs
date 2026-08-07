@@ -412,7 +412,10 @@ fn create_session_item<'a>(
         Span::styled(prefix.to_string(), name_style),
         Span::styled(status_icon, Style::default().fg(status_color)),
         Span::raw(" "),
-        Span::styled(session.agent_type.display_name().to_string(), name_style),
+        // The model rather than the agent it runs in — "Opus 5", not
+        // "Claude". Falls back to the agent's name until a turn has been
+        // journalled, which is the only moment anything knows the model.
+        Span::styled(state.session_label(session.id), name_style),
         alias_indicator,
         attention_indicator,
         dangerous_indicator,

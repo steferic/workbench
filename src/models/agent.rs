@@ -1,5 +1,71 @@
 use serde::{Deserialize, Serialize};
 
+/// What to call a model on screen.
+///
+/// Agents journal an id built for an API rather than for a status bar —
+/// `claude-opus-5`, `claude-haiku-4-5-20251001`, `gpt-5.6-sol`. What is worth
+/// the width is the family and the version, so that is what comes back:
+/// "Opus 5", "Haiku 4.5", "GPT-5.6 Sol".
+///
+/// Deliberately not a table of known ids. A model this does not recognise is
+/// the one case that matters — it is the new one, and printing it tidily
+/// without being taught is the whole job.
+pub fn model_label(raw: &str) -> String {
+    // `claude-opus-5[1m]` — a context-window variant, not another model, and
+    // noise in a column this narrow.
+    let trimmed = raw.split('[').next().unwrap_or(raw).trim();
+    let mut parts: Vec<&str> = trimmed.split('-').filter(|p| !p.is_empty()).collect();
+    // A trailing 8-digit date is how a snapshot gets pinned. The version above
+    // it already says which model this is.
+    if parts
+        .last()
+        .is_some_and(|p| p.len() == 8 && p.chars().all(|c| c.is_ascii_digit()))
+    {
+        parts.pop();
+    }
+    // The vendor is already obvious from the agent it is running in.
+    if parts.first() == Some(&"claude") {
+        parts.remove(0);
+    }
+    if parts.is_empty() {
+        return trimmed.to_string();
+    }
+
+    let mut out: Vec<String> = Vec::new();
+    for part in parts {
+        let numeric = part.chars().all(|c| c.is_ascii_digit() || c == '.');
+        let follows_number = out
+            .last()
+            .is_some_and(|last: &String| last.chars().any(|c| c.is_ascii_digit()));
+        if numeric && follows_number {
+            // `haiku-4-5` is one version number that the id split with its own
+            // separator; put it back together as 4.5 rather than "4 5".
+            let last = out.last_mut().expect("checked by follows_number");
+            last.push('.');
+            last.push_str(part);
+        } else {
+            out.push(match part {
+                "gpt" => "GPT".to_string(),
+                other => capitalise(other),
+            });
+        }
+    }
+    // GPT wears its version on a hyphen, which is how OpenAI writes it.
+    if out.len() > 1 && out[0] == "GPT" && out[1].starts_with(|c: char| c.is_ascii_digit()) {
+        let version = out.remove(1);
+        out[0] = format!("GPT-{version}");
+    }
+    out.join(" ")
+}
+
+fn capitalise(word: &str) -> String {
+    let mut chars = word.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AgentType {
     Claude,
@@ -82,5 +148,41 @@ impl AgentType {
 impl std::fmt::Display for AgentType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.display_name())
+    }
+}
+
+#[cfg(test)]
+mod model_label_tests {
+    use super::model_label;
+
+    #[test]
+    fn it_prints_the_family_and_version_a_status_bar_has_room_for() {
+        // The ask: "I want to see Opus 5, not just generic Claude".
+        assert_eq!(model_label("claude-opus-5"), "Opus 5");
+        assert_eq!(model_label("claude-sonnet-5"), "Sonnet 5");
+        // A version the id split with its own separator is one number.
+        assert_eq!(model_label("claude-haiku-4-5"), "Haiku 4.5");
+        // A pinned snapshot's date says nothing the version does not.
+        assert_eq!(model_label("claude-haiku-4-5-20251001"), "Haiku 4.5");
+        // A context-window variant is the same model.
+        assert_eq!(model_label("claude-opus-5[1m]"), "Opus 5");
+    }
+
+    #[test]
+    fn it_handles_the_other_agent_without_being_taught_each_one() {
+        assert_eq!(model_label("gpt-5.6-sol"), "GPT-5.6 Sol");
+        assert_eq!(model_label("gpt-5"), "GPT-5");
+        assert_eq!(model_label("o3"), "O3");
+    }
+
+    /// The case that matters most is the model this has never seen, because
+    /// that is the new one — it should come out tidy without a table entry.
+    #[test]
+    fn an_unknown_id_still_comes_out_readable() {
+        assert_eq!(model_label("claude-quartz-7"), "Quartz 7");
+        assert_eq!(model_label("some-future-model-2"), "Some Future Model 2");
+        // And nothing it cannot make sense of is lost.
+        assert_eq!(model_label("mystery"), "Mystery");
+        assert_eq!(model_label(""), "");
     }
 }
