@@ -482,6 +482,7 @@ mod tests {
                 reason: reason.into(),
                 at: chrono::Utc::now(),
                 event: "Notification".into(),
+                transcript: None,
             },
         );
         state

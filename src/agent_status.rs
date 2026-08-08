@@ -92,6 +92,14 @@ pub struct AgentStatus {
     pub at: DateTime<Utc>,
     /// The hook event this came from, for debugging.
     pub event: String,
+    /// The journal file the agent says it is writing, when the provider's
+    /// hooks name one (Claude sends `transcript_path` on every event). This is
+    /// the agent in the present tense — it beats every heuristic in
+    /// `locate`, and it is the only signal that survives `/clear`, which
+    /// rotates the transcript to a new session id in the same process while
+    /// the file the old heuristics point at just quietly stops growing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transcript: Option<String>,
 }
 
 impl AgentStatus {
@@ -268,6 +276,7 @@ pub fn interpret(event: &str, payload: Option<&serde_json::Value>) -> Option<Age
         reason,
         at: Utc::now(),
         event: event.to_string(),
+        transcript: field("transcript_path").map(str::to_string),
     })
 }
 
@@ -620,12 +629,14 @@ mod tests {
             reason: "finished its turn".into(),
             at: Utc::now(),
             event: "Stop".into(),
+            transcript: None,
         };
         let late_tool = AgentStatus {
             activity: Activity::Working,
             reason: "running Bash".into(),
             at: stop.at - chrono::TimeDelta::seconds(1),
             event: "PostToolUse".into(),
+            transcript: None,
         };
 
         record(&workspace, "abc12345", &stop).unwrap();
@@ -653,6 +664,7 @@ mod tests {
             reason: String::new(),
             at: now - chrono::TimeDelta::minutes(5),
             event: "PreToolUse".into(),
+            transcript: None,
         };
         let stale = AgentStatus {
             at: now - chrono::TimeDelta::hours(2),

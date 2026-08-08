@@ -217,6 +217,7 @@ mod tests {
                 reason: String::new(),
                 at: Utc::now(),
                 event: "test".into(),
+                transcript: None,
             },
         );
     }

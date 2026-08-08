@@ -212,6 +212,7 @@ pub(crate) mod tests {
                 started_at: Utc::now(),
                 conversation: None,
                 spawned_at: None,
+                reported: None,
             },
             &std::collections::HashSet::new(),
         );

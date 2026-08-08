@@ -471,6 +471,7 @@ mod tests {
                 reason: "running Edit".into(),
                 at: chrono::Utc::now(),
                 event: "PreToolUse".into(),
+                transcript: None,
             },
         );
         state.system.agent_status.insert(
@@ -480,6 +481,7 @@ mod tests {
                 reason: "wants to run shell".into(),
                 at: chrono::Utc::now(),
                 event: "PermissionRequest".into(),
+                transcript: None,
             },
         );
         (state, busy_id, blocked_id)

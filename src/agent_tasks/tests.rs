@@ -255,6 +255,7 @@ fn a_claimed_log_is_not_handed_to_a_second_session() {
         started_at: Utc::now() - ChronoDuration::hours(1),
         conversation: None,
         spawned_at: None,
+        reported: None,
     };
 
     let root = files::codex_sessions_root(home.path());
@@ -296,6 +297,7 @@ fn a_pinned_claude_log_wins_over_the_cwd_scan() {
         started_at: Utc::now() - ChronoDuration::hours(1),
         conversation: None,
         spawned_at: None,
+        reported: None,
     };
 
     let found = files::locate_claude(&files::claude_projects_root(home.path()), &ctx, &HashSet::new());
@@ -375,6 +377,7 @@ fn refresh_reads_only_what_is_new_and_skips_partial_lines() {
         started_at: Utc::now(),
         conversation: None,
         spawned_at: None,
+        reported: None,
     };
     let mut t = TaskTracker::new(Provider::Codex);
     t.source = Some(Source::File(path.clone()));
@@ -512,6 +515,7 @@ fn hermes_prefers_a_cwd_match_and_never_reuses_a_claimed_session() {
         started_at: Utc::now() - ChronoDuration::minutes(1),
         conversation: None,
         spawned_at: None,
+        reported: None,
     };
 
     // An exact cwd match wins over any newer session.
@@ -648,6 +652,7 @@ fn opencode_maps_a_session_by_its_directory() {
         started_at: Utc::now() - ChronoDuration::minutes(1),
         conversation: None,
         spawned_at: None,
+        reported: None,
     };
 
     let first = db::locate_opencode(&db, &ctx, &HashSet::new()).unwrap();
@@ -737,6 +742,7 @@ fn codex_ctx(cwd: &Path, spawned_at: Option<DateTime<Utc>>) -> TaskSource {
         started_at: Utc::now() - ChronoDuration::hours(6),
         conversation: None,
         spawned_at,
+        reported: None,
     }
 }
 
@@ -928,6 +934,7 @@ fn a_resumed_claude_session_is_found_by_the_conversation_it_resumed() {
         started_at: Utc::now() - ChronoDuration::hours(1),
         conversation: Some(conversation.to_string()),
         spawned_at: Some(Utc::now()),
+        reported: None,
     };
 
     let found = files::locate_claude(&files::claude_projects_root(home.path()), &ctx, &HashSet::new());
@@ -965,6 +972,70 @@ fn a_rollout_with_no_opening_timestamp_is_skipped_not_fatal() {
     assert_eq!(found.as_deref(), Some(good.as_path()));
 }
 
+
+// ---------------------------------------------------------------------------
+// Following the journal the agent says it is writing
+// ---------------------------------------------------------------------------
+
+/// The scenario found live: an agent resumed as conversation A, then `/clear`
+/// rotated its transcript to a new session id, B. A's file still exists — it
+/// just stops growing — so both the resumed-id branch of `locate_claude` and
+/// the tracker's "source is still there" check hold onto it forever, and the
+/// phone shows a conversation the desktop's terminal has long since left.
+/// The hook report is the agent saying "I write to B now", and it must win.
+#[test]
+fn a_cleared_agent_is_followed_to_its_new_transcript() {
+    let dir = tempfile::tempdir().unwrap();
+    let old = dir.path().join("aaaaaaaa-resumed.jsonl");
+    let new = dir.path().join("bbbbbbbb-cleared.jsonl");
+    fs::write(
+        &old,
+        format!("{}\n", claude_assistant_with_model("claude-opus-5")),
+    )
+    .unwrap();
+
+    let mut ctx = TaskSource {
+        provider: Provider::Claude,
+        session_uuid: "not-on-disk".into(),
+        cwd: dir.path().to_path_buf(),
+        started_at: Utc::now(),
+        conversation: Some("aaaaaaaa-resumed".into()),
+        spawned_at: None,
+        reported: None,
+    };
+
+    // Before any hook has spoken, the tracker sits on the resumed file.
+    let mut tracker = TaskTracker::new(Provider::Claude);
+    tracker.source = Some(Source::File(old.clone()));
+    tracker.refresh(&ctx, &HashSet::new());
+    assert_eq!(tracker.source(), Some(&Source::File(old.clone())));
+    assert_eq!(tracker.model(), Some("claude-opus-5"));
+
+    // /clear: a new file, and the next hook names it. The old file is intact.
+    fs::write(
+        &new,
+        format!("{}\n", claude_assistant_with_model("claude-sonnet-5")),
+    )
+    .unwrap();
+    ctx.reported = Some(new.clone());
+    tracker.refresh(&ctx, &HashSet::new());
+    assert_eq!(
+        tracker.source(),
+        Some(&Source::File(new.clone())),
+        "the agent said where it writes now, and the old file existing is no reason to stay"
+    );
+    // And everything downstream reads the new conversation, not the old.
+    assert_eq!(tracker.model(), Some("claude-sonnet-5"));
+
+    // A report pointing at a file that is gone is not followed off a cliff.
+    ctx.reported = Some(dir.path().join("never-existed.jsonl"));
+    tracker.refresh(&ctx, &HashSet::new());
+    assert_eq!(
+        tracker.source(),
+        Some(&Source::File(new)),
+        "a stale report falls back to what is known rather than unseating it"
+    );
+}
 
 // ---------------------------------------------------------------------------
 // Which model a session is answering with
@@ -1097,6 +1168,7 @@ fn the_model_is_read_by_the_same_pass_that_reads_the_tasks() {
         started_at: Utc::now(),
         conversation: None,
         spawned_at: None,
+        reported: None,
     };
     let mut t = TaskTracker::new(Provider::Claude);
     t.source = Some(Source::File(path.clone()));

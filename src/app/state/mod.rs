@@ -868,6 +868,7 @@ mod activity_tests {
                 reason: "because".into(),
                 at: chrono::Utc::now() - chrono::TimeDelta::minutes(age_mins),
                 event: "test".into(),
+                transcript: None,
             },
         );
     }

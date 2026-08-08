@@ -128,6 +128,12 @@ pub struct TaskSource {
     /// a fresh rollout on every start, so its log is the one created after
     /// this moment — a far tighter anchor than "newest in this directory".
     pub spawned_at: Option<DateTime<Utc>>,
+    /// The journal the agent itself last named, via its hooks (Claude sends
+    /// `transcript_path` on every event). First-person and present tense, so
+    /// it outranks everything below — and it is the only signal that follows
+    /// `/clear`, which rotates the transcript to a new session id in the same
+    /// process while every file the heuristics point at keeps existing.
+    pub reported: Option<PathBuf>,
 }
 
 /// The resolved store for one session.
@@ -247,7 +253,17 @@ impl TaskTracker {
     /// running in one directory would otherwise both resolve to the newest
     /// conversation there and mirror each other.
     pub fn refresh(&mut self, ctx: &TaskSource, claimed: &HashSet<String>) {
-        if !self.source.as_ref().map(Source::still_there).unwrap_or(false) {
+        // A survivor is not necessarily current: after `/clear` the old
+        // journal still exists — it just stops growing — so "the file is
+        // still there" would hold this tracker on a dead conversation
+        // forever. When the agent reports a different file, follow it.
+        let superseded = match (&self.source, &ctx.reported) {
+            (Some(Source::File(current)), Some(reported)) => {
+                current != reported && reported.is_file()
+            }
+            _ => false,
+        };
+        if superseded || !self.source.as_ref().map(Source::still_there).unwrap_or(false) {
             self.reset();
             self.source = locate(ctx, claimed);
         }
@@ -350,6 +366,13 @@ impl TaskTracker {
 }
 
 fn locate(ctx: &TaskSource, claimed: &HashSet<String>) -> Option<Source> {
+    // The agent said where it is writing; nothing to infer. Deliberately not
+    // checked against `claimed`: claims exist to keep two *guesses* from
+    // landing on one file, and a report is not a guess — each pty's hooks
+    // carry their own session env, so two sessions cannot report one path.
+    if let Some(path) = ctx.reported.as_ref().filter(|path| path.is_file()) {
+        return Some(Source::File(path.clone()));
+    }
     let home = dirs::home_dir()?;
     match ctx.provider {
         Provider::Claude => files::locate_claude(&files::claude_projects_root(&home), ctx, claimed)

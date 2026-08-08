@@ -860,6 +860,14 @@ fn plan_task_refresh(state: &AppState) -> TaskRefreshPlan {
                     started_at: session.started_at,
                     conversation: session.provider_session_id.clone(),
                     spawned_at: state.system.session_spawned_at.get(&session.id).copied(),
+                    // Not gated on freshness: the last file the agent named is
+                    // the last file it wrote, however long ago that was.
+                    reported: state
+                        .system
+                        .agent_status
+                        .get(&session.id)
+                        .and_then(|status| status.transcript.as_deref())
+                        .map(std::path::PathBuf::from),
                 },
             );
         }
@@ -1059,6 +1067,7 @@ mod tests {
                     reason: String::new(),
                     at: Utc::now(),
                     event: "Stop".into(),
+                    transcript: None,
                 },
             );
             crate::remote::publish(state, &state.system.remote_state.clone());
@@ -1118,6 +1127,7 @@ mod tests {
                     reason: "wants to run shell".into(),
                     at: Utc::now(),
                     event: "PermissionRequest".into(),
+                    transcript: None,
                 },
             );
             crate::remote::publish(state, &state.system.remote_state.clone());
@@ -1165,6 +1175,7 @@ mod tests {
                     reason: String::new(),
                     at: Utc::now(),
                     event: "Stop".into(),
+                    transcript: None,
                 },
             );
             crate::remote::publish(state, &state.system.remote_state.clone());
@@ -1222,6 +1233,7 @@ mod tests {
                 reason: String::new(),
                 at: Utc::now() - ChronoDuration::minutes(45),
                 event: "Stop".into(),
+                transcript: None,
             },
         );
         let publish = |state: &mut AppState| {
