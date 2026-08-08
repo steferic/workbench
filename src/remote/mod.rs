@@ -161,9 +161,15 @@ pub fn since(snapshot: &Snapshot, have: usize) -> Snapshot {
             continue;
         }
         let owed = agent.msg_total.saturating_sub(have);
-        if owed >= agent.messages.len() {
-            // Further behind than the window we keep — or a client that has
-            // nothing. Everything we hold, as a replacement.
+        if have > agent.msg_total || owed >= agent.messages.len() {
+            // Three clients look alike from here and all need a replacement
+            // rather than a splice: one further behind than the window we
+            // keep, one with nothing, and one *ahead* of us — quoting a count
+            // from a previous process life. `have` lives in a page that stays
+            // open for days; restart workbench and every count starts over
+            // while the phone still quotes the old one. Draining "nothing
+            // owed" at it left its log silently frozen on the pre-restart
+            // conversation.
             agent.msg_reset = true;
         } else {
             let drop = agent.messages.len() - owed;
@@ -250,7 +256,16 @@ fn conversation(state: &mut AppState, session_id: Uuid) -> Option<(Vec<Message>,
     };
     let before = cache.messages.len();
     cache.cursor = thread::read_more(&path, provider, cache.cursor, &mut cache.messages);
-    cache.total += cache.messages.len() - before;
+    if cache.messages.len() < before {
+        // Fewer messages than we already had means the file shrank underneath
+        // the cursor and `read_more` started over from the tail. What it read
+        // is a different conversation's worth of history, so the count
+        // restarts with it — `+=` here underflowed, and one wrapped total
+        // poisoned the phone's `have` into a number that never parses again.
+        cache.total = cache.messages.len();
+    } else {
+        cache.total += cache.messages.len() - before;
+    }
     if cache.messages.len() > MAX_MESSAGES {
         cache.messages.drain(..cache.messages.len() - MAX_MESSAGES);
     }
@@ -679,6 +694,120 @@ mod tests {
         let fresh = since(&snapshot, 0);
         assert_eq!(fresh.agents[0].messages.len(), 3);
         assert!(fresh.agents[0].msg_reset);
+    }
+
+    /// A phone that knows MORE of the conversation than the server is not
+    /// caught up — it is from a previous life. `have` lives in the page, and
+    /// the page is a home-screen app that stays open for days; restart
+    /// workbench and every count starts over from the tail window while the
+    /// phone still quotes the old total. Draining "nothing owed" at it leaves
+    /// its log silently frozen on the pre-restart conversation.
+    #[test]
+    fn a_client_that_is_ahead_of_us_is_reset_not_starved() {
+        let mut snapshot = Snapshot::default();
+        snapshot.agents.push(AgentView {
+            id: "ab12cd34".into(),
+            project: "workbench".into(),
+            project_id: "p".into(),
+            provider: "Claude".into(),
+            model: None,
+            status: "working".into(),
+            reason: None,
+            running: None,
+            steps: Vec::new(),
+            queued: Vec::new(),
+            paused: false,
+            holding: None,
+            prompt: None,
+            messages: vec![Message {
+                role: crate::remote::thread::Role::Agent,
+                text: "after the restart".into(),
+                at: None,
+            }],
+            msg_total: 1,
+            msg_reset: false,
+            tail: Vec::new(),
+            finished_ago: None,
+        });
+
+        let ahead = since(&snapshot, 347);
+        assert!(
+            ahead.agents[0].msg_reset,
+            "a client quoting a count we never issued needs a replacement, not silence"
+        );
+        assert_eq!(ahead.agents[0].messages.len(), 1);
+    }
+
+    /// A journal that gets *shorter* under the cursor must not poison the
+    /// count. `read_more` copes — it throws its parse away and re-reads the
+    /// tail — but the caller then computed `total += new_len - old_len` on
+    /// unsigned numbers. One shrink and the total wraps to ~2^64; the page
+    /// echoes that back as `?have=1.8e19`, which fails to parse as a usize,
+    /// so every poll gets the full window and the phone concatenates the
+    /// whole conversation onto itself once a second.
+    #[test]
+    fn a_journal_replaced_underneath_does_not_poison_the_count() {
+        let (mut state, busy, _blocked) = state_with_agents();
+        use std::io::Write;
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        for i in 0..10 {
+            writeln!(
+                file,
+                r#"{{"type":"user","message":{{"role":"user","content":"m{i}"}}}}"#
+            )
+            .unwrap();
+        }
+        file.flush().unwrap();
+        state.get_session_mut(busy).unwrap().journal_path = Some(file.path().to_path_buf());
+        state.system.remote_focus = Some(busy);
+
+        let shared: Shared = Default::default();
+        publish(&mut state, &shared);
+        assert_eq!(
+            shared
+                .lock()
+                .unwrap()
+                .agents
+                .iter()
+                .find(|a| a.msg_total > 0)
+                .unwrap()
+                .msg_total,
+            10
+        );
+
+        // The same path, replaced with a shorter conversation.
+        std::fs::write(
+            file.path(),
+            concat!(
+                r#"{"type":"user","message":{"role":"user","content":"fresh"}}"#,
+                "
+"
+            ),
+        )
+        .unwrap();
+        publish(&mut state, &shared);
+
+        let snapshot = shared.lock().unwrap().clone();
+        let agent = snapshot
+            .agents
+            .iter()
+            .find(|a| !a.messages.is_empty())
+            .unwrap();
+        assert_eq!(
+            agent.msg_total, 1,
+            "a replaced file is a fresh count, not an overflow"
+        );
+        assert_eq!(agent.messages.len(), 1);
+
+        // And the phone that held the old count is reset on its next poll.
+        assert!(
+            since(&snapshot, 10)
+                .agents
+                .iter()
+                .find(|a| a.id == agent.id)
+                .unwrap()
+                .msg_reset
+        );
     }
 
     /// The window is trimmed from the front once it is full, so a message's
