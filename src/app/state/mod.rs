@@ -595,13 +595,29 @@ impl AppState {
     /// The model a session is answering with, ready to print — "Opus 5"
     /// rather than "Claude".
     ///
-    /// `None` until the agent has journalled a turn, and always for a provider
-    /// whose store does not record one, so every caller keeps the provider
-    /// name as its fallback. A fresh agent therefore reads as its provider for
-    /// a few seconds and then names itself, which is the honest order: nothing
-    /// knows the model until the model has answered.
+    /// Two sources, and the agent's own hooks come first for the same reason
+    /// they do in `locate`: a report is first-person and present tense, where
+    /// the journal is a file we went looking for. It is also the earlier of
+    /// the two for Codex, which names its model on `SessionStart` but does not
+    /// write its rollout until the first turn — so reading only the journal
+    /// left every Codex agent reading as "Codex" until someone talked to it.
+    ///
+    /// `None` when neither source has named one, so every caller keeps the
+    /// provider name as its fallback. Claude sends no `model` in its hooks and
+    /// does not need to: a resumed log names it on every past assistant line.
     pub fn session_model(&self, session_id: Uuid) -> Option<String> {
-        let raw = self.system.agent_tasks.get(&session_id)?.model()?;
+        let reported = self
+            .system
+            .agent_status
+            .get(&session_id)
+            .and_then(|status| status.model.as_deref());
+        let journalled = || {
+            self.system
+                .agent_tasks
+                .get(&session_id)
+                .and_then(|tracker| tracker.model())
+        };
+        let raw = reported.or_else(journalled)?;
         Some(crate::models::model_label(raw))
     }
 
@@ -869,6 +885,7 @@ mod activity_tests {
                 at: chrono::Utc::now() - chrono::TimeDelta::minutes(age_mins),
                 event: "test".into(),
                 transcript: None,
+                model: None,
             },
         );
     }

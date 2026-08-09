@@ -472,6 +472,7 @@ mod tests {
                 at: chrono::Utc::now(),
                 event: "PreToolUse".into(),
                 transcript: None,
+                model: None,
             },
         );
         state.system.agent_status.insert(
@@ -482,6 +483,7 @@ mod tests {
                 at: chrono::Utc::now(),
                 event: "PermissionRequest".into(),
                 transcript: None,
+                model: None,
             },
         );
         (state, busy_id, blocked_id)

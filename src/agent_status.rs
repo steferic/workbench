@@ -100,6 +100,16 @@ pub struct AgentStatus {
     /// the file the old heuristics point at just quietly stops growing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transcript: Option<String>,
+    /// The model the agent says it is answering with, when its hooks name one.
+    ///
+    /// Codex puts `model` on every event, including the `SessionStart` that
+    /// fires before it has taken a turn — which is the only moment its journal
+    /// does not exist yet, because it writes the rollout on the first turn
+    /// rather than at startup. Claude sends no such field and does not need
+    /// to: a resumed session's log already names the model on every past
+    /// assistant line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 impl AgentStatus {
@@ -132,11 +142,20 @@ pub fn status_path(workspace_id: &str, session_short_id: &str) -> Result<PathBuf
 /// drag a finished agent back to "working".
 pub fn record(workspace_id: &str, session_short_id: &str, status: &AgentStatus) -> Result<()> {
     let path = status_path(workspace_id, session_short_id)?;
+    let mut status = std::borrow::Cow::Borrowed(status);
     if let Some(existing) = read_status(&path) {
         if existing.at > status.at {
             return Ok(());
         }
+        // An event that does not name a model does not mean the agent stopped
+        // having one — only that this payload was not asked about it. Carrying
+        // the last one forward keeps a named agent from flickering back to its
+        // provider between events.
+        if status.model.is_none() && existing.model.is_some() {
+            status.to_mut().model = existing.model;
+        }
     }
+    let status = status.as_ref();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -277,6 +296,7 @@ pub fn interpret(event: &str, payload: Option<&serde_json::Value>) -> Option<Age
         at: Utc::now(),
         event: event.to_string(),
         transcript: field("transcript_path").map(str::to_string),
+        model: field("model").map(str::to_string),
     })
 }
 
@@ -630,6 +650,7 @@ mod tests {
             at: Utc::now(),
             event: "Stop".into(),
             transcript: None,
+            model: None,
         };
         let late_tool = AgentStatus {
             activity: Activity::Working,
@@ -637,6 +658,7 @@ mod tests {
             at: stop.at - chrono::TimeDelta::seconds(1),
             event: "PostToolUse".into(),
             transcript: None,
+            model: None,
         };
 
         record(&workspace, "abc12345", &stop).unwrap();
@@ -665,6 +687,7 @@ mod tests {
             at: now - chrono::TimeDelta::minutes(5),
             event: "PreToolUse".into(),
             transcript: None,
+            model: None,
         };
         let stale = AgentStatus {
             at: now - chrono::TimeDelta::hours(2),
@@ -672,5 +695,78 @@ mod tests {
         };
         assert!(fresh.is_fresh(now));
         assert!(!stale.is_fresh(now));
+    }
+
+    /// Codex names its model in every hook payload, including the
+    /// `SessionStart` that fires before it has taken a turn. That is the only
+    /// source for it at that moment: codex writes its rollout on the first
+    /// turn, so there is no journal to read until someone talks to it.
+    ///
+    /// Payloads below are the real ones, captured from codex-cli 0.147.0.
+    #[test]
+    fn codex_names_its_model_in_the_payload_before_it_has_journalled_a_turn() {
+        let start = serde_json::json!({
+            "session_id": "019fe658-0192-7392-8560-1fd016b8775e",
+            "transcript_path": "/Users/x/.codex/sessions/2026/08/09/rollout-x.jsonl",
+            "cwd": "/Users/x/code",
+            "hook_event_name": "SessionStart",
+            "model": "gpt-5.6-sol",
+            "permission_mode": "bypassPermissions",
+            "source": "startup"
+        });
+        let status = interpret("SessionStart", Some(&start)).expect("a state for SessionStart");
+        assert_eq!(status.model.as_deref(), Some("gpt-5.6-sol"));
+
+        // Claude sends no `model` — its journal already names one on every
+        // past assistant line, so nothing here needs to fall back to a guess.
+        let claude = serde_json::json!({
+            "session_id": "abc",
+            "transcript_path": "/Users/x/.claude/projects/p/abc.jsonl",
+            "cwd": "/Users/x/code",
+            "hook_event_name": "SessionStart",
+            "source": "startup"
+        });
+        let status = interpret("SessionStart", Some(&claude)).expect("a state for SessionStart");
+        assert_eq!(status.model, None);
+    }
+
+    /// A payload that does not mention the model is not the agent saying it no
+    /// longer has one, so the name must not flicker back to the provider.
+    #[test]
+    fn an_event_without_a_model_keeps_the_last_one_named() {
+        let workspace = format!("test-{}", uuid::Uuid::new_v4());
+        let named = AgentStatus {
+            activity: Activity::Idle,
+            reason: "session started".into(),
+            at: Utc::now(),
+            event: "SessionStart".into(),
+            transcript: None,
+            model: Some("gpt-5.6-sol".into()),
+        };
+        let quiet = AgentStatus {
+            activity: Activity::Working,
+            reason: "running Bash".into(),
+            at: named.at + chrono::TimeDelta::seconds(1),
+            event: "PreToolUse".into(),
+            transcript: None,
+            model: None,
+        };
+
+        record(&workspace, "abc12345", &named).unwrap();
+        record(&workspace, "abc12345", &quiet).unwrap();
+
+        let loaded = load_all(&workspace);
+        assert_eq!(
+            loaded[0].1.activity,
+            Activity::Working,
+            "the later event wins"
+        );
+        assert_eq!(
+            loaded[0].1.model.as_deref(),
+            Some("gpt-5.6-sol"),
+            "but it must not have erased the model"
+        );
+
+        forget(&workspace, "abc12345");
     }
 }

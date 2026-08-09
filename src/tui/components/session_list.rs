@@ -483,6 +483,7 @@ mod tests {
                 at: chrono::Utc::now(),
                 event: "Notification".into(),
                 transcript: None,
+                model: None,
             },
         );
         state

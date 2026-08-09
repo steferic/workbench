@@ -218,6 +218,7 @@ mod tests {
                 at: Utc::now(),
                 event: "test".into(),
                 transcript: None,
+                model: None,
             },
         );
     }

@@ -696,6 +696,9 @@ fn codex_day_dir(home: &Path) -> PathBuf {
     dir
 }
 
+/// The model every codex fixture rollout says it is answering with.
+const FIXTURE_CODEX_MODEL: &str = "gpt-5.6-sol";
+
 /// A rollout whose `session_meta` says when it was opened and for which cwd,
 /// last written at `created` — a conversation nobody has resumed.
 fn codex_rollout(dir: &Path, id: &str, cwd: &Path, created: DateTime<Utc>) -> PathBuf {
@@ -713,14 +716,23 @@ fn codex_rollout_touched(
     touched: DateTime<Utc>,
 ) -> PathBuf {
     let path = dir.join(format!("rollout-2026-07-26T00-00-00-{id}.jsonl"));
+    // A real rollout opens with `session_meta` and then names its model in a
+    // `turn_context` ahead of the first turn. Both lines matter: `locate_codex`
+    // reads only the first, and the model is only ever on the second — a
+    // fixture with just the header cannot tell the two apart.
     fs::write(
         &path,
         format!(
-            "{}\n",
+            "{}\n{}\n",
             serde_json::json!({
                 "timestamp": created.to_rfc3339(),
                 "type": "session_meta",
                 "payload": {"session_id": id, "cwd": cwd.to_string_lossy()}
+            }),
+            serde_json::json!({
+                "timestamp": created.to_rfc3339(),
+                "type": "turn_context",
+                "payload": {"model": FIXTURE_CODEX_MODEL, "effort": "xhigh"}
             })
         ),
     )
@@ -1184,4 +1196,35 @@ fn the_model_is_read_by_the_same_pass_that_reads_the_tasks() {
     fs::write(&path, appended).unwrap();
     t.refresh(&ctx, &HashSet::new());
     assert_eq!(t.model(), Some("claude-sonnet-5"));
+}
+
+/// The codex half of the above, starting a step earlier: the rollout is *found*
+/// rather than handed over.
+///
+/// Both halves were previously only covered by `ingest_line` against a
+/// hand-written `turn_context`, which is the one arrangement that cannot fail —
+/// it skips discovery, and every codex fixture on disk stopped at the
+/// `session_meta` header, so no test ever read a model off a located file.
+#[test]
+fn a_located_codex_rollout_names_the_model_it_answers_with() {
+    let home = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let dir = codex_day_dir(home.path());
+    let root = files::codex_sessions_root(home.path());
+
+    let spawned_at = Utc::now() - ChronoDuration::seconds(30);
+    codex_rollout(
+        &dir,
+        "11111111-1111-4111-8111-111111111111",
+        cwd.path(),
+        spawned_at + ChronoDuration::seconds(1),
+    );
+
+    let ctx = codex_ctx(cwd.path(), Some(spawned_at));
+    let found = files::locate_codex(&root, &ctx, &HashSet::new()).expect("the rollout it opened");
+
+    let mut t = TaskTracker::new(Provider::Codex);
+    t.source = Some(Source::File(found));
+    t.refresh(&ctx, &HashSet::new());
+    assert_eq!(t.model(), Some(FIXTURE_CODEX_MODEL));
 }

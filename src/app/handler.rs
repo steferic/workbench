@@ -1068,6 +1068,7 @@ mod tests {
                     at: Utc::now(),
                     event: "Stop".into(),
                     transcript: None,
+                    model: None,
                 },
             );
             crate::remote::publish(state, &state.system.remote_state.clone());
@@ -1128,6 +1129,7 @@ mod tests {
                     at: Utc::now(),
                     event: "PermissionRequest".into(),
                     transcript: None,
+                    model: None,
                 },
             );
             crate::remote::publish(state, &state.system.remote_state.clone());
@@ -1176,6 +1178,7 @@ mod tests {
                     at: Utc::now(),
                     event: "Stop".into(),
                     transcript: None,
+                    model: None,
                 },
             );
             crate::remote::publish(state, &state.system.remote_state.clone());
@@ -1234,6 +1237,7 @@ mod tests {
                 at: Utc::now() - ChronoDuration::minutes(45),
                 event: "Stop".into(),
                 transcript: None,
+                model: None,
             },
         );
         let publish = |state: &mut AppState| {
