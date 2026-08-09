@@ -735,10 +735,13 @@ pub const HTML: &str = r##"<!doctype html>
     display:flex; flex-direction:column;
   }
   .who { display:flex; flex-direction:column; min-width:0; flex:1; gap:1px; }
+  /* Both lines cut rather than wrap. A header is one row tall by definition,
+     and the alternative is a name breaking over three lines on a narrow phone
+     and pushing the conversation down the screen to make room for itself. */
+  .who b, .who span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .who b { font-size:13px; font-weight:500; letter-spacing:-.045em; }
   .who span {
     font-size:9.5px; color:color-mix(in srgb, var(--on-head,var(--fg)) 66%, transparent);
-    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
   }
   .dot { width:9px; height:9px; border-radius:50%; background:var(--faint); flex:none; }
   /* Alert colours are chosen per theme to differ from the page in hue, not
@@ -754,22 +757,34 @@ pub const HTML: &str = r##"<!doctype html>
   .dot.idle { background:var(--ok); }
   @keyframes pulse { 50% { opacity:.3; } }
 
-  /* 44px, which is the touch target rather than a size chosen by eye, and a
-     glyph big enough to be worth the target. The colour comes from the
-     header's own composite — see headInk(): these sit on a 60% tint over the
-     top of the wash, which is a different surface from the page the rest of
-     `--fg` was picked against. */
+  /* 48px, past the 44px minimum rather than at it. A target you have to look
+     at to hit is too small even when it measures legal, and these are pressed
+     one-handed with a thumb, at the top of the screen, which is the furthest
+     the thumb reaches and the least accurately. The glyph scales with the box:
+     the target is what you hit, but the glyph is what tells you it is there.
+
+     The colour comes from the header's own composite — see headInk(): these
+     sit on a 60% tint over the top of the wash, which is a different surface
+     from the page the rest of `--fg` was picked against. */
   .icon {
-    flex:none; width:44px; height:44px; border-radius:11px; position:relative;
-    display:grid; place-items:center; font-size:19px;
+    flex:none; width:48px; height:48px; border-radius:13px; position:relative;
+    display:grid; place-items:center; font-size:22px;
     background:none; border:0; color:var(--on-head,var(--fg));
   }
   .icon:active { background:color-mix(in srgb, var(--on-head,var(--fg)) 10%, transparent); }
   .icon .badge {
-    position:absolute; top:2px; right:1px; min-width:16px; height:16px; padding:0 4px;
+    position:absolute; top:3px; right:2px; min-width:17px; height:17px; padding:0 4px;
     background:var(--warn); color:#1a1305; border-radius:999px;
-    font-size:8px; font-weight:500; line-height:16px; text-align:center;
+    font-size:8.5px; font-weight:500; line-height:17px; text-align:center;
   }
+  /* The icons close ranks so the growth comes out of the space between them
+     rather than out of the name beside them: four 48px targets and the
+     header's own gap would leave a narrow phone with nothing to write in. The
+     gap that matters is the one before the group, which `header` still sets;
+     between two adjacent targets there is nothing to separate. The negative
+     margin pulls the last glyph back over the header's padding so it sits
+     optically on the edge, the way the 44px one did. */
+  .tools { display:flex; align-items:center; gap:0; flex:none; margin-right:-5px; }
 
   /* ---- conversation ---------------------------------------------------- */
   /* The only child still in the column, so it takes the whole height, and the
@@ -1214,9 +1229,12 @@ pub const HTML: &str = r##"<!doctype html>
 <header>
   <span class="dot" id="hdot"></span>
   <span class="who"><b id="hname">—</b><span id="hwhat"></span></span>
-  <button class="icon" id="cycle" onclick="cycleAgent()" title="next agent here" hidden>⇄</button>
-  <button class="icon" onclick="togglePalette()" title="theme">◑</button>
-  <button class="icon" onclick="toggleDrawer()" title="projects">☰<span class="badge" id="hbadge" hidden></span></button>
+  <nav class="tools">
+    <button class="icon" id="cycleproj" onclick="cycleProject()" title="next project" hidden>⇅</button>
+    <button class="icon" id="cycle" onclick="cycleAgent()" title="next agent here" hidden>⇄</button>
+    <button class="icon" onclick="togglePalette()" title="theme">◑</button>
+    <button class="icon" onclick="toggleDrawer()" title="projects">☰<span class="badge" id="hbadge" hidden></span></button>
+  </nav>
 </header>
 
 <div id="log"><div class="skeleton"><div></div><div></div><div></div></div></div>
@@ -1379,6 +1397,29 @@ function cycleAgent() {
   if (siblings.length < 2) return;
   const at = siblings.findIndex(a => a.id === current);
   pick(siblings[(at + 1) % siblings.length].id);
+}
+
+/* Next project, wrapping — the same flick one level up, for when the thing you
+   are switching between is what you are working on rather than who is doing it.
+
+   Only projects with an agent in them: this moves you to a conversation, and a
+   project with none has none to move to (starting one is the drawer's job).
+   The order is `data.projects` as published rather than the drawer's, which
+   floats whoever needs you to the top — an order that reshuffles underneath a
+   button you are pressing repeatedly is not one you can rotate through.
+
+   Lands on whoever in that project needs you, else its first agent, which is
+   the same rule `render` uses to open the app on nothing in particular. */
+function cycleProject() {
+  const withAgents = (data?.projects || [])
+    .filter(p => data.agents.some(a => a.project_id === p.id));
+  if (withAgents.length < 2) return;
+  const here = agent(current);
+  const at = withAgents.findIndex(p => p.id === here?.project_id);
+  const next = withAgents[(at + 1) % withAgents.length];
+  const inNext = data.agents.filter(a => a.project_id === next.id);
+  const target = inNext.find(a => a.status === "blocked") || inNext[0];
+  if (target) pick(target.id);
 }
 
 function newAgent(projectId, provider) {
@@ -2120,6 +2161,10 @@ function render() {
   document.getElementById("hdot").className = "dot " + a.status;
   document.getElementById("cycle").hidden =
     data.agents.filter(x => x.project_id === a.project_id).length < 2;
+  // Same rule one level up: nothing to rotate to unless a second project has
+  // an agent in it to rotate to.
+  document.getElementById("cycleproj").hidden =
+    (data.projects || []).filter(p => data.agents.some(x => x.project_id === p.id)).length < 2;
   // The composer's pill says who the message is going to. Name and project
   // only: what the agent is *doing* belongs in the header, not on a control
   // you are about to press.
