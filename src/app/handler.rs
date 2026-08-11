@@ -913,9 +913,18 @@ fn refresh_scrollback(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Ac
         .scrollback_state
         .retain(|session_id, _| live.contains(session_id));
 
-    // The first session whose parsed history is out of date; one per tick
-    // keeps a big log from stalling the others behind it.
-    let stale = state
+    // A session whose parsed history is out of date; one per tick keeps a big
+    // log from stalling the others behind it.
+    //
+    // The one you are looking at goes first. One per tick at this interval
+    // means a session waits behind every other stale session before its turn,
+    // so with several agents all answering at once the history under your
+    // scroll could be many seconds behind the screen — and the gap shows,
+    // because anything that scrolled off the live viewport in that window is
+    // in neither the last parse nor the current frame. Whichever session is
+    // open is the only one whose staleness anybody can see.
+    let open = state.active_session_id();
+    let stale: Vec<_> = state
         .data
         .sessions
         .values()
@@ -933,9 +942,13 @@ fn refresh_scrollback(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Ac
             let current = state.system.scrollback_state.get(&session.id);
             (current != Some(&(size, cols, theme_mode))).then_some((session.id, format, path, size))
         })
-        .next();
+        .collect();
 
-    let Some((session_id, format, path, size)) = stale else {
+    let Some((session_id, format, path, size)) = open
+        .and_then(|open| stale.iter().find(|(id, ..)| *id == open))
+        .or_else(|| stale.first())
+        .cloned()
+    else {
         return;
     };
 

@@ -313,15 +313,33 @@ impl TranscriptBuffer {
     }
 
     pub fn len(&self) -> usize {
-        self.history().len() + self.visible.len()
+        self.history_len() + self.visible.len()
     }
 
-    /// Committed history: the session log when we have it, otherwise whatever
-    /// the frame differ could prove.
-    fn history(&self) -> &[TranscriptLine] {
+    /// How much committed history there is: the session log when we have it,
+    /// otherwise whatever the frame differ could prove.
+    ///
+    /// Deliberately a length and an indexed read rather than one `&[_]`. The
+    /// fallback lives in a `VecDeque` that is pushed at the back and popped at
+    /// the front, so the moment it fills it wraps its ring and its contents
+    /// stop being one contiguous slice. Handing back `as_slices().0` compiled
+    /// and read like history, but it was only the part before the wrap: with a
+    /// full buffer still moving it reported one line where there were eight.
+    /// That is scrollback disappearing exactly while an agent is mid-answer,
+    /// because a buffer that is full and still rotating is what "still
+    /// generating" looks like from in here.
+    fn history_len(&self) -> usize {
         match self.log_history.as_deref() {
-            Some(log) => log,
-            None => self.lines.as_slices().0,
+            Some(log) => log.len(),
+            None => self.lines.len(),
+        }
+    }
+
+    /// One line of committed history. `VecDeque::get` walks the wrap for us.
+    fn history_get(&self, index: usize) -> Option<&TranscriptLine> {
+        match self.log_history.as_deref() {
+            Some(log) => log.get(index),
+            None => self.lines.get(index),
         }
     }
 
@@ -334,15 +352,14 @@ impl TranscriptBuffer {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.history().is_empty() && self.visible.is_empty()
+        self.history_len() == 0 && self.visible.is_empty()
     }
 
     /// Index across committed history followed by the current visible frame.
     fn get(&self, index: usize) -> Option<&TranscriptLine> {
-        let history = self.history();
-        match history.get(index) {
+        match self.history_get(index) {
             Some(line) => Some(line),
-            None => self.visible.get(index - history.len()),
+            None => self.visible.get(index - self.history_len()),
         }
     }
 
@@ -1108,6 +1125,44 @@ mod tests {
 
     /// Once the session log is parsed it *replaces* the frame-diff history:
     /// the log is the deterministic record, the differ only a stand-in.
+    /// Committed history is held in a `VecDeque` that is pushed at the back and
+    /// popped at the front, which is exactly what makes a ring buffer wrap. Once
+    /// it has, its contents are two slices rather than one, and reading only the
+    /// first silently drops everything after the wrap — the newest history, and
+    /// only once the buffer is full and still moving, which is to say while the
+    /// agent is mid-answer and you have scrolled back to read it.
+    #[test]
+    fn history_survives_the_deque_wrapping_round() {
+        let cap = 8;
+        let mut transcript = TranscriptBuffer::new(cap);
+
+        // Scroll one line off the top per frame, well past `cap`, so the deque
+        // fills and then keeps rotating.
+        for n in 0..40 {
+            transcript.ingest_aligned_frame(snapshot(&[
+                &format!("line {n}"),
+                &format!("line {}", n + 1),
+                &format!("line {}", n + 2),
+                "",
+                "> ",
+            ]));
+        }
+
+        assert_eq!(
+            transcript.history_len(),
+            cap,
+            "history lost lines to the wrap",
+        );
+        // And what it holds has to be the newest `cap`, reachable by index.
+        let held: Vec<String> = (0..transcript.history_len())
+            .map(|i| transcript.line(i).unwrap_or_default().trim().to_string())
+            .collect();
+        // The newest `cap` committed lines, in order, reachable by index —
+        // the wrap is a storage detail and must not show through as a gap.
+        let expected: Vec<String> = (31..=38).map(|n| format!("line {n}")).collect();
+        assert_eq!(held, expected, "history is not the newest lines in order");
+    }
+
     #[test]
     fn log_history_replaces_the_frame_diff_reconstruction() {
         let mut transcript = TranscriptBuffer::new(50);
