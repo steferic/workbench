@@ -44,8 +44,6 @@ pub struct Message {
 /// Codex needs the room: it journals encrypted reasoning blobs between turns,
 /// so a megabyte of rollout can hold only a handful of spoken messages.
 const TAIL_BYTES: u64 = 4 * 1024 * 1024;
-/// A long reply is worth reading on a phone; a pasted file is not.
-const MAX_TEXT: usize = 2000;
 
 /// Where a reader has got to, so the next pass costs only what was appended.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -128,18 +126,18 @@ fn push(out: &mut Vec<Message>, role: Role, text: &str, at: Option<&str>) {
     if text.is_empty() {
         return;
     }
+    // Whole, however long it is. A message used to be cut at 2000 characters on
+    // the theory that a pasted file is not worth reading on a phone — but the
+    // phone is where you read the conversation when you are not at the desk,
+    // and a reply that stops mid-sentence under an ellipsis is worse than a
+    // long one you can scroll. What bounds the payload is `TAIL_BYTES`, which
+    // is how much journal a first read parses at all; after that a pass carries
+    // only what was appended, and `?have=` means each message crosses once.
     out.push(Message {
         role,
-        text: truncate(text),
+        text: text.to_string(),
         at: at.map(str::to_string),
     });
-}
-
-fn truncate(text: &str) -> String {
-    if text.chars().count() <= MAX_TEXT {
-        return text.to_string();
-    }
-    text.chars().take(MAX_TEXT).chain(['…']).collect()
 }
 
 /// Harness plumbing that Claude stores as if it were your message: system
@@ -445,15 +443,31 @@ mod tests {
         assert_eq!(short_name("Bash"), "Bash");
     }
 
+    /// A wall of text arrives whole. The phone is where the conversation gets
+    /// read away from the desk, so a reply that stops under an ellipsis is a
+    /// reply you have to go to the desk to finish.
     #[test]
-    fn a_wall_of_text_is_cut_rather_than_sent_whole() {
-        let long = "x".repeat(MAX_TEXT * 2);
+    fn a_wall_of_text_arrives_whole() {
+        let long = "x".repeat(40_000);
         let file = write_log(&[&format!(
             r#"{{"type":"user","message":{{"role":"user","content":"{long}"}}}}"#
         )]);
 
         let messages = read(file.path(), Provider::Claude, 5);
-        assert_eq!(messages[0].text.chars().count(), MAX_TEXT + 1);
-        assert!(messages[0].text.ends_with('…'));
+        assert_eq!(messages[0].text, long, "the message was cut");
+        assert!(!messages[0].text.ends_with('…'));
+    }
+
+    /// Multi-byte text is not cut either — the old cap counted characters, so
+    /// nothing here should be able to split one.
+    #[test]
+    fn a_long_message_of_wide_characters_survives_intact() {
+        let long = "日本語のテキスト".repeat(500);
+        let file = write_log(&[&format!(
+            r#"{{"type":"user","message":{{"role":"user","content":"{long}"}}}}"#
+        )]);
+
+        let messages = read(file.path(), Provider::Claude, 5);
+        assert_eq!(messages[0].text, long);
     }
 }
