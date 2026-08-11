@@ -45,8 +45,23 @@ pub struct GlobalConfig {
     #[serde(default = "default_output_split_ratio")]
     pub output_split_ratio: f32,
 
-    #[serde(default)]
+    #[serde(default, deserialize_with = "theme_or_default")]
     pub theme_mode: crate::theme::ThemeMode,
+}
+
+/// A theme name this build does not have falls back to the default instead of
+/// failing the parse.
+///
+/// Themes get added over time, and `load_config` gives up on the whole file
+/// when any field does not deserialize — so without this, picking a new theme
+/// and then running an older binary once would cost you every pane ratio in
+/// the config, to fix a field that has a perfectly good default.
+fn theme_or_default<'de, D>(deserializer: D) -> Result<crate::theme::ThemeMode, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let name = String::deserialize(deserializer)?;
+    Ok(crate::theme::ThemeMode::from_name(&name).unwrap_or_default())
 }
 
 fn default_banner_visible() -> bool {
@@ -323,5 +338,43 @@ mod tests {
         }))
         .expect("config with todos_ratio must still deserialize");
         assert!((config.tasks_ratio - 0.42).abs() < f32::EPSILON);
+    }
+
+    /// The theme field is a name, and names outlive the build that wrote them.
+    #[test]
+    fn a_theme_name_this_build_does_not_have_costs_only_the_theme() {
+        // Written by a newer build, read by this one.
+        let config: GlobalConfig = serde_json::from_value(serde_json::json!({
+            "banner_visible": false,
+            "left_panel_ratio": 0.42,
+            "theme_mode": "Sometheme"
+        }))
+        .expect("an unknown theme must not fail the whole config");
+        assert_eq!(config.theme_mode, crate::theme::ThemeMode::default());
+        assert!(
+            (config.left_panel_ratio - 0.42).abs() < f32::EPSILON,
+            "the rest of the config has to survive the fallback",
+        );
+        assert!(!config.banner_visible);
+
+        // The two that existed before there was a registry still land.
+        for (stored, want) in [
+            ("Dark", crate::theme::ThemeMode::Dark),
+            ("Light", crate::theme::ThemeMode::Light),
+            ("Kimidori", crate::theme::ThemeMode::Kimidori),
+        ] {
+            let config: GlobalConfig =
+                serde_json::from_value(serde_json::json!({ "theme_mode": stored })).unwrap();
+            assert_eq!(config.theme_mode, want, "{stored} did not round-trip");
+        }
+
+        // And what we write is what we can read back.
+        let round = serde_json::to_string(&GlobalConfig {
+            theme_mode: crate::theme::ThemeMode::Botan,
+            ..GlobalConfig::default()
+        })
+        .unwrap();
+        let back: GlobalConfig = serde_json::from_str(&round).unwrap();
+        assert_eq!(back.theme_mode, crate::theme::ThemeMode::Botan);
     }
 }

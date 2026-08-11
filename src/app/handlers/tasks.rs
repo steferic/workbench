@@ -170,9 +170,11 @@ pub fn handle_task_action(
             state.system.task_refresh_inflight = false;
         }
         Action::ActivateUtility => {
-            // Handle ToggleTheme - flip dark/light and persist
+            // Step to the next theme and persist. Enter advances through the
+            // list rather than flipping a pair, because there are fourteen of
+            // them now and a toggle could only ever reach two.
             if state.ui.selected_utility == UtilityItem::ToggleTheme {
-                state.ui.theme_mode = state.ui.theme_mode.toggled();
+                state.ui.theme_mode = state.ui.theme_mode.next();
                 let config = crate::persistence::GlobalConfig {
                     banner_visible: state.ui.banner_visible,
                     left_panel_ratio: state.ui.layout.left_panel_ratio,
@@ -183,6 +185,8 @@ pub fn handle_task_action(
                     theme_mode: state.ui.theme_mode,
                 };
                 save_config(state, &config, "failed to save theme config");
+                // Redraw the list so its marker follows the theme it is naming.
+                load_utility_content(state, action_tx);
             } else {
                 load_utility_content(state, action_tx);
                 state.set_active_session_id(None);
