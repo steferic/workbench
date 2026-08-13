@@ -364,6 +364,7 @@ pub fn process_action(
 
                 // Global already handled
                 Action::Quit | Action::ConfirmQuit | Action::Tick | Action::Resize(_, _) |
+                Action::ForceRedraw |
                 Action::UtilityContentLoaded(_) | Action::DiffStatsUpdated(_) |
                 Action::PortsScanned(_) | Action::ScrollbackLoaded { .. } => {}
             }

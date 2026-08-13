@@ -19,14 +19,6 @@ use uuid::Uuid;
 
 use super::{report_runtime_error, save_config, save_state_with_notepad};
 
-fn bracketed_paste_payload(text: &str) -> Vec<u8> {
-    let mut data = Vec::with_capacity(text.len() + 10);
-    data.extend_from_slice(b"\x1b[200~");
-    data.extend_from_slice(text.as_bytes());
-    data.extend_from_slice(b"\x1b[201~");
-    data
-}
-
 fn paste_target_session_id(state: &AppState) -> Option<Uuid> {
     match state.ui.focus {
         FocusPanel::PinnedTerminalPane(idx) => state.pinned_terminal_id_at(idx),
@@ -224,7 +216,7 @@ pub fn handle_navigation_action(
                 }
                 save_state_with_notepad(state, "failed to save notepad paste");
             } else if let Some(session_id) = paste_target_session_id(state) {
-                let data = bracketed_paste_payload(&text);
+                let data = crate::app::agent_input::bracketed(&text);
                 let send_error = state
                     .system
                     .pty_handles

@@ -41,8 +41,9 @@ pub fn submit_text(action_tx: &mpsc::UnboundedSender<Action>, session_id: Uuid, 
 
 /// Wrap text in the paste markers, with any end-marker inside it removed —
 /// otherwise a message could close its own paste and have the rest read as
-/// keystrokes.
-fn bracketed(text: &str) -> Vec<u8> {
+/// keystrokes. Used for every paste workbench forwards, including the user's
+/// own clipboard.
+pub(crate) fn bracketed(text: &str) -> Vec<u8> {
     const START: &[u8] = b"\x1b[200~";
     const END: &[u8] = b"\x1b[201~";
 

@@ -212,6 +212,12 @@ async fn run_main_loop(
         // Check discriminant before consuming the action to avoid cloning
         let is_pty_output = matches!(&action, Action::PtyOutput(_, _));
 
+        // ForceRedraw needs the terminal handle, which only this loop holds:
+        // drop ratatui's back buffer so the next draw repaints every cell.
+        if matches!(&action, Action::ForceRedraw) {
+            terminal.clear()?;
+        }
+
         // Process action (takes ownership, no clone needed)
         process_action(state, action, pty_manager, &action_tx, &pty_tx)?;
 

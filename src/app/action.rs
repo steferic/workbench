@@ -254,6 +254,11 @@ pub enum Action {
     // Debug
     ToggleDebugOverlay, // F11 - show terminal dimension debug info
 
+    // Repaint every cell on the next draw. Recovers from an emulator-level
+    // screen clear (e.g. Ghostty's Cmd+K on the primary screen), which wipes
+    // cells ratatui still believes are painted.
+    ForceRedraw,
+
     // Config window
     EnterConfigWindow,
     ExitConfigWindow,

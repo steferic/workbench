@@ -480,6 +480,7 @@ fn format_action_name(action: &str) -> &str {
         "InitiateQuit" => "Quit",
         "ToggleDebugOverlay" => "Debug Overlay",
         "EnterConfigWindow" => "Help & Settings",
+        "ForceRedraw" => "Force Redraw",
         _ => action,
     }
 }
