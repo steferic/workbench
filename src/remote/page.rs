@@ -706,25 +706,69 @@ pub const HTML: &str = r##"<!doctype html>
   .proj:active, .agent:active, .server:active { transform:scale(.985); }
 
   /* ---- header ---------------------------------------------------------- */
-  /* Lifted out of the column and laid over it, so the conversation runs
-     underneath instead of stopping short — which is the whole point of a
-     blurred bar. Nothing passes behind a bar that nothing can reach.
+  /* Not a bar. The foot is a card floating over the page and the top now
+     answers it: a status chip and a row of round buttons, each its own piece
+     of glass, with the conversation running between them rather than under a
+     lid. An edge-to-edge bar has to be opaque enough to hide what it crosses,
+     which is the opposite of what the material is for — glass is worth having
+     because you can see it is glass, and you only see that at its edges.
+     Discrete pieces are almost all edge.
 
-     The blur is only visible because of the 60%: at full opacity there is
-     nothing to see through, and `backdrop-filter` would be doing work no one
-     could tell was happening. `--bg` is the tint because it is the top of the
-     wash, which is the part of the page this sits on. */
+     The container keeps the position and the spacing and paints nothing, so
+     what is left between the pieces is page. `pointer-events` follows: the
+     gaps belong to the log, and a flick that lands in one scrolls the
+     conversation instead of hitting a bar that is no longer there. */
   header {
     position:absolute; top:0; left:0; right:0; z-index:4;
-    display:flex; align-items:center; gap:11px;
-    padding:max(9px,env(safe-area-inset-top)) 10px 9px 14px;
-    background:color-mix(in srgb, var(--head-tint,var(--bg)) 60%, transparent);
+    display:flex; align-items:center; gap:8px;
+    padding:max(9px,env(safe-area-inset-top)) 10px 9px 10px;
+    background:none; box-shadow:none; border-bottom:0;
+    color:var(--on-head,var(--fg));
+    pointer-events:none;
+  }
+  /* The pieces, not their wrappers: `.tools` spans the whole run of buttons,
+     so handing it back its events would put the gaps between them inside a
+     hit area again — which is the bar, invisible. */
+  .chip, .icon { pointer-events:auto; }
+
+  /* The same glass as `.dock`, because it is the same material and two
+     recipes that drifted apart would just be a way to get one wrong: a
+     translucent fill over the theme's bar colour, blurred behind, with a
+     specular rim. See `.dock::before` and `.dock::after` for why the fill is
+     a layer of its own and why the rim is a gradient rather than a border.
+
+     What differs is the shape and what it is judged against. These are round
+     rather than a rounded rectangle, and they sit at the *top* of the wash,
+     so their ink is measured there — see `headInk`. */
+  .chip, .icon {
+    position:relative; isolation:isolate;
     backdrop-filter:blur(18px) saturate(150%);
     -webkit-backdrop-filter:blur(18px) saturate(150%);
-    /* `--depth` without the ring: the ring would box all four sides, and only
-       the underside of a header is an edge. */
-    border-bottom:0; box-shadow:var(--depth);
+    box-shadow:var(--float);
     color:var(--on-head,var(--fg));
+  }
+  .chip::before, .icon::before {
+    content:""; position:absolute; inset:0; z-index:-1; border-radius:inherit;
+    background:linear-gradient(var(--surface),var(--surface)), var(--chrome);
+    opacity:var(--bubble-alpha,.4);
+  }
+  .chip::after, .icon::after {
+    content:""; position:absolute; inset:0; border-radius:inherit;
+    pointer-events:none; padding:1px;
+    background:linear-gradient(150deg,
+      #ffffffa8 0%, #ffffff38 22%, #ffffff0f 42%,
+      transparent 58%, #ffffff1f 88%, #ffffff4d 100%);
+    -webkit-mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite:xor;
+    mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask-composite:exclude;
+  }
+  /* Hugs its text and gives the rest of the row away, so the buttons sit at
+     the far edge and the gap between is page. A chip that stretched would be
+     the bar again, drawn in two pieces. */
+  .chip {
+    display:flex; align-items:center; gap:8px; min-width:0; margin-right:auto;
+    padding:6px 13px 6px 11px; border-radius:999px;
   }
   /* The same for the bottom edge, and for the same reason — the composer's
      `backdrop-filter` had nothing behind it to blur while the log ended above
@@ -734,7 +778,7 @@ pub const HTML: &str = r##"<!doctype html>
     position:absolute; left:0; right:0; bottom:0; z-index:4;
     display:flex; flex-direction:column;
   }
-  .who { display:flex; flex-direction:column; min-width:0; flex:1; gap:1px; }
+  .who { display:flex; flex-direction:column; min-width:0; flex:0 1 auto; gap:1px; }
   /* Both lines cut rather than wrap. A header is one row tall by definition,
      and the alternative is a name breaking over three lines on a narrow phone
      and pushing the conversation down the screen to make room for itself. */
@@ -763,28 +807,33 @@ pub const HTML: &str = r##"<!doctype html>
      the thumb reaches and the least accurately. The glyph scales with the box:
      the target is what you hit, but the glyph is what tells you it is there.
 
-     The colour comes from the header's own composite — see headInk(): these
-     sit on a 60% tint over the top of the wash, which is a different surface
-     from the page the rest of `--fg` was picked against. */
+     Round because they are separate objects now. A rounded square reads as a
+     tile cut from a bar even after the bar is gone; a circle has no side to
+     line up with the next one, which is what makes a row of them read as
+     buttons rather than as a strip. The ink comes from what the glass
+     actually composites to — see headInk(). */
   .icon {
-    flex:none; width:48px; height:48px; border-radius:13px; position:relative;
+    flex:none; width:48px; height:48px; border-radius:50%;
     display:grid; place-items:center; font-size:22px;
-    background:none; border:0; color:var(--on-head,var(--fg));
+    background:none; border:0;
   }
-  .icon:active { background:color-mix(in srgb, var(--on-head,var(--fg)) 10%, transparent); }
+  /* The press reads on the glass itself rather than by filling it: these are
+     round now, and a tinted square inside a circle was visible as one. */
+  .icon:active::before { opacity:calc(var(--bubble-alpha,.4) + .28); }
+  /* Sat in the corner of a rounded square; on a circle that corner is outside
+     the shape, so it comes in to straddle the arc instead. Above the rim,
+     which is a later pseudo-element and would otherwise be drawn over it. */
   .icon .badge {
-    position:absolute; top:3px; right:2px; min-width:17px; height:17px; padding:0 4px;
+    position:absolute; top:2px; right:2px; z-index:1;
+    min-width:17px; height:17px; padding:0 4px;
     background:var(--warn); color:#1a1305; border-radius:999px;
     font-size:8.5px; font-weight:500; line-height:17px; text-align:center;
   }
-  /* The icons close ranks so the growth comes out of the space between them
-     rather than out of the name beside them: four 48px targets and the
-     header's own gap would leave a narrow phone with nothing to write in. The
-     gap that matters is the one before the group, which `header` still sets;
-     between two adjacent targets there is nothing to separate. The negative
-     margin pulls the last glyph back over the header's padding so it sits
-     optically on the edge, the way the 44px one did. */
-  .tools { display:flex; align-items:center; gap:0; flex:none; margin-right:-5px; }
+  /* Separate pieces now, so they are spaced like pieces. They closed ranks
+     when they were glyphs on one bar and there was nothing between them to
+     separate; each carries its own edge, and two rims touching would read as
+     a seam rather than two buttons. */
+  .tools { display:flex; align-items:center; gap:7px; flex:none; }
 
   /* ---- conversation ---------------------------------------------------- */
   /* The only child still in the column, so it takes the whole height, and the
@@ -1227,8 +1276,10 @@ pub const HTML: &str = r##"<!doctype html>
 </head>
 <body>
 <header>
-  <span class="dot" id="hdot"></span>
-  <span class="who"><b id="hname">—</b><span id="hwhat"></span></span>
+  <div class="chip">
+    <span class="dot" id="hdot"></span>
+    <span class="who"><b id="hname">—</b><span id="hwhat"></span></span>
+  </div>
   <nav class="tools">
     <button class="icon" id="cycleproj" onclick="cycleProject()" title="next project" hidden>⇅</button>
     <button class="icon" id="cycle" onclick="cycleAgent()" title="next agent here" hidden>⇄</button>
@@ -1853,8 +1904,6 @@ function contrast(a, b) {
    runs from dark brown to cream, and no single colour clears a useful bar
    against both ends. A theme with no gradient leaves `--stops` transparent,
    and then the page is simply the page. */
-function washUnderCard(styles) { return washAt(styles, true); }
-
 function washAt(styles, atFoot) {
   // Checked before it is read: `toRgb` cannot fail — handed something that is
   // not a colour it quietly returns the probe's inherited one, so a stop this
@@ -1925,19 +1974,16 @@ function inkFor(surface, base) {
    The visible top of the wash is the right tint, so the bar reads as the page
    thickened rather than as a slab, and `--fg` — chosen against exactly that —
    almost always still fits. `inkFor` covers the rest. */
-function headSurface() {
-  const styles = getComputedStyle(document.documentElement);
-  const tint = washAt(styles, false);
-  document.documentElement.style.setProperty("--head-tint", "rgb(" + tint.join(",") + ")");
-  return { styles, tint };
+/* The header's pieces are the composer's material, so they are judged by the
+   same measurement — only at the other end of the wash. They used to be a
+   60% tint of the page painted edge to edge, which is a different surface
+   with different ink; as glass over the top of the gradient they land where
+   `cardInk` already knows how to look. */
+function headInk(alpha) {
+  return cardInk(alpha, false);
 }
 
-function headInk() {
-  const { styles, tint } = headSurface();
-  return inkFor(tint, toRgb(styles.getPropertyValue("--fg")).slice(0, 3)) || "var(--fg)";
-}
-
-function cardInk(alpha) {
+function cardInk(alpha, atFoot = true) {
   const styles = getComputedStyle(document.documentElement);
   const surface = toRgb(styles.getPropertyValue("--surface"));
   const chrome = toRgb(styles.getPropertyValue("--chrome")).slice(0, 3);
@@ -1945,7 +1991,7 @@ function cardInk(alpha) {
   // over `--chrome` first — the same material the card paints.
   const own = surface.length === 4 ? surface[3] : 1;
   const material = chrome.map((c, i) => surface[i] * own + c * (1 - own));
-  const behind = washUnderCard(styles);
+  const behind = washAt(styles, atFoot);
   const card = material.map((c, i) => c * alpha + behind[i] * (1 - alpha));
 
   // Further from the card, never across it. Letting the walk pick whichever
@@ -1984,7 +2030,7 @@ function setBubbles(percent) {
   root.style.setProperty("--on-bubble", readableOn("--accent", percent / 100));
   root.style.setProperty("--on-bubble-2", readableOn("--accent-2", percent / 100));
   root.style.setProperty("--on-card", cardInk(percent / 100));
-  root.style.setProperty("--on-head", headInk());
+  root.style.setProperty("--on-head", headInk(percent / 100));
   root.setAttribute("data-bubbles", percent > 0 ? "on" : "off");
   document.getElementById("bubbles").value = percent;
   document.getElementById("bubbleValue").textContent = percent ? percent + "%" : "plain";
