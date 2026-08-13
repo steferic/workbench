@@ -302,15 +302,46 @@ fn agent_args(
         "grok" => {
             if dangerously_skip_permissions {
                 args.push("--permission-mode".into());
-                args.push("full".into());
+                args.push("bypassPermissions".into());
             }
-            if resume != &Resume::No {
-                args.push("--continue".into());
+            match resume {
+                Resume::Conversation(id) => {
+                    args.push("--resume".into());
+                    args.push(id.clone());
+                }
+                Resume::MostRecent => args.push("--continue".into()),
+                Resume::No => {}
             }
         }
-        // Anything else (including opencode, whose resume flags are not yet
-        // verified) runs bare. Its task list is still mirrored — that reads the
-        // agent's own store and needs no cooperation from the command line.
+        "pi" => {
+            // pi has no approval-bypass flag; `--approve` only trusts
+            // project-local files, so `dangerously_skip_permissions` has
+            // nothing to map onto here.
+            match resume {
+                Resume::Conversation(id) => {
+                    args.push("--session".into());
+                    args.push(id.clone());
+                }
+                Resume::MostRecent => args.push("--continue".into()),
+                // Pin the session id like Claude, so the conversation is
+                // addressable on restart rather than merging into whatever
+                // ran last in this directory.
+                Resume::No => {
+                    args.push("--session-id".into());
+                    args.push(session_id.to_string());
+                }
+            }
+        }
+        "opencode" => match resume {
+            Resume::Conversation(id) => {
+                args.push("--session".into());
+                args.push(id.clone());
+            }
+            Resume::MostRecent => args.push("--continue".into()),
+            Resume::No => {}
+        },
+        // Anything else runs bare. Its task list is still mirrored — that reads
+        // the agent's own store and needs no cooperation from the command line.
         _ => {}
     }
     args
@@ -1112,6 +1143,70 @@ mod tests {
                 args(custom("codex"), Resume::Conversation("conv".into()), id, true),
                 vec!["resume", "conv"]
             );
+        }
+
+        /// `--permission-mode` is an enum on grok's side: an invalid value is
+        /// a hard startup error, not a warning.
+        #[test]
+        fn grok_bypasses_permissions_with_a_value_grok_actually_accepts() {
+            let id = Uuid::new_v4();
+            let grok = AgentType::Custom {
+                command: "grok".into(),
+                display_name: "Grok".into(),
+                badge: "K".into(),
+            };
+            assert_eq!(
+                agent_args(&grok, id, &Resume::No, true, true, None),
+                vec!["--permission-mode", "bypassPermissions"]
+            );
+        }
+
+        /// Resuming by id has to name the session; falling back to `--continue`
+        /// would silently attach to whatever ran last in this directory.
+        #[test]
+        fn grok_resumes_its_own_conversation_by_id() {
+            let id = Uuid::new_v4();
+            let grok = |r| {
+                args(
+                    AgentType::Custom {
+                        command: "grok".into(),
+                        display_name: "Grok".into(),
+                        badge: "K".into(),
+                    },
+                    r,
+                    id,
+                    true,
+                )
+            };
+            assert_eq!(
+                grok(Resume::Conversation("conv".into())),
+                vec!["--resume", "conv"]
+            );
+            assert_eq!(grok(Resume::MostRecent), vec!["--continue"]);
+            assert!(grok(Resume::No).is_empty());
+        }
+
+        #[test]
+        fn pi_pins_a_new_session_id_and_resumes_that_session_by_id() {
+            let id = Uuid::new_v4();
+            let pi = |r| {
+                args(
+                    AgentType::Custom {
+                        command: "pi".into(),
+                        display_name: "Pi".into(),
+                        badge: "P".into(),
+                    },
+                    r,
+                    id,
+                    true,
+                )
+            };
+            assert_eq!(pi(Resume::No), vec!["--session-id", &id.to_string()]);
+            assert_eq!(
+                pi(Resume::Conversation("conv".into())),
+                vec!["--session", "conv"]
+            );
+            assert_eq!(pi(Resume::MostRecent), vec!["--continue"]);
         }
 
         #[test]

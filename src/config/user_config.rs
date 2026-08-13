@@ -124,6 +124,27 @@ fn default_agents() -> Vec<AgentConfig> {
             hotkey: "4".into(),
             enabled: true,
         },
+        AgentConfig {
+            command: "opencode".into(),
+            display_name: "opencode".into(),
+            badge: "O".into(),
+            hotkey: "5".into(),
+            enabled: true,
+        },
+        AgentConfig {
+            command: "hermes".into(),
+            display_name: "Hermes".into(),
+            badge: "H".into(),
+            hotkey: "6".into(),
+            enabled: true,
+        },
+        AgentConfig {
+            command: "pi".into(),
+            display_name: "Pi".into(),
+            badge: "P".into(),
+            hotkey: "7".into(),
+            enabled: true,
+        },
     ]
 }
 
