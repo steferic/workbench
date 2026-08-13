@@ -177,7 +177,9 @@ pub fn convert_vt100_to_lines_visible(
         rows
     };
 
-    // Optimization: if visible range is specified, only convert those rows
+    // Optimization: if visible range is specified, only convert those rows.
+    // The returned Vec then starts at `visible_start` — the caller renders it
+    // as a window, so no leading placeholder lines are materialized.
     let (start_row, end_row) = if let (Some(start), Some(count)) = (visible_start, visible_count) {
         let start = start.min(rows_to_render as usize);
         let end = (start + count).min(rows_to_render as usize);
@@ -185,11 +187,6 @@ pub fn convert_vt100_to_lines_visible(
     } else {
         (0, rows_to_render)
     };
-
-    // If we're skipping rows, add empty lines as placeholders for scroll offset calculation
-    for _ in 0..start_row {
-        all_lines.push(Line::raw(""));
-    }
 
     // Pre-allocate reusable buffers outside the row loop
     let mut spans: Vec<Span<'static>> = Vec::with_capacity(cols as usize);
@@ -248,9 +245,10 @@ pub fn convert_vt100_to_lines_visible(
     }
 
     // Only trim trailing empty lines for non-alternate screen mode
-    // For alternate screen (nvim, etc.), preserve all rows for proper layout
+    // For alternate screen (nvim, etc.), preserve all rows for proper layout.
+    // Row indices are absolute even when the Vec starts at `start_row`.
     if !is_alternate {
-        while all_lines.len() > (cursor_row as usize + 1)
+        while start_row as usize + all_lines.len() > (cursor_row as usize + 1)
             && all_lines
                 .last()
                 .map(|l| l.spans.is_empty())

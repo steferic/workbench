@@ -30,7 +30,13 @@ pub(super) struct TerminalViewRequest {
 }
 
 pub(super) struct TerminalView {
+    /// A window of content rows starting at `window_start` — NOT the full
+    /// content. Renderers must scroll by `scroll_offset - window_start`.
+    /// Materializing lines for the whole history just so Paragraph::scroll
+    /// could skip them cost O(history) allocations per frame.
     pub lines: Vec<Line<'static>>,
+    /// Absolute content row of `lines[0]`.
+    pub window_start: usize,
     pub content_len: usize,
     pub scrollbar_content_len: usize,
     pub scroll_from_bottom: usize,
@@ -107,6 +113,7 @@ pub(super) fn build_terminal_view(
                 request.viewport_height,
                 scroll_offset,
             ),
+            window_start: window_start_for(scroll_offset),
             content_len,
             scrollbar_content_len: content_len,
             scroll_from_bottom,
@@ -170,6 +177,7 @@ pub(super) fn build_terminal_view(
                 request.viewport_height,
                 scroll_offset,
             ),
+            window_start: window_start_for(scroll_offset),
             content_len,
             scrollbar_content_len: content_len,
             scroll_from_bottom,
@@ -209,6 +217,7 @@ pub(super) fn build_terminal_view(
                 request.viewport_height,
                 scroll_offset,
             ),
+            window_start: window_start_for(scroll_offset),
             content_len,
             scrollbar_content_len,
             scroll_from_bottom,
@@ -297,6 +306,11 @@ fn scroll_positions(
     (scroll_from_bottom, scroll_offset)
 }
 
+/// Absolute content row where the rendered window begins.
+fn window_start_for(scroll_offset: usize) -> usize {
+    scroll_offset.saturating_sub(VISIBLE_BUFFER_LINES)
+}
+
 fn visible_lines(
     screen: &vt100::Screen,
     selection: Option<crate::tui::utils::SelectionBounds>,
@@ -304,7 +318,7 @@ fn visible_lines(
     viewport_height: usize,
     scroll_offset: usize,
 ) -> Vec<Line<'static>> {
-    let visible_start = scroll_offset.saturating_sub(VISIBLE_BUFFER_LINES);
+    let window_start = window_start_for(scroll_offset);
     let visible_count = viewport_height + VISIBLE_BUFFER_LINES * 2;
 
     let mut lines = convert_vt100_to_lines_visible(
@@ -312,12 +326,13 @@ fn visible_lines(
         selection,
         cursor_row,
         Some(viewport_height as u16),
-        Some(visible_start),
+        Some(window_start),
         Some(visible_count),
     );
 
-    let min_visible_len = scroll_offset.saturating_add(viewport_height);
-    while lines.len() < min_visible_len {
+    // Pad so the scrolled viewport always has a full page of rows to show.
+    let min_window_len = scroll_offset + viewport_height - window_start;
+    while lines.len() < min_window_len {
         lines.push(Line::raw(""));
     }
 
@@ -330,15 +345,12 @@ fn transcript_lines(
     viewport_height: usize,
     scroll_offset: usize,
 ) -> Vec<Line<'static>> {
-    let visible_start = scroll_offset.saturating_sub(VISIBLE_BUFFER_LINES);
+    let window_start = window_start_for(scroll_offset);
     let visible_count = viewport_height + VISIBLE_BUFFER_LINES * 2;
-    let visible_end = (visible_start + visible_count).min(transcript.len());
+    let visible_end = (window_start + visible_count).min(transcript.len());
 
     let mut lines = Vec::new();
-    for _ in 0..visible_start {
-        lines.push(Line::raw(""));
-    }
-    for row in visible_start..visible_end {
+    for row in window_start..visible_end {
         if let Some(line) = transcript.styled_line(row) {
             lines.push(transcript_line(row, line, selection));
         } else {
@@ -346,8 +358,9 @@ fn transcript_lines(
         }
     }
 
-    let min_visible_len = scroll_offset.saturating_add(viewport_height);
-    while lines.len() < min_visible_len {
+    // Pad so the scrolled viewport always has a full page of rows to show.
+    let min_window_len = scroll_offset + viewport_height - window_start;
+    while lines.len() < min_window_len {
         lines.push(Line::raw(""));
     }
 

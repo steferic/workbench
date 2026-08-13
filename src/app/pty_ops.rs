@@ -96,8 +96,14 @@ pub fn resize_ptys_to_panes(state: &mut AppState) {
         }
     }
 
-    // Invalidate all replay caches since column changes affect line wrapping
-    state.system.replay_caches.clear();
+    // Drop replay caches whose column count no longer matches their pane —
+    // rebuilding one replays the whole raw buffer, so a resize that left a
+    // pane's width alone must not cost its sessions their caches. (Staleness
+    // from new output is handled at use: build_terminal_view checks the
+    // cache's generation and cols before trusting it.)
+    state.system.replay_caches.retain(|session_id, cache| {
+        size_for(session_id).is_none_or(|(_, cols)| cache.cols == cols.max(1))
+    });
 }
 
 #[cfg(test)]

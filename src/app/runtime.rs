@@ -26,6 +26,27 @@ const RAIN_WAV: &str = concat!(
     "/assets/sounds/rainforest_rain.wav"
 );
 
+/// Is anything on screen moving on its own — without an action arriving?
+/// These are the only things that justify repainting on a bare tick: the
+/// banner marquee, working/loading spinners, and drag auto-scroll (which
+/// keeps scrolling while the mouse holds still at a pane edge).
+fn has_ambient_animation(state: &AppState) -> bool {
+    if state.ui.banner_visible {
+        return true;
+    }
+    if state.drag_mouse_pos().is_some() {
+        return true;
+    }
+    if !state.system.startup_queue.is_empty() {
+        return true;
+    }
+    state
+        .data
+        .workspaces
+        .iter()
+        .any(|ws| state.is_workspace_working(ws.id))
+}
+
 fn stop_radio_process(mut child: std::process::Child) {
     if let Err(err) = child.kill() {
         crate::logger::warn(format!("failed to stop radio process: {err}"));
@@ -168,22 +189,45 @@ async fn run_main_loop(
     // Track if we've done initial session start after first render
     let mut initial_sessions_started = false;
 
+    // The input thread ticks every 50ms even when idle. Drawing on every tick
+    // burns CPU repainting an unchanged screen, so draws are gated: real
+    // actions draw immediately, ambient animations (spinners, banner marquee)
+    // repaint on a slower cadence, and a heartbeat bounds how stale anything —
+    // the header clock, a missed dirty flag — can ever get.
+    const ANIMATION_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+    const IDLE_HEARTBEAT: std::time::Duration = std::time::Duration::from_secs(1);
+    let mut needs_draw = true;
+    let mut last_draw = std::time::Instant::now();
+
     loop {
-        // Start frame timing
-        state.system.perf.frame_start();
+        let since_last_draw = last_draw.elapsed();
+        let draw_now = needs_draw
+            || effects.has_active_effects()
+            || !effects.startup_complete()
+            || since_last_draw >= IDLE_HEARTBEAT
+            || (since_last_draw >= ANIMATION_INTERVAL && has_ambient_animation(state));
 
-        // Draw UI with effects
-        terminal.draw(|frame| tui::ui::draw(frame, state, effects))?;
+        if draw_now {
+            // Start frame timing
+            state.system.perf.frame_start();
 
-        // End frame timing (measures render time)
-        state.system.perf.frame_end();
+            // Draw UI with effects
+            terminal.draw(|frame| tui::ui::draw(frame, state, effects))?;
 
-        // Sync PTY sizes to pane sizes now that this frame's layout rects are
-        // stored (see request_pty_resize — doing this from action handlers
-        // would use the previous layout and leave PTYs one resize behind).
-        if state.system.pty_resize_pending {
-            state.system.pty_resize_pending = false;
-            super::pty_ops::resize_ptys_to_panes(state);
+            // End frame timing (measures render time)
+            state.system.perf.frame_end();
+
+            last_draw = std::time::Instant::now();
+            needs_draw = false;
+
+            // Sync PTY sizes to pane sizes now that this frame's layout rects
+            // are stored (see request_pty_resize — doing this from action
+            // handlers would use the previous layout and leave PTYs one
+            // resize behind).
+            if state.system.pty_resize_pending {
+                state.system.pty_resize_pending = false;
+                super::pty_ops::resize_ptys_to_panes(state);
+            }
         }
 
         // After first render, start sessions with accurate pane dimensions
@@ -211,6 +255,13 @@ async fn run_main_loop(
 
         // Check discriminant before consuming the action to avoid cloning
         let is_pty_output = matches!(&action, Action::PtyOutput(_, _));
+
+        // Anything but a bare tick changes state worth showing. A tick that
+        // carries a queued palette action does too — it executes inside the
+        // tick handler and shouldn't wait out the heartbeat.
+        if !matches!(&action, Action::Tick) || state.ui.palette.pending_action.is_some() {
+            needs_draw = true;
+        }
 
         // ForceRedraw needs the terminal handle, which only this loop holds:
         // drop ratatui's back buffer so the next draw repaints every cell.

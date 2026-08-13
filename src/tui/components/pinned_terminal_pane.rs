@@ -75,9 +75,12 @@ pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index
         pane.content_length = view.content_len;
     }
 
+    // view.lines is a window starting at view.window_start, so the Paragraph
+    // scrolls by the small in-window remainder, not the absolute offset.
+    let window_scroll = view.scroll_offset.saturating_sub(view.window_start);
     let paragraph = Paragraph::new(view.lines)
         .block(block)
-        .scroll((view.scroll_offset as u16, 0));
+        .scroll((window_scroll as u16, 0));
 
     frame.render_widget(paragraph, area);
 
