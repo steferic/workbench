@@ -511,6 +511,13 @@ fn scan_ports(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) {
     if !state.system.user_config.expose_dev_servers || state.system.port_scan_inflight {
         return;
     }
+    // Everything the scan feeds is a phone-view feature — the dev-server
+    // list and the tailnet forwarders — and both attribute servers to a
+    // workspace. Without a running remote or any workspace to own a port,
+    // the two lsof forks every 5 seconds buy nothing.
+    if state.system.remote.is_none() || state.data.workspaces.is_empty() {
+        return;
+    }
     let due = state
         .system
         .last_port_scan
