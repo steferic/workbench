@@ -92,6 +92,13 @@ each workspace's `CLAUDE.local.md` / `AGENTS.md` (kept out of git via
 just tell Claude "ask codex what it thinks" or "read the other claude's
 transcript and take over where it left off".
 
+If a workspace already **tracks** `AGENTS.md` in git, workbench never writes
+to it: that file is project-owned and committed, while this block describes
+your local machine (a TUI, live peer sessions, `$WORKBENCH_SESSION`) — and
+editing a tracked file would let any agent running `git add -A` commit those
+machine instructions into the shared repo. The block goes to an untracked
+`AGENTS.local.md` sidecar instead, so agents here still get the protocol.
+
 ```bash
 workbench agents                       # roster: id, provider, alias, branch, idle/busy
 workbench transcript <id|alias>        # a peer's recent conversation (exported at each idle)

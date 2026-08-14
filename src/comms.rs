@@ -385,18 +385,65 @@ pub fn upsert_instructions_file(path: &Path, block: &str) -> Result<bool> {
     Ok(created)
 }
 
+/// The untracked sidecar that carries the block when the conventional file
+/// is version-controlled. `AGENTS.md` -> `AGENTS.local.md`; anything already
+/// ending in `.local.md` is its own sidecar.
+fn local_sidecar_name(name: &str) -> String {
+    match name.strip_suffix(".md") {
+        Some(stem) if !stem.ends_with(".local") => format!("{stem}.local.md"),
+        _ => name.to_string(),
+    }
+}
+
+/// Is this path version-controlled in the workspace?
+fn is_git_tracked(workspace_path: &Path, name: &str) -> bool {
+    if !workspace_path.join(".git").exists() {
+        return false;
+    }
+    std::process::Command::new("git")
+        .arg("-C")
+        .arg(workspace_path)
+        .args(["ls-files", "--error-unmatch", "--"])
+        .arg(name)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 /// Make sure a workspace's instruction files carry the workbench block.
-/// Files we create are added to `.git/info/exclude` so they never show up
-/// as untracked noise; pre-existing (possibly tracked) files just get the
-/// fenced section refreshed.
+///
+/// Placement rules, in order:
+///  - the file is GIT-TRACKED: never touch it. `AGENTS.md` is increasingly a
+///    project-owned, committed convention file, and this block is guidance
+///    about the local dev environment (a TUI, peer sessions, `$WORKBENCH_SESSION`)
+///    that no teammate or CI checkout should inherit. Worse, editing a tracked
+///    file means any agent running `git add -A` silently commits machine
+///    instructions into the shared repo. The block goes to an untracked
+///    sidecar (`AGENTS.local.md`) instead, so agents here still get it.
+///  - the file is untracked (or absent): create/refresh the fenced section in
+///    place. Files we create are added to `.git/info/exclude` so they never
+///    show up as untracked noise.
 pub fn ensure_workspace_instructions(workspace_path: &Path) -> Result<()> {
     let block = instructions_block();
     for name in ["CLAUDE.local.md", "AGENTS.md"] {
-        let path = workspace_path.join(name);
+        let mut target = name.to_string();
+        if is_git_tracked(workspace_path, name) {
+            let sidecar = local_sidecar_name(name);
+            if sidecar == name {
+                continue; // tracked and has no distinct sidecar: leave it alone
+            }
+            target = sidecar;
+            if is_git_tracked(workspace_path, &target) {
+                continue; // the sidecar is tracked too; nothing safe to write
+            }
+        }
+        let path = workspace_path.join(&target);
         let existed = path.exists();
         upsert_instructions_file(&path, &block)?;
         if !existed {
-            add_git_exclude(workspace_path, name);
+            add_git_exclude(workspace_path, &target);
         }
     }
     Ok(())
@@ -430,6 +477,7 @@ fn add_git_exclude(workspace_path: &Path, name: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     fn agent(id: &str, provider: &str, alias: Option<&str>, status: &str) -> RosterAgent {
         RosterAgent {
@@ -452,6 +500,111 @@ mod tests {
             updated_at: "now".into(),
             agents,
         }
+    }
+
+    fn git_init(dir: &Path) {
+        for args in [
+            vec!["init", "-q"],
+            vec!["config", "user.email", "t@t"],
+            vec!["config", "user.name", "t"],
+        ] {
+            let _ = std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(args)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        }
+    }
+
+    fn git_commit_file(dir: &Path, name: &str, body: &str) {
+        fs::write(dir.join(name), body).unwrap();
+        for args in [vec!["add", name], vec!["commit", "-qm", "add"]] {
+            let _ = std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(args)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        }
+    }
+
+    #[test]
+    fn sidecar_naming() {
+        assert_eq!(local_sidecar_name("AGENTS.md"), "AGENTS.local.md");
+        assert_eq!(local_sidecar_name("CLAUDE.local.md"), "CLAUDE.local.md");
+    }
+
+    /// A project-owned, committed AGENTS.md must never be rewritten: the
+    /// block is local-environment guidance, and editing a tracked file
+    /// invites `git add -A` to commit it into the shared repo.
+    #[test]
+    fn tracked_instruction_file_is_never_modified() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        git_init(root);
+        let original = "# AGENTS\n\nProject-owned guidance.\n";
+        git_commit_file(root, "AGENTS.md", original);
+
+        ensure_workspace_instructions(root).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(root.join("AGENTS.md")).unwrap(),
+            original,
+            "tracked AGENTS.md must be left byte-identical"
+        );
+        let sidecar = fs::read_to_string(root.join("AGENTS.local.md")).unwrap();
+        assert!(
+            sidecar.contains(BLOCK_BEGIN),
+            "the block must still reach agents via the untracked sidecar"
+        );
+        let exclude =
+            fs::read_to_string(root.join(".git/info/exclude")).unwrap_or_default();
+        assert!(exclude.lines().any(|l| l.trim() == "AGENTS.local.md"));
+        assert!(
+            !exclude.lines().any(|l| l.trim() == "AGENTS.md"),
+            "a tracked file must never be added to the exclude list"
+        );
+    }
+
+    /// The ordinary case is unchanged: absent/untracked files are created,
+    /// refreshed in place, and excluded.
+    #[test]
+    fn untracked_instruction_file_is_created_and_excluded() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        git_init(root);
+
+        ensure_workspace_instructions(root).unwrap();
+
+        let agents = fs::read_to_string(root.join("AGENTS.md")).unwrap();
+        assert!(agents.contains(BLOCK_BEGIN));
+        assert!(!root.join("AGENTS.local.md").exists());
+        let exclude =
+            fs::read_to_string(root.join(".git/info/exclude")).unwrap_or_default();
+        assert!(exclude.lines().any(|l| l.trim() == "AGENTS.md"));
+    }
+
+    /// Content outside the fence — a project's own sections — survives a
+    /// refresh untouched.
+    #[test]
+    fn upsert_preserves_content_around_the_fence() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("AGENTS.md");
+        fs::write(
+            &path,
+            format!("before\n\n{}\nstale\n{}\n\nafter\n", BLOCK_BEGIN, BLOCK_END),
+        )
+        .unwrap();
+
+        upsert_instructions_file(&path, &instructions_block()).unwrap();
+
+        let out = fs::read_to_string(&path).unwrap();
+        assert!(out.starts_with("before"), "content before the fence is kept");
+        assert!(out.trim_end().ends_with("after"), "content after the fence is kept");
+        assert!(!out.contains("stale"), "the fenced section is replaced");
     }
 
     #[test]
