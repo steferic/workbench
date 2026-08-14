@@ -51,6 +51,13 @@ pub struct Snapshot {
     /// there from the phone.
     pub projects: Vec<ProjectView>,
     pub agents: Vec<AgentView>,
+    /// The agent whose conversation is being published (short id), if any.
+    /// Focus lives in workbench memory and restarts as "none", while the
+    /// page's idea of it lives in localStorage and survives — without this
+    /// field the page cannot tell "no new messages" from "nobody is
+    /// publishing my conversation", and an open phone kept polling forever
+    /// while its thread silently stopped growing.
+    pub open: Option<String>,
     /// Seconds since the epoch, so the page can show staleness if the desktop
     /// goes away mid-session.
     pub at: i64,
@@ -397,6 +404,14 @@ fn publish_with(state: &AppState, shared: &Shared, open: Option<(Vec<Message>, u
     if let Ok(mut snapshot) = shared.lock() {
         snapshot.projects = projects;
         snapshot.agents = agents;
+        // Through get_session, not straight off the uuid: a focus left
+        // pointing at a deleted session publishes as "none", so the page
+        // knows to claim it afresh rather than trusting a ghost.
+        snapshot.open = state
+            .system
+            .remote_focus
+            .and_then(|id| state.get_session(id))
+            .map(|session| session.short_id());
         snapshot.at = chrono::Utc::now().timestamp();
     }
 }

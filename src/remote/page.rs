@@ -664,7 +664,13 @@ pub const HTML: &str = r##"<!doctype html>
      bar to the composer instead of each bar restating it inside its own box.
      It also means the strip beyond the body on iOS is the page, not a guess
      at which surface ought to stand in for it. */
-  html { height:100%; overflow:hidden; background:var(--page); }
+  /* `text-size-adjust` off: on rotation to landscape iOS "helpfully"
+     inflates text it deems too small for the wider screen, which blew the
+     11.5px mono up to poster size. The page sets every size deliberately. */
+  html {
+    height:100%; overflow:hidden; background:var(--page);
+    -webkit-text-size-adjust:100%; text-size-adjust:100%;
+  }
   body {
     /* Pinned to the viewport's edges, and *only* that. There is deliberately
        no height here: with `top`, `bottom` and `height` all set, CSS drops
@@ -689,6 +695,22 @@ pub const HTML: &str = r##"<!doctype html>
     -webkit-font-smoothing:antialiased;
   }
   button, a { font:inherit; color:inherit; }
+  /* The page is a portrait layout; sideways it re-flows into something
+     nobody designed. A web page cannot refuse to rotate (Safari has no
+     orientation lock), so the next best thing: an opaque cover asking for
+     portrait back. It lies *over* the app rather than unmounting it, so
+     rotating back finds the conversation exactly where it was, scroll and
+     all. Coarse pointer + short viewport keeps this to phones — an iPad or
+     a squat desktop window never sees it. */
+  #rotate { display:none; }
+  @media (orientation: landscape) and (pointer: coarse) and (max-height: 480px) {
+    #rotate {
+      display:grid; place-items:center; position:fixed; inset:0;
+      z-index:99; background:var(--page); color:var(--dim);
+      text-align:center; font-size:12px; letter-spacing:-.02em;
+    }
+    #rotate .glyph { display:block; font-size:28px; margin-bottom:10px; color:var(--faint); }
+  }
   /* Everything tappable answers the finger. Without this the page is correct
      and feels dead: on a touch screen the press *is* the feedback, because
      there is no cursor and no hover to tell you the thing is live. */
@@ -1275,6 +1297,7 @@ pub const HTML: &str = r##"<!doctype html>
 </script>
 </head>
 <body>
+<div id="rotate"><div><span class="glyph">⟳</span>portrait, please</div></div>
 <header>
   <div class="chip">
     <span class="dot" id="hdot"></span>
@@ -2233,18 +2256,27 @@ function render() {
   document.getElementById("ask").innerHTML = askHtml(a);
 }
 
+let refreshing = false;                 // one poll in flight, ever
 async function refresh() {
   // Only a POST holds this off, so its effect is in the next snapshot rather
   // than racing it. Typing no longer does: the composer is not redrawn, and
   // freezing the conversation the moment the keyboard opens is worse than
   // anything it was protecting against.
   if (busy) return;
+  // One at a time, and give up on a dead radio. Without both, a subway ride
+  // stacked a poll per second behind a radio that never answered — each
+  // carrying the `have` from before the tunnel — and when signal returned
+  // they all completed, each appending the same "messages you are owed"
+  // window. One message, fifteen times over.
+  if (refreshing) return;
+  refreshing = true;
   try {
     // `have` asks for only the messages we do not hold; the ETag turns a
     // tick where nothing moved at all into an empty 304.
     const res = await fetch(q("/api/state?have=" + have), {
       cache: "no-store",
       headers: tag ? { "If-None-Match": tag } : {},
+      signal: AbortSignal.timeout ? AbortSignal.timeout(20000) : undefined,
     });
     if (res.status === 304) return;
     if (!res.ok) throw new Error(res.status === 401 ? "bad or missing token" : await res.text());
@@ -2253,7 +2285,19 @@ async function refresh() {
   } catch (err) {
     document.getElementById("hwhat").textContent = "offline";
     return;
+  } finally {
+    refreshing = false;
   }
+  // Focus lives in workbench memory and restarts as "none"; this page and
+  // its localStorage live on. The boot-time claim below covers a reload, but
+  // a page that stays open across a workbench restart never boots again —
+  // it just polled forever while its thread silently stopped growing,
+  // statuses still ticking, which is exactly what "some agents' history is
+  // out of date" looks like. When nobody holds the conversation we think we
+  // have open, claim it again. Only when nobody does: another device holding
+  // a different one is a choice, not an outage, and re-claiming per tick
+  // from two devices would have them wrestling once a second.
+  if (current && data.open == null) post("/api/focus", { agent: current });
   merge(agent(current));
   // Drop the local echo once the agent's journal has your message in it.
   const said = thread.filter(m => m.role === "you").map(m => m.text);
