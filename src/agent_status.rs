@@ -100,14 +100,18 @@ pub struct AgentStatus {
     /// the file the old heuristics point at just quietly stops growing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transcript: Option<String>,
-    /// The model the agent says it is answering with, when its hooks name one.
+    /// The model the agent says it was *started* with, when its hooks name one.
     ///
-    /// Codex puts `model` on every event, including the `SessionStart` that
-    /// fires before it has taken a turn — which is the only moment its journal
-    /// does not exist yet, because it writes the rollout on the first turn
-    /// rather than at startup. Claude sends no such field and does not need
-    /// to: a resumed session's log already names the model on every past
-    /// assistant line.
+    /// Not what it is answering with now. Claude keeps sending the startup
+    /// model on events like `Notification` long after `/model` has moved the
+    /// session elsewhere, so this is a starting point and never an update —
+    /// `AppState::session_model` reads the journal first for that reason and
+    /// falls back here only when no turn has been journalled yet.
+    ///
+    /// Which is the case worth keeping it for: Codex puts `model` on every
+    /// event, including the `SessionStart` that fires before it has taken a
+    /// turn — the one moment its journal does not exist yet, because it writes
+    /// the rollout on the first turn rather than at startup.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
 }

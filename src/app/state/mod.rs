@@ -595,29 +595,42 @@ impl AppState {
     /// The model a session is answering with, ready to print — "Opus 5"
     /// rather than "Claude".
     ///
-    /// Two sources, and the agent's own hooks come first for the same reason
-    /// they do in `locate`: a report is first-person and present tense, where
-    /// the journal is a file we went looking for. It is also the earlier of
-    /// the two for Codex, which names its model on `SessionStart` but does not
-    /// write its rollout until the first turn — so reading only the journal
-    /// left every Codex agent reading as "Codex" until someone talked to it.
+    /// The journal wins, because it is the only source that describes a turn
+    /// that actually happened: every assistant line (Claude) and every
+    /// `turn_context` (Codex) carries the model that produced it, so `/model`
+    /// mid-session shows up on the next turn.
+    ///
+    /// The hook is a fallback, not the truth. It reports the model the session
+    /// was *started* with and keeps reporting it after a switch: three live
+    /// Claude sessions moved to Opus at 14:06 and were still being announced
+    /// as Fable by `Notification` events firing after 16:37, which is the bug
+    /// this ordering fixes. Being later than the journal line does not make it
+    /// righter, so freshness cannot arbitrate between the two — only
+    /// provenance can.
+    ///
+    /// It still earns its place underneath: Codex names its model on
+    /// `SessionStart` but does not write its rollout until the first turn, so
+    /// without the fallback every Codex agent read as plain "Codex" until
+    /// someone talked to it. A session resumed onto a different model wears
+    /// the old one for that same window — until its first turn is journalled —
+    /// which is the one case this ordering is worse at, and it corrects
+    /// itself.
     ///
     /// `None` when neither source has named one, so every caller keeps the
-    /// provider name as its fallback. Claude sends no `model` in its hooks and
-    /// does not need to: a resumed log names it on every past assistant line.
+    /// provider name as its fallback.
     pub fn session_model(&self, session_id: Uuid) -> Option<String> {
-        let reported = self
+        let journalled = self
             .system
-            .agent_status
+            .agent_tasks
             .get(&session_id)
-            .and_then(|status| status.model.as_deref());
-        let journalled = || {
+            .and_then(|tracker| tracker.model());
+        let reported = || {
             self.system
-                .agent_tasks
+                .agent_status
                 .get(&session_id)
-                .and_then(|tracker| tracker.model())
+                .and_then(|status| status.model.as_deref())
         };
-        let raw = reported.or_else(journalled)?;
+        let raw = journalled.or_else(reported)?;
         Some(crate::models::model_label(raw))
     }
 
@@ -856,6 +869,123 @@ impl AppState {
 impl Default for AppState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod model_tests {
+    use super::*;
+    use crate::agent_status::{AgentStatus, Activity};
+    use crate::agent_tasks::{Provider, Source, TaskSource, TaskTracker};
+    use crate::models::AgentType;
+    use std::io::Write;
+
+    fn session(state: &mut AppState) -> Uuid {
+        let workspace = Workspace::new("w".into(), std::path::PathBuf::from("/tmp/w"));
+        let workspace_id = workspace.id;
+        let session = Session::new(workspace_id, AgentType::Claude, false);
+        let session_id = session.id;
+        state.data.workspaces.push(workspace);
+        state.data.sessions.insert(workspace_id, vec![session]);
+        session_id
+    }
+
+    fn started_as(state: &mut AppState, id: Uuid, model: &str) {
+        state.system.agent_status.insert(
+            id,
+            AgentStatus {
+                activity: Activity::Idle,
+                reason: "waiting for your input".into(),
+                at: chrono::Utc::now(),
+                event: "Notification".into(),
+                transcript: None,
+                model: Some(model.to_string()),
+            },
+        );
+    }
+
+    /// Point a real tracker at a real log, the way a live session's is.
+    fn journalled(state: &mut AppState, id: Uuid, line: &str) -> tempfile::NamedTempFile {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(file, "{line}").unwrap();
+        file.flush().unwrap();
+
+        let mut tracker =
+            TaskTracker::with_source(Provider::Claude, Source::File(file.path().to_path_buf()));
+        tracker.refresh(
+            &TaskSource {
+                provider: Provider::Claude,
+                session_uuid: id.to_string(),
+                cwd: std::path::PathBuf::from("/tmp/w"),
+                started_at: chrono::Utc::now(),
+                conversation: None,
+                spawned_at: None,
+                reported: None,
+            },
+            &std::collections::HashSet::new(),
+        );
+        state.system.agent_tasks.insert(id, tracker);
+        file // held: dropping it deletes the log the tracker is reading
+    }
+
+    /// The bug: `/model` mid-session moved three live agents to Opus, and the
+    /// hook went on announcing the model each was *started* with for hours —
+    /// on `Notification` events firing a minute later than the Opus turn they
+    /// contradicted. A turn that happened outranks a field that never moved.
+    #[test]
+    fn a_mid_session_model_switch_beats_the_one_it_started_with() {
+        let mut state = AppState::default();
+        let id = session(&mut state);
+
+        started_as(&mut state, id, "claude-fable-5");
+        assert_eq!(
+            state.session_model(id).as_deref(),
+            Some("Fable 5"),
+            "with nothing journalled yet, the hook is all there is"
+        );
+
+        let _log = journalled(&mut state, id, r#"{"message":{"model":"claude-opus-5"}}"#);
+
+        assert_eq!(
+            state.session_model(id).as_deref(),
+            Some("Opus 5"),
+            "the journal names the model that answered; the hook names the one it booted on"
+        );
+    }
+
+    /// Why the hook is kept at all: Codex names its model at `SessionStart`
+    /// but writes no rollout until its first turn, so without the fallback it
+    /// reads as bare "Codex" until someone talks to it.
+    #[test]
+    fn a_session_with_nothing_journalled_still_names_its_model() {
+        let mut state = AppState::default();
+        let id = session(&mut state);
+
+        assert_eq!(state.session_model(id), None, "nothing to go on yet");
+
+        started_as(&mut state, id, "gpt-5.6-sol");
+        assert_eq!(state.session_model(id).as_deref(), Some("GPT-5.6 Sol"));
+    }
+
+    /// A subagent shares the file and may run a different model on the
+    /// session's behalf, so its line must not be mistaken for the session's.
+    #[test]
+    fn a_subagents_model_is_not_the_sessions() {
+        let mut state = AppState::default();
+        let id = session(&mut state);
+        started_as(&mut state, id, "claude-fable-5");
+
+        let _log = journalled(
+            &mut state,
+            id,
+            r#"{"isSidechain":true,"message":{"model":"claude-haiku-4-5"}}"#,
+        );
+
+        assert_eq!(
+            state.session_model(id).as_deref(),
+            Some("Fable 5"),
+            "the sidechain is ignored, so the hook remains the only answer"
+        );
     }
 }
 
