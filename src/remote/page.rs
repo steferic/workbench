@@ -714,15 +714,15 @@ pub const HTML: &str = r##"<!doctype html>
   /* Everything tappable answers the finger. Without this the page is correct
      and feels dead: on a touch screen the press *is* the feedback, because
      there is no cursor and no hover to tell you the thing is live. */
-  .icon, .proj, .agent, .server, .new button, .theme button,
-  .ask button, .sheet button, .chip button, #stale button {
+  .icon, .proj, .agent, .server, .new button, .drawer-actions button,
+  .theme button, .ask button, .chip button, #stale button {
     transition: transform var(--dur-fast) var(--ease),
                 background-color var(--dur-fast) var(--ease),
                 opacity var(--dur-fast) var(--ease);
   }
-  .icon:active, .new button:active, .theme button:active,
-  .ask button:active, .sheet button:active, #stale button:active {
-    transform:scale(.94);
+  .icon:active, .new button:active, .drawer-actions button:active,
+  .theme button:active, .ask button:active, #stale button:active {
+    transform:scale(.96);
   }
   /* Full-width rows scale less: the same 6% reads as a lurch across 340px. */
   .proj:active, .agent:active, .server:active { transform:scale(.985); }
@@ -751,7 +751,7 @@ pub const HTML: &str = r##"<!doctype html>
   /* The pieces, not their wrappers: `.tools` spans the whole run of buttons,
      so handing it back its events would put the gaps between them inside a
      hit area again — which is the bar, invisible. */
-  .chip, .icon { pointer-events:auto; }
+  .identity, header .icon { pointer-events:auto; }
 
   /* The same glass as `.dock`, because it is the same material and two
      recipes that drifted apart would just be a way to get one wrong: a
@@ -762,19 +762,19 @@ pub const HTML: &str = r##"<!doctype html>
      What differs is the shape and what it is judged against. These are round
      rather than a rounded rectangle, and they sit at the *top* of the wash,
      so their ink is measured there — see `headInk`. */
-  .chip, .icon {
+  .identity, header .icon {
     position:relative; isolation:isolate;
     backdrop-filter:blur(18px) saturate(150%);
     -webkit-backdrop-filter:blur(18px) saturate(150%);
     box-shadow:var(--float);
     color:var(--on-head,var(--fg));
   }
-  .chip::before, .icon::before {
+  .identity::before, header .icon::before {
     content:""; position:absolute; inset:0; z-index:-1; border-radius:inherit;
     background:linear-gradient(var(--surface),var(--surface)), var(--chrome);
     opacity:var(--bubble-alpha,.4);
   }
-  .chip::after, .icon::after {
+  .identity::after, header .icon::after {
     content:""; position:absolute; inset:0; border-radius:inherit;
     pointer-events:none; padding:1px;
     background:linear-gradient(150deg,
@@ -788,14 +788,14 @@ pub const HTML: &str = r##"<!doctype html>
   /* Hugs its text and gives the rest of the row away, so the buttons sit at
      the far edge and the gap between is page. A chip that stretched would be
      the bar again, drawn in two pieces. */
-  .chip {
+  .identity {
     display:flex; align-items:center; gap:8px; min-width:0; margin-right:auto;
     padding:6px 13px 6px 11px; border-radius:999px;
   }
   /* The same for the bottom edge, and for the same reason — the composer's
      `backdrop-filter` had nothing behind it to blur while the log ended above
-     it. `#ask` and the sheet ride along: they belong to the bottom of the
-     screen, not to a position in the transcript. */
+     it. `#ask` rides along: it belongs to the bottom of the screen, not to a
+     position in the transcript. */
   .foot {
     position:absolute; left:0; right:0; bottom:0; z-index:4;
     display:flex; flex-direction:column;
@@ -805,9 +805,10 @@ pub const HTML: &str = r##"<!doctype html>
      and the alternative is a name breaking over three lines on a narrow phone
      and pushing the conversation down the screen to make room for itself. */
   .who b, .who span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .who b { font-size:13px; font-weight:500; letter-spacing:-.045em; }
+  .who b { font-size:14px; font-weight:650; letter-spacing:-.035em; }
   .who span {
-    font-size:9.5px; color:color-mix(in srgb, var(--on-head,var(--fg)) 66%, transparent);
+    font-size:9.5px; font-weight:500;
+    color:color-mix(in srgb, var(--on-head,var(--fg)) 64%, transparent);
   }
   .dot { width:9px; height:9px; border-radius:50%; background:var(--faint); flex:none; }
   /* Alert colours are chosen per theme to differ from the page in hue, not
@@ -855,7 +856,7 @@ pub const HTML: &str = r##"<!doctype html>
      when they were glyphs on one bar and there was nothing between them to
      separate; each carries its own edge, and two rims touching would read as
      a seam rather than two buttons. */
-  .tools { display:flex; align-items:center; gap:7px; flex:none; }
+  header .tools { display:flex; align-items:center; gap:7px; flex:none; padding:0; }
 
   /* ---- conversation ---------------------------------------------------- */
   /* The only child still in the column, so it takes the whole height, and the
@@ -1073,8 +1074,8 @@ pub const HTML: &str = r##"<!doctype html>
   }
   /* The tools sit under the field, as a row of their own — where a phone's
      thumb is, and out of the way of the text as it grows. */
-  .tools { display:flex; align-items:center; gap:8px; padding:0 2px; }
-  .tools .gap { flex:1; }
+  .dock .tools { display:flex; align-items:center; gap:8px; padding:0 2px; }
+  .dock .tools .gap { flex:1; }
   /* `.act`, not `.tool` — `.tool` is a tool-call line in the transcript, and
      naming these that turned every one of them into a 36px circle with its
      command overflowing sideways out of it. */
@@ -1088,26 +1089,15 @@ pub const HTML: &str = r##"<!doctype html>
   /* 36px is the circle; the touch target is 44px, and the 8px gaps mean two
      of them meet without ever overlapping. */
   .act::after { content:""; position:absolute; inset:-4px; border-radius:50%; }
-  .act:active { transform:scale(.94); }
+  .act:active { transform:scale(.96); }
+  .act.switcher {
+    background:color-mix(in srgb, var(--on-card,var(--fg)) 10%, transparent);
+    font-size:18px; font-weight:600; line-height:1;
+  }
   #mic { background:color-mix(in srgb, var(--on-card,var(--fg)) 10%, transparent); }
   #mic.on { background:color-mix(in srgb, var(--warn) 20%, transparent); color:var(--warn); }
   .act.send { background:var(--accent); color:var(--on-accent); }
   .act.send:disabled { opacity:.35; }
-  /* Which agent this box talks to, in the place the Claude app puts the
-     model — the one choice you make about a message that is not its text. */
-  .picker {
-    display:flex; align-items:baseline; gap:6px; min-width:0; max-width:62%;
-    padding:8px 12px; border-radius:999px; border:0;
-    background:color-mix(in srgb, var(--on-card,var(--fg)) 10%, transparent);
-    color:var(--on-card,var(--fg)); font-size:11px; font-weight:500; line-height:1;
-    transition:background var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
-  }
-  .picker span {
-    color:color-mix(in srgb, var(--on-card,var(--fg)) 62%, transparent);
-    font-weight:400; min-width:0;
-    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
-  }
-  .picker:active { transform:scale(.97); }
   /* The mic rides inside the field rather than beside it: dictation is a way
      of filling this box, not a third peer of send and attach, and one fewer
      circle in the row is one fewer thing to read. */
@@ -1126,25 +1116,6 @@ pub const HTML: &str = r##"<!doctype html>
     flex:none; color:var(--dim); font-size:10.5px; text-align:center;
     padding:0 14px 7px;
   }
-
-  /* What the + offers. A sheet rather than going straight to the picker,
-     because queueing work was what this button did and losing it silently
-     would be worse than one extra tap. */
-  /* Animated with max-height rather than `hidden`, because display:none has
-     no in-between for a transition to happen in. */
-  .sheet {
-    flex:none; display:flex; flex-direction:column; gap:6px;
-    padding:0 10px; max-height:0; opacity:0; overflow:hidden;
-    transform:translateY(6px);
-    transition: max-height var(--dur) var(--ease), opacity var(--dur) var(--ease),
-                transform var(--dur) var(--ease-spring), padding var(--dur) var(--ease);
-  }
-  .sheet.open { max-height:220px; opacity:1; transform:none; padding:0 10px 8px; }
-  .sheet button {
-    padding:12px; border-radius:10px; font-size:11.5px; font-weight:500;
-    border:0; background:var(--surface); color:var(--fg); box-shadow:var(--lift);
-  }
-  .sheet button.cancel { font-weight:400; color:var(--dim); }
 
   /* Inside the card, above the field — the attachment belongs to the message
      being written, so it travels with the box rather than floating over it. */
@@ -1237,6 +1208,12 @@ pub const HTML: &str = r##"<!doctype html>
     flex:1; font-size:11px; padding:8px; border-radius:10px;
     border:0; background:none; color:var(--dim); box-shadow:var(--lift);
   }
+  .drawer-actions { display:flex; gap:8px; padding:2px 16px 8px; }
+  .drawer-actions button {
+    flex:1; min-height:44px; padding:9px; border:0; border-radius:10px;
+    background:none; color:var(--dim); box-shadow:var(--lift);
+    font-size:10.5px; font-weight:500;
+  }
   .notify {
     flex:none; margin:8px 16px 0; padding:11px 13px; text-align:left;
     border:0; border-radius:11px; background:var(--bg);
@@ -1299,13 +1276,11 @@ pub const HTML: &str = r##"<!doctype html>
 <body>
 <div id="rotate"><div><span class="glyph">⟳</span>portrait, please</div></div>
 <header>
-  <div class="chip">
+  <div class="identity">
     <span class="dot" id="hdot"></span>
-    <span class="who"><b id="hname">—</b><span id="hwhat"></span></span>
+    <span class="who"><b id="hproject">—</b><span id="hagent"></span></span>
   </div>
   <nav class="tools">
-    <button class="icon" id="cycleproj" onclick="cycleProject()" title="next project" hidden>⇅</button>
-    <button class="icon" id="cycle" onclick="cycleAgent()" title="next agent here" hidden>⇄</button>
     <button class="icon" onclick="togglePalette()" title="theme">◑</button>
     <button class="icon" onclick="toggleDrawer()" title="projects">☰<span class="badge" id="hbadge" hidden></span></button>
   </nav>
@@ -1320,25 +1295,19 @@ pub const HTML: &str = r##"<!doctype html>
 <div id="ask"></div>
 <div class="note" id="note" hidden></div>
 
-<div class="sheet" id="sheet">
-  <button onclick="pickFile()">Photo or file</button>
-  <button onclick="hideSheet(); queueMessage()">Queue as a TODO</button>
-  <button class="cancel" onclick="hideSheet()">Cancel</button>
-</div>
 <div class="composer">
   <input type="file" id="file" accept="image/*,text/*,.pdf,.log,.json" multiple hidden>
   <div class="dock">
     <div id="attached"></div>
     <textarea id="msg" rows="1" placeholder="Message"></textarea>
     <div class="tools">
-      <button class="act" id="queue" onclick="toggleSheet()" title="attach or queue" aria-label="attach or queue">
-        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor"
-             stroke-width="1.9" stroke-linecap="round" aria-hidden="true">
-          <path d="M12 5v14M5 12h14"/>
-        </svg>
+      <button class="act switcher" id="cycleproj" onclick="cycleProject()"
+              title="next project" aria-label="next project" hidden>
+        ⇅
       </button>
-      <button class="picker" id="who" onclick="toggleDrawer()" title="switch agent">
-        <b id="pname">—</b><span id="pwhat"></span>
+      <button class="act switcher" id="cycle" onclick="cycleAgent()"
+              title="next agent in project" aria-label="next agent in project" hidden>
+        ⇄
       </button>
       <span class="gap"></span>
       <button class="act" id="mic" onclick="toggleMic()" title="dictate" aria-label="dictate">
@@ -1377,6 +1346,11 @@ pub const HTML: &str = r##"<!doctype html>
 <aside id="drawer">
   <h2>projects</h2>
   <div class="tree" id="tree"></div>
+  <h2>message actions</h2>
+  <div class="drawer-actions">
+    <button onclick="toggleDrawer(); pickFile()">Attach file</button>
+    <button onclick="toggleDrawer(); queueMessage()">Queue draft</button>
+  </div>
   <button class="notify" id="notify" onclick="enablePush()">
     <span>Notify me when an agent is blocked</span>
   </button>
@@ -1448,7 +1422,6 @@ function pick(id) {
   sent = [];
   attached = [];
   renderAttached();
-  hideSheet();
   thread = [];
   drawn = 0;
   have = 0;
@@ -1531,14 +1504,7 @@ function sendMessage() {
    photo can have a caption. */
 let attached = [];
 
-function toggleSheet() {
-  document.getElementById("sheet").classList.toggle("open");
-}
-
-function hideSheet() { document.getElementById("sheet").classList.remove("open"); }
-
 function pickFile() {
-  hideSheet();
   document.getElementById("file").click();
 }
 
@@ -1761,6 +1727,14 @@ function atGap() {
   return el.tagName.toLowerCase() + "." + (el.className || "-") + " " +
          getComputedStyle(el).backgroundColor;
 }
+
+/* One restrained haptic for every enabled button, including buttons rendered
+   later for prompts and project/session drawers. Browsers without vibration
+   support simply skip it. */
+document.addEventListener("click", event => {
+  const button = event.target instanceof Element && event.target.closest("button");
+  if (button && !button.disabled) navigator.vibrate?.(12);
+});
 
 /* ---- notifications ---------------------------------------------------- */
 
@@ -2221,9 +2195,9 @@ function render() {
     return;
   }
 
-  document.getElementById("hname").textContent = named(a);
-  document.getElementById("hwhat").textContent = [
-    a.project,
+  document.getElementById("hproject").textContent = a.project;
+  document.getElementById("hagent").textContent = [
+    named(a),
     a.running || (a.queued.length ? a.queued.length + " queued" : null),
     a.holding,
   ].filter(Boolean).join(" · ");
@@ -2234,12 +2208,6 @@ function render() {
   // an agent in it to rotate to.
   document.getElementById("cycleproj").hidden =
     (data.projects || []).filter(p => data.agents.some(x => x.project_id === p.id)).length < 2;
-  // The composer's pill says who the message is going to. Name and project
-  // only: what the agent is *doing* belongs in the header, not on a control
-  // you are about to press.
-  document.getElementById("pname").textContent = named(a);
-  document.getElementById("pwhat").textContent = a.project;
-
   // Redraw only when there is something new: rewriting the log every second
   // fights your scrolling and drops any text you had selected.
   const last = thread[thread.length - 1];
@@ -2283,7 +2251,7 @@ async function refresh() {
     tag = res.headers.get("ETag");
     data = await res.json();
   } catch (err) {
-    document.getElementById("hwhat").textContent = "offline";
+    document.getElementById("hagent").textContent = "offline";
     return;
   } finally {
     refreshing = false;
@@ -2313,8 +2281,8 @@ setTheme(localStorage.getItem("theme") || "system");
 markPush(store.get("push", "") === "on");
 /* The header and the foot float over the log, so the log has to be told how
    much of itself they are covering. Measured rather than assumed: the
-   header's height moves with the safe area, and the foot's with the sheet
-   opening, a prompt arriving, an attachment, or the field growing a line.
+   header's height moves with the safe area, and the foot's with a prompt,
+   an attachment, or the field growing a line.
    A watcher rather than a one-off for exactly those reasons. */
 (function trackEdges() {
   const root = document.documentElement;
@@ -2444,3 +2412,40 @@ self.addEventListener("notificationclick", event => {
   })());
 });
 "##;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn enabled_mobile_buttons_request_a_light_tap_haptic() {
+        assert!(HTML.contains("event.target.closest(\"button\")"));
+        assert!(HTML.contains("navigator.vibrate?.(12)"));
+        assert!(!SERVICE_WORKER.contains("vibrate:"));
+    }
+
+    #[test]
+    fn mobile_identity_is_project_first_and_switchers_live_in_the_composer() {
+        let header = HTML
+            .split_once("<header>")
+            .and_then(|(_, rest)| rest.split_once("</header>"))
+            .map(|(header, _)| header)
+            .unwrap();
+        let composer = HTML
+            .split_once("<div class=\"composer\">")
+            .map(|(_, composer)| composer)
+            .unwrap();
+
+        assert!(header.contains("<b id=\"hproject\">"));
+        assert!(header.contains("<span id=\"hagent\">"));
+        assert!(!header.contains("id=\"cycleproj\""));
+        assert!(!header.contains("id=\"cycle\""));
+        assert!(composer.contains("id=\"cycleproj\""));
+        assert!(composer.contains("id=\"cycle\""));
+        assert!(!composer.contains("id=\"queue\""));
+        assert!(!composer.contains("id=\"who\""));
+        assert!(!HTML.contains("id=\"sheet\""));
+        assert!(HTML.contains(">Attach file</button>"));
+        assert!(HTML.contains(">Queue draft</button>"));
+    }
+}
