@@ -1159,12 +1159,13 @@ pub const HTML: &str = r##"<!doctype html>
 
   /* ---- drawer ---------------------------------------------------------- */
   .scrim {
-    position:fixed; inset:0; background:#00000073; opacity:0; pointer-events:none;
+    position:fixed; inset:0; z-index:5;
+    background:#00000073; opacity:0; pointer-events:none;
     transition:opacity var(--dur) var(--ease); backdrop-filter:blur(1px);
   }
   .scrim.open { opacity:1; pointer-events:auto; }
   aside {
-    position:fixed; top:0; right:0; bottom:0; width:min(87vw,352px);
+    position:fixed; top:0; right:0; bottom:0; z-index:6; width:min(87vw,352px);
     background:var(--chrome); border-left:1px solid var(--line);
     transform:translateX(100%); transition:transform var(--dur-slow) var(--ease);
     display:flex; flex-direction:column; padding-top:env(safe-area-inset-top);
@@ -2447,5 +2448,22 @@ mod tests {
         assert!(!HTML.contains("id=\"sheet\""));
         assert!(HTML.contains(">Attach file</button>"));
         assert!(HTML.contains(">Queue draft</button>"));
+    }
+
+    #[test]
+    fn mobile_drawer_owns_the_overlay_layers() {
+        let scrim = HTML
+            .split_once(".scrim {")
+            .and_then(|(_, rest)| rest.split_once('}'))
+            .map(|(rule, _)| rule)
+            .unwrap();
+        let drawer = HTML
+            .split_once("aside {")
+            .and_then(|(_, rest)| rest.split_once('}'))
+            .map(|(rule, _)| rule)
+            .unwrap();
+
+        assert!(scrim.contains("z-index:5"));
+        assert!(drawer.contains("z-index:6"));
     }
 }
