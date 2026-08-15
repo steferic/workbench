@@ -6,14 +6,6 @@ use uuid::Uuid;
 /// Maximum number of pinned terminals per workspace
 pub const MAX_PINNED_TERMINALS: usize = 4;
 
-/// Workspace status for organizing active vs paused projects
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub enum WorkspaceStatus {
-    #[default]
-    Working,
-    Paused,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Workspace {
     pub id: Uuid,
@@ -23,9 +15,6 @@ pub struct Workspace {
     /// Pinned terminal session IDs - shown stacked in the pinned pane
     #[serde(default)]
     pub pinned_terminal_ids: Vec<Uuid>,
-    /// Whether this workspace is actively being worked on
-    #[serde(default)]
-    pub status: WorkspaceStatus,
     /// Last time this workspace had activity (session created, input sent, etc.)
     #[serde(default)]
     pub last_active_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -49,20 +38,11 @@ impl Workspace {
             path,
             created_at: now,
             pinned_terminal_ids: Vec::new(),
-            status: WorkspaceStatus::default(),
             last_active_at: Some(now),
             parallel_tasks: Vec::new(),
             active_worktree_session_id: None,
             last_active_session_id: None,
         }
-    }
-
-    /// Toggle between Working and Paused status
-    pub fn toggle_status(&mut self) {
-        self.status = match self.status {
-            WorkspaceStatus::Working => WorkspaceStatus::Paused,
-            WorkspaceStatus::Paused => WorkspaceStatus::Working,
-        };
     }
 
     /// Update last_active_at to now
@@ -199,6 +179,21 @@ mod tests {
             "test-branch".to_string(),
             std::env::temp_dir().join("worktree"),
         )
+    }
+
+    #[test]
+    fn legacy_paused_status_is_ignored_when_loading() {
+        let workspace = create_test_workspace();
+        let mut saved = serde_json::to_value(&workspace).unwrap();
+        saved
+            .as_object_mut()
+            .unwrap()
+            .insert("status".into(), serde_json::Value::String("Paused".into()));
+
+        let loaded: Workspace = serde_json::from_value(saved).unwrap();
+
+        assert_eq!(loaded.id, workspace.id);
+        assert_eq!(loaded.name, workspace.name);
     }
 
     // ==================== Parallel Task Management Tests ====================

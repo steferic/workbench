@@ -1,5 +1,4 @@
 use crate::app::{AppState, FocusPanel};
-use crate::models::WorkspaceStatus;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
@@ -36,72 +35,15 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     let list_area = chunks[0];
     let action_area = chunks[1];
 
-    // Separate workspaces into working and paused
-    let working_indices: Vec<usize> = state
+    let items: Vec<ListItem> = state
         .data
         .workspaces
         .iter()
         .enumerate()
-        .filter(|(_, ws)| ws.status == WorkspaceStatus::Working)
-        .map(|(i, _)| i)
+        .map(|(ws_idx, workspace)| {
+            create_workspace_item(state, ws_idx, workspace, is_focused)
+        })
         .collect();
-
-    let paused_indices: Vec<usize> = state
-        .data
-        .workspaces
-        .iter()
-        .enumerate()
-        .filter(|(_, ws)| ws.status == WorkspaceStatus::Paused)
-        .map(|(i, _)| i)
-        .collect();
-
-    let mut items: Vec<ListItem> = Vec::new();
-    let mut selected_visual_idx: Option<usize> = None;
-    let mut current_visual_idx: usize = 0;
-
-    // Working section header
-    if !working_indices.is_empty() || paused_indices.is_empty() {
-        let header_style = Style::default()
-            .fg(t.success)
-            .add_modifier(Modifier::BOLD);
-        items.push(ListItem::new(Line::from(vec![Span::styled(
-            "── Working ──",
-            header_style,
-        )])));
-        current_visual_idx += 1;
-    }
-
-    // Working workspaces
-    for &ws_idx in &working_indices {
-        let ws = &state.data.workspaces[ws_idx];
-        items.push(create_workspace_item(state, ws_idx, ws, is_focused, false));
-        if ws_idx == state.ui.selected_workspace_idx {
-            selected_visual_idx = Some(current_visual_idx);
-        }
-        current_visual_idx += 1;
-    }
-
-    // Paused section header
-    if !paused_indices.is_empty() {
-        let header_style = Style::default()
-            .fg(t.command)
-            .add_modifier(Modifier::BOLD);
-        items.push(ListItem::new(Line::from(vec![Span::styled(
-            "── Paused ──",
-            header_style,
-        )])));
-        current_visual_idx += 1;
-    }
-
-    // Paused workspaces (dimmed)
-    for &ws_idx in &paused_indices {
-        let ws = &state.data.workspaces[ws_idx];
-        items.push(create_workspace_item(state, ws_idx, ws, is_focused, true));
-        if ws_idx == state.ui.selected_workspace_idx {
-            selected_visual_idx = Some(current_visual_idx);
-        }
-        current_visual_idx += 1;
-    }
 
     // Highlight style with full row background when focused
     let highlight_style = if is_focused {
@@ -116,7 +58,9 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
 
     // Use ListState for automatic scrolling
     let mut list_state = ListState::default();
-    list_state.select(selected_visual_idx);
+    if !state.data.workspaces.is_empty() {
+        list_state.select(Some(state.ui.selected_workspace_idx));
+    }
 
     frame.render_stateful_widget(list, list_area, &mut list_state);
 
@@ -145,7 +89,6 @@ fn create_workspace_item<'a>(
     ws_idx: usize,
     ws: &crate::models::Workspace,
     is_focused: bool,
-    is_paused: bool,
 ) -> ListItem<'a> {
     let t = crate::theme::current();
     let is_working = state.is_workspace_working(ws.id);
@@ -158,23 +101,19 @@ fn create_workspace_item<'a>(
 
     let is_selected = ws_idx == state.ui.selected_workspace_idx;
 
-    // Different styling for selected/focused vs paused
+    // Different styling for selected/focused rows.
     let style = if is_selected && is_focused {
         Style::default()
             .fg(t.accent)
             .add_modifier(Modifier::BOLD)
     } else if is_selected {
         Style::default().fg(t.fg)
-    } else if is_paused {
-        Style::default().fg(t.fg_faint)
     } else {
         Style::default().fg(t.fg_dim)
     };
 
     // Time style - slightly dimmer, different color for recency
-    let time_style = if is_paused {
-        Style::default().fg(t.fg_faint)
-    } else if last_active == "just now" || last_active.ends_with("m ago") {
+    let time_style = if last_active == "just now" || last_active.ends_with("m ago") {
         Style::default().fg(t.success)
     } else if last_active.ends_with("h ago") {
         Style::default().fg(t.active)
@@ -199,12 +138,12 @@ fn create_workspace_item<'a>(
     // Blue = loading (sessions starting up), Yellow = working (actively processing)
     let working_indicator = if waiting_here {
         Span::styled("! ", Style::default().fg(t.warning).add_modifier(Modifier::BOLD))
-    } else if is_loading && !is_paused {
+    } else if is_loading {
         Span::styled(
             format!("{} ", state.spinner_char()),
             Style::default().fg(t.info),
         )
-    } else if is_working && !is_paused {
+    } else if is_working {
         Span::styled(
             format!("{} ", state.spinner_char()),
             Style::default().fg(t.active),
@@ -219,4 +158,45 @@ fn create_workspace_item<'a>(
         Span::styled(name, style),
         Span::styled(time_info, time_style),
     ]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::Workspace;
+    use ratatui::{backend::TestBackend, Terminal};
+
+    fn screen(state: &AppState, width: u16, height: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| render(frame, frame.area(), state))
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        (0..height)
+            .map(|y| {
+                (0..width)
+                    .map(|x| buffer[(x, y)].symbol().to_string())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn every_workspace_renders_in_one_flat_list() {
+        let mut state = AppState::default();
+        state.data.workspaces = vec![
+            Workspace::new("alpha".into(), "/tmp/alpha".into()),
+            Workspace::new("beta".into(), "/tmp/beta".into()),
+        ];
+
+        let out = screen(&state, 40, 7);
+
+        assert!(out.contains("alpha"), "{out}");
+        assert!(out.contains("beta"), "{out}");
+        assert!(!out.contains("Working"), "{out}");
+        assert!(!out.contains("Paused"), "{out}");
+    }
 }

@@ -197,7 +197,12 @@ fn claude(v: &Value, out: &mut Vec<Message>) {
                     }
                     Some("tool_use") => {
                         let name = block.get("name").and_then(Value::as_str).unwrap_or("tool");
-                        push(out, Role::Tool, &tool_line(short_name(name), block.get("input")), at);
+                        push(
+                            out,
+                            Role::Tool,
+                            &tool_line(short_name(name), block.get("input")),
+                            at,
+                        );
                     }
                     // Thinking is the agent talking to itself, and it is long.
                     _ => {}
@@ -270,7 +275,10 @@ fn codex(v: &Value, out: &mut Vec<Message>) {
             }
         }
         (Some("response_item"), Some("function_call")) => {
-            let name = payload.get("name").and_then(Value::as_str).unwrap_or("tool");
+            let name = payload
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("tool");
             // `arguments` is JSON in a string.
             let args = payload
                 .get("arguments")
@@ -279,7 +287,10 @@ fn codex(v: &Value, out: &mut Vec<Message>) {
             push(out, Role::Tool, &codex_tool_line(name, args.as_ref()), at);
         }
         (Some("response_item"), Some("custom_tool_call")) => {
-            let name = payload.get("name").and_then(Value::as_str).unwrap_or("tool");
+            let name = payload
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("tool");
             let input = payload.get("input").and_then(Value::as_str);
             let line = match input {
                 Some(input) => format!("{name} · {}", input.lines().next().unwrap_or("").trim()),
@@ -391,9 +402,7 @@ mod tests {
     fn only_the_recent_end_of_a_long_session_travels() {
         let lines: Vec<String> = (0..200)
             .map(|i| {
-                format!(
-                    r#"{{"type":"user","message":{{"role":"user","content":"message {i}"}}}}"#
-                )
+                format!(r#"{{"type":"user","message":{{"role":"user","content":"message {i}"}}}}"#)
             })
             .collect();
         let file = write_log(&lines.iter().map(String::as_str).collect::<Vec<_>>());
@@ -411,19 +420,30 @@ mod tests {
     #[test]
     fn a_second_pass_reads_only_what_was_appended() {
         use std::io::Write;
-        let mut file = write_log(&[
-            r#"{"type":"user","message":{"role":"user","content":"first"}}"#,
-        ]);
+        let mut file =
+            write_log(&[r#"{"type":"user","message":{"role":"user","content":"first"}}"#]);
 
         let mut messages = Vec::new();
-        let cursor = read_more(file.path(), Provider::Claude, Cursor::default(), &mut messages);
+        let cursor = read_more(
+            file.path(),
+            Provider::Claude,
+            Cursor::default(),
+            &mut messages,
+        );
         assert_eq!(messages.len(), 1);
 
         // A half-written record: the cursor must not advance past it.
-        write!(file, r#"{{"type":"user","message":{{"role":"user","content":"second"}}}}"#).unwrap();
+        write!(
+            file,
+            r#"{{"type":"user","message":{{"role":"user","content":"second"}}}}"#
+        )
+        .unwrap();
         file.flush().unwrap();
         let partial = read_more(file.path(), Provider::Claude, cursor, &mut messages);
-        assert_eq!(partial, cursor, "a line without its newline is not consumed");
+        assert_eq!(
+            partial, cursor,
+            "a line without its newline is not consumed"
+        );
         assert_eq!(messages.len(), 1);
 
         writeln!(file).unwrap();
@@ -439,7 +459,10 @@ mod tests {
 
     #[test]
     fn mcp_tools_lose_the_server_plumbing_in_their_name() {
-        assert_eq!(short_name("mcp__plugin_playwright_playwright__browser_click"), "browser_click");
+        assert_eq!(
+            short_name("mcp__plugin_playwright_playwright__browser_click"),
+            "browser_click"
+        );
         assert_eq!(short_name("Bash"), "Bash");
     }
 

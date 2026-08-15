@@ -74,7 +74,7 @@ pub async fn run_tui(initial_workspace: Option<PathBuf>, use_alternate_screen: b
             for (ws_id, content) in persisted.notepad_content {
                 state.load_notepad_content(ws_id, content);
             }
-            // Select first workspace in visual order (Working workspaces first)
+            // Select the first workspace in list order.
             let visual_order = state.workspace_visual_order();
             if let Some(&first_idx) = visual_order.first() {
                 state.ui.selected_workspace_idx = first_idx;
@@ -103,6 +103,7 @@ pub async fn run_tui(initial_workspace: Option<PathBuf>, use_alternate_screen: b
             state.ui.layout.tasks_ratio = config.tasks_ratio;
             state.ui.layout.output_split_ratio = config.output_split_ratio;
             state.ui.theme_mode = config.theme_mode;
+            state.ui.selected_theme = config.theme_mode;
         }
         Err(_e) => {
             state.ui.toasts.push_back(Toast::new(
@@ -239,7 +240,6 @@ async fn run_main_loop(
             // Auto-activate first agent session in currently selected workspace
             let first_agent_id = state
                 .selected_workspace()
-                .filter(|ws| ws.status == crate::models::WorkspaceStatus::Working)
                 .and_then(|ws| state.data.sessions.get(&ws.id))
                 .and_then(|sessions| sessions.iter().find(|s| !s.agent_type.is_terminal()))
                 .map(|s| s.id);

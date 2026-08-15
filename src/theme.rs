@@ -41,8 +41,8 @@ pub enum ThemeMode {
 }
 
 impl ThemeMode {
-    /// Every theme, in picker order: the two originals, then the generated ones
-    /// grouped by harmony.
+    /// Every theme, in Themes-tab order: the two originals, then the generated
+    /// ones grouped by harmony.
     pub const ALL: [ThemeMode; 14] = [
         ThemeMode::Dark,
         ThemeMode::Light,
@@ -80,26 +80,6 @@ impl ThemeMode {
         }
     }
 
-    /// How it was made, for the second column of the picker. The originals were
-    /// chosen by hand and say so.
-    pub fn detail(self) -> &'static str {
-        match self {
-            ThemeMode::Dark | ThemeMode::Light => "hand-written",
-            ThemeMode::Kimidori => "mono · dark",
-            ThemeMode::Tsuyukusa => "mono · dark",
-            ThemeMode::Edo => "mono · light",
-            ThemeMode::Ruri => "mono · light",
-            ThemeMode::Kusa => "duo · dark",
-            ThemeMode::Fuji => "duo · dark",
-            ThemeMode::Ayame => "duo · light",
-            ThemeMode::Sumire => "duo · light",
-            ThemeMode::Aomidori => "triad · dark",
-            ThemeMode::Botan => "triad · dark",
-            ThemeMode::Kinu => "triad · light",
-            ThemeMode::Budo => "triad · light",
-        }
-    }
-
     /// Whether this theme sits on a dark ground. The picker groups on it, and it
     /// is the one thing callers occasionally need that the colours do not say
     /// outright.
@@ -124,14 +104,6 @@ impl ThemeMode {
     /// `persistence::theme_or_default`, which is the only caller that matters.
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|theme| theme.label() == name)
-    }
-
-    /// The next theme in [`ALL`](Self::ALL), wrapping. What the utility pane's
-    /// Enter does — with fourteen themes a list you step through beats a toggle
-    /// that can only ever reach two of them.
-    pub fn next(self) -> Self {
-        let at = Self::ALL.iter().position(|t| *t == self).unwrap_or(0);
-        Self::ALL[(at + 1) % Self::ALL.len()]
     }
 
     pub fn palette(self) -> Theme {
@@ -617,10 +589,10 @@ mod tests {
         Some((hi + 0.05) / (lo + 0.05))
     }
 
-    /// A theme missing from `ALL` is one the picker cannot show and `next` can
-    /// never reach — the arms of `palette`/`label`/`detail` are exhaustive
-    /// matches, so the compiler already catches a variant with no colours, but
-    /// nothing but this catches a variant with no way in.
+    /// A theme missing from `ALL` is one the Themes tab cannot show. The arms
+    /// of `palette`/`label` are exhaustive matches, so the compiler already
+    /// catches a variant with no colours, but nothing but this catches a
+    /// variant with no way into the picker.
     #[test]
     fn every_theme_is_reachable_and_names_itself() {
         for theme in ThemeMode::ALL {
@@ -637,12 +609,6 @@ mod tests {
         seen.dedup();
         assert_eq!(seen.len(), count, "two themes share a name");
 
-        // Stepping through the list has to visit all of it and come home.
-        let mut walk = ThemeMode::default();
-        for _ in 0..ThemeMode::ALL.len() {
-            walk = walk.next();
-        }
-        assert_eq!(walk, ThemeMode::default(), "next() does not wrap the list");
     }
 
     /// The floors the seeds were swept against. They are asserted here rather
@@ -658,7 +624,7 @@ mod tests {
     #[test]
     fn every_generated_theme_keeps_its_contrast_floors() {
         for theme in ThemeMode::ALL {
-            if theme.detail() == "hand-written" {
+            if matches!(theme, ThemeMode::Dark | ThemeMode::Light) {
                 continue;
             }
             let t = theme.palette();

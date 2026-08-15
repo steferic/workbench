@@ -196,11 +196,14 @@ pub struct UIState {
     // Utilities pane
     pub utility_section: UtilitySection,
     pub selected_utility: UtilityItem, // For Utilities section (tools)
+    pub selected_theme: crate::theme::ThemeMode,
     pub selected_sound: UtilityItem,   // For Sounds section
     pub utility_content: Vec<String>,
     pub utility_scroll_offset: usize,
     pub pie_chart_data: Vec<(String, f64, ratatui::style::Color)>,
     pub show_calendar: bool,
+    /// Served URL and its terminal-native QR rows while the Phone QR utility is open.
+    pub phone_qr: Option<(String, Vec<String>)>,
     pub utility_request_id: u64,
 
     // Banner
@@ -208,7 +211,7 @@ pub struct UIState {
     pub banner_offset: usize,
     pub banner_visible: bool,
 
-    // Active UI theme (dark/light)
+    // Active UI theme
     pub theme_mode: crate::theme::ThemeMode,
 
     // Contextual IDs
@@ -270,11 +273,13 @@ impl UIState {
             layout: LayoutState::default(),
             utility_section: UtilitySection::default(),
             selected_utility: UtilityItem::default(),
+            selected_theme: crate::theme::ThemeMode::default(),
             selected_sound: UtilityItem::BrownNoise,  // Default to first sound
             utility_content: Vec::new(),
             utility_scroll_offset: 0,
             pie_chart_data: Vec::new(),
             show_calendar: false,
+            phone_qr: None,
             utility_request_id: 0,
             banner_text: "\u{2726} WORKBENCH \u{2726} Multi-Agent Development Environment \u{2726} Claude \u{2022} Gemini \u{2022} Codex \u{2022} Grok \u{2726} ".to_string(),
             banner_offset: 0,

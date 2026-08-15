@@ -15,13 +15,33 @@ fn queue_utility_content(
 
 /// Load utility content based on the selected utility
 pub fn load_utility_content(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) {
-    // Ahead of the workspace check, because the theme is the one utility that
-    // is not about a project: it reads nothing off disk and applies to the
-    // whole app, so "No workspace selected" would be both wrong and, on a
-    // fresh install with nothing set up yet, the only thing you could see.
-    if state.ui.selected_utility == UtilityItem::ToggleTheme {
-        state.ui.utility_scroll_offset = 0;
-        state.ui.utility_content = theme_picker_lines(state.ui.theme_mode);
+    state.ui.utility_scroll_offset = 0;
+    state.ui.pie_chart_data.clear();
+    state.ui.show_calendar = false;
+    state.ui.phone_qr = None;
+    // A new synchronous utility must also invalidate work still loading for
+    // the previous selection.
+    state.ui.utility_request_id = state.ui.utility_request_id.wrapping_add(1);
+    let request_id = state.ui.utility_request_id;
+
+    // The phone link belongs to Workbench rather than to one repository, so it
+    // remains useful when no workspace is selected.
+    if state.ui.selected_utility == UtilityItem::PhoneQr {
+        load_phone_qr(state);
+        return;
+    }
+    if state.ui.selected_utility == UtilityItem::ToggleBanner {
+        state.ui.utility_content = vec![
+            String::new(),
+            "  Banner Bar".to_string(),
+            "  ==========".to_string(),
+            String::new(),
+            "  Press Enter to toggle the banner bar.".to_string(),
+            format!(
+                "  Status: {}",
+                if state.ui.banner_visible { "Visible" } else { "Hidden" }
+            ),
+        ];
         return;
     }
 
@@ -33,13 +53,6 @@ pub fn load_utility_content(state: &mut AppState, action_tx: &mpsc::UnboundedSen
             return;
         }
     };
-
-    state.ui.utility_scroll_offset = 0;
-    // Clear special view flags (only specific utilities set these)
-    state.ui.pie_chart_data.clear();
-    state.ui.show_calendar = false;
-    state.ui.utility_request_id = state.ui.utility_request_id.wrapping_add(1);
-    let request_id = state.ui.utility_request_id;
 
     match state.ui.selected_utility {
         UtilityItem::BrownNoise => {
@@ -138,42 +151,58 @@ pub fn load_utility_content(state: &mut AppState, action_tx: &mpsc::UnboundedSen
             load_keybindings_info(state);
         }
         // Handled above the workspace check.
-        UtilityItem::ToggleTheme => {}
+        UtilityItem::PhoneQr | UtilityItem::ToggleBanner => {}
     }
 }
 
-/// The theme list, with a marker on the one in use.
-///
-/// Enter steps to the next theme rather than opening a chooser, so this pane is
-/// the chooser: it is the list you are stepping through, and the marker is
-/// where you are in it.
-fn theme_picker_lines(current: crate::theme::ThemeMode) -> Vec<String> {
-    let mut lines = vec![
-        String::new(),
-        "  Theme".to_string(),
-        "  =====".to_string(),
-        String::new(),
-        "  Press Enter to step to the next theme.".to_string(),
-        String::new(),
-    ];
-    // Grouped by ground, which is the first thing you are choosing; `ALL` is in
-    // Enter's stepping order, which interleaves the two.
-    for (heading, dark) in [("  On a dark ground", true), ("  On a light ground", false)] {
-        lines.push(heading.to_string());
-        for theme in crate::theme::ThemeMode::ALL
-            .iter()
-            .filter(|t| t.is_dark() == dark)
-        {
-            lines.push(format!(
-                "  {} {:<11} {}",
-                if *theme == current { "▶" } else { " " },
-                theme.label(),
-                theme.detail(),
-            ));
+fn load_phone_qr(state: &mut AppState) {
+    let Some(remote) = state.system.remote.as_ref() else {
+        state.ui.utility_content = vec![
+            String::new(),
+            "  Phone QR".to_string(),
+            "  ========".to_string(),
+            String::new(),
+            "  Phone view is unavailable.".to_string(),
+            "  Start Tailscale and ensure remote_port is enabled in settings.".to_string(),
+        ];
+        return;
+    };
+
+    let url = remote.config.url();
+    match phone_qr_rows(&url) {
+        Ok(rows) => {
+            state.ui.phone_qr = Some((url.clone(), rows));
+            state.ui.utility_content = vec![
+                String::new(),
+                "  Phone QR".to_string(),
+                "  ========".to_string(),
+                String::new(),
+                "  Scan the code with your phone camera.".to_string(),
+                format!("  {url}"),
+                "  Reachable from your tailnet devices only.".to_string(),
+            ];
         }
-        lines.push(String::new());
+        Err(error) => {
+            state.ui.utility_content = vec![
+                String::new(),
+                "  Could not create the phone QR code.".to_string(),
+                format!("  {error}"),
+                String::new(),
+                format!("  {url}"),
+            ];
+        }
     }
-    lines
+}
+
+fn phone_qr_rows(url: &str) -> Result<Vec<String>, qrcode::types::QrError> {
+    let rendered = qrcode::QrCode::new(url.as_bytes())?
+        .render::<qrcode::render::unicode::Dense1x2>()
+        .build();
+    Ok(rendered
+        .trim_end_matches('\n')
+        .lines()
+        .map(str::to_string)
+        .collect())
 }
 
 fn loading_message(title: &str) -> Vec<String> {
@@ -293,12 +322,8 @@ fn load_calendar_content(state: &mut AppState) {
 
     // Show last active for each workspace
     for ws in &state.data.workspaces {
-        let status_icon = match ws.status {
-            crate::models::WorkspaceStatus::Working => "●",
-            crate::models::WorkspaceStatus::Paused => "○",
-        };
         let last_active = ws.last_active_display();
-        content.push(format!("  {} {} - {}", status_icon, ws.name, last_active));
+        content.push(format!("  {} - {}", ws.name, last_active));
     }
 
     if state.data.workspaces.is_empty() {
@@ -306,7 +331,6 @@ fn load_calendar_content(state: &mut AppState) {
     }
 
     content.push("".to_string());
-    content.push("  ● = Working, ○ = Paused".to_string());
     content.push("  Today is highlighted in blue".to_string());
 
     state.ui.utility_content = content;
@@ -494,50 +518,24 @@ fn build_top_files(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::theme::ThemeMode;
 
     #[test]
-    fn the_picker_lists_every_theme_and_marks_the_one_in_use() {
-        let lines = theme_picker_lines(ThemeMode::Botan);
-        let body = lines.join("\n");
-
-        for theme in ThemeMode::ALL {
-            assert!(
-                body.contains(theme.label()),
-                "{} is missing from the picker",
-                theme.label(),
-            );
-        }
-        // Exactly one marker, on the theme actually in use.
-        let marked: Vec<&str> = lines
-            .iter()
-            .filter(|l| l.contains('▶'))
-            .map(String::as_str)
-            .collect();
-        assert_eq!(marked.len(), 1, "expected one marker, got {marked:?}");
-        assert!(
-            marked[0].contains("Botan"),
-            "marker sits on {:?}",
-            marked[0]
-        );
-
-        // Both grounds are named, so the list reads as two groups.
-        assert!(body.contains("On a dark ground") && body.contains("On a light ground"));
+    fn phone_links_encode_as_dense_terminal_qr_rows() {
+        let rows = phone_qr_rows("http://100.64.0.7:8765/?t=scan-me-23456789")
+            .expect("phone link should fit a QR code");
+        assert!(rows.len() >= 10, "QR was unexpectedly short: {rows:?}");
+        assert!(rows.iter().any(|row| row.contains('█')));
     }
 
-    /// The theme is the one utility that applies to the whole app rather than
-    /// to a project, and it has to work on a fresh install with nothing set up.
     #[test]
-    fn the_theme_list_does_not_need_a_workspace() {
+    fn the_phone_utility_explains_when_the_server_is_unavailable() {
         let (tx, _rx) = mpsc::unbounded_channel();
         let mut state = AppState::new();
-        assert!(state.selected_workspace().is_none());
+        state.ui.selected_utility = UtilityItem::PhoneQr;
 
-        state.ui.selected_utility = UtilityItem::ToggleTheme;
         load_utility_content(&mut state, &tx);
 
-        let body = state.ui.utility_content.join("\n");
-        assert!(!body.contains("No workspace selected"), "got: {body}");
-        assert!(body.contains("Kimidori"), "got: {body}");
+        assert!(state.ui.phone_qr.is_none());
+        assert!(state.ui.utility_content.join("\n").contains("unavailable"));
     }
 }

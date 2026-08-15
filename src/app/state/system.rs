@@ -675,6 +675,8 @@ pub struct SystemState {
     /// server keeping it alive (see `crate::remote`).
     pub remote_state: crate::remote::Shared,
     pub remote: Option<crate::remote::Remote>,
+    /// Loopback-only repository map, started the first time the user opens it.
+    pub canvas: Option<crate::canvas::CanvasServer>,
     /// Commands from the phone, applied on the tick by the event loop.
     pub remote_commands: Option<tokio::sync::mpsc::UnboundedReceiver<crate::remote::RemoteCommand>>,
     /// Set once we have tried to start, so a machine without Tailscale does
@@ -762,6 +764,7 @@ impl SystemState {
             comms: crate::app::comms_tick::CommsState::new(),
             remote_state: Default::default(),
             remote: None,
+            canvas: None,
             remote_commands: None,
             remote_tried: false,
             remote_focus: None,
@@ -1404,5 +1407,3 @@ mod tests {
         assert_eq!(frame[0].spans()[0].text, "red");
     }
 }
-
-

@@ -72,7 +72,7 @@ impl EventHandler {
             KeyCode::Char('k') | KeyCode::Up => Action::MoveUp,
             KeyCode::Char('l') => Action::FocusRight,
             KeyCode::Char('n') => Action::EnterWorkspaceActionMode,
-            KeyCode::Char('w') => Action::ToggleWorkspaceStatus,
+            KeyCode::Char('g') => Action::OpenRepositoryMap,
             KeyCode::Enter => Action::FocusRight,
             KeyCode::Char('d') => {
                 if let Some(workspace) = state.selected_workspace() {
@@ -325,6 +325,7 @@ impl EventHandler {
             KeyCode::Char('k') | KeyCode::Up => Action::SelectPrevUtility,
             KeyCode::Char('l') | KeyCode::Enter => match state.ui.utility_section {
                 UtilitySection::Utilities => Action::ActivateUtility,
+                UtilitySection::Themes => Action::ActivateUtility,
                 UtilitySection::Sounds => match state.ui.selected_sound {
                     UtilityItem::BrownNoise => Action::ToggleBrownNoise,
                     UtilityItem::ClassicalRadio => Action::ToggleClassicalRadio,

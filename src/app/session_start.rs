@@ -1,6 +1,6 @@
 use crate::app::handlers::{report_background_error, save_state};
 use crate::app::{Action, AppState, PendingSessionStart, Toast, ToastLevel};
-use crate::models::{AgentType, SessionStatus, WorkspaceStatus};
+use crate::models::{AgentType, SessionStatus};
 use crate::pty::{PtyManager, Resume, SessionSpawnConfig};
 use std::path::{Path, PathBuf};
 use tokio::sync::mpsc;
@@ -103,9 +103,6 @@ pub fn start_workspace_sessions(
         Some(ws) => ws,
         None => return,
     };
-    if workspace.status != WorkspaceStatus::Working {
-        return;
-    }
     let workspace_id = workspace.id;
     let workspace_path = workspace.path.clone();
 
@@ -167,12 +164,11 @@ pub fn start_workspace_sessions(
     save_state(state, "failed to save started workspace sessions");
 }
 
-/// Queue the selected working workspace's sessions for staggered startup.
-/// Other working workspaces remain stopped until the user selects them.
+/// Queue the selected workspace's sessions for staggered startup. Other
+/// workspaces remain stopped until the user selects them.
 pub fn queue_selected_workspace_sessions(state: &mut AppState) {
     let Some((workspace_id, workspace_path)) = state
         .selected_workspace()
-        .filter(|ws| ws.status == WorkspaceStatus::Working)
         .map(|ws| (ws.id, ws.path.clone()))
     else {
         return;
@@ -272,11 +268,9 @@ pub fn process_startup_queue(
 
 #[cfg(test)]
 mod tests {
-    use super::{queue_selected_workspace_sessions, start_workspace_sessions, SessionStartRequest};
+    use super::{queue_selected_workspace_sessions, SessionStartRequest};
     use crate::app::AppState;
-    use crate::models::{AgentType, Session, SessionStatus, Workspace, WorkspaceStatus};
-    use crate::pty::PtyManager;
-    use tokio::sync::mpsc;
+    use crate::models::{AgentType, Session, SessionStatus, Workspace};
     use uuid::Uuid;
 
     #[test]
@@ -329,14 +323,10 @@ mod tests {
         assert_eq!(request.effective_dir(), workspace_dir.path());
     }
 
-    fn workspace_with_stopped_session(
-        state: &mut AppState,
-        status: WorkspaceStatus,
-    ) -> (Uuid, Uuid) {
+    fn workspace_with_stopped_session(state: &mut AppState) -> (Uuid, Uuid) {
         let workspace_dir =
             std::env::temp_dir().join(format!("workbench-session-start-{}", Uuid::new_v4()));
-        let mut workspace = Workspace::from_path(workspace_dir);
-        workspace.status = status;
+        let workspace = Workspace::from_path(workspace_dir);
         let workspace_id = workspace.id;
 
         let mut session = Session::new(workspace_id, AgentType::Claude, false);
@@ -351,10 +341,8 @@ mod tests {
     #[test]
     fn initial_queue_only_includes_selected_workspace() {
         let mut state = AppState::new();
-        let (_, selected_session_id) =
-            workspace_with_stopped_session(&mut state, WorkspaceStatus::Working);
-        let (_, other_session_id) =
-            workspace_with_stopped_session(&mut state, WorkspaceStatus::Working);
+        let (_, selected_session_id) = workspace_with_stopped_session(&mut state);
+        let (_, other_session_id) = workspace_with_stopped_session(&mut state);
         state.ui.selected_workspace_idx = 0;
 
         queue_selected_workspace_sessions(&mut state);
@@ -369,30 +357,4 @@ mod tests {
         assert!(!queued_ids.contains(&other_session_id));
     }
 
-    #[test]
-    fn paused_workspace_is_not_queued_on_initial_startup() {
-        let mut state = AppState::new();
-        workspace_with_stopped_session(&mut state, WorkspaceStatus::Paused);
-
-        queue_selected_workspace_sessions(&mut state);
-
-        assert!(state.system.startup_queue.is_empty());
-    }
-
-    #[test]
-    fn paused_workspace_is_not_started_by_navigation() {
-        let mut state = AppState::new();
-        let (_, session_id) = workspace_with_stopped_session(&mut state, WorkspaceStatus::Paused);
-        let pty_manager = PtyManager::new();
-        let (pty_tx, _pty_rx) = mpsc::channel(1);
-
-        start_workspace_sessions(&mut state, &pty_manager, &pty_tx);
-
-        assert_eq!(
-            state.get_session(session_id).map(|session| session.status),
-            Some(SessionStatus::Stopped)
-        );
-        assert!(!state.system.pty_handles.contains_key(&session_id));
-        assert!(!state.system.output_buffers.contains_key(&session_id));
-    }
 }

@@ -112,6 +112,7 @@ pub fn process_action(
 
             refresh_agent_status(state);
             remote_tick(state, action_tx);
+            sync_repository_map(state);
             super::todo_dispatch::tick(state, action_tx);
             tasks::sync_selection(state);
             refresh_agent_tasks(state, action_tx);
@@ -167,7 +168,6 @@ pub fn process_action(
                     });
                 }
             }
-
         }
         Action::UtilityContentLoaded(payload) => {
             if payload.request_id == state.ui.utility_request_id {
@@ -199,6 +199,7 @@ pub fn process_action(
             state.system.port_scan_inflight = false;
             expose_project_servers(state);
         }
+        Action::OpenRepositoryMap => open_repository_map(state),
         Action::Resize(w, h) => {
             state.system.terminal_size = (w, h);
             request_pty_resize(state);
@@ -223,8 +224,8 @@ pub fn process_action(
 
             match action {
                 // Workspace actions
-                Action::ToggleWorkspaceStatus | Action::InitiateDeleteWorkspace(_, _) |
-                Action::ConfirmDeleteWorkspace | Action::EnterWorkspaceActionMode |
+                Action::InitiateDeleteWorkspace(_, _) | Action::ConfirmDeleteWorkspace |
+                Action::EnterWorkspaceActionMode |
                 Action::NextWorkspaceChoice | Action::PrevWorkspaceChoice |
                 Action::ConfirmWorkspaceChoice | Action::EnterWorkspaceNameMode |
                 Action::CreateNewWorkspace(_) => {
@@ -364,7 +365,7 @@ pub fn process_action(
 
                 // Global already handled
                 Action::Quit | Action::ConfirmQuit | Action::Tick | Action::Resize(_, _) |
-                Action::ForceRedraw |
+                Action::ForceRedraw | Action::OpenRepositoryMap |
                 Action::UtilityContentLoaded(_) | Action::DiffStatsUpdated(_) |
                 Action::PortsScanned(_) | Action::ScrollbackLoaded { .. } => {}
             }
@@ -381,6 +382,110 @@ pub fn process_action(
     }
 
     Ok(())
+}
+
+fn canvas_workspaces(state: &AppState) -> Vec<crate::canvas::CanvasWorkspace> {
+    state
+        .data
+        .workspaces
+        .iter()
+        .map(|workspace| {
+            crate::canvas::CanvasWorkspace::new(
+                workspace.id.to_string(),
+                workspace.name.clone(),
+                workspace.path.clone(),
+            )
+        })
+        .collect()
+}
+
+/// Keep the server's allowed roots aligned with the projects visible in the
+/// TUI. The server never accepts a path from the browser, only one of these
+/// opaque ids, so this list is also the traversal security boundary.
+fn sync_repository_map(state: &mut AppState) {
+    if state.system.canvas.is_none() {
+        return;
+    }
+    let workspaces = canvas_workspaces(state);
+    if let Some(canvas) = state.system.canvas.as_ref() {
+        canvas.replace_workspaces(workspaces);
+    }
+
+    let commands = state
+        .system
+        .canvas
+        .as_ref()
+        .map(crate::canvas::CanvasServer::take_commands)
+        .unwrap_or_default();
+    for command in commands {
+        dispatch_canvas_command(state, command);
+    }
+}
+
+fn dispatch_canvas_command(state: &mut AppState, command: crate::canvas::CanvasCommand) {
+    let workspace_path = state
+        .data
+        .workspaces
+        .iter()
+        .find(|workspace| workspace.id.to_string() == command.workspace)
+        .map(|workspace| workspace.path.clone());
+    let Some(workspace_path) = workspace_path else {
+        if let Some(canvas) = state.system.canvas.as_ref() {
+            canvas.fail(&command.request_id, "This workspace is no longer available.");
+        }
+        return;
+    };
+    if let Some(canvas) = state.system.canvas.as_ref() {
+        canvas.launch_agent(command, workspace_path);
+    }
+}
+
+fn open_repository_map(state: &mut AppState) {
+    use crate::app::{Toast, ToastLevel};
+
+    let Some(selected) = state
+        .selected_workspace()
+        .map(|workspace| workspace.id.to_string())
+    else {
+        state.ui.toasts.push_back(Toast::new(
+            "Open a workspace before launching the repository map".into(),
+            ToastLevel::Warning,
+            Duration::from_secs(4),
+        ));
+        return;
+    };
+    let workspaces = canvas_workspaces(state);
+    if state.system.canvas.is_none() {
+        match crate::canvas::CanvasServer::start(workspaces.clone()) {
+            Ok(canvas) => state.system.canvas = Some(canvas),
+            Err(err) => {
+                state.ui.toasts.push_back(Toast::new(
+                    err.to_string(),
+                    ToastLevel::Error,
+                    Duration::from_secs(5),
+                ));
+                return;
+            }
+        }
+    }
+
+    let Some(canvas) = state.system.canvas.as_ref() else {
+        return;
+    };
+    canvas.replace_workspaces(workspaces);
+    let url = canvas.url(Some(&selected));
+    match crate::canvas::open_browser(&url) {
+        Ok(()) => state.ui.toasts.push_back(Toast::new(
+            "Repository map opened in your browser".into(),
+            ToastLevel::Success,
+            Duration::from_secs(3),
+        )),
+        Err(err) => state.ui.toasts.push_back(Toast::new(
+            format!("{err}; open {url}"),
+            ToastLevel::Error,
+            Duration::from_secs(7),
+        )),
+    }
 }
 
 /// How often the agent session logs are re-read for the tasks pane. Each pass
@@ -567,10 +672,13 @@ fn expose_project_servers(state: &mut AppState) {
             continue;
         }
         let bind = std::net::SocketAddr::new(tailnet, port);
-        let upstream = std::net::SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), port);
+        let upstream =
+            std::net::SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), port);
         match crate::ports::expose(bind, upstream) {
             Ok(_) => {
-                crate::logger::info(format!("dev server on {port} is now reachable from the phone"));
+                crate::logger::info(format!(
+                    "dev server on {port} is now reachable from the phone"
+                ));
                 state.system.forwarded.insert(port);
             }
             // Almost always "address in use" — something else already has that
@@ -729,7 +837,9 @@ fn apply_remote(
             }
         };
         if state.get_workspace(workspace_id).is_none() {
-            crate::logger::warn(format!("phone asked for an agent in unknown project {project}"));
+            crate::logger::warn(format!(
+                "phone asked for an agent in unknown project {project}"
+            ));
             return;
         }
         crate::logger::info(format!("phone started a {provider} in {project}"));

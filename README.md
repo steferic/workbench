@@ -8,12 +8,13 @@ A TUI for managing AI agent workspaces and sessions. Run Claude, Codex, Gemini, 
 
 - Multiple workspaces, each with its own agents and terminals
 - TODO pane: queue up work for an agent and it gets through the list one item at a time, sending the next when a turn ends — unless the agent is blocked on you or you are mid-conversation with it. The agent's own steps show under whatever is running (Claude, Codex, opencode, hermes)
-- Phone view over Tailscale: every agent's status across projects, queue work, and approve or deny a blocked agent from your phone — served on the tailnet address only, never a public port
+- Phone view over Tailscale: every agent's status across projects, queue work, and approve or deny a blocked agent from your phone — served on the tailnet address only, never a public port, with a scannable QR in Utilities
 - Live status reported by the agent itself: a session stopped at a permission prompt is flagged `!` instead of looking idle, in its session row, its project row, and the status bar (Claude; Codex in ⚡ mode, which is what lets its hooks run)
 - Restart restores each agent's *own* conversation, so several agents in one project keep separate histories
 - Run agents in isolated git worktrees and merge their work back with one key
 - Parallel tasks: race several agents on the same prompt in separate worktrees
 - Pinned terminal panes alongside the agent output
+- Local repository map: open any workspace as a searchable, live file tree on a clean light infinite canvas, with read-only highlighted code previews and agent-generated explanations, highlights, notes, connections, groups, and diagrams
 - Scrollback reconstruction for full-screen agents (Claude, Codex)
 - Dark/light themes, mouse support, clipboard integration
 
@@ -120,6 +121,27 @@ outstanding consult per asker). Transcripts and rosters live outside the
 repo under the workbench config directory, so nothing pollutes git status.
 
 Press `h` or `?` in the app for keybindings and settings.
+
+From the workspace list, press `g` to open the selected repository map in your
+browser. The map is served on loopback only, respects `.gitignore`, and shows
+the full tree in compact folder clusters with search, pan/zoom, fit-to-view, a
+minimap, optional folder collapsing, and automatic refresh. Click anywhere in
+the minimap to center the canvas there, drag its viewport frame to navigate, or
+focus it and use the arrow keys for keyboard panning.
+
+Use **Analyze** and **Categorize** for the built-in repository jobs, or click
+**Note** to place an independent agent note on the board. Each note starts a fresh,
+read-only Claude Code instance using Claude Sonnet 5. Answers and follow-up turns
+appear inside the note; note conversations live only in the open canvas and Claude
+session persistence is disabled. Use **Select**, Shift-drag, or Cmd/Ctrl-click
+before creating a note to bind it to specific files and folders.
+
+The Categorize job creates a grounded Architecture Lens. Workbench lays out the
+agent's categories and relationships as a compact full-canvas graph, and every
+concept must reference real repository paths. Select a concept to reveal its files
+or generate a deeper subsystem map, then use the back control to move through the
+abstraction levels or return to the factual file tree. Generated maps and other AI
+drawing layers remain read-only, bounded, validated, undoable, and removable.
 
 ## License
 

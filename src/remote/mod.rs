@@ -880,4 +880,3 @@ mod tests {
         assert_eq!(session_for(&state, "nosuchid"), None);
     }
 }
-

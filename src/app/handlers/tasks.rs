@@ -5,12 +5,33 @@
 //! decides when an item may go out.
 
 use crate::app::utilities::load_utility_content;
-use crate::app::{tasks_view, Action, AppState, InputMode, TaskEdit, UtilityItem};
+use crate::app::{
+    tasks_view, Action, AppState, InputMode, TaskEdit, UtilityItem, UtilitySection,
+};
 use anyhow::Result;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use super::save_config;
+
+fn global_config(state: &AppState) -> crate::persistence::GlobalConfig {
+    crate::persistence::GlobalConfig {
+        banner_visible: state.ui.banner_visible,
+        left_panel_ratio: state.ui.layout.left_panel_ratio,
+        workspace_ratio: state.ui.layout.workspace_ratio,
+        sessions_ratio: state.ui.layout.sessions_ratio,
+        tasks_ratio: state.ui.layout.tasks_ratio,
+        output_split_ratio: state.ui.layout.output_split_ratio,
+        theme_mode: state.ui.theme_mode,
+    }
+}
+
+fn toggle_banner(state: &mut AppState) {
+    state.ui.banner_visible = !state.ui.banner_visible;
+    // The next draw computes the new pane geometry; resize PTYs immediately
+    // after that frame so terminal applications use the reclaimed row.
+    crate::app::pty_ops::request_pty_resize(state);
+}
 
 /// Keep the pane's row cursor meaningful as the Sessions pane cursor moves:
 /// a row index into one agent's list means nothing in another's.
@@ -170,26 +191,19 @@ pub fn handle_task_action(
             state.system.task_refresh_inflight = false;
         }
         Action::ActivateUtility => {
-            // Step to the next theme and persist. Enter advances through the
-            // list rather than flipping a pair, because there are fourteen of
-            // them now and a toggle could only ever reach two.
-            if state.ui.selected_utility == UtilityItem::ToggleTheme {
-                state.ui.theme_mode = state.ui.theme_mode.next();
-                let config = crate::persistence::GlobalConfig {
-                    banner_visible: state.ui.banner_visible,
-                    left_panel_ratio: state.ui.layout.left_panel_ratio,
-                    workspace_ratio: state.ui.layout.workspace_ratio,
-                    sessions_ratio: state.ui.layout.sessions_ratio,
-                    tasks_ratio: state.ui.layout.tasks_ratio,
-                    output_split_ratio: state.ui.layout.output_split_ratio,
-                    theme_mode: state.ui.theme_mode,
-                };
+            if state.ui.utility_section == UtilitySection::Themes {
+                state.ui.theme_mode = state.ui.selected_theme;
+                let config = global_config(state);
                 save_config(state, &config, "failed to save theme config");
-                // Redraw the list so its marker follows the theme it is naming.
-                load_utility_content(state, action_tx);
-            } else {
-                load_utility_content(state, action_tx);
-                state.set_active_session_id(None);
+            } else if state.ui.utility_section == UtilitySection::Utilities {
+                if state.ui.selected_utility == UtilityItem::ToggleBanner {
+                    toggle_banner(state);
+                    let config = global_config(state);
+                    save_config(state, &config, "failed to save banner config");
+                } else {
+                    load_utility_content(state, action_tx);
+                    state.set_active_session_id(None);
+                }
             }
         }
         _ => {}
@@ -342,6 +356,18 @@ mod tests {
 
         act(&mut state, Action::ToggleTodoQueuePaused);
         assert!(!queue(&state, id).paused);
+    }
+
+    #[test]
+    fn banner_toggle_updates_visibility_and_requests_a_resize() {
+        let mut state = AppState::default();
+        assert!(state.ui.banner_visible);
+        assert!(!state.system.pty_resize_pending);
+
+        toggle_banner(&mut state);
+
+        assert!(!state.ui.banner_visible);
+        assert!(state.system.pty_resize_pending);
     }
 
     #[test]

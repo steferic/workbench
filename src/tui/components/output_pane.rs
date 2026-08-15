@@ -2,14 +2,14 @@ use super::terminal_view::{build_terminal_view, ReplayPolicy, TerminalViewReques
 use crate::app::{AppState, FocusPanel, InputMode};
 use crate::tui::utils::render_cursor;
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
-    style::{Modifier, Style},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    style::{Color, Modifier, Style},
     symbols,
     text::{Line, Span},
     widgets::{
         calendar::{CalendarEventStore, Monthly},
         Bar, BarChart, BarGroup, Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation,
-        ScrollbarState,
+        ScrollbarState, Wrap,
     },
     Frame,
 };
@@ -60,6 +60,12 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
         return;
     }
 
+    if state.ui.phone_qr.is_some() && state.active_session_id().is_none() {
+        state.set_output_content_length(0);
+        render_phone_qr_view(frame, area, state, block);
+        return;
+    }
+
     // Render terminal output with scrolling support
     if let Some(session_id) = state.active_session_id() {
         // Don't show pinned terminal in output pane when split view is active
@@ -102,6 +108,83 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
         let mut scrollbar_state = ScrollbarState::new(max_scroll).position(scroll_offset);
         frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
     }
+}
+
+/// Render the phone link as a high-contrast, terminal-native QR code.
+///
+/// The QR gets its own white surface even under dark themes. Keeping the
+/// modules black-on-white and preserving the encoder's quiet zone makes phone
+/// cameras substantially more dependable than inheriting terminal colors.
+fn render_phone_qr_view(frame: &mut Frame, area: Rect, state: &AppState, block: Block) {
+    let t = crate::theme::current();
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let Some((url, rows)) = state.ui.phone_qr.as_ref() else {
+        return;
+    };
+    let qr_width = rows
+        .iter()
+        .map(|row| row.chars().count())
+        .max()
+        .unwrap_or(0)
+        .min(u16::MAX as usize) as u16;
+    let qr_height = rows.len().min(u16::MAX as usize) as u16;
+    let info_height = 4;
+
+    if qr_width == 0
+        || qr_height == 0
+        || inner.width < qr_width
+        || inner.height < qr_height.saturating_add(info_height)
+    {
+        let needed_height = qr_height.saturating_add(info_height);
+        let message = Paragraph::new(vec![
+            Line::from(Span::styled(
+                "Enlarge the output pane to scan",
+                Style::default().fg(t.active).add_modifier(Modifier::BOLD),
+            )),
+            Line::from(format!(
+                "QR needs at least {qr_width}×{needed_height} cells"
+            )),
+            Line::from(""),
+            Line::from(Span::styled(url.clone(), Style::default().fg(t.accent))),
+        ])
+        .alignment(Alignment::Center)
+        .wrap(Wrap { trim: false });
+        frame.render_widget(message, inner);
+        return;
+    }
+
+    let qr_space_height = inner.height - info_height;
+    let qr_area = Rect::new(
+        inner.x + (inner.width - qr_width) / 2,
+        inner.y + (qr_space_height - qr_height) / 2,
+        qr_width,
+        qr_height,
+    );
+    let qr = Paragraph::new(
+        rows.iter()
+            .map(|row| Line::from(row.clone()))
+            .collect::<Vec<_>>(),
+    )
+    .style(Style::default().fg(Color::Black).bg(Color::White));
+    frame.render_widget(qr, qr_area);
+
+    let details_area = Rect::new(inner.x, inner.y + qr_space_height, inner.width, info_height);
+    let details = Paragraph::new(vec![
+        Line::from(Span::styled(
+            "Scan with your phone camera",
+            Style::default().fg(t.active).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(url.clone(), Style::default().fg(t.accent))),
+        Line::from(Span::styled(
+            "Tailnet only · link includes your access token",
+            Style::default().fg(t.fg_faint),
+        )),
+    ])
+    .alignment(Alignment::Center)
+    .wrap(Wrap { trim: false });
+    frame.render_widget(details, details_area);
 }
 
 /// Render the terminal output for an active session (live or replay).
@@ -450,4 +533,61 @@ fn offset_month(year: i32, month: Month, offset: i32) -> (i32, Month) {
     };
 
     (new_year, new_month)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::UtilityItem;
+    use ratatui::{backend::TestBackend, Terminal};
+
+    fn qr_state(rows: Vec<String>) -> AppState {
+        let mut state = AppState::new();
+        state.ui.selected_utility = UtilityItem::PhoneQr;
+        state.ui.utility_content = vec!["Phone QR".to_string()];
+        state.ui.phone_qr = Some(("http://100.64.0.7:8765/?t=token".to_string(), rows));
+        state
+    }
+
+    #[test]
+    fn phone_qr_always_uses_a_black_on_white_scan_surface() {
+        let mut state = qr_state(vec!["█▀▄ ".to_string(); 3]);
+        let mut terminal = Terminal::new(TestBackend::new(60, 20)).unwrap();
+
+        terminal
+            .draw(|frame| render(frame, frame.area(), &mut state))
+            .unwrap();
+
+        let white_cells: Vec<_> = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .filter(|cell| cell.bg == Color::White)
+            .collect();
+        assert_eq!(white_cells.len(), 12);
+        assert!(white_cells.iter().all(|cell| cell.fg == Color::Black));
+    }
+
+    #[test]
+    fn a_small_output_pane_asks_for_space_instead_of_clipping_the_qr() {
+        let mut state = qr_state(vec!["█".repeat(30); 12]);
+        let mut terminal = Terminal::new(TestBackend::new(24, 10)).unwrap();
+
+        terminal
+            .draw(|frame| render(frame, frame.area(), &mut state))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let screen = (0..10)
+            .map(|y| {
+                (0..24)
+                    .map(|x| buffer[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(screen.contains("Enlarge the output"), "screen was:\n{screen}");
+        assert!(!buffer.content().iter().any(|cell| cell.bg == Color::White));
+    }
 }

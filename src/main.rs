@@ -2,6 +2,7 @@ mod agent_status;
 mod agent_tasks;
 mod app;
 mod audio;
+mod canvas;
 mod cli;
 mod comms;
 mod config;

@@ -6,14 +6,14 @@ mod ui;
 
 pub use data::DataState;
 pub use system::{
-    PendingSessionStart, RawOutputBuffer, ReplayCache, SystemState, ThreadCache, TranscriptBuffer,
-    TranscriptLine, TranscriptSpan,
+    PendingSessionStart, RawOutputBuffer, ReplayCache, SystemState, ThreadCache,
+    TranscriptBuffer, TranscriptLine, TranscriptSpan,
 };
 pub use types::*;
 pub use ui::{PinnedPaneState, UIState, WorkspaceUiState};
 
 use crate::agent_status::{Activity, Attention};
-use crate::models::{Session, SessionStatus, Workspace, WorkspaceStatus};
+use crate::models::{Session, SessionStatus, Workspace};
 use std::collections::HashMap;
 use tui_textarea::TextArea;
 use uuid::Uuid;
@@ -288,28 +288,9 @@ impl AppState {
         }
     }
 
-    /// Returns workspace indices in visual order (Working first, then Paused)
+    /// Returns workspace indices in their list order.
     pub fn workspace_visual_order(&self) -> Vec<usize> {
-        let mut working: Vec<usize> = self
-            .data
-            .workspaces
-            .iter()
-            .enumerate()
-            .filter(|(_, ws)| ws.status == WorkspaceStatus::Working)
-            .map(|(i, _)| i)
-            .collect();
-
-        let paused: Vec<usize> = self
-            .data
-            .workspaces
-            .iter()
-            .enumerate()
-            .filter(|(_, ws)| ws.status == WorkspaceStatus::Paused)
-            .map(|(i, _)| i)
-            .collect();
-
-        working.extend(paused);
-        working
+        (0..self.data.workspaces.len()).collect()
     }
 
     /// Navigate to previous workspace in visual order
@@ -751,25 +732,14 @@ impl AppState {
     }
 
     /// Update idle queue based on current session states
-    /// Only includes sessions from "Working" workspaces
     /// Returns IDs of sessions that just became idle (new to the queue)
     pub fn update_idle_queue(&mut self) -> Vec<Uuid> {
-        // Get IDs of "Working" workspaces only
-        let working_workspace_ids: Vec<Uuid> = self
-            .data
-            .workspaces
-            .iter()
-            .filter(|ws| ws.status == WorkspaceStatus::Working)
-            .map(|ws| ws.id)
-            .collect();
-
-        // Get all running AGENT sessions from WORKING workspaces (exclude terminals)
+        // Get all running agent sessions (exclude terminals).
         let running_agent_sessions: Vec<Uuid> = self
             .data
             .sessions
-            .iter()
-            .filter(|(ws_id, _)| working_workspace_ids.contains(ws_id))
-            .flat_map(|(_, sessions)| sessions)
+            .values()
+            .flatten()
             .filter(|s| s.status == SessionStatus::Running && s.agent_type.is_agent())
             .map(|s| s.id)
             .collect();

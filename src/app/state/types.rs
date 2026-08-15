@@ -81,6 +81,7 @@ pub enum PendingDelete {
 pub enum UtilitySection {
     #[default]
     Utilities,
+    Themes,
     Sounds,
     Notepad,
 }
@@ -88,7 +89,8 @@ pub enum UtilitySection {
 impl UtilitySection {
     pub fn toggle(&self) -> Self {
         match self {
-            UtilitySection::Utilities => UtilitySection::Sounds,
+            UtilitySection::Utilities => UtilitySection::Themes,
+            UtilitySection::Themes => UtilitySection::Sounds,
             UtilitySection::Sounds => UtilitySection::Notepad,
             UtilitySection::Notepad => UtilitySection::Utilities,
         }
@@ -132,7 +134,8 @@ pub enum UtilityItem {
     Calendar,
     GitHistory,
     Keybindings,
-    ToggleTheme,
+    PhoneQr,
+    ToggleBanner,
     // Sounds
     BrownNoise,
     ClassicalRadio,
@@ -149,7 +152,8 @@ impl UtilityItem {
             UtilityItem::Calendar,
             UtilityItem::GitHistory,
             UtilityItem::Keybindings,
-            UtilityItem::ToggleTheme,
+            UtilityItem::PhoneQr,
+            UtilityItem::ToggleBanner,
         ]
     }
 
@@ -175,7 +179,8 @@ impl UtilityItem {
             UtilityItem::Calendar => "Calendar",
             UtilityItem::GitHistory => "Git History",
             UtilityItem::Keybindings => "Keybindings",
-            UtilityItem::ToggleTheme => "Theme",
+            UtilityItem::PhoneQr => "Phone QR",
+            UtilityItem::ToggleBanner => "Banner Bar",
         }
     }
 
@@ -190,7 +195,8 @@ impl UtilityItem {
             UtilityItem::Calendar => "\u{1F4C5}",
             UtilityItem::GitHistory => "\u{1F4DC}",
             UtilityItem::Keybindings => "\u{2328}",
-            UtilityItem::ToggleTheme => "\u{1F313}",
+            UtilityItem::PhoneQr => "\u{25A6}",
+            UtilityItem::ToggleBanner => "\u{1F4E2}",
         }
     }
 }

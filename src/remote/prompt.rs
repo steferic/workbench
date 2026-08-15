@@ -263,7 +263,10 @@ mod tests {
     fn codex_asking_the_same_thing_parses_the_same_way() {
         let prompt = parse(CODEX).expect("a prompt is on screen");
 
-        assert_eq!(prompt.lines[0], "  Would you like to run the following command?");
+        assert_eq!(
+            prompt.lines[0],
+            "  Would you like to run the following command?"
+        );
         assert!(
             prompt.lines.iter().any(|l| l.contains("$ rm -f /tmp/zzz")),
             "{:?}",

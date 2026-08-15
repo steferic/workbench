@@ -5,8 +5,8 @@ use crate::app::selection::{
 };
 use crate::app::session_start::start_workspace_sessions;
 use crate::app::workspace_nav::{
-    cycle_next_working_workspace, cycle_prev_working_workspace, move_workspace_selection,
-    set_selected_workspace, workspace_index_at_position,
+    cycle_next_workspace, cycle_prev_workspace, move_workspace_selection, set_selected_workspace,
+    workspace_index_at_position,
 };
 use crate::app::{
     Action, AppState, Divider, FocusPanel, InputMode, TextSelection, UtilityItem, UtilitySection,
@@ -188,10 +188,10 @@ pub fn handle_navigation_action(
             handle_mouse_scroll(state, x, y, false, pty_manager, pty_tx)
         }
         Action::CycleNextWorkspace => {
-            cycle_next_working_workspace(state);
+            cycle_next_workspace(state);
         }
         Action::CyclePrevWorkspace => {
-            cycle_prev_working_workspace(state);
+            cycle_prev_workspace(state);
         }
         Action::CycleNextSession => cycle_session(state, true),
         Action::CyclePrevSession => cycle_session(state, false),
@@ -253,6 +253,16 @@ pub fn handle_navigation_action(
                         state.ui.selected_utility = tools[current_idx + 1];
                     }
                 }
+                UtilitySection::Themes => {
+                    let themes = crate::theme::ThemeMode::ALL;
+                    let current_idx = themes
+                        .iter()
+                        .position(|theme| *theme == state.ui.selected_theme)
+                        .unwrap_or(0);
+                    if current_idx < themes.len() - 1 {
+                        state.ui.selected_theme = themes[current_idx + 1];
+                    }
+                }
                 UtilitySection::Sounds => {
                     let sounds = UtilityItem::sounds();
                     let current_idx = sounds
@@ -276,6 +286,16 @@ pub fn handle_navigation_action(
                         .unwrap_or(0);
                     if current_idx > 0 {
                         state.ui.selected_utility = tools[current_idx - 1];
+                    }
+                }
+                UtilitySection::Themes => {
+                    let themes = crate::theme::ThemeMode::ALL;
+                    let current_idx = themes
+                        .iter()
+                        .position(|theme| *theme == state.ui.selected_theme)
+                        .unwrap_or(0);
+                    if current_idx > 0 {
+                        state.ui.selected_theme = themes[current_idx - 1];
                     }
                 }
                 UtilitySection::Sounds => {
@@ -862,32 +882,28 @@ pub fn handle_drag_auto_scroll(state: &mut AppState) {
 #[cfg(test)]
 mod tests {
     use super::handle_navigation_action;
-    use crate::app::{Action, AppState, FocusPanel};
-    use crate::models::{Workspace, WorkspaceStatus};
+    use crate::app::{Action, AppState, FocusPanel, UtilitySection};
+    use crate::models::Workspace;
     use crate::pty::PtyManager;
+    use crate::theme::ThemeMode;
     use std::path::PathBuf;
     use tokio::sync::mpsc;
 
-    fn workspace(name: &str, status: WorkspaceStatus) -> Workspace {
-        let mut workspace = Workspace::new(name.to_string(), PathBuf::from(format!("/tmp/{name}")));
-        workspace.status = status;
-        workspace
+    fn workspace(name: &str) -> Workspace {
+        Workspace::new(name.to_string(), PathBuf::from(format!("/tmp/{name}")))
     }
 
     #[test]
-    fn mouse_click_on_paused_workspace_selects_it() {
+    fn mouse_click_selects_the_workspace_row() {
         let mut state = AppState::default();
-        state.data.workspaces = vec![
-            workspace("alpha", WorkspaceStatus::Working),
-            workspace("beta", WorkspaceStatus::Paused),
-        ];
+        state.data.workspaces = vec![workspace("alpha"), workspace("beta")];
         state.ui.workspace_area = Some((0, 0, 20, 7));
         state.ui.focus = FocusPanel::OutputPane;
 
         let pty_manager = PtyManager::new();
         let (pty_tx, _) = mpsc::channel(1);
 
-        handle_navigation_action(&mut state, Action::MouseClick(2, 4), &pty_manager, &pty_tx)
+        handle_navigation_action(&mut state, Action::MouseClick(2, 2), &pty_manager, &pty_tx)
             .unwrap();
 
         assert_eq!(state.ui.focus, FocusPanel::WorkspaceList);
@@ -897,10 +913,7 @@ mod tests {
     #[test]
     fn mouse_scroll_in_workspace_moves_workspace_selection() {
         let mut state = AppState::default();
-        state.data.workspaces = vec![
-            workspace("alpha", WorkspaceStatus::Working),
-            workspace("beta", WorkspaceStatus::Paused),
-        ];
+        state.data.workspaces = vec![workspace("alpha"), workspace("beta")];
         state.ui.workspace_area = Some((0, 0, 20, 7));
 
         let pty_manager = PtyManager::new();
@@ -916,5 +929,58 @@ mod tests {
 
         assert_eq!(state.ui.focus, FocusPanel::WorkspaceList);
         assert_eq!(state.ui.selected_workspace_idx, 1);
+    }
+
+    #[test]
+    fn theme_navigation_moves_the_picker_without_applying_it() {
+        let mut state = AppState::default();
+        state.ui.utility_section = UtilitySection::Themes;
+        state.ui.selected_theme = ThemeMode::Dark;
+        state.ui.theme_mode = ThemeMode::Dark;
+        let pty_manager = PtyManager::new();
+        let (pty_tx, _) = mpsc::channel(1);
+
+        handle_navigation_action(
+            &mut state,
+            Action::SelectNextUtility,
+            &pty_manager,
+            &pty_tx,
+        )
+        .unwrap();
+
+        assert_eq!(state.ui.selected_theme, ThemeMode::Light);
+        assert_eq!(state.ui.theme_mode, ThemeMode::Dark);
+
+        handle_navigation_action(
+            &mut state,
+            Action::SelectPrevUtility,
+            &pty_manager,
+            &pty_tx,
+        )
+        .unwrap();
+        assert_eq!(state.ui.selected_theme, ThemeMode::Dark);
+    }
+
+    #[test]
+    fn utility_tab_navigation_includes_themes() {
+        let mut state = AppState::default();
+        let pty_manager = PtyManager::new();
+        let (pty_tx, _) = mpsc::channel(1);
+
+        for expected in [
+            UtilitySection::Themes,
+            UtilitySection::Sounds,
+            UtilitySection::Notepad,
+            UtilitySection::Utilities,
+        ] {
+            handle_navigation_action(
+                &mut state,
+                Action::ToggleUtilitySection,
+                &pty_manager,
+                &pty_tx,
+            )
+            .unwrap();
+            assert_eq!(state.ui.utility_section, expected);
+        }
     }
 }

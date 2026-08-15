@@ -63,7 +63,8 @@ pub enum Action {
     CyclePrevSession,          // F8 - cycle backward through sessions
 
     // Workspace operations
-    ToggleWorkspaceStatus,
+    /// Open the selected repository in the local infinite-canvas file map.
+    OpenRepositoryMap,
     InitiateDeleteWorkspace(Uuid, String), // (id, name) - first 'd' press
     ConfirmDeleteWorkspace,                // second 'd' press
 
@@ -155,8 +156,8 @@ pub enum Action {
     // Utilities pane
     SelectNextUtility,
     SelectPrevUtility,
-    ActivateUtility,      // Load and display utility content in output pane
-    ToggleUtilitySection, // Switch between Util, Sounds, and Notepad sections
+    ActivateUtility,      // Open a utility or apply the selected theme
+    ToggleUtilitySection, // Switch between the utility pane tabs
     ToggleBrownNoise,     // Toggle brown noise player on/off
     ToggleClassicalRadio, // Toggle WRTI classical radio stream on/off
     ToggleOceanWaves,     // Toggle ocean waves sound on/off

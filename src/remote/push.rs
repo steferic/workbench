@@ -82,7 +82,8 @@ impl Push {
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .unwrap_or_default();
         if push.key.is_empty() {
-            push.key = URL_SAFE_NO_PAD.encode(SigningKey::random(&mut rand::rngs::OsRng).to_bytes());
+            push.key =
+                URL_SAFE_NO_PAD.encode(SigningKey::random(&mut rand::rngs::OsRng).to_bytes());
             if let Err(err) = push.save() {
                 crate::logger::warn(format!("could not store the push keypair: {err}"));
             }
@@ -292,7 +293,10 @@ mod tests {
     #[test]
     fn the_contact_is_one_a_push_service_will_accept() {
         let (scheme, rest) = CONTACT.split_once(':').expect("a URI with a scheme");
-        assert!(matches!(scheme, "mailto" | "https"), "{scheme} is not a contact");
+        assert!(
+            matches!(scheme, "mailto" | "https"),
+            "{scheme} is not a contact"
+        );
         assert!(
             !rest.contains("localhost") && !rest.contains("127.0.0.1"),
             "a push service cannot reach {rest}, and Apple rejects it outright"
@@ -309,6 +313,3 @@ mod tests {
         assert_eq!(push.subscriptions.len(), 2);
     }
 }
-
-
-

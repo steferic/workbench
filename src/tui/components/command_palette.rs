@@ -51,6 +51,11 @@ fn palette_entries() -> Vec<PaletteEntry> {
             keybinding: "n",
         },
         PaletteEntry {
+            name: "Open Repository Map",
+            action: Action::OpenRepositoryMap,
+            keybinding: "g",
+        },
+        PaletteEntry {
             name: "Toggle Split View",
             action: Action::ToggleSplitView,
             keybinding: "\\",

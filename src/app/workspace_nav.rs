@@ -1,7 +1,6 @@
 use crate::app::selection::transition_workspace;
 use crate::app::session_start::start_workspace_sessions;
 use crate::app::{Action, AppState, TextSelection};
-use crate::models::WorkspaceStatus;
 use crate::pty::PtyManager;
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -69,12 +68,12 @@ pub(crate) fn set_selected_workspace(
     start_workspace_sessions(state, pty_manager, pty_tx);
 }
 
-pub(crate) fn cycle_next_working_workspace(state: &mut AppState) {
-    cycle_working_workspace(state, CycleDirection::Next);
+pub(crate) fn cycle_next_workspace(state: &mut AppState) {
+    cycle_workspace(state, CycleDirection::Next);
 }
 
-pub(crate) fn cycle_prev_working_workspace(state: &mut AppState) {
-    cycle_working_workspace(state, CycleDirection::Prev);
+pub(crate) fn cycle_prev_workspace(state: &mut AppState) {
+    cycle_workspace(state, CycleDirection::Prev);
 }
 
 pub(crate) fn workspace_index_at_position(state: &AppState, x: u16, y: u16) -> Option<usize> {
@@ -95,40 +94,7 @@ pub(crate) fn workspace_index_at_position(state: &AppState, x: u16, y: u16) -> O
     }
 
     let row = (y - inner_y) as usize;
-    let working_indices = workspace_indices_with_status(state, WorkspaceStatus::Working);
-    let paused_indices = workspace_indices_with_status(state, WorkspaceStatus::Paused);
-
-    let mut visual_row = 0usize;
-
-    if !working_indices.is_empty() || paused_indices.is_empty() {
-        if row == visual_row {
-            return None;
-        }
-        visual_row += 1;
-    }
-
-    for idx in working_indices {
-        if row == visual_row {
-            return Some(idx);
-        }
-        visual_row += 1;
-    }
-
-    if !paused_indices.is_empty() {
-        if row == visual_row {
-            return None;
-        }
-        visual_row += 1;
-    }
-
-    for idx in paused_indices {
-        if row == visual_row {
-            return Some(idx);
-        }
-        visual_row += 1;
-    }
-
-    None
+    state.data.workspaces.get(row).map(|_| row)
 }
 
 enum CycleDirection {
@@ -136,10 +102,9 @@ enum CycleDirection {
     Prev,
 }
 
-fn cycle_working_workspace(state: &mut AppState, direction: CycleDirection) {
-    let working_indices = workspace_indices_with_status(state, WorkspaceStatus::Working);
-
-    if working_indices.is_empty() {
+fn cycle_workspace(state: &mut AppState, direction: CycleDirection) {
+    let workspace_count = state.data.workspaces.len();
+    if workspace_count == 0 {
         return;
     }
 
@@ -158,34 +123,18 @@ fn cycle_working_workspace(state: &mut AppState, direction: CycleDirection) {
         current_ws.last_active_session_id = active;
     }
 
-    let current_pos = working_indices
-        .iter()
-        .position(|&idx| idx == state.ui.selected_workspace_idx);
-
-    let next_idx = match (direction, current_pos) {
-        (CycleDirection::Next, Some(pos)) => working_indices[(pos + 1) % working_indices.len()],
-        (CycleDirection::Next, None) => working_indices[0],
-        (CycleDirection::Prev, Some(pos)) => {
-            working_indices[(pos + working_indices.len() - 1) % working_indices.len()]
-        }
-        (CycleDirection::Prev, None) => *working_indices.last().unwrap(),
+    let current = state.ui.selected_workspace_idx;
+    let next_idx = match (direction, current < workspace_count) {
+        (CycleDirection::Next, true) => (current + 1) % workspace_count,
+        (CycleDirection::Next, false) => 0,
+        (CycleDirection::Prev, true) => (current + workspace_count - 1) % workspace_count,
+        (CycleDirection::Prev, false) => workspace_count - 1,
     };
 
     if next_idx != state.ui.selected_workspace_idx {
         state.ui.selected_workspace_idx = next_idx;
         transition_workspace_after_index_change(state, prev_ws_id);
     }
-}
-
-fn workspace_indices_with_status(state: &AppState, status: WorkspaceStatus) -> Vec<usize> {
-    state
-        .data
-        .workspaces
-        .iter()
-        .enumerate()
-        .filter(|(_, ws)| ws.status == status)
-        .map(|(idx, _)| idx)
-        .collect()
 }
 
 fn transition_workspace_after_index_change(state: &mut AppState, prev_ws_id: Option<uuid::Uuid>) {
@@ -243,60 +192,47 @@ fn restore_workspace_session(state: &mut AppState) {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        cycle_next_working_workspace, cycle_prev_working_workspace, workspace_index_at_position,
-    };
+    use super::{cycle_next_workspace, cycle_prev_workspace, workspace_index_at_position};
     use crate::app::AppState;
-    use crate::models::{Workspace, WorkspaceStatus};
+    use crate::models::Workspace;
     use std::path::PathBuf;
 
-    fn workspace(name: &str, status: WorkspaceStatus) -> Workspace {
-        let mut workspace = Workspace::new(name.to_string(), PathBuf::from(format!("/tmp/{name}")));
-        workspace.status = status;
-        workspace
+    fn workspace(name: &str) -> Workspace {
+        Workspace::new(name.to_string(), PathBuf::from(format!("/tmp/{name}")))
     }
 
     #[test]
-    fn workspace_hit_testing_skips_section_headers() {
+    fn workspace_hit_testing_maps_each_row_directly() {
         let mut state = AppState::default();
         state.data.workspaces = vec![
-            workspace("alpha", WorkspaceStatus::Working),
-            workspace("beta", WorkspaceStatus::Paused),
-            workspace("gamma", WorkspaceStatus::Paused),
+            workspace("alpha"),
+            workspace("beta"),
+            workspace("gamma"),
         ];
         state.ui.workspace_area = Some((0, 0, 20, 8));
 
-        assert_eq!(workspace_index_at_position(&state, 2, 1), None);
-        assert_eq!(workspace_index_at_position(&state, 2, 2), Some(0));
-        assert_eq!(workspace_index_at_position(&state, 2, 3), None);
-        assert_eq!(workspace_index_at_position(&state, 2, 4), Some(1));
-        assert_eq!(workspace_index_at_position(&state, 2, 5), Some(2));
+        assert_eq!(workspace_index_at_position(&state, 2, 1), Some(0));
+        assert_eq!(workspace_index_at_position(&state, 2, 2), Some(1));
+        assert_eq!(workspace_index_at_position(&state, 2, 3), Some(2));
+        assert_eq!(workspace_index_at_position(&state, 2, 4), None);
     }
 
     #[test]
-    fn cycle_next_working_workspace_skips_paused() {
+    fn cycle_next_workspace_visits_every_project() {
         let mut state = AppState::default();
-        state.data.workspaces = vec![
-            workspace("alpha", WorkspaceStatus::Working),
-            workspace("beta", WorkspaceStatus::Paused),
-            workspace("gamma", WorkspaceStatus::Working),
-        ];
+        state.data.workspaces = vec![workspace("alpha"), workspace("beta"), workspace("gamma")];
 
-        cycle_next_working_workspace(&mut state);
+        cycle_next_workspace(&mut state);
 
-        assert_eq!(state.ui.selected_workspace_idx, 2);
+        assert_eq!(state.ui.selected_workspace_idx, 1);
     }
 
     #[test]
-    fn cycle_prev_working_workspace_wraps_to_last_working_workspace() {
+    fn cycle_prev_workspace_wraps_to_last_project() {
         let mut state = AppState::default();
-        state.data.workspaces = vec![
-            workspace("alpha", WorkspaceStatus::Working),
-            workspace("beta", WorkspaceStatus::Paused),
-            workspace("gamma", WorkspaceStatus::Working),
-        ];
+        state.data.workspaces = vec![workspace("alpha"), workspace("beta"), workspace("gamma")];
 
-        cycle_prev_working_workspace(&mut state);
+        cycle_prev_workspace(&mut state);
 
         assert_eq!(state.ui.selected_workspace_idx, 2);
     }

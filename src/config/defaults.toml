@@ -95,7 +95,6 @@
 "l" = "FocusRight"
 "Enter" = "FocusRight"
 "n" = "EnterWorkspaceActionMode"
-"w" = "ToggleWorkspaceStatus"
 "d" = "InitiateDeleteWorkspace"
 "h" = "EnterConfigWindow"
 "?" = "EnterConfigWindow"

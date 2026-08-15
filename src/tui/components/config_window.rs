@@ -157,8 +157,8 @@ fn render_quickref_tab(frame: &mut Frame, area: Rect, state: &AppState) {
         Span::raw("Select workspace"),
     ]));
     lines.push(Line::from(vec![
-        Span::styled("  w                  ", key_style),
-        Span::raw("Toggle working/paused"),
+        Span::styled("  g                  ", key_style),
+        Span::raw("Open repository map in browser"),
     ]));
     lines.push(Line::from(vec![
         Span::styled("  d                  ", key_style),
