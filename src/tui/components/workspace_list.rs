@@ -40,9 +40,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         .workspaces
         .iter()
         .enumerate()
-        .map(|(ws_idx, workspace)| {
-            create_workspace_item(state, ws_idx, workspace, is_focused)
-        })
+        .map(|(ws_idx, workspace)| create_workspace_item(state, ws_idx, workspace, is_focused))
         .collect();
 
     // Highlight style with full row background when focused
@@ -103,9 +101,7 @@ fn create_workspace_item<'a>(
 
     // Different styling for selected/focused rows.
     let style = if is_selected && is_focused {
-        Style::default()
-            .fg(t.accent)
-            .add_modifier(Modifier::BOLD)
+        Style::default().fg(t.accent).add_modifier(Modifier::BOLD)
     } else if is_selected {
         Style::default().fg(t.fg)
     } else {
@@ -137,7 +133,10 @@ fn create_workspace_item<'a>(
     // Working/Loading indicator (spinner) - fixed width so name doesn't shift
     // Blue = loading (sessions starting up), Yellow = working (actively processing)
     let working_indicator = if waiting_here {
-        Span::styled("! ", Style::default().fg(t.warning).add_modifier(Modifier::BOLD))
+        Span::styled(
+            "! ",
+            Style::default().fg(t.warning).add_modifier(Modifier::BOLD),
+        )
     } else if is_loading {
         Span::styled(
             format!("{} ", state.spinner_char()),

@@ -5,13 +5,12 @@ use crate::tui::components::{
     parallel_task_modal, pinned_terminal_pane, session_list, status_bar, tasks_pane,
     utilities_pane, workspace_action_dialog, workspace_list, workspace_name_dialog,
 };
-use crate::tui::effects::{EffectsManager, StartupAreas};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     Frame,
 };
 
-pub fn draw(frame: &mut Frame, state: &mut AppState, effects: &mut EffectsManager) {
+pub fn draw(frame: &mut Frame, state: &mut AppState) {
     // Activate the chosen theme for this frame and fill the background so light
     // mode doesn't show through to the terminal's (dark) default.
     crate::theme::set_current(state.ui.theme_mode);
@@ -213,48 +212,6 @@ pub fn draw(frame: &mut Frame, state: &mut AppState, effects: &mut EffectsManage
         }
         InputMode::Normal => {}
     }
-
-    // Trigger startup animation on first draw
-    if !effects.startup_complete() && !effects.has_active_effects() {
-        // Collect all pane areas for startup animation
-        let pinned_areas = if state.should_show_split() {
-            let output_pct = (state.ui.layout.output_split_ratio * 100.0) as u16;
-            let right_split = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([
-                    Constraint::Percentage(output_pct),
-                    Constraint::Percentage(100 - output_pct),
-                ])
-                .split(right_panel);
-            split_pinned_area(right_split[1], state)
-        } else {
-            vec![]
-        };
-
-        let areas = StartupAreas {
-            workspace: workspace_area,
-            session: session_area,
-            tasks: tasks_area,
-            utilities: utilities_area,
-            output: if state.should_show_split() {
-                let output_pct = (state.ui.layout.output_split_ratio * 100.0) as u16;
-                Layout::default()
-                    .direction(Direction::Horizontal)
-                    .constraints([
-                        Constraint::Percentage(output_pct),
-                        Constraint::Percentage(100 - output_pct),
-                    ])
-                    .split(right_panel)[0]
-            } else {
-                right_panel
-            },
-            pinned: pinned_areas,
-        };
-        effects.trigger_startup(&areas);
-    }
-
-    // Process active effects
-    effects.process(frame);
 
     // Toast notifications are intentionally suppressed — the in-app toast
     // surface didn't earn its keep. State machinery and helpers remain so

@@ -83,9 +83,7 @@ fn render_quickref_tab(frame: &mut Frame, area: Rect, state: &AppState) {
 
     let mut lines: Vec<Line> = Vec::new();
 
-    let section_style = Style::default()
-        .fg(t.active)
-        .add_modifier(Modifier::BOLD);
+    let section_style = Style::default().fg(t.active).add_modifier(Modifier::BOLD);
     let key_style = Style::default().fg(t.accent);
     let sep_style = Style::default().fg(t.fg_faint);
 
@@ -99,7 +97,10 @@ fn render_quickref_tab(frame: &mut Frame, area: Rect, state: &AppState) {
     // -- Phone --
     if let Some(remote) = state.system.remote.as_ref() {
         lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled("  Phone (tailnet only)", section_style)));
+        lines.push(Line::from(Span::styled(
+            "  Phone (tailnet only)",
+            section_style,
+        )));
         lines.push(sep());
         lines.push(Line::from(vec![
             Span::styled("  open on your phone ", key_style),
@@ -376,16 +377,8 @@ fn render_agents_tab(frame: &mut Frame, area: Rect, state: &AppState) {
 
     for (idx, agent) in agents.iter().enumerate() {
         let is_selected = idx == selected_row;
-        let row_bg = if is_selected {
-            t.fg_faint
-        } else {
-            t.bg
-        };
-        let row_fg = if is_selected {
-            t.fg
-        } else {
-            t.fg_dim
-        };
+        let row_bg = if is_selected { t.fg_faint } else { t.bg };
+        let row_fg = if is_selected { t.fg } else { t.fg_dim };
 
         let num_str = format!("  {}  ", idx + 1);
 
@@ -511,25 +504,14 @@ fn render_hotkeys_tab(frame: &mut Frame, area: Rect, state: &AppState) {
 
     for (idx, action) in ordered_actions.iter().enumerate() {
         let is_selected = idx == selected_row;
-        let row_bg = if is_selected {
-            t.fg_faint
-        } else {
-            t.bg
-        };
-        let row_fg = if is_selected {
-            t.fg
-        } else {
-            t.fg_dim
-        };
+        let row_bg = if is_selected { t.fg_faint } else { t.bg };
+        let row_fg = if is_selected { t.fg } else { t.fg_dim };
 
         let display_name = format_action_name(action);
         let key_val = hotkeys.get(action).map(|s| s.as_str()).unwrap_or("???");
 
         let key_display = if rebinding && is_selected {
-            Span::styled(
-                "Press a key...",
-                Style::default().fg(t.active).bg(row_bg),
-            )
+            Span::styled("Press a key...", Style::default().fg(t.active).bg(row_bg))
         } else {
             Span::styled(key_val.to_string(), Style::default().fg(row_fg).bg(row_bg))
         };
@@ -626,30 +608,21 @@ fn render_scrollback_tab(frame: &mut Frame, area: Rect, state: &AppState) {
         Style::default().fg(t.fg_dim),
     )]));
     lines.push(Line::from(vec![
-        Span::styled(
-            "      Raw buffer:       ",
-            Style::default().fg(t.fg_faint),
-        ),
+        Span::styled("      Raw buffer:       ", Style::default().fg(t.fg_faint)),
         Span::styled(
             format!("{} KB", config.scrollback_buffer_kb),
             Style::default().fg(t.fg_dim),
         ),
     ]));
     lines.push(Line::from(vec![
-        Span::styled(
-            "      Replay rows:      ",
-            Style::default().fg(t.fg_faint),
-        ),
+        Span::styled("      Replay rows:      ", Style::default().fg(t.fg_faint)),
         Span::styled(
             format!("{}", config.replay_parser_rows),
             Style::default().fg(t.fg_dim),
         ),
     ]));
     lines.push(Line::from(vec![
-        Span::styled(
-            "      Live scrollback:  ",
-            Style::default().fg(t.fg_faint),
-        ),
+        Span::styled("      Live scrollback:  ", Style::default().fg(t.fg_faint)),
         Span::styled(
             format!("{} rows", config.live_scrollback_rows),
             Style::default().fg(t.fg_dim),

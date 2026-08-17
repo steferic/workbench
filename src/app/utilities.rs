@@ -44,6 +44,32 @@ pub fn load_utility_content(state: &mut AppState, action_tx: &mpsc::UnboundedSen
         ];
         return;
     }
+    if state.ui.selected_utility == UtilityItem::PromptLog {
+        state.ui.utility_content = loading_message("Prompt Log");
+        let action_tx = action_tx.clone();
+        task::spawn_blocking(move || {
+            let content = crate::prompt_log::analysis_lines(30).unwrap_or_else(|err| {
+                vec![
+                    String::new(),
+                    "  Prompt Log".to_string(),
+                    "  ==========".to_string(),
+                    String::new(),
+                    format!("  Could not load prompt history: {err}"),
+                ]
+            });
+            queue_utility_content(
+                &action_tx,
+                UtilityContentPayload {
+                    request_id,
+                    content,
+                    pie_chart_data: Vec::new(),
+                    show_calendar: false,
+                },
+                "failed to load prompt log utility content",
+            );
+        });
+        return;
+    }
 
     let workspace_path = match state.selected_workspace() {
         Some(ws) => ws.path.clone(),
@@ -151,7 +177,7 @@ pub fn load_utility_content(state: &mut AppState, action_tx: &mpsc::UnboundedSen
             load_keybindings_info(state);
         }
         // Handled above the workspace check.
-        UtilityItem::PhoneQr | UtilityItem::ToggleBanner => {}
+        UtilityItem::PhoneQr | UtilityItem::ToggleBanner | UtilityItem::PromptLog => {}
     }
 }
 

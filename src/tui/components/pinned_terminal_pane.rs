@@ -86,8 +86,7 @@ pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index
 
     if view.scrollbar_content_len > viewport_height {
         let scrollbar_max = view.scrollbar_content_len.saturating_sub(viewport_height);
-        let scrollbar_sfb =
-            (state.pinned_scroll_offset(pane_index) as usize).min(scrollbar_max);
+        let scrollbar_sfb = (state.pinned_scroll_offset(pane_index) as usize).min(scrollbar_max);
         let scrollbar_pos = scrollbar_max.saturating_sub(scrollbar_sfb);
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight);
         let mut scrollbar_state = ScrollbarState::new(scrollbar_max).position(scrollbar_pos);

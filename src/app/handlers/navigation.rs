@@ -217,6 +217,12 @@ pub fn handle_navigation_action(
                 save_state_with_notepad(state, "failed to save notepad paste");
             } else if let Some(session_id) = paste_target_session_id(state) {
                 let data = crate::app::agent_input::bracketed(&text);
+                if state
+                    .get_session(session_id)
+                    .is_some_and(|session| session.agent_type.is_agent())
+                {
+                    state.system.prompt_capture.observe(session_id, &data);
+                }
                 let send_error = state
                     .system
                     .pty_handles

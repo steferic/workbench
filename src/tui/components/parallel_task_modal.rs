@@ -58,9 +58,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     content.push(Line::from(""));
     content.push(Line::from(Span::styled(
         "  Task prompt:",
-        Style::default()
-            .fg(t.fg)
-            .add_modifier(Modifier::BOLD),
+        Style::default().fg(t.fg).add_modifier(Modifier::BOLD),
     )));
 
     // Show the input buffer with cursor
@@ -77,9 +75,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     content.push(Line::from(""));
     content.push(Line::from(Span::styled(
         "  Agents to use:",
-        Style::default()
-            .fg(t.fg)
-            .add_modifier(Modifier::BOLD),
+        Style::default().fg(t.fg).add_modifier(Modifier::BOLD),
     )));
 
     // Render agent selection
@@ -104,9 +100,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
                 ),
                 Span::styled(
                     agent_name,
-                    Style::default()
-                        .fg(t.fg)
-                        .add_modifier(Modifier::BOLD),
+                    Style::default().fg(t.fg).add_modifier(Modifier::BOLD),
                 ),
             ])
         } else {
@@ -114,11 +108,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
                 Span::raw("    "),
                 Span::styled(
                     checkbox,
-                    Style::default().fg(if *selected {
-                        t.success
-                    } else {
-                        t.fg_faint
-                    }),
+                    Style::default().fg(if *selected { t.success } else { t.fg_faint }),
                 ),
                 Span::raw(" "),
                 Span::styled(
@@ -153,9 +143,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
             ),
             Span::styled(
                 " Dangerous mode (skip permission prompts)",
-                Style::default()
-                    .fg(t.fg)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(t.fg).add_modifier(Modifier::BOLD),
             ),
         ])
     } else {
@@ -194,9 +182,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
             ),
             Span::styled(
                 " Request report (PARALLEL_REPORT.md)",
-                Style::default()
-                    .fg(t.fg)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(t.fg).add_modifier(Modifier::BOLD),
             ),
         ])
     } else {

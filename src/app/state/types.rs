@@ -131,6 +131,7 @@ pub enum UtilityItem {
     // Tools
     #[default]
     TopFiles,
+    PromptLog,
     Calendar,
     GitHistory,
     Keybindings,
@@ -149,6 +150,7 @@ impl UtilityItem {
     pub fn tools() -> &'static [UtilityItem] {
         &[
             UtilityItem::TopFiles,
+            UtilityItem::PromptLog,
             UtilityItem::Calendar,
             UtilityItem::GitHistory,
             UtilityItem::Keybindings,
@@ -176,6 +178,7 @@ impl UtilityItem {
             UtilityItem::WindChimes => "Chimes",
             UtilityItem::RainforestRain => "Rain",
             UtilityItem::TopFiles => "Top Files (LOC)",
+            UtilityItem::PromptLog => "Prompt Log",
             UtilityItem::Calendar => "Calendar",
             UtilityItem::GitHistory => "Git History",
             UtilityItem::Keybindings => "Keybindings",
@@ -192,6 +195,7 @@ impl UtilityItem {
             UtilityItem::WindChimes => "\u{1F390}",
             UtilityItem::RainforestRain => "\u{1F327}\u{FE0F}",
             UtilityItem::TopFiles => "\u{1F4CA}",
+            UtilityItem::PromptLog => "\u{270E}",
             UtilityItem::Calendar => "\u{1F4C5}",
             UtilityItem::GitHistory => "\u{1F4DC}",
             UtilityItem::Keybindings => "\u{2328}",

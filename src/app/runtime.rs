@@ -4,7 +4,6 @@ use crate::models::Workspace;
 use crate::persistence;
 use crate::pty::PtyManager;
 use crate::tui;
-use crate::tui::effects::EffectsManager;
 use crate::tui::event::EventHandler;
 use anyhow::Result;
 use std::path::PathBuf;
@@ -147,9 +146,6 @@ pub async fn run_tui(initial_workspace: Option<PathBuf>, use_alternate_screen: b
     // This ensures we have accurate pane dimensions from the actual Layout
     // (nvim and other full-screen apps can't handle resize events during startup)
 
-    // Create effects manager for animations
-    let mut effects = EffectsManager::new();
-
     // Main loop
     let result = run_main_loop(
         &mut terminal,
@@ -158,7 +154,6 @@ pub async fn run_tui(initial_workspace: Option<PathBuf>, use_alternate_screen: b
         &pty_manager,
         action_tx,
         pty_tx,
-        &mut effects,
     )
     .await;
 
@@ -175,7 +170,6 @@ async fn run_main_loop(
     pty_manager: &PtyManager,
     action_tx: mpsc::UnboundedSender<Action>,
     pty_tx: mpsc::Sender<Action>,
-    effects: &mut EffectsManager,
 ) -> Result<()> {
     // Audio player for brown noise (created lazily)
     let mut audio_player: Option<AudioPlayer> = None;
@@ -203,8 +197,6 @@ async fn run_main_loop(
     loop {
         let since_last_draw = last_draw.elapsed();
         let draw_now = needs_draw
-            || effects.has_active_effects()
-            || !effects.startup_complete()
             || since_last_draw >= IDLE_HEARTBEAT
             || (since_last_draw >= ANIMATION_INTERVAL && has_ambient_animation(state));
 
@@ -212,8 +204,7 @@ async fn run_main_loop(
             // Start frame timing
             state.system.perf.frame_start();
 
-            // Draw UI with effects
-            terminal.draw(|frame| tui::ui::draw(frame, state, effects))?;
+            terminal.draw(|frame| tui::ui::draw(frame, state))?;
 
             // End frame timing (measures render time)
             state.system.perf.frame_end();

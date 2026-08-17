@@ -81,6 +81,8 @@ workbench                                  # run the TUI
 workbench --workspace /path/to/project    # open a specific workspace
 workbench add /path/to/project            # register a workspace
 workbench list                            # list workspaces
+workbench prompts                         # analyze submitted prompts
+workbench prompts --json                  # export recent prompts with metadata
 ```
 
 ## Agent-to-agent communication
@@ -163,18 +165,6 @@ event loop and answer `{"accepted":true}` — the loop took it, not that the
 agent has replied. Subscribers get `agent.added`, `agent.removed`,
 `agent.status_changed` and `agent.model_changed` as they happen, which is why
 `wait` costs nothing while it waits. The socket is `0600` and local only.
-
-The instructions block also encodes what multi-agent research says works:
-review a peer's *branch diff* with fresh eyes (never its self-report), use
-`handoff` from the live author when taking over, prefer cross-provider
-opinions, and push back with a better alternative when asked for known
-anti-patterns (consensus debates, shared-branch edits).
-
-Consults deliver only when the target is idle, appear visibly in its pane,
-and are guarded against cycles (A→B while B→A) and unbounded fan-out (one
-outstanding consult per asker). Transcripts and rosters live outside the
-repo under the workbench config directory, so nothing pollutes git status.
-
 
 The instructions block also encodes what multi-agent research says works:
 review a peer's *branch diff* with fresh eyes (never its self-report), use

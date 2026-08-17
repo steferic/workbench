@@ -597,6 +597,16 @@ fn queue_ask(body: &str, shared: &Arc<RwLock<CanvasShared>>) -> Response<std::io
         operations: Vec::new(),
         error: None,
     };
+    if let Err(err) = crate::prompt_log::record_canvas_prompt(
+        &workspace.id,
+        &workspace.name,
+        &workspace.path,
+        &ask.note_id,
+        &ask.prompt,
+        CANVAS_AGENT_MODEL,
+    ) {
+        crate::logger::warn(format!("failed to record canvas prompt: {err}"));
+    }
     shared.commands.push_back(CanvasCommand {
         request_id: id.clone(),
         workspace: ask.workspace,

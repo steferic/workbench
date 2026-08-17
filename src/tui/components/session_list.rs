@@ -100,13 +100,9 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
             };
 
         let branch_style = if is_worktree {
-            Style::default()
-                .fg(t.active)
-                .add_modifier(Modifier::BOLD)
+            Style::default().fg(t.active).add_modifier(Modifier::BOLD)
         } else {
-            Style::default()
-                .fg(t.accent)
-                .add_modifier(Modifier::BOLD)
+            Style::default().fg(t.accent).add_modifier(Modifier::BOLD)
         };
         let icon_style = if is_worktree {
             Style::default().fg(t.active)
@@ -155,9 +151,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
 
     // Agents section header
     if !agent_indices.is_empty() {
-        let header_style = Style::default()
-            .fg(t.special)
-            .add_modifier(Modifier::BOLD);
+        let header_style = Style::default().fg(t.special).add_modifier(Modifier::BOLD);
         items.push(ListItem::new(Line::from(vec![Span::styled(
             "── Agents ──",
             header_style,
@@ -192,9 +186,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
             })
             .unwrap_or_else(|| "Parallel Task".to_string());
 
-        let header_style = Style::default()
-            .fg(t.active)
-            .add_modifier(Modifier::BOLD);
+        let header_style = Style::default().fg(t.active).add_modifier(Modifier::BOLD);
         items.push(ListItem::new(Line::from(vec![Span::styled(
             format!("── {} ──", task_preview),
             header_style,
@@ -216,9 +208,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
 
     // Terminals section header
     if !terminal_indices.is_empty() {
-        let header_style = Style::default()
-            .fg(t.success)
-            .add_modifier(Modifier::BOLD);
+        let header_style = Style::default().fg(t.success).add_modifier(Modifier::BOLD);
         items.push(ListItem::new(Line::from(vec![Span::styled(
             "── Terminals ──",
             header_style,
@@ -311,11 +301,7 @@ fn create_session_item<'a>(
     };
 
     // Pinned terminals are flagged by the diamond color rather than a label.
-    let status_color = if is_pinned {
-        t.special
-    } else {
-        status_color
-    };
+    let status_color = if is_pinned { t.special } else { status_color };
 
     // Dangerous mode indicator (skip permissions)
     let dangerous_indicator =
@@ -343,9 +329,7 @@ fn create_session_item<'a>(
             // Extract just the ID part (last segment after final '-')
             let short_id = branch_name.rsplit('-').next().unwrap_or(&branch_name);
             let style = if is_worktree_active {
-                Style::default()
-                    .fg(t.active)
-                    .add_modifier(Modifier::BOLD)
+                Style::default().fg(t.active).add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(t.accent)
             };
@@ -358,9 +342,7 @@ fn create_session_item<'a>(
         // Regular session with worktree - extract just the ID part
         let short_id = branch.rsplit('-').next().unwrap_or(branch);
         let style = if is_worktree_active {
-            Style::default()
-                .fg(t.active)
-                .add_modifier(Modifier::BOLD)
+            Style::default().fg(t.active).add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(t.accent)
         };
@@ -371,13 +353,9 @@ fn create_session_item<'a>(
     };
 
     let name_style = if is_selected {
-        Style::default()
-            .fg(t.accent)
-            .add_modifier(Modifier::BOLD)
+        Style::default().fg(t.accent).add_modifier(Modifier::BOLD)
     } else if is_active {
-        Style::default()
-            .fg(t.active)
-            .add_modifier(Modifier::BOLD)
+        Style::default().fg(t.active).add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(t.fg)
     };
@@ -391,10 +369,7 @@ fn create_session_item<'a>(
     };
 
     let alias_indicator = match session.alias.as_deref() {
-        Some(alias) => Span::styled(
-            format!(" “{alias}”"),
-            Style::default().fg(t.accent),
-        ),
+        Some(alias) => Span::styled(format!(" “{alias}”"), Style::default().fg(t.accent)),
         None => Span::raw(""),
     };
 

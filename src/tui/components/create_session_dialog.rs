@@ -32,9 +32,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         Line::from(""),
         Line::from(Span::styled(
             "  Select an agent:",
-            Style::default()
-                .fg(t.fg)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(t.fg).add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
     ];

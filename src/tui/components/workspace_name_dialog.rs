@@ -42,7 +42,8 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     // Show parent path
     let path_display = state
         .ui
-        .file_browser.path
+        .file_browser
+        .path
         .to_str()
         .map(|s| {
             if let Some(home) = dirs::home_dir() {
@@ -80,9 +81,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     let input_text = Paragraph::new(Line::from(vec![
         Span::styled(
             &state.ui.input_buffer,
-            Style::default()
-                .fg(t.fg)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(t.fg).add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             cursor_char,
@@ -99,7 +98,8 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     } else {
         state
             .ui
-            .file_browser.path
+            .file_browser
+            .path
             .join(&state.ui.input_buffer)
             .to_str()
             .map(|s| {
@@ -131,9 +131,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     let help = Paragraph::new(Line::from(vec![
         Span::styled(
             "[Enter]",
-            Style::default()
-                .fg(t.success)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(t.success).add_modifier(Modifier::BOLD),
         ),
         Span::raw(" Create  "),
         Span::styled("[Esc]", Style::default().fg(t.active)),

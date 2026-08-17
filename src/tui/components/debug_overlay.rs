@@ -31,9 +31,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     let mut lines = vec![
         Line::from(Span::styled(
             "Debug: Terminal Dimensions",
-            Style::default()
-                .fg(t.active)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(t.active).add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
     ];
@@ -131,8 +129,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
 
         // Count actual rendered lines
         let content_len = get_content_length(screen, cursor_info.row);
-        let selection =
-            get_selection_bounds(&state.text_selection(), content_len, screen.size().1);
+        let selection = get_selection_bounds(&state.text_selection(), content_len, screen.size().1);
         let rendered_lines = convert_vt100_to_lines(screen, selection, cursor_info.row);
         lines.push(Line::from(vec![
             Span::styled("Rendered Lines: ", Style::default().fg(t.fg_faint)),

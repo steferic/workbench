@@ -68,7 +68,8 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     // Show the highlighted entry's name (what will actually be selected)
     let workspace_name = state
         .ui
-        .file_browser.entries
+        .file_browser
+        .entries
         .get(state.ui.file_browser.selected)
         .and_then(|p| p.file_name())
         .and_then(|n| n.to_str())
@@ -76,7 +77,8 @@ pub fn render(frame: &mut Frame, state: &AppState) {
             // Fallback to current directory name if no entry highlighted
             state
                 .ui
-                .file_browser.path
+                .file_browser
+                .path
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("unknown")
@@ -106,9 +108,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
                 Span::styled(" Name: ", Style::default().fg(t.fg_dim)),
                 Span::styled(
                     workspace_name,
-                    Style::default()
-                        .fg(t.success)
-                        .add_modifier(Modifier::BOLD),
+                    Style::default().fg(t.success).add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(" (will be added)", Style::default().fg(t.fg_faint)),
             ]),
@@ -167,7 +167,8 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     } else {
         state
             .ui
-            .file_browser.entries
+            .file_browser
+            .entries
             .iter()
             .enumerate()
             .skip(state.ui.file_browser.scroll)
@@ -193,9 +194,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
                 let icon = if is_repo { "📁 " } else { "📂 " };
 
                 let style = if is_selected {
-                    Style::default()
-                        .fg(t.accent)
-                        .add_modifier(Modifier::BOLD)
+                    Style::default().fg(t.accent).add_modifier(Modifier::BOLD)
                 } else if is_repo {
                     Style::default().fg(t.success)
                 } else {
@@ -210,10 +209,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
                 ];
 
                 if is_repo {
-                    spans.push(Span::styled(
-                        " (repo)",
-                        Style::default().fg(t.fg_faint),
-                    ));
+                    spans.push(Span::styled(" (repo)", Style::default().fg(t.fg_faint)));
                 }
 
                 let base_len = prefix.chars().count()
@@ -289,14 +285,9 @@ pub fn render(frame: &mut Frame, state: &AppState) {
             Line::from(vec![
                 Span::styled(
                     "[Space/Tab]",
-                    Style::default()
-                        .fg(t.active)
-                        .add_modifier(Modifier::BOLD),
+                    Style::default().fg(t.active).add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(
-                    " Create here → Enter name  ",
-                    Style::default().fg(t.fg),
-                ),
+                Span::styled(" Create here → Enter name  ", Style::default().fg(t.fg)),
                 Span::styled("[Esc]", Style::default().fg(t.active)),
                 Span::raw(" Cancel"),
             ]),
@@ -316,16 +307,12 @@ pub fn render(frame: &mut Frame, state: &AppState) {
             Line::from(vec![
                 Span::styled(
                     "[Type]",
-                    Style::default()
-                        .fg(t.success)
-                        .add_modifier(Modifier::BOLD),
+                    Style::default().fg(t.success).add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(" Path or filter  ", Style::default().fg(t.fg)),
                 Span::styled(
                     "[Space/Tab]",
-                    Style::default()
-                        .fg(t.success)
-                        .add_modifier(Modifier::BOLD),
+                    Style::default().fg(t.success).add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(" Select as workspace  ", Style::default().fg(t.fg)),
                 Span::styled("[Esc]", Style::default().fg(t.active)),

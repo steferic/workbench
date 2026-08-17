@@ -319,6 +319,11 @@ pub fn handle_session_action(
             }
         }
         Action::SendInput(session_id, data) => {
+            let completed_prompt = state
+                .get_session(session_id)
+                .is_some_and(|session| session.agent_type.is_agent())
+                .then(|| state.system.prompt_capture.observe(session_id, &data))
+                .flatten();
             state
                 .data
                 .last_send_input
@@ -335,6 +340,11 @@ pub fn handle_session_action(
                     err,
                     "Failed to send input",
                 );
+            }
+            if let Some(prompt) = completed_prompt {
+                if let Err(err) = crate::prompt_log::record_for_session(state, session_id, &prompt) {
+                    crate::logger::warn(format!("failed to record submitted prompt: {err}"));
+                }
             }
             if let Some(workspace_id) = state.workspace_id_for_session(session_id) {
                 if let Some(ws) = state

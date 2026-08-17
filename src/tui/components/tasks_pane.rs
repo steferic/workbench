@@ -107,8 +107,8 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
 
 /// Items still to run vs. items in the queue.
 fn queue_counts(state: &AppState) -> (usize, usize) {
-    let Some(session) = tasks_view::selected_agent(state)
-        .and_then(|agent| state.get_session(agent.session_id))
+    let Some(session) =
+        tasks_view::selected_agent(state).and_then(|agent| state.get_session(agent.session_id))
     else {
         return (0, 0);
     };
@@ -604,7 +604,6 @@ mod tests {
         assert!(out.contains("Press n to add"), "{out}");
     }
 
-
     #[test]
     fn pane_points_at_the_sessions_list_when_no_agent_is_selected() {
         let state = AppState::default();
@@ -646,6 +645,9 @@ mod tests {
 
     #[test]
     fn single_line_flattens_multiline_prompts() {
-        assert_eq!(single_line("make it\n  show   tasks\n"), "make it show tasks");
+        assert_eq!(
+            single_line("make it\n  show   tasks\n"),
+            "make it show tasks"
+        );
     }
 }

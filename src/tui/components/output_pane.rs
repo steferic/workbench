@@ -281,9 +281,7 @@ fn render_hints(state: &AppState) -> Vec<Line<'static>> {
             Line::from(""),
             Line::from(Span::styled(
                 "  Welcome to Workbench!",
-                Style::default()
-                    .fg(t.accent)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
             Line::from(Span::styled(
@@ -394,10 +392,7 @@ fn render_pie_chart_view(frame: &mut Frame, area: Rect, state: &AppState, block:
                         .unwrap_or(line.len());
                     return Line::from(vec![
                         Span::styled(line[..split_at].to_string(), Style::default().fg(*color)),
-                        Span::styled(
-                            line[split_at..].to_string(),
-                            Style::default().fg(t.fg_dim),
-                        ),
+                        Span::styled(line[split_at..].to_string(), Style::default().fg(t.fg_dim)),
                     ]);
                 }
             }
@@ -459,13 +454,9 @@ fn render_calendar_view(frame: &mut Frame, area: Rect, state: &AppState, block: 
         .add_modifier(Modifier::BOLD)
         .bg(t.selection_bg);
 
-    let header_style = Style::default()
-        .add_modifier(Modifier::BOLD)
-        .fg(t.accent);
+    let header_style = Style::default().add_modifier(Modifier::BOLD).fg(t.accent);
 
-    let weekday_style = Style::default()
-        .add_modifier(Modifier::DIM)
-        .fg(t.fg_faint);
+    let weekday_style = Style::default().add_modifier(Modifier::DIM).fg(t.fg_faint);
 
     for row in rows.iter() {
         let cols = Layout::default()
@@ -587,7 +578,10 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
 
-        assert!(screen.contains("Enlarge the output"), "screen was:\n{screen}");
+        assert!(
+            screen.contains("Enlarge the output"),
+            "screen was:\n{screen}"
+        );
         assert!(!buffer.content().iter().any(|cell| cell.bg == Color::White));
     }
 }

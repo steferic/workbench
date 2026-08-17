@@ -38,7 +38,6 @@ tokio = { version = "1.35", features = ["full"] }
 # TUI framework
 ratatui = { version = "0.30", features = ["unstable-widget-ref"] }
 crossterm = "0.29"
-tachyonfx = "0.22"
 
 # PTY support (cross-platform)
 portable-pty = "0.8"

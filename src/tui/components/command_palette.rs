@@ -141,9 +141,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         .map(|(i, entry)| {
             let is_selected = i == state.ui.palette.selected;
             let name_style = if is_selected {
-                Style::default()
-                    .fg(t.accent)
-                    .add_modifier(Modifier::BOLD)
+                Style::default().fg(t.accent).add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(t.fg_dim)
             };
@@ -181,7 +179,8 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         list_state.select(Some(
             state
                 .ui
-                .palette.selected
+                .palette
+                .selected
                 .min(entries.len().saturating_sub(1)),
         ));
     }

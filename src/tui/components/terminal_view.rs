@@ -591,7 +591,10 @@ mod tests {
         }
 
         let transcript_len = system.transcript_buffers.get(&session_id).unwrap().len();
-        assert!(transcript_len > 10, "history not accumulated: {transcript_len}");
+        assert!(
+            transcript_len > 10,
+            "history not accumulated: {transcript_len}"
+        );
 
         // Scrolling up past the live screen must switch to the transcript.
         let view = build_terminal_view(
@@ -608,7 +611,14 @@ mod tests {
         )
         .unwrap();
 
-        assert!(view.on_replay, "expected transcript (history) view when scrolled");
-        assert!(view.content_len > 10, "history view too short: {}", view.content_len);
+        assert!(
+            view.on_replay,
+            "expected transcript (history) view when scrolled"
+        );
+        assert!(
+            view.content_len > 10,
+            "history view too short: {}",
+            view.content_len
+        );
     }
 }

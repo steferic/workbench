@@ -489,8 +489,7 @@ impl EventHandler {
             return action;
         }
 
-        if state.pinned_text_selection(pane_idx).start.is_some()
-        {
+        if state.pinned_text_selection(pane_idx).start.is_some() {
             match key.code {
                 // Ctrl+C copies when a selection is active; without a selection
                 // it falls through and is sent to the PTY as SIGINT.

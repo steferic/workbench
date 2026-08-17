@@ -124,9 +124,7 @@ fn render_utilities_list(frame: &mut Frame, area: Rect, state: &AppState, is_foc
             let is_selected = *item == state.ui.selected_utility;
 
             let style = if is_selected && is_focused {
-                Style::default()
-                    .fg(t.accent)
-                    .add_modifier(Modifier::BOLD)
+                Style::default().fg(t.accent).add_modifier(Modifier::BOLD)
             } else if is_selected {
                 Style::default().fg(t.fg)
             } else {
@@ -182,9 +180,7 @@ fn render_themes_list(frame: &mut Frame, area: Rect, state: &AppState, is_focuse
             let is_selected = *theme == state.ui.selected_theme;
             let is_active = *theme == state.ui.theme_mode;
             let style = if is_selected && is_focused {
-                Style::default()
-                    .fg(t.accent)
-                    .add_modifier(Modifier::BOLD)
+                Style::default().fg(t.accent).add_modifier(Modifier::BOLD)
             } else if is_selected || is_active {
                 Style::default().fg(t.fg)
             } else {
@@ -202,9 +198,7 @@ fn render_themes_list(frame: &mut Frame, area: Rect, state: &AppState, is_focuse
                 Span::styled(format!("{:<11}", theme.label()), style),
                 Span::styled(
                     format!("[{kind}]"),
-                    Style::default()
-                        .fg(kind_color)
-                        .add_modifier(Modifier::BOLD),
+                    Style::default().fg(kind_color).add_modifier(Modifier::BOLD),
                 ),
             ]))
         })
@@ -238,9 +232,7 @@ fn render_sounds_list(frame: &mut Frame, area: Rect, state: &AppState, is_focuse
             let is_selected = *item == state.ui.selected_sound;
 
             let style = if is_selected && is_focused {
-                Style::default()
-                    .fg(t.accent)
-                    .add_modifier(Modifier::BOLD)
+                Style::default().fg(t.accent).add_modifier(Modifier::BOLD)
             } else if is_selected {
                 Style::default().fg(t.fg)
             } else {
@@ -394,14 +386,33 @@ mod tests {
                 .find(|line| line.contains(theme.label()))
                 .unwrap_or_else(|| panic!("{} is missing from:\n{out}", theme.label()));
             let kind = if theme.is_dark() { "[DARK]" } else { "[LIGHT]" };
-            assert!(row.contains(kind), "{} is not labelled in: {row}", theme.label());
+            assert!(
+                row.contains(kind),
+                "{} is not labelled in: {row}",
+                theme.label()
+            );
         }
 
         let active = out.lines().find(|line| line.contains("Botan")).unwrap();
         assert!(active.contains('●'), "active theme is not marked: {active}");
         let selected = out.lines().find(|line| line.contains("Kinu")).unwrap();
-        assert!(selected.contains('>'), "selected theme is not marked: {selected}");
+        assert!(
+            selected.contains('>'),
+            "selected theme is not marked: {selected}"
+        );
         assert!(out.contains("enter:apply  tab:next"), "{out}");
+    }
+
+    #[test]
+    fn prompt_log_is_an_item_in_the_existing_util_tab() {
+        let mut state = AppState::default();
+        state.ui.focus = FocusPanel::UtilitiesPane;
+        state.ui.selected_utility = UtilityItem::PromptLog;
+
+        let out = screen(state, 38, 14);
+
+        assert!(out.contains(" Util | Themes | Sounds | Notes "), "{out}");
+        assert!(out.contains("> ✎ Prompt Log"), "{out}");
     }
 
     #[test]

@@ -632,6 +632,9 @@ pub struct SystemState {
     /// Live mirror of each agent's own task list, keyed by session. Parsed
     /// from the agent's session log off-thread (see `crate::agent_tasks`).
     pub agent_tasks: HashMap<Uuid, crate::agent_tasks::TaskTracker>,
+    /// Text currently being composed in each agent PTY, reconstructed from
+    /// the input bytes Workbench forwards so submitted messages can be logged.
+    pub prompt_capture: crate::prompt_log::PromptCapture,
     /// When each session's current process was spawned. Process-local, like
     /// the PTY handles: it anchors which store belongs to this run of the
     /// agent, so a restart cannot keep mirroring the conversation it left.
@@ -754,6 +757,7 @@ impl SystemState {
             replay_caches: HashMap::new(),
             sync_output_buffers: HashMap::new(),
             agent_tasks: HashMap::new(),
+            prompt_capture: Default::default(),
             session_spawned_at: HashMap::new(),
             agent_status: HashMap::new(),
             last_status_refresh: Instant::now(),
@@ -812,6 +816,7 @@ impl SystemState {
         // new rollout on resume), and the old tracker would keep tailing the
         // one it left behind.
         self.agent_tasks.remove(&session_id);
+        self.prompt_capture.reset(session_id);
         self.agent_status.remove(&session_id);
         self.session_spawned_at
             .insert(session_id, chrono::Utc::now());
@@ -826,6 +831,7 @@ impl SystemState {
     /// Remove parser + raw output buffer + replay cache for a session
     pub fn remove_session_buffers(&mut self, session_id: &Uuid) {
         self.agent_tasks.remove(session_id);
+        self.prompt_capture.reset(*session_id);
         self.agent_status.remove(session_id);
         self.session_spawned_at.remove(session_id);
         self.output_buffers.remove(session_id);

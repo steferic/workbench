@@ -13,6 +13,7 @@ mod models;
 mod persistence;
 mod scrollback;
 mod ports;
+mod prompt_log;
 mod pty;
 mod remote;
 mod theme;
@@ -125,6 +126,15 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Analyze messages submitted to agents through Workbench
+    Prompts {
+        /// How many recent messages to include
+        #[arg(long, default_value_t = 30)]
+        limit: usize,
+        /// Print structured records for custom analysis
+        #[arg(long)]
+        json: bool,
+    },
     /// Report an agent lifecycle event (invoked by the agent's own hooks)
     Hook {
         /// The provider's event name, e.g. `Stop` or `Notification`. Omitted
@@ -187,6 +197,13 @@ async fn main() -> Result<()> {
             timeout,
             json,
         }) => cli::cmd_wait(target, state, project, timeout, json)?,
+        Some(Commands::Prompts { limit, json }) => {
+            if json {
+                println!("{}", serde_json::to_string_pretty(&prompt_log::recent(limit)?)?);
+            } else {
+                println!("{}", prompt_log::analysis_lines(limit)?.join("\n"));
+            }
+        }
         None => {
             // Load config to get default, CLI flag overrides
             let config = load_user_config();

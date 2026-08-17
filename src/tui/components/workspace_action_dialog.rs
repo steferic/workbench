@@ -42,9 +42,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
             let is_selected = *action == state.ui.selected_workspace_action;
 
             let style = if is_selected {
-                Style::default()
-                    .fg(t.accent)
-                    .add_modifier(Modifier::BOLD)
+                Style::default().fg(t.accent).add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(t.fg)
             };
@@ -78,9 +76,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         Span::raw(" Down  "),
         Span::styled(
             "[Enter]",
-            Style::default()
-                .fg(t.success)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(t.success).add_modifier(Modifier::BOLD),
         ),
         Span::raw(" Select  "),
         Span::styled("[Esc]", Style::default().fg(t.active)),

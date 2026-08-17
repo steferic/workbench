@@ -75,18 +75,14 @@ pub fn render(frame: &mut Frame, state: &AppState) {
             Span::styled("  From: ", Style::default().fg(t.fg_dim)),
             Span::styled(
                 &branch_name,
-                Style::default()
-                    .fg(t.accent)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
             ),
         ]),
         Line::from(vec![
             Span::styled("  Into: ", Style::default().fg(t.fg_dim)),
             Span::styled(
                 &source_branch,
-                Style::default()
-                    .fg(t.success)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(t.success).add_modifier(Modifier::BOLD),
             ),
         ]),
     ]);
@@ -96,9 +92,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     let help = Paragraph::new(Line::from(vec![
         Span::styled(
             "[Y/Enter]",
-            Style::default()
-                .fg(t.success)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(t.success).add_modifier(Modifier::BOLD),
         ),
         Span::raw(" Commit & Merge  "),
         Span::styled("[N/Esc]", Style::default().fg(t.error)),
