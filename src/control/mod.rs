@@ -27,7 +27,9 @@
 use anyhow::{Result, anyhow};
 use serde::Serialize;
 use serde_json::{Value, json};
+#[cfg(unix)]
 use std::io::{BufRead, BufReader, Read, Write};
+#[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -43,11 +45,13 @@ use crate::remote::{RemoteCommand, Shared, Snapshot};
 /// Refuse a line longer than this. A control message is a few hundred bytes;
 /// anything at this scale is a mistake or a wedge, and reading it to the end
 /// would be the bug rather than the defence.
+#[cfg(unix)]
 const MAX_LINE_BYTES: u64 = 1 << 20;
 
 /// A subscriber's backlog. A caller that stops reading while workbench keeps
 /// ticking must not grow the queue without bound — past this it is dropped,
 /// which it discovers as a closed socket.
+#[cfg(unix)]
 const MAX_PENDING_EVENTS: usize = 256;
 
 // ---------------------------------------------------------------------------
@@ -226,12 +230,30 @@ pub fn socket_path() -> Result<PathBuf> {
     }
     // Per-user by construction on macOS (`/var/folders/…`), and the 0600 mode
     // set at bind covers the shared `/tmp` that some Linuxes hand back.
-    let uid = unsafe { libc::getuid() };
-    Ok(std::env::temp_dir().join(format!("workbench-control-{uid}.sock")))
+    #[cfg(unix)]
+    {
+        let uid = unsafe { libc::getuid() };
+        Ok(std::env::temp_dir().join(format!("workbench-control-{uid}.sock")))
+    }
+    #[cfg(not(unix))]
+    Ok(preferred)
 }
 
 /// Start listening. Errors are the caller's to log and shrug at: the TUI runs
 /// perfectly well without a control socket, exactly as it does without a phone.
+///
+/// Windows gets the error rather than a socket. Named pipes would serve, but
+/// nothing here has been run against them, and a stub that claims to work is
+/// worse than one that says it does not.
+#[cfg(not(unix))]
+pub fn start(
+    _shared: Shared,
+    _commands: UnboundedSender<RemoteCommand>,
+) -> Result<ControlServer> {
+    Err(anyhow!("the control socket needs a Unix socket"))
+}
+
+#[cfg(unix)]
 pub fn start(
     shared: Shared,
     commands: UnboundedSender<RemoteCommand>,
@@ -290,6 +312,7 @@ pub fn start(
     Ok(server)
 }
 
+#[cfg(unix)]
 /// One connection: read a request per line, answer it on the same line-based
 /// stream. A subscription hands the write half to its own thread so events
 /// keep flowing while this one goes on reading requests.
@@ -367,6 +390,7 @@ fn serve(
     Ok(())
 }
 
+#[cfg(unix)]
 fn reply(
     out: &mut UnixStream,
     id: &Value,

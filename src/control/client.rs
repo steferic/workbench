@@ -4,21 +4,53 @@
 //! rather than in `cli` so the request shapes are written once and the server
 //! and its first client cannot drift apart.
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, bail};
+#[cfg(unix)]
+use anyhow::anyhow;
 use serde_json::{Value, json};
+#[cfg(unix)]
 use std::io::{BufRead, BufReader, Write};
+#[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
+#[cfg(unix)]
 use super::socket_path;
 
+/// Where there is no Unix socket there is no client. Kept as a type so the
+/// `wait` command compiles everywhere and fails with a sentence rather than
+/// being silently absent from the CLI on one platform.
+#[cfg(not(unix))]
+pub struct Client;
+
+#[cfg(not(unix))]
+impl Client {
+    pub fn connect() -> Result<Self> {
+        bail!("the control socket needs a Unix socket")
+    }
+    pub fn set_timeout(&mut self, _timeout: Option<Duration>) -> Result<()> {
+        bail!("unsupported")
+    }
+    pub fn call(&mut self, _method: &str, _params: Value) -> Result<Value> {
+        bail!("unsupported")
+    }
+    pub fn subscribe(&mut self) -> Result<()> {
+        bail!("unsupported")
+    }
+    pub fn next_event(&mut self) -> Result<Option<Value>> {
+        bail!("unsupported")
+    }
+}
+
 /// An open connection. One request per line, one reply per line.
+#[cfg(unix)]
 pub struct Client {
     stream: UnixStream,
     reader: BufReader<UnixStream>,
     next_id: u64,
 }
 
+#[cfg(unix)]
 impl Client {
     /// Connect to the workbench on this machine.
     ///
