@@ -286,3 +286,121 @@ pub fn cmd_hook(event: Option<&str>) {
         let _ = crate::agent_status::record(&workspace_id, &session, &status);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Waiting on an agent (over the control socket)
+// ---------------------------------------------------------------------------
+
+/// What `wait` treats as "no longer working". An agent that stops to ask you
+/// something has finished the turn as far as a script is concerned — and this
+/// is the trap the default exists to avoid: `--state idle` alone would hang
+/// forever on a permission prompt, because a blocked agent never becomes idle
+/// until a human answers.
+const SETTLED: &[&str] = &["idle", "blocked", "stopped"];
+
+/// Exit code for "the state never arrived". Distinct from 1 so a script can
+/// tell a timeout from a real failure — `wait || handle_timeout` is the whole
+/// point of the command.
+pub const EXIT_TIMEOUT: i32 = 3;
+
+/// Block until an agent reaches one of `states`, then print what happened.
+///
+/// The ordering here is the only subtle part: subscribe *before* reading the
+/// current state. The other way round, an agent that settles in the gap
+/// between the read and the subscription is never reported, and the command
+/// waits out its whole timeout on a condition that already came true.
+pub fn cmd_wait(
+    target: String,
+    states: Option<String>,
+    timeout_secs: u64,
+    json_out: bool,
+) -> Result<()> {
+    use serde_json::{json, Value};
+
+    let wanted: Vec<String> = match states.as_deref() {
+        None => SETTLED.iter().map(|s| s.to_string()).collect(),
+        Some(list) => {
+            let states: Vec<String> = list
+                .split(',')
+                .map(|state| state.trim().to_lowercase())
+                .filter(|state| !state.is_empty())
+                .collect();
+            if states.is_empty() {
+                bail!("--state needs at least one state");
+            }
+            const KNOWN: &[&str] = &["idle", "working", "blocked", "stopped"];
+            if let Some(unknown) = states.iter().find(|state| !KNOWN.contains(&state.as_str())) {
+                bail!("unknown state `{unknown}` — expected one of {}", KNOWN.join(", "));
+            }
+            states
+        }
+    };
+
+    let mut client = crate::control::Client::connect()?;
+
+    // Subscribe first. See the note above: this order is what makes the
+    // command race-free.
+    client.subscribe()?;
+
+    let agents = client.call("agents.list", json!({}))?;
+    let agents = agents.as_array().cloned().unwrap_or_default();
+    let agent = crate::control::resolve_agent(&agents, &target)?;
+
+    let describe = |state: &str, waited: Duration| {
+        if json_out {
+            println!(
+                "{}",
+                json!({"agent": agent, "state": state, "waited_ms": waited.as_millis() as u64})
+            );
+        } else {
+            println!("{agent} is {state} (after {:.1}s)", waited.as_secs_f64());
+        }
+    };
+
+    let current = agents
+        .iter()
+        .find(|candidate| candidate.get("id").and_then(Value::as_str) == Some(agent.as_str()))
+        .and_then(|candidate| candidate.get("status").and_then(Value::as_str))
+        .unwrap_or("unknown")
+        .to_string();
+    if wanted.iter().any(|state| state == &current) {
+        describe(&current, Duration::ZERO);
+        return Ok(());
+    }
+
+    let started = Instant::now();
+    let deadline = Duration::from_secs(timeout_secs);
+    // Poll in slices rather than one long blocking read, so the deadline is
+    // honoured even while events keep arriving for other agents.
+    client.set_timeout(Some(Duration::from_millis(500)))?;
+
+    while started.elapsed() < deadline {
+        let Some(event) = client.next_event()? else {
+            continue;
+        };
+        let name = event.get("event").and_then(Value::as_str).unwrap_or("");
+        let data = event.get("data").cloned().unwrap_or(Value::Null);
+        if data.get("agent").and_then(Value::as_str) != Some(agent.as_str()) {
+            continue;
+        }
+        match name {
+            "agent.status_changed" => {
+                let to = data.get("to").and_then(Value::as_str).unwrap_or("unknown");
+                if wanted.iter().any(|state| state == to) {
+                    describe(to, started.elapsed());
+                    return Ok(());
+                }
+            }
+            // The agent went away. Waiting for a state it can no longer reach
+            // would burn the whole timeout to report nothing useful.
+            "agent.removed" => bail!("{agent} is gone"),
+            _ => {}
+        }
+    }
+
+    eprintln!(
+        "{agent} did not reach {} within {timeout_secs}s",
+        wanted.join(" or ")
+    );
+    std::process::exit(EXIT_TIMEOUT);
+}

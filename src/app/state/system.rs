@@ -679,6 +679,14 @@ pub struct SystemState {
     pub canvas: Option<crate::canvas::CanvasServer>,
     /// Commands from the phone, applied on the tick by the event loop.
     pub remote_commands: Option<tokio::sync::mpsc::UnboundedReceiver<crate::remote::RemoteCommand>>,
+    /// The control socket, and the commands arriving on it. A separate channel
+    /// from the phone's on purpose: the phone needs a tailnet and may never
+    /// start, and a script on this machine should not depend on that.
+    pub control: Option<crate::control::ControlServer>,
+    pub control_commands: Option<tokio::sync::mpsc::UnboundedReceiver<crate::remote::RemoteCommand>>,
+    pub control_tried: bool,
+    /// What the last tick published, so this one can say what moved.
+    pub control_events: crate::control::EventState,
     /// Set once we have tried to start, so a machine without Tailscale does
     /// not retry every tick.
     pub remote_tried: bool,
@@ -766,6 +774,10 @@ impl SystemState {
             remote: None,
             canvas: None,
             remote_commands: None,
+            control: None,
+            control_commands: None,
+            control_tried: false,
+            control_events: Default::default(),
             remote_tried: false,
             remote_focus: None,
             remote_thread: None,

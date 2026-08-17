@@ -445,6 +445,12 @@ impl PtyManager {
         // roster/inbox to use.
         cmd.env(crate::comms::ENV_SESSION, &session_id.to_string()[..8]);
         cmd.env(crate::comms::ENV_WORKSPACE, workspace_id.to_string());
+        // Where to reach workbench itself. An agent inside a pane can read its
+        // own workspace and drive its peers over the control socket, and it
+        // cannot be expected to guess a path that moves with the platform.
+        if let Ok(socket) = crate::control::socket_path() {
+            cmd.env(crate::control::ENV_SOCKET, socket);
+        }
 
         // Do NOT export LINES/COLUMNS. Exported, they override the live
         // TIOCGWINSZ size in Ink (Claude) and other TUI frameworks, freezing

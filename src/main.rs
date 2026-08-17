@@ -5,6 +5,7 @@ mod audio;
 mod canvas;
 mod cli;
 mod comms;
+mod control;
 mod config;
 mod git;
 mod logger;
@@ -103,6 +104,23 @@ enum Commands {
     },
     /// Set this session's alias for agent-to-agent addressing
     Alias { name: String },
+    /// Block until an agent stops working (for scripts and other agents)
+    Wait {
+        /// Target agent: short id, an unambiguous prefix, or a provider name
+        target: String,
+        /// Which states count, comma-separated: idle, working, blocked,
+        /// stopped. Defaults to any of idle, blocked, stopped — "not working" —
+        /// because `--state idle` alone waits forever on a permission prompt.
+        #[arg(long)]
+        state: Option<String>,
+        /// Give up after this long. Exits 3 on timeout, so a script can tell
+        /// that apart from a failure.
+        #[arg(long, default_value_t = 600)]
+        timeout: u64,
+        /// Print one JSON object instead of a sentence
+        #[arg(long)]
+        json: bool,
+    },
     /// Report an agent lifecycle event (invoked by the agent's own hooks)
     Hook {
         /// The provider's event name, e.g. `Stop` or `Notification`. Omitted
@@ -158,6 +176,12 @@ async fn main() -> Result<()> {
         }) => cli::cmd_replies(ticket, wait, timeout)?,
         Some(Commands::Hook { event }) => cli::cmd_hook(event.as_deref()),
         Some(Commands::Alias { name }) => cli::cmd_alias(name)?,
+        Some(Commands::Wait {
+            target,
+            state,
+            timeout,
+            json,
+        }) => cli::cmd_wait(target, state, timeout, json)?,
         None => {
             // Load config to get default, CLI flag overrides
             let config = load_user_config();

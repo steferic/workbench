@@ -595,6 +595,7 @@ fn remote_tick(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) 
 
     crate::remote::publish(state, &state.system.remote_state.clone());
     notify_phone(state);
+    control_tick(state);
 
     let mut pending = Vec::new();
     if let Some(rx) = state.system.remote_commands.as_mut() {
@@ -602,9 +603,48 @@ fn remote_tick(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) 
             pending.push(command);
         }
     }
+    // The control socket speaks the same command vocabulary, so it lands in
+    // the same place and takes the same path as a tap on the phone.
+    if let Some(rx) = state.system.control_commands.as_mut() {
+        while let Ok(command) = rx.try_recv() {
+            pending.push(command);
+        }
+    }
     for command in pending {
         apply_remote(state, command, action_tx);
     }
+}
+
+/// Start the control socket once, then push whatever moved since last tick.
+///
+/// Runs after `publish`, so subscribers are told about the snapshot callers
+/// can actually read — an event that arrives before the state backing it is
+/// readable is worse than no event.
+fn control_tick(state: &mut AppState) {
+    if !state.system.control_tried {
+        state.system.control_tried = true;
+        let (tx, rx) = mpsc::unbounded_channel();
+        match crate::control::start(state.system.remote_state.clone(), tx) {
+            Ok(server) => {
+                crate::logger::info(format!("control socket on {}", server.path().display()));
+                state.system.control = Some(server);
+                state.system.control_commands = Some(rx);
+            }
+            // Another workbench owns the socket, or the directory is not
+            // writable. The TUI does not need it to work.
+            Err(err) => crate::logger::warn(format!("control socket unavailable: {err}")),
+        }
+    }
+
+    let Some(server) = state.system.control.as_ref() else {
+        return;
+    };
+    let hub = server.hub.clone();
+    let snapshot = match state.system.remote_state.lock() {
+        Ok(snapshot) => snapshot.clone(),
+        Err(_) => return,
+    };
+    crate::control::publish_events(&hub, &mut state.system.control_events, &snapshot);
 }
 
 /// How often to look for dev servers. Two `lsof` calls, so not every tick —
