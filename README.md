@@ -107,7 +107,74 @@ workbench ask <id|alias> "question"    # queue a question for a live peer; print
 workbench handoff <id|alias> --wait    # structured take-over summary from a live peer
 workbench replies <ticket> --wait      # collect the answer
 workbench alias <name>                 # name this session for easy addressing
+workbench wait <id|alias>              # block until a peer stops working
 ```
+
+An agent or script can address a peer by short id, by alias, or by provider
+name — the last resolves when only one such agent runs in *your* project,
+and never resolves to the caller itself, so `wait codex` from a codex agent
+means the other one. Anything still ambiguous is refused with the candidates
+named rather than guessed at; `--project <name>` narrows explicitly from a
+plain shell.
+
+`wait` returns as soon as the agent stops working, which by default means
+idle, blocked, *or* stopped — an agent parked on a permission prompt has
+finished its turn as far as a script is concerned, and `--state idle` alone
+would hang there until a human answered. It exits `3` on timeout, distinct
+from `1`, so a script can tell "still working" from "no such agent".
+
+## Control socket
+
+Workbench listens on a Unix socket (`WORKBENCH_CONTROL_SOCK`, injected into
+every agent pane) speaking newline-delimited JSON — a third way in, after the
+TUI's keys and the phone. `wait` is built on it, and so can your own scripts,
+editors, or agents.
+
+Inside a pane the path is already in `$WORKBENCH_CONTROL_SOCK`. Elsewhere,
+workbench logs it at startup (`control socket on …`) — it lives beside the
+rest of workbench's state, or in the temp directory when that path would
+overflow the ~104 bytes a Unix socket address can hold.
+
+One JSON object per line, in and out. Ask it what it can do:
+
+```jsonc
+→ {"id":1,"method":"api.schema"}
+← {"id":1,"result":{"methods":[…],"events":[…]}}
+
+→ {"id":2,"method":"agents.list"}
+← {"id":2,"result":[{"id":"a9b5f906","project":"workbench","provider":"Claude",
+                    "alias":null,"model":"Opus 5","status":"working",…}]}
+
+→ {"id":3,"method":"agent.prompt","params":{"agent":"a9b5f906","text":"ship it"}}
+← {"id":3,"result":{"accepted":true}}
+
+→ {"id":4,"method":"events.subscribe"}
+← {"id":4,"result":{"subscribed":true}}
+← {"event":"agent.status_changed","data":{"agent":"a9b5f906","from":"working","to":"idle"}}
+```
+
+Any client that speaks a Unix stream socket will do — `workbench wait` is the
+one that ships.
+
+Reads answer from the snapshot the event loop already publishes each tick, so
+they never block the UI and are at most one tick old. Writes (`agent.prompt`,
+`agent.todo`, `agent.answer`, `agent.focus`, `agent.new`) are queued for the
+event loop and answer `{"accepted":true}` — the loop took it, not that the
+agent has replied. Subscribers get `agent.added`, `agent.removed`,
+`agent.status_changed` and `agent.model_changed` as they happen, which is why
+`wait` costs nothing while it waits. The socket is `0600` and local only.
+
+The instructions block also encodes what multi-agent research says works:
+review a peer's *branch diff* with fresh eyes (never its self-report), use
+`handoff` from the live author when taking over, prefer cross-provider
+opinions, and push back with a better alternative when asked for known
+anti-patterns (consensus debates, shared-branch edits).
+
+Consults deliver only when the target is idle, appear visibly in its pane,
+and are guarded against cycles (A→B while B→A) and unbounded fan-out (one
+outstanding consult per asker). Transcripts and rosters live outside the
+repo under the workbench config directory, so nothing pollutes git status.
+
 
 The instructions block also encodes what multi-agent research says works:
 review a peer's *branch diff* with fresh eyes (never its self-report), use

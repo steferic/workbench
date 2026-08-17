@@ -318,11 +318,15 @@ The `workbench` CLI lets you discover and communicate with peers:
 - `workbench ask <id|alias> "question" --wait` — deliver a question to a live peer and collect its answer (or collect later: `workbench replies <ticket> --wait`)
 - `workbench handoff <id|alias> --wait` — ask a peer for a structured summary of its work (done/remaining/decisions/gotchas) before taking over or building on it
 - `workbench alias <name>` — set your own alias
+- `workbench wait <id|alias>` — block until a peer stops working (add `--json` for a parseable line, `--state idle` to insist it is not merely blocked)
 
-Address peers by id or alias; a provider name like `codex` only works when
-exactly one such agent is running. A consult costs the peer a full model
-turn — consult when the user asks you to or you are genuinely blocked, not
-by default.
+Address peers by id or alias. A provider name like `codex` also works when
+only one such agent runs in this project — and you are never a match for
+your own provider, so `codex` from a codex agent means the other one. What
+is still ambiguous is refused with the candidates named, never guessed at.
+
+A consult costs the peer a full model turn — consult when the user asks you
+to or you are genuinely blocked, not by default.
 
 ### Choosing the right collaboration pattern
 
@@ -336,6 +340,9 @@ Match the user's request to what is known to work; if it fits, just do it:
   guess); read `transcript` only when the author is stopped or unresponsive.
 - CONSULTING: one broad question beats many narrow ones; a cross-provider
   opinion (claude<->codex) is worth more than a same-provider one.
+- WAITING on a peer to finish: `workbench wait <id|alias>`, which returns the
+  moment it stops working. Do not poll `workbench agents` in a loop, and do
+  not sit in `sleep` guessing how long a turn takes.
 
 If the user asks for something known to be counterproductive — e.g. agents
 debating in rounds until they agree (models sycophantically converge on
