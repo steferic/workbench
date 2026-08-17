@@ -89,6 +89,10 @@ pub struct AgentView {
     /// Which project to start a sibling agent in.
     pub project_id: String,
     pub provider: String,
+    /// The name this agent gave itself with `workbench alias`. Unique within
+    /// a project, and the only address that stays meaningful across a restart
+    /// — session ids do not survive one.
+    pub alias: Option<String>,
     /// What the agent is actually answering with — "Opus 5" rather than
     /// "Claude". `None` until it has journalled a turn, and always for a
     /// provider whose store does not record one, so the page falls back to
@@ -350,6 +354,7 @@ fn publish_with(state: &AppState, shared: &Shared, open: Option<(Vec<Message>, u
                 project: workspace.name.clone(),
                 project_id: workspace.id.to_string(),
                 provider: session.agent_type.display_name(),
+                alias: session.alias.clone(),
                 model: state.session_model(session.id),
                 status: status.to_string(),
                 reason: state.activity_reason(session.id).map(str::to_string),
@@ -679,6 +684,7 @@ mod tests {
             project: "workbench".into(),
             project_id: "p".into(),
             provider: "Claude".into(),
+            alias: None,
             model: Some("Opus 5".into()),
             status: "working".into(),
             reason: None,
@@ -729,6 +735,7 @@ mod tests {
             project: "workbench".into(),
             project_id: "p".into(),
             provider: "Claude".into(),
+            alias: None,
             model: None,
             status: "working".into(),
             reason: None,

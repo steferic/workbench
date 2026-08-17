@@ -36,7 +36,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 mod client;
 
-pub use client::{resolve_agent, Client};
+pub use client::{resolve_agent, resolve_project, Client, Scope};
 
 use crate::remote::{RemoteCommand, Shared, Snapshot};
 
@@ -490,6 +490,7 @@ fn summarize(agent: &crate::remote::AgentView) -> Value {
         "project": agent.project,
         "project_id": agent.project_id,
         "provider": agent.provider,
+        "alias": agent.alias,
         "model": agent.model,
         "status": agent.status,
         "reason": agent.reason,
@@ -551,6 +552,7 @@ mod tests {
             project: "workbench".into(),
             project_id: "p1".into(),
             provider: "Claude".into(),
+            alias: None,
             model: Some("Opus 5".into()),
             status: status.into(),
             reason: None,

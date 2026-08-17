@@ -312,6 +312,7 @@ pub const EXIT_TIMEOUT: i32 = 3;
 pub fn cmd_wait(
     target: String,
     states: Option<String>,
+    project: Option<String>,
     timeout_secs: u64,
     json_out: bool,
 ) -> Result<()> {
@@ -344,7 +345,18 @@ pub fn cmd_wait(
 
     let agents = client.call("agents.list", json!({}))?;
     let agents = agents.as_array().cloned().unwrap_or_default();
-    let agent = crate::control::resolve_agent(&agents, &target)?;
+
+    // The caller's own pane says which project it is in, which is what makes a
+    // bare provider name usable — `wait codex` from inside a project means
+    // that project's codex. `--project` says it outright, for a script run
+    // from a plain shell where the environment cannot.
+    let mut scope = crate::control::Scope::from_env();
+    if let Some(name) = project.as_deref() {
+        let projects = client.call("projects.list", json!({}))?;
+        let projects = projects.as_array().cloned().unwrap_or_default();
+        scope.project_id = Some(crate::control::resolve_project(&projects, name)?);
+    }
+    let agent = crate::control::resolve_agent(&agents, &target, &scope)?;
 
     let describe = |state: &str, waited: Duration| {
         if json_out {

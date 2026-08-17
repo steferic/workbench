@@ -113,6 +113,10 @@ enum Commands {
         /// because `--state idle` alone waits forever on a permission prompt.
         #[arg(long)]
         state: Option<String>,
+        /// Which project to look in, by name. Only needed from a plain
+        /// shell: inside a workbench pane the agent's own project is used.
+        #[arg(long)]
+        project: Option<String>,
         /// Give up after this long. Exits 3 on timeout, so a script can tell
         /// that apart from a failure.
         #[arg(long, default_value_t = 600)]
@@ -179,9 +183,10 @@ async fn main() -> Result<()> {
         Some(Commands::Wait {
             target,
             state,
+            project,
             timeout,
             json,
-        }) => cli::cmd_wait(target, state, timeout, json)?,
+        }) => cli::cmd_wait(target, state, project, timeout, json)?,
         None => {
             // Load config to get default, CLI flag overrides
             let config = load_user_config();
