@@ -1,6 +1,6 @@
 # Workbench
 
-[![CI](https://github.com/steferic/workbench/actions/workflows/ci.yml/badge.svg)](https://github.com/steferic/workbench/actions/workflows/ci.yml)
+[![Check](https://github.com/steferic/workbench/actions/workflows/check.yml/badge.svg)](https://github.com/steferic/workbench/actions/workflows/check.yml)
 
 A TUI for managing AI agent workspaces and sessions. Run Claude, Codex, Gemini, and other coding agents side by side across multiple projects, with per-workspace sessions, pinned terminals, a live view of the selected agent's task list, and git worktree isolation.
 
@@ -178,6 +178,12 @@ outstanding consult per asker). Transcripts and rosters live outside the
 repo under the workbench config directory, so nothing pollutes git status.
 
 Press `h` or `?` in the app for keybindings and settings.
+
+For phone access, install and open [Tailscale](https://tailscale.com/download) on
+the computer running Workbench and on your phone, then sign in to the same
+tailnet on both. Restart Workbench and open **Utilities → Phone QR** to scan the
+private link. Phone access is enabled by default; set `remote_port = 0` in
+`user_config.toml` to turn it off.
 
 From the workspace list, press `g` to open the selected repository map in your
 browser. The map is served on loopback only, respects `.gitignore`, and shows
