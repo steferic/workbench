@@ -325,8 +325,8 @@ fn render_quickref_tab(frame: &mut Frame, area: Rect, state: &AppState) {
         Span::raw("Open this window"),
     ]));
     lines.push(Line::from(vec![
-        Span::styled("  q                  ", key_style),
-        Span::raw("Quit workbench"),
+        Span::styled("  Ctrl-q             ", key_style),
+        Span::raw("Quit workbench (then y / Enter to confirm)"),
     ]));
     lines.push(Line::from(""));
 

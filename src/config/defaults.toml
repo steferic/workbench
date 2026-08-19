@@ -98,8 +98,6 @@
 "d" = "InitiateDeleteWorkspace"
 "h" = "EnterConfigWindow"
 "?" = "EnterConfigWindow"
-"q" = "InitiateQuit"
-"Esc" = "InitiateQuit"
 
 [panel.session_list]
 "j" = "MoveDown"
@@ -125,7 +123,6 @@
 "w" = "SwitchToWorktree"
 "h" = "EnterConfigWindow"
 "?" = "EnterConfigWindow"
-"q" = "Quit"
 "1" = "CreateClaude"
 "2" = "CreateGemini"
 "3" = "CreateCodex"
@@ -150,7 +147,6 @@
 "m" = "MergeSelectedReport"
 "h" = "EnterConfigWindow"
 "?" = "EnterConfigWindow"
-"q" = "Quit"
 
 [panel.utilities_pane]
 "j" = "SelectNextUtility"
@@ -162,13 +158,11 @@
 "Tab" = "ToggleUtilitySection"
 "h" = "EnterConfigWindow"
 "?" = "EnterConfigWindow"
-"q" = "Quit"
 
 [panel.output_pane]
 "h" = "FocusLeft"
 "Esc" = "FocusLeftOrSendEsc"
 "?" = "EnterConfigWindow"
-"q" = "Quit"
 "Ctrl-h" = "FocusLeft"
 "Shift-Up" = "ScrollOutputUp"
 "Shift-Down" = "ScrollOutputDown"

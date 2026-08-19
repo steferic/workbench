@@ -81,11 +81,11 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         let right_text = vec![
             Span::styled("Press ", Style::default().fg(t.fg_dim)),
             Span::styled(
-                "[Esc/q/y]",
+                "[y]",
                 Style::default().fg(t.error).add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                " to confirm, any other key to cancel",
+                " or Enter to confirm, Esc to cancel",
                 Style::default().fg(t.fg_dim),
             ),
         ];
@@ -324,7 +324,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
                         Span::raw(" Sessions  "),
                         Span::styled("[?]", Style::default().fg(t.accent)),
                         Span::raw(" Help  "),
-                        Span::styled("[q]", Style::default().fg(t.accent)),
+                        Span::styled("[^Q]", Style::default().fg(t.accent)),
                         Span::raw(" Quit"),
                     ],
                     FocusPanel::SessionList => vec![

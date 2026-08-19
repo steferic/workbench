@@ -25,13 +25,21 @@ impl EventHandler {
             };
         }
 
-        // Handle pending quit confirmation
+        // Handle pending quit confirmation.
+        //
+        // Esc cancels. It used to confirm, alongside `q` and `y`, which made
+        // the key you reach for to back out of an accidental quit the key that
+        // completed it. Confirming takes `y`, Enter, or Ctrl+Q again — the
+        // same chord that asked the question.
         if state.ui.pending_quit {
-            return match key.code {
-                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('y') | KeyCode::Char('Y') => {
-                    Action::ConfirmQuit
-                }
-                _ => Action::CancelQuit,
+            let confirmed = matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y'))
+                || key.code == KeyCode::Enter
+                || (key.code == KeyCode::Char('q')
+                    && key.modifiers.contains(KeyModifiers::CONTROL));
+            return if confirmed {
+                Action::ConfirmQuit
+            } else {
+                Action::CancelQuit
             };
         }
 
@@ -83,7 +91,6 @@ impl EventHandler {
             }
             KeyCode::Char('h') => Action::EnterConfigWindow,
             KeyCode::Char('?') => Action::EnterConfigWindow,
-            KeyCode::Char('q') | KeyCode::Esc => Action::InitiateQuit,
             _ => Action::Tick,
         }
     }
@@ -241,7 +248,6 @@ impl EventHandler {
             }
             KeyCode::Char('h') => Action::EnterConfigWindow,
             KeyCode::Char('?') => Action::EnterConfigWindow,
-            KeyCode::Char('q') => Action::Quit,
             _ => Action::Tick,
         }
     }
@@ -298,7 +304,6 @@ impl EventHandler {
 
             KeyCode::Char('h') => Action::EnterConfigWindow,
             KeyCode::Char('?') => Action::EnterConfigWindow,
-            KeyCode::Char('q') => Action::Quit,
             _ => Action::Tick,
         }
     }
@@ -339,7 +344,6 @@ impl EventHandler {
             KeyCode::Tab => Action::ToggleUtilitySection,
             KeyCode::Char('h') => Action::EnterConfigWindow,
             KeyCode::Char('?') => Action::EnterConfigWindow,
-            KeyCode::Char('q') => Action::Quit,
             _ => Action::Tick,
         }
     }
@@ -473,8 +477,7 @@ impl EventHandler {
             match key.code {
                 KeyCode::Char('h') | KeyCode::Esc => Action::FocusLeft,
                 KeyCode::Char('?') => Action::EnterConfigWindow,
-                KeyCode::Char('q') => Action::Quit,
-                _ => Action::Tick,
+                    _ => Action::Tick,
             }
         }
     }
@@ -620,6 +623,113 @@ impl EventHandler {
                 KeyCode::Esc | KeyCode::Char('h') => Action::FocusLeft,
                 _ => Action::Tick,
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod quit_tests {
+    use super::*;
+    use crate::models::Workspace;
+
+    fn state() -> AppState {
+        let mut state = AppState::default();
+        let workspace = Workspace::new("w".into(), std::path::PathBuf::from("/tmp/w"));
+        state.data.workspaces.push(workspace);
+        state
+    }
+
+    fn press(events: &EventHandler, state: &AppState, code: KeyCode, mods: KeyModifiers) -> Action {
+        events.handle_key_event(KeyEvent::new(code, mods), state)
+    }
+
+    /// Quitting kills every agent on the machine, so it takes the one chord
+    /// nobody presses by accident.
+    #[test]
+    fn ctrl_q_is_the_way_out() {
+        let events = EventHandler::new();
+        let mut state = state();
+        for panel in [
+            FocusPanel::WorkspaceList,
+            FocusPanel::SessionList,
+            FocusPanel::TasksPane,
+            FocusPanel::UtilitiesPane,
+            FocusPanel::OutputPane,
+        ] {
+            state.ui.focus = panel;
+            assert!(
+                matches!(
+                    press(&events, &state, KeyCode::Char('q'), KeyModifiers::CONTROL),
+                    Action::InitiateQuit
+                ),
+                "Ctrl+Q should ask to quit from {panel:?}"
+            );
+        }
+    }
+
+    /// The bug this guards: `q` ended the session outright from four panes,
+    /// and `Esc` did it from the workspace list. Both are one finger away from
+    /// keys used constantly for navigation.
+    #[test]
+    fn a_bare_q_or_esc_never_quits() {
+        let events = EventHandler::new();
+        let mut state = state();
+        for panel in [
+            FocusPanel::WorkspaceList,
+            FocusPanel::SessionList,
+            FocusPanel::TasksPane,
+            FocusPanel::UtilitiesPane,
+            FocusPanel::OutputPane,
+        ] {
+            state.ui.focus = panel;
+            for code in [KeyCode::Char('q'), KeyCode::Esc] {
+                let action = press(&events, &state, code, KeyModifiers::NONE);
+                assert!(
+                    !matches!(action, Action::Quit | Action::InitiateQuit | Action::ConfirmQuit),
+                    "{code:?} must not quit from {panel:?}, got {action:?}"
+                );
+            }
+        }
+    }
+
+    /// Esc used to *confirm* the quit it is the natural key to escape from.
+    #[test]
+    fn esc_backs_out_of_the_confirmation() {
+        let events = EventHandler::new();
+        let mut state = state();
+        state.ui.pending_quit = true;
+
+        assert!(matches!(
+            press(&events, &state, KeyCode::Esc, KeyModifiers::NONE),
+            Action::CancelQuit
+        ));
+        // And so does anything else that is not a yes.
+        assert!(matches!(
+            press(&events, &state, KeyCode::Char('n'), KeyModifiers::NONE),
+            Action::CancelQuit
+        ));
+        assert!(matches!(
+            press(&events, &state, KeyCode::Char('q'), KeyModifiers::NONE),
+            Action::CancelQuit
+        ));
+    }
+
+    #[test]
+    fn yes_enter_or_the_same_chord_confirms() {
+        let events = EventHandler::new();
+        let mut state = state();
+        state.ui.pending_quit = true;
+
+        for (code, mods) in [
+            (KeyCode::Char('y'), KeyModifiers::NONE),
+            (KeyCode::Char('Y'), KeyModifiers::NONE),
+            (KeyCode::Enter, KeyModifiers::NONE),
+            (KeyCode::Char('q'), KeyModifiers::CONTROL),
+        ] {
+            assert!(
+                matches!(press(&events, &state, code, mods), Action::ConfirmQuit),
+                "{code:?}+{mods:?} should confirm"
+            );
         }
     }
 }
