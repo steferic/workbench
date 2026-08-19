@@ -144,8 +144,16 @@ enum Commands {
     },
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+/// Deliberately not `#[tokio::main]`.
+///
+/// Only the TUI is async. Every other subcommand is a short file read or
+/// write — and one of them, `hook`, is invoked by the agents themselves on
+/// every lifecycle event: measured at ~1,450 spawns a minute across a busy
+/// set of agents. Building a multi-threaded runtime for each of those, to
+/// write one small JSON file, cost roughly a tenth of a core continuously and
+/// a thread pool's worth of setup per event. The runtime is now built where it
+/// is actually used.
+fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
@@ -212,7 +220,10 @@ async fn main() -> Result<()> {
             } else {
                 config.use_alternate_screen
             };
-            run_tui(cli.workspace, use_alt_screen).await?;
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?
+                .block_on(run_tui(cli.workspace, use_alt_screen))?;
         }
     }
 
