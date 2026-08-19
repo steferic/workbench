@@ -24,6 +24,15 @@ lto = "thin"
 name = "workbench"
 path = "src/main.rs"
 
+# The hook forwarder. Declared explicitly so it is visible to anything reading
+# the manifest — releases in particular: agents run it on every lifecycle
+# event, and an install that shipped only the main binary would quietly fall
+# back to the slow path rather than fail, which is the sort of regression
+# nobody notices.
+[[bin]]
+name = "wbhook"
+path = "src/bin/wbhook.rs"
+
 [dependencies]
 # Reading agent session stores (opencode, hermes keep theirs in SQLite).
 # `bundled` compiles SQLite itself so there is no system dependency.

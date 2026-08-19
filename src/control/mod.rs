@@ -384,7 +384,13 @@ fn serve(
         }
 
         let result = dispatch(method, &params, &shared, &commands);
-        reply(&mut out, &id, result)?;
+        if reply(&mut out, &id, result).is_err() {
+            // The caller hung up without reading — which the hook forwarder
+            // does by design, since nothing acts on the answer and a hook that
+            // waits is a hook that slows the agent down. Not worth a line in
+            // the log 24 times a second.
+            return Ok(());
+        }
     }
 
     Ok(())
@@ -469,6 +475,39 @@ fn dispatch(
             },
         ),
 
+        // The hook fast path (see `src/bin/wbhook.rs`). Interpreting the
+        // event stays here rather than in the little forwarder, so the rule
+        // for what an event means lives in one place.
+        "hook" => {
+            let workspace = text_param(params, "workspace")?;
+            let session = text_param(params, "session")?;
+            let raw = params.get("payload").and_then(Value::as_str).unwrap_or("");
+            let payload: Option<Value> = serde_json::from_str(raw).ok();
+            // Codex's hook command carries no arguments and names the event in
+            // the payload instead; Claude passes it as one.
+            let named = params.get("event").and_then(Value::as_str).unwrap_or("");
+            let event = if named.is_empty() {
+                payload
+                    .as_ref()
+                    .and_then(|p| p.get("hook_event_name"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+            } else {
+                named
+            };
+            if event.is_empty() {
+                return Ok(json!({"ignored": "no event"}));
+            }
+            match crate::agent_status::interpret(event, payload.as_ref()) {
+                Some(status) => {
+                    crate::agent_status::record(&workspace, &session, &status)
+                        .map_err(|err| ("record_failed", err.to_string()))?;
+                    Ok(json!({"recorded": true}))
+                }
+                None => Ok(json!({"ignored": event})),
+            }
+        }
+
         "" => Err(("no_method", "every request needs a `method`".into())),
         other => Err((
             "unknown_method",
@@ -540,7 +579,8 @@ fn schema() -> Value {
             {"name": "agent.answer", "params": ["agent", "key"], "kind": "write"},
             {"name": "agent.focus", "params": ["agent"], "kind": "write"},
             {"name": "agent.new", "params": ["project", "provider"], "kind": "write"},
-            {"name": "events.subscribe", "params": [], "kind": "stream"}
+            {"name": "events.subscribe", "params": [], "kind": "stream"},
+            {"name": "hook", "params": ["workspace", "session", "event", "payload"], "kind": "write"}
         ],
         "events": [
             "agent.added",
