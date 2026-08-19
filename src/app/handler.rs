@@ -111,6 +111,7 @@ pub fn process_action(
             }
 
             refresh_agent_status(state);
+            health_tick(state);
             remote_tick(state, action_tx);
             sync_repository_map(state);
             super::todo_dispatch::tick(state, action_tx);
@@ -645,6 +646,62 @@ fn control_tick(state: &mut AppState) {
         Err(_) => return,
     };
     crate::control::publish_events(&hub, &mut state.system.control_events, &snapshot);
+}
+
+/// How often to write a line describing the machine we are living on.
+fn health_every() -> Duration {
+    // Overridable so a test can watch several heartbeats without waiting
+    // minutes; nothing sets it in normal use.
+    std::env::var("WORKBENCH_HEALTH_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .map(Duration::from_secs)
+        .unwrap_or(Duration::from_secs(60))
+}
+
+/// Leave a trail the process cannot leave for itself.
+///
+/// SIGKILL is uncatchable: no panic hook, no Drop, no last words. Three times
+/// now workbench has simply ended, and the only honest answer to "why" was
+/// that the log stopped. Nothing in-process can report its own killing — but
+/// it can describe the conditions on the way there, so the minute before the
+/// silence says whether memory was the story.
+///
+/// The PID is here for the same reason. Attribution lives in the system log
+/// (`log show`), which identifies processes by number, and matching one up
+/// after the fact previously meant guessing from open ports.
+fn health_tick(state: &mut AppState) {
+    let due = state
+        .system
+        .last_health_log
+        .map(|at| at.elapsed() >= health_every())
+        .unwrap_or(true);
+    if !due {
+        return;
+    }
+    state.system.last_health_log = Some(std::time::Instant::now());
+
+    let agents = state
+        .data
+        .sessions
+        .values()
+        .flatten()
+        .filter(|s| s.status == crate::models::SessionStatus::Running)
+        .count();
+    let swap = match state.system.perf.system_swap() {
+        Some((used, total)) if total > 0 => format!(
+            "swap {:.1}/{:.1}GB ({:.0}%)",
+            used as f64 / 1e9,
+            total as f64 / 1e9,
+            used as f64 / total as f64 * 100.0
+        ),
+        _ => "swap unknown".to_string(),
+    };
+    crate::logger::info(format!(
+        "health: pid {} rss {:.0}MB, {agents} running agents, {swap}",
+        std::process::id(),
+        state.system.perf.memory_mb(),
+    ));
 }
 
 /// How often to look for dev servers. Two `lsof` calls, so not every tick —

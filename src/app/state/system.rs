@@ -101,6 +101,44 @@ impl PerformanceMetrics {
         total as f64 / self.pty_batch_sizes.len() as f64
     }
 
+    /// How much swap the machine is using, as (used, total) bytes.
+    ///
+    /// Read straight from the kernel rather than by shelling out: this is for
+    /// a heartbeat, and spawning a process once a minute to describe memory
+    /// pressure would be a small joke at our own expense.
+    #[cfg(target_os = "macos")]
+    pub fn system_swap(&self) -> Option<(u64, u64)> {
+        #[repr(C)]
+        #[derive(Default)]
+        struct XswUsage {
+            total: u64,
+            avail: u64,
+            used: u64,
+            pagesize: u64,
+            encrypted: bool,
+        }
+        let mut usage = XswUsage::default();
+        let mut size = std::mem::size_of::<XswUsage>();
+        let name = c"vm.swapusage";
+        // SAFETY: sysctlbyname fills `usage` with at most `size` bytes, and
+        // the layout matches the kernel's `struct xsw_usage`.
+        let ok = unsafe {
+            libc::sysctlbyname(
+                name.as_ptr(),
+                &mut usage as *mut _ as *mut libc::c_void,
+                &mut size,
+                std::ptr::null_mut(),
+                0,
+            )
+        } == 0;
+        ok.then_some((usage.used, usage.total))
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub fn system_swap(&self) -> Option<(u64, u64)> {
+        None
+    }
+
     /// Get memory usage in MB (RSS - resident set size)
     pub fn memory_mb(&self) -> f64 {
         #[cfg(target_os = "macos")]
@@ -688,6 +726,8 @@ pub struct SystemState {
     pub control: Option<crate::control::ControlServer>,
     pub control_commands: Option<tokio::sync::mpsc::UnboundedReceiver<crate::remote::RemoteCommand>>,
     pub control_tried: bool,
+    /// When the last health line was written (see `handler::health_tick`).
+    pub last_health_log: Option<Instant>,
     /// What the last tick published, so this one can say what moved.
     pub control_events: crate::control::EventState,
     /// Set once we have tried to start, so a machine without Tailscale does
@@ -781,6 +821,7 @@ impl SystemState {
             control: None,
             control_commands: None,
             control_tried: false,
+            last_health_log: None,
             control_events: Default::default(),
             remote_tried: false,
             remote_focus: None,
