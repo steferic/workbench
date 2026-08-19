@@ -17,7 +17,9 @@
 //! not running, or the socket has gone, the agent must carry on regardless —
 //! and it is the agent's own stderr that noise would land in.
 
+#[cfg(unix)]
 use std::io::{Read, Write};
+#[cfg(unix)]
 use std::os::unix::net::UnixStream;
 
 /// Escape a string for a JSON scalar. Hand-rolled to keep this binary free of
@@ -39,6 +41,14 @@ fn escape(raw: &str) -> String {
     out
 }
 
+/// Windows has no control socket to forward to — `control::start` says so
+/// outright there — so the forwarder is a no-op rather than a build error.
+/// It still exists as a program so the hook command generated for an agent
+/// does not have to differ by platform.
+#[cfg(not(unix))]
+fn main() {}
+
+#[cfg(unix)]
 fn main() {
     let (Ok(socket), Ok(session), Ok(workspace)) = (
         std::env::var("WORKBENCH_CONTROL_SOCK"),
