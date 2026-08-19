@@ -203,6 +203,13 @@ fn load_inner(path: &PathBuf) -> Result<PersistedState> {
             if session.status == SessionStatus::Running {
                 session.status = SessionStatus::Stopped;
             }
+            // And nothing it was told to do is still in flight, for the same
+            // reason: the turn died with the process. A queued item left
+            // `Running` used to survive the restart with its old `sent_at`,
+            // and the first idle report from the restarted agent retired it as
+            // Done — so work that was interrupted was silently skipped rather
+            // than redone. Put it back at the head of the queue.
+            session.todo_queue.requeue_running();
         }
     }
 
@@ -376,5 +383,56 @@ mod tests {
         .unwrap();
         let back: GlobalConfig = serde_json::from_str(&round).unwrap();
         assert_eq!(back.theme_mode, crate::theme::ThemeMode::Botan);
+    }
+}
+
+#[cfg(test)]
+mod restart_tests {
+    use super::*;
+    use crate::models::{AgentType, Session, TodoState, Workspace};
+
+    /// What a crash used to cost: an item handed to an agent was still marked
+    /// `Running` in the saved state, so after the restart the agent's first
+    /// idle report retired it as Done — even though its turn had been killed
+    /// with the process and the work was never done.
+    #[test]
+    fn work_interrupted_by_a_restart_is_queued_again_not_marked_done() {
+        let workspace = Workspace::new("w".into(), std::path::PathBuf::from("/tmp/w"));
+        let mut session = Session::new(workspace.id, AgentType::Claude, false);
+        session.status = SessionStatus::Running;
+        session.todo_queue.add("ship the migration");
+        let id = session.todo_queue.next_pending().unwrap().id;
+        session.todo_queue.mark_running(id);
+        assert_eq!(session.todo_queue.items[0].state, TodoState::Running);
+        assert!(session.todo_queue.items[0].sent_at.is_some());
+
+        let mut state = PersistedState {
+            version: default_state_version(),
+            workspaces: vec![workspace.clone()],
+            sessions: [(workspace.id, vec![session])].into_iter().collect(),
+            notepad_content: Default::default(),
+        };
+
+        // The same pass that decides a PTY did not survive the restart.
+        for sessions in state.sessions.values_mut() {
+            for session in sessions.iter_mut() {
+                if session.status == SessionStatus::Running {
+                    session.status = SessionStatus::Stopped;
+                }
+                session.todo_queue.requeue_running();
+            }
+        }
+
+        let restored = &state.sessions[&workspace.id][0];
+        assert_eq!(restored.status, SessionStatus::Stopped, "restarted, not live");
+        assert_eq!(
+            restored.todo_queue.items[0].state,
+            TodoState::Pending,
+            "the interrupted item must be waiting again, not skipped"
+        );
+        assert!(
+            restored.todo_queue.items[0].sent_at.is_none(),
+            "clearing sent_at is what stops it being retired on the next idle"
+        );
     }
 }

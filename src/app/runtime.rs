@@ -163,6 +163,31 @@ pub async fn run_tui(initial_workspace: Option<PathBuf>, use_alternate_screen: b
     result
 }
 
+/// Run one action, and keep the session alive when it fails.
+///
+/// An action that cannot be carried out is ordinary: "no workspace selected"
+/// is what a keystroke means at the wrong moment, and the tree behind
+/// `process_action` reaches git, the disk, and other processes, none of which
+/// fail for reasons that have anything to do with the agents currently
+/// running. Propagating that out of the loop ended the session and killed
+/// every one of them — which is how workbench came to just stop and drop the
+/// user back at a shell, with nothing in the log to say why.
+///
+/// So a failed action is reported and the loop goes on. The things that really
+/// are fatal — the terminal itself going away — still end it, and now say so
+/// on the way out.
+fn dispatch(
+    state: &mut AppState,
+    action: Action,
+    pty_manager: &PtyManager,
+    action_tx: &mpsc::UnboundedSender<Action>,
+    pty_tx: &mpsc::Sender<Action>,
+) {
+    if let Err(err) = process_action(state, action, pty_manager, action_tx, pty_tx) {
+        crate::logger::warn(format!("action failed: {err:#}"));
+    }
+}
+
 async fn run_main_loop(
     terminal: &mut tui::Terminal,
     state: &mut AppState,
@@ -204,7 +229,10 @@ async fn run_main_loop(
             // Start frame timing
             state.system.perf.frame_start();
 
-            terminal.draw(|frame| tui::ui::draw(frame, state))?;
+            if let Err(err) = terminal.draw(|frame| tui::ui::draw(frame, state)) {
+                crate::logger::warn(format!("giving up: the terminal could not be drawn: {err}"));
+                return Err(err.into());
+            }
 
             // End frame timing (measures render time)
             state.system.perf.frame_end();
@@ -242,7 +270,13 @@ async fn run_main_loop(
         }
 
         // Handle events - batch process multiple PTY outputs to avoid UI starvation
-        let action = events.next(state).await?;
+        let action = match events.next(state).await {
+            Ok(action) => action,
+            Err(err) => {
+                crate::logger::warn(format!("giving up: input ended: {err:#}"));
+                return Err(err);
+            }
+        };
 
         // Check discriminant before consuming the action to avoid cloning
         let is_pty_output = matches!(&action, Action::PtyOutput(_, _));
@@ -261,7 +295,7 @@ async fn run_main_loop(
         }
 
         // Process action (takes ownership, no clone needed)
-        process_action(state, action, pty_manager, &action_tx, &pty_tx)?;
+        dispatch(state, action, pty_manager, &action_tx, &pty_tx);
 
         // If we just processed a PTY output, drain more from the queue without redrawing
         // This prevents UI starvation during heavy output
@@ -274,12 +308,12 @@ async fn run_main_loop(
                 // Check for more PTY outputs without blocking
                 if let Ok(next_action) = events.try_recv_pty_action() {
                     if matches!(next_action, Action::PtyOutput(_, _)) {
-                        process_action(state, next_action, pty_manager, &action_tx, &pty_tx)?;
+                        dispatch(state, next_action, pty_manager, &action_tx, &pty_tx);
                         state.system.perf.record_pty_output(); // Track batched PTY output
                         batch_count += 1;
                     } else {
                         // Non-PTY action, process it and stop batching
-                        process_action(state, next_action, pty_manager, &action_tx, &pty_tx)?;
+                        dispatch(state, next_action, pty_manager, &action_tx, &pty_tx);
                         break;
                     }
                 } else {
@@ -352,4 +386,55 @@ async fn run_main_loop(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod dispatch_tests {
+    use super::*;
+    use crate::models::AgentType;
+
+    /// The bug behind "workbench just stops": an action that could not be
+    /// carried out returned `Err`, the error travelled out of the event loop,
+    /// and the process ended — taking every running agent with it and leaving
+    /// nothing in the log to explain the empty terminal.
+    ///
+    /// Starting a parallel task with no workspace selected is the cheapest
+    /// example: "No workspace selected" is a sentence about a keystroke, not a
+    /// reason to end the session.
+    #[test]
+    fn a_failing_action_no_longer_ends_the_session() {
+        let pty = PtyManager::new();
+        let (action_tx, _action_rx) = mpsc::unbounded_channel();
+        let (pty_tx, _pty_rx) = mpsc::channel(8);
+
+        let mut state = AppState::default();
+        // Enough to get past the modal's own guards and reach the workspace
+        // lookup, which is the thing that fails.
+        state.ui.parallel_task.agents = vec![(AgentType::Claude, true)];
+        state.ui.parallel_task.prompt = "do the thing".to_string();
+        assert!(state.data.workspaces.is_empty());
+
+        // It really does fail — without this the test would pass for the wrong
+        // reason the day the action stops erroring.
+        assert!(
+            process_action(
+                &mut state,
+                Action::StartParallelTask,
+                &pty,
+                &action_tx,
+                &pty_tx,
+            )
+            .is_err(),
+            "expected this action to fail with no workspace"
+        );
+
+        // And the loop's dispatch absorbs it: returning at all is the assertion.
+        dispatch(
+            &mut state,
+            Action::StartParallelTask,
+            &pty,
+            &action_tx,
+            &pty_tx,
+        );
+    }
 }

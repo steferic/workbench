@@ -85,6 +85,28 @@ fn install_panic_hook() {
     INSTALL.call_once(|| {
         let original = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
+            // Write it down before touching the terminal. The default hook
+            // prints to stderr, which is the one place it cannot survive: the
+            // alt screen is torn down a line later and takes the message with
+            // it, so a panic looked exactly like workbench quietly stopping.
+            // The log outlives the process and is the only record anyone can
+            // go back to.
+            let payload = info
+                .payload()
+                .downcast_ref::<&str>()
+                .map(|s| (*s).to_string())
+                .or_else(|| info.payload().downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "panicked".to_string());
+            let where_ = info
+                .location()
+                .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+                .unwrap_or_else(|| "unknown location".to_string());
+            crate::logger::warn(format!("PANIC at {where_}: {payload}"));
+            crate::logger::warn(format!(
+                "backtrace:\n{}",
+                std::backtrace::Backtrace::force_capture()
+            ));
+
             // Best-effort restore — we don't know the original
             // `use_alternate_screen` arg here, but `ALT_SCREEN_ACTIVE`
             // captures the actual runtime state.
