@@ -183,14 +183,36 @@ pub fn load_utility_content(state: &mut AppState, action_tx: &mpsc::UnboundedSen
 
 fn load_phone_qr(state: &mut AppState) {
     let Some(remote) = state.system.remote.as_ref() else {
-        state.ui.utility_content = vec![
-            String::new(),
-            "  Phone QR".to_string(),
-            "  ========".to_string(),
-            String::new(),
-            "  Phone view is unavailable.".to_string(),
-            "  Start Tailscale and ensure remote_port is enabled in settings.".to_string(),
-        ];
+        state.ui.utility_content = if state.system.user_config.remote_port == 0 {
+            vec![
+                String::new(),
+                "  Phone QR".to_string(),
+                "  ========".to_string(),
+                String::new(),
+                "  Phone view is turned off.".to_string(),
+                String::new(),
+                "  1. Set remote_port = 8765 in user_config.toml.".to_string(),
+                "  2. Install Tailscale on this computer and your phone.".to_string(),
+                "  3. Sign in to the same tailnet on both, then restart Workbench.".to_string(),
+                String::new(),
+                "  Setup: https://tailscale.com/download".to_string(),
+            ]
+        } else {
+            vec![
+                String::new(),
+                "  Phone QR".to_string(),
+                "  ========".to_string(),
+                String::new(),
+                "  Phone view isn't ready.".to_string(),
+                String::new(),
+                "  First-time setup:".to_string(),
+                "  1. Install and open Tailscale on this computer and your phone.".to_string(),
+                "  2. Sign in to the same tailnet on both devices.".to_string(),
+                "  3. Restart Workbench, reopen Phone QR, then scan.".to_string(),
+                String::new(),
+                "  Setup: https://tailscale.com/download".to_string(),
+            ]
+        };
         return;
     };
 
@@ -205,6 +227,8 @@ fn load_phone_qr(state: &mut AppState) {
                 String::new(),
                 "  Scan the code with your phone camera.".to_string(),
                 format!("  {url}"),
+                "  First time? Install Tailscale on your phone and sign in".to_string(),
+                "  to the same tailnet as this computer before scanning.".to_string(),
                 "  Reachable from your tailnet devices only.".to_string(),
             ];
         }
@@ -562,6 +586,25 @@ mod tests {
         load_utility_content(&mut state, &tx);
 
         assert!(state.ui.phone_qr.is_none());
-        assert!(state.ui.utility_content.join("\n").contains("unavailable"));
+        let content = state.ui.utility_content.join("\n");
+        assert!(content.contains("First-time setup"));
+        assert!(content.contains("Install and open Tailscale"));
+        assert!(content.contains("same tailnet"));
+        assert!(content.contains("Restart Workbench"));
+    }
+
+    #[test]
+    fn the_phone_utility_explains_how_to_enable_a_disabled_server() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut state = AppState::new();
+        state.system.user_config.remote_port = 0;
+        state.ui.selected_utility = UtilityItem::PhoneQr;
+
+        load_utility_content(&mut state, &tx);
+
+        let content = state.ui.utility_content.join("\n");
+        assert!(content.contains("turned off"));
+        assert!(content.contains("remote_port = 8765"));
+        assert!(content.contains("Install Tailscale"));
     }
 }

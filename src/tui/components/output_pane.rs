@@ -178,7 +178,11 @@ fn render_phone_qr_view(frame: &mut Frame, area: Rect, state: &AppState, block: 
         )),
         Line::from(Span::styled(url.clone(), Style::default().fg(t.accent))),
         Line::from(Span::styled(
-            "Tailnet only · link includes your access token",
+            "First time? Install Tailscale and sign in on your phone.",
+            Style::default().fg(t.fg_dim),
+        )),
+        Line::from(Span::styled(
+            "Same tailnet as this computer · link includes your access token",
             Style::default().fg(t.fg_faint),
         )),
     ])
@@ -558,6 +562,31 @@ mod tests {
             .collect();
         assert_eq!(white_cells.len(), 12);
         assert!(white_cells.iter().all(|cell| cell.fg == Color::Black));
+    }
+
+    #[test]
+    fn phone_qr_includes_first_time_tailscale_guidance() {
+        let mut state = qr_state(vec!["█▀▄ ".to_string(); 3]);
+        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
+
+        terminal
+            .draw(|frame| render(frame, frame.area(), &mut state))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let screen = (0..20)
+            .map(|y| {
+                (0..80)
+                    .map(|x| buffer[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            screen.contains("Install Tailscale"),
+            "screen was:\n{screen}"
+        );
+        assert!(screen.contains("Same tailnet"), "screen was:\n{screen}");
     }
 
     #[test]
