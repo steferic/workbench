@@ -15,6 +15,9 @@
 //!            Codex        ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl
 //!            Append-only JSONL, tailed from a byte offset.
 //!
+//!            pi           ~/.pi/agent/sessions/<encoded-cwd>/<stamp>_<id>.jsonl
+//!            Append-only JSONL, tailed from a byte offset.
+//!
 //! db.rs      opencode     ~/.local/share/opencode/opencode.db
 //!            hermes       ~/.hermes/state.db
 //!            SQLite, re-queried when a cheap change probe moves.
@@ -81,6 +84,7 @@ pub enum Provider {
     Codex,
     OpenCode,
     Hermes,
+    Pi,
 }
 
 impl Provider {
@@ -101,13 +105,14 @@ impl Provider {
             "codex" => Some(Provider::Codex),
             "opencode" => Some(Provider::OpenCode),
             "hermes" => Some(Provider::Hermes),
+            "pi" => Some(Provider::Pi),
             _ => None,
         }
     }
 
     /// Append-only log file vs. SQLite store.
     fn is_file_log(&self) -> bool {
-        matches!(self, Provider::Claude | Provider::Codex)
+        matches!(self, Provider::Claude | Provider::Codex | Provider::Pi)
     }
 }
 
@@ -217,6 +222,8 @@ impl TaskTracker {
             Source::File(path) if self.provider == Provider::Claude => {
                 path.file_stem().map(|s| s.to_string_lossy().into_owned())
             }
+            // `<stamp>_<id>.jsonl`, and `pi --session <id>` takes the id.
+            Source::File(path) if self.provider == Provider::Pi => files::pi_session_id(path),
             // The rollout's *filename*, which is what `codex resume <id>`
             // reopens. Its `session_meta.session_id` is the lineage root
             // whenever the rollout was itself forked from another, so
@@ -379,6 +386,9 @@ fn locate(ctx: &TaskSource, claimed: &HashSet<String>) -> Option<Source> {
             .map(Source::File),
         Provider::Codex => files::locate_codex(&files::codex_sessions_root(&home), ctx, claimed)
             .map(Source::File),
+        Provider::Pi => {
+            files::locate_pi(&files::pi_sessions_root(&home), ctx, claimed).map(Source::File)
+        }
         Provider::Hermes => db::locate_hermes(&db::hermes_db(&home), ctx, claimed),
         Provider::OpenCode => db::locate_opencode(&db::opencode_db(&home), ctx, claimed),
     }

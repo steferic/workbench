@@ -1,4 +1,4 @@
-//! Agents that journal to append-only JSONL: Claude Code and Codex.
+//! Agents that journal to append-only JSONL: Claude Code, Codex and pi.
 //!
 //! Both write one line per event, so a tracker keeps a byte offset and parses
 //! only what was appended. Finding *which* file belongs to a workbench session
@@ -19,6 +19,10 @@ pub(super) fn claude_projects_root(home: &Path) -> PathBuf {
 
 pub(super) fn codex_sessions_root(home: &Path) -> PathBuf {
     home.join(".codex").join("sessions")
+}
+
+pub(super) fn pi_sessions_root(home: &Path) -> PathBuf {
+    home.join(".pi").join("agent").join("sessions")
 }
 
 /// The model named by one journal line, if it names one.
@@ -46,6 +50,21 @@ pub(super) fn model_in(provider: super::Provider, v: &Value) -> Option<String> {
             }
             v.pointer("/payload/model")?.as_str()?
         }
+        // pi says it twice, and both are worth reading. `model_change` lands
+        // when the session opens and again on every switch, so the model is
+        // known before the first answer; every assistant message then carries
+        // the model that actually produced it, which is what a switch made
+        // outside our sight still shows up in.
+        super::Provider::Pi => match v.get("type").and_then(Value::as_str)? {
+            "model_change" => v.get("modelId")?.as_str()?,
+            "message" => {
+                if v.pointer("/message/role")?.as_str()? != "assistant" {
+                    return None;
+                }
+                v.pointer("/message/model")?.as_str()?
+            }
+            _ => return None,
+        },
         _ => return None,
     };
     // Claude labels harness-generated turns `<synthetic>`. It is in the field
@@ -502,4 +521,83 @@ fn codex_log_head(path: &Path) -> Option<CodexHead> {
         created: timestamp(value.get("timestamp"))
             .or_else(|| timestamp(value.pointer("/payload/timestamp"))),
     })
+}
+
+// ---------------------------------------------------------------------------
+// pi
+// ---------------------------------------------------------------------------
+
+/// pi keeps one directory per working directory, named after the path itself:
+/// `/Users/me/Code/app` becomes `--Users-me-Code-app--`. Deterministic, so
+/// there is no directory to search — only the logs inside one.
+///
+/// Mirrors pi's own encoding exactly, including that it strips a *single*
+/// leading separator before replacing the rest.
+fn pi_session_dir(root: &Path, cwd: &Path) -> PathBuf {
+    let path = cwd.to_string_lossy();
+    let path = path.strip_prefix(['/', '\\']).unwrap_or(&path);
+    let encoded: String = path
+        .chars()
+        .map(|c| if matches!(c, '/' | '\\' | ':') { '-' } else { c })
+        .collect();
+    root.join(format!("--{encoded}--"))
+}
+
+/// The conversation id pi files a log under, which is what `pi --session <id>`
+/// reopens. The stamp ahead of it carries its own separators, so only a tail
+/// actually shaped like a uuid counts.
+pub(super) fn pi_session_id(path: &Path) -> Option<String> {
+    let stem = path.file_stem()?.to_string_lossy();
+    let id = stem.rsplit('_').next()?;
+    let dashes: Vec<usize> = id.match_indices('-').map(|(i, _)| i).collect();
+    (id.len() == 36 && dashes == [8, 13, 18, 23]).then(|| id.to_string())
+}
+
+pub(super) fn locate_pi(
+    root: &Path,
+    ctx: &TaskSource,
+    claimed: &HashSet<String>,
+) -> Option<PathBuf> {
+    let logs: Vec<PathBuf> = fs::read_dir(pi_session_dir(root, &ctx.cwd))
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|e| e.to_str()) == Some("jsonl"))
+        .collect();
+
+    // We spawn pi with `--session-id <ours>`, and it names the log
+    // `<stamp>_<id>.jsonl` — so this session's own log says so outright, and
+    // no mtime guessing is needed.
+    for id in [Some(ctx.session_uuid.as_str()), ctx.conversation.as_deref()]
+        .into_iter()
+        .flatten()
+    {
+        if let Some(found) = logs
+            .iter()
+            .find(|path| pi_session_id(path).as_deref() == Some(id))
+        {
+            return Some(found.clone());
+        }
+    }
+
+    // Started by hand, or resumed onto a conversation nobody told us about:
+    // the newest log in this project touched since we spawned. The directory
+    // is already scoped to the cwd, so there is nothing further to match on.
+    let cutoff = ctx.spawned_at.unwrap_or(ctx.started_at) - ChronoDuration::minutes(1);
+    let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
+    for path in logs {
+        let Ok(modified) = fs::metadata(&path).and_then(|m| m.modified()) else {
+            continue;
+        };
+        if DateTime::<Utc>::from(modified) < cutoff {
+            continue;
+        }
+        if claimed.contains(&path.to_string_lossy().into_owned()) {
+            continue;
+        }
+        if newest.as_ref().map_or(true, |(best, _)| modified > *best) {
+            newest = Some((modified, path));
+        }
+    }
+    newest.map(|(_, path)| path)
 }

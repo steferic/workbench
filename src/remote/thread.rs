@@ -4,7 +4,7 @@
 //! characters, spinners, token counters, a status line — all shrunk to fit a
 //! phone. It was legible in the way a screenshot of a terminal is legible.
 //!
-//! Both Claude and Codex journal every turn to JSONL, and workbench already
+//! Claude, Codex and pi journal every turn to JSONL, and workbench already
 //! knows which file belongs to which session (see `agent_tasks::locate`). So
 //! the phone can have what it actually wants: your messages, the agent's
 //! replies, and a one-line trace of the tools in between.
@@ -100,6 +100,7 @@ pub fn read_more(path: &Path, provider: Provider, from: Cursor, out: &mut Vec<Me
                 match provider {
                     Provider::Claude => claude(&value, out),
                     Provider::Codex => codex(&value, out),
+                    Provider::Pi => pi(&value, out),
                     _ => {}
                 }
             }
@@ -243,6 +244,58 @@ fn tool_line(name: &str, input: Option<&Value>) -> String {
             format!("{name} · {first}")
         }
         None => name.to_string(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// pi
+// ---------------------------------------------------------------------------
+
+fn pi(v: &Value, out: &mut Vec<Message>) {
+    if v.get("type").and_then(Value::as_str) != Some("message") {
+        return;
+    }
+    let at = v.get("timestamp").and_then(Value::as_str);
+    let Some(message) = v.get("message") else {
+        return;
+    };
+    // `toolResult` is the third role pi journals. The tool line above it
+    // already said what ran, and its output is the last thing a phone has room
+    // for, so it stays out of the conversation.
+    let role = match message.get("role").and_then(Value::as_str) {
+        Some("user") => Role::You,
+        Some("assistant") => Role::Agent,
+        _ => return,
+    };
+    for block in message
+        .get("content")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        match block.get("type").and_then(Value::as_str) {
+            Some("text") => {
+                let Some(text) = block.get("text").and_then(Value::as_str) else {
+                    continue;
+                };
+                if role == Role::Agent || !is_plumbing(text) {
+                    push(out, role, text, at);
+                }
+            }
+            // pi spells the arguments `arguments`; their keys are the same
+            // ones `tool_line` already looks for.
+            Some("toolCall") => {
+                let name = block.get("name").and_then(Value::as_str).unwrap_or("tool");
+                push(
+                    out,
+                    Role::Tool,
+                    &tool_line(short_name(name), block.get("arguments")),
+                    at,
+                );
+            }
+            // Thinking is the agent talking to itself, and it is long.
+            _ => {}
+        }
     }
 }
 

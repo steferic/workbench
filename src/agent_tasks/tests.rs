@@ -1228,3 +1228,209 @@ fn a_located_codex_rollout_names_the_model_it_answers_with() {
     t.refresh(&ctx, &HashSet::new());
     assert_eq!(t.model(), Some(FIXTURE_CODEX_MODEL));
 }
+
+// ---------------------------------------------------------------------------
+// pi
+// ---------------------------------------------------------------------------
+
+/// Shapes taken from a real pi journal.
+fn pi_model_change(model: &str) -> String {
+    serde_json::json!({
+        "type": "model_change",
+        "id": "ee8bb56d",
+        "timestamp": "2026-08-21T21:30:52.002Z",
+        "provider": "openrouter",
+        "modelId": model
+    })
+    .to_string()
+}
+
+fn pi_assistant(model: &str) -> String {
+    serde_json::json!({
+        "type": "message",
+        "id": "9805e817",
+        "timestamp": "2026-08-21T21:31:28.131Z",
+        "message": {
+            "role": "assistant",
+            "provider": "openrouter",
+            "model": model,
+            "content": [{"type": "text", "text": "hi"}]
+        }
+    })
+    .to_string()
+}
+
+fn pi_dir(home: &Path, cwd: &Path) -> PathBuf {
+    let encoded = cwd
+        .to_string_lossy()
+        .trim_start_matches('/')
+        .replace('/', "-");
+    let dir = home
+        .join(".pi")
+        .join("agent")
+        .join("sessions")
+        .join(format!("--{encoded}--"));
+    fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+fn pi_ctx(cwd: &Path, session_uuid: &str) -> TaskSource {
+    TaskSource {
+        provider: Provider::Pi,
+        session_uuid: session_uuid.to_string(),
+        cwd: cwd.to_path_buf(),
+        started_at: Utc::now() - ChronoDuration::minutes(1),
+        conversation: None,
+        spawned_at: None,
+        reported: None,
+    }
+}
+
+/// The bug this fixes: a pi session showed as plain "Pi" because nothing read
+/// its journal. It names the model twice and both are read — the opening
+/// `model_change` so the pane is right before the first answer, then each
+/// assistant turn.
+#[test]
+fn a_pi_session_reports_the_model_its_journal_names() {
+    let mut pi = TaskTracker::new(Provider::Pi);
+    assert_eq!(pi.model(), None, "nothing is known before it opens");
+    feed(&mut pi, &[&pi_model_change("google/gemini-3.7-flash")]);
+    assert_eq!(pi.model(), Some("google/gemini-3.7-flash"));
+    assert_eq!(
+        crate::models::model_label(pi.model().unwrap()),
+        "Gemini 3.7 Flash",
+        "which is what the sessions pane prints"
+    );
+}
+
+#[test]
+fn switching_model_mid_pi_session_is_picked_up() {
+    let mut pi = TaskTracker::new(Provider::Pi);
+    feed(
+        &mut pi,
+        &[
+            &pi_model_change("z-ai/glm-5v-turbo"),
+            &pi_assistant("z-ai/glm-5v-turbo"),
+            // Ctrl+P cycles the model without restarting the session.
+            &pi_model_change("google/gemini-3.7-flash"),
+            &pi_assistant("google/gemini-3.7-flash"),
+        ],
+    );
+    assert_eq!(pi.model(), Some("google/gemini-3.7-flash"));
+}
+
+/// A user message carries no model, and must not blank the one we have.
+#[test]
+fn a_pi_user_turn_does_not_clear_the_model() {
+    let mut pi = TaskTracker::new(Provider::Pi);
+    let user = serde_json::json!({
+        "type": "message",
+        "message": {"role": "user", "content": [{"type": "text", "text": "hi"}]}
+    })
+    .to_string();
+    feed(
+        &mut pi,
+        &[&pi_model_change("google/gemini-3.7-flash"), &user],
+    );
+    assert_eq!(pi.model(), Some("google/gemini-3.7-flash"));
+}
+
+/// pi is spawned with `--session-id <ours>` and files the log as
+/// `<stamp>_<id>.jsonl`, so the right one is found by name — even with a
+/// newer log from another agent sitting beside it.
+#[test]
+fn a_pi_log_is_found_by_the_session_id_we_pinned() {
+    let home = tempfile::tempdir().unwrap();
+    let project = home.path().join("Code").join("app");
+    fs::create_dir_all(&project).unwrap();
+    let dir = pi_dir(home.path(), &project);
+
+    let ours = "52cb8b04-c985-4506-9ff1-27e3dbcd15ae";
+    let mine = dir.join(format!("2026-08-21T21-30-51-948Z_{ours}.jsonl"));
+    fs::write(&mine, pi_model_change("google/gemini-3.7-flash") + "\n").unwrap();
+    let theirs = dir.join("2026-08-21T22-00-00-000Z_86b7783e-6ec1-4f8f-a396-f8e285bb14c4.jsonl");
+    fs::write(&theirs, "{}\n").unwrap();
+
+    let root = home.path().join(".pi").join("agent").join("sessions");
+    let found = files::locate_pi(&root, &pi_ctx(&project, ours), &HashSet::new());
+    assert_eq!(found.as_deref(), Some(mine.as_path()));
+
+    // And that path is what `pi --session <id>` reopens on restart.
+    let mut tracker = TaskTracker::with_source(Provider::Pi, Source::File(mine.clone()));
+    tracker.refresh(&pi_ctx(&project, ours), &HashSet::new());
+    assert_eq!(tracker.provider_session_id().as_deref(), Some(ours));
+    assert_eq!(tracker.model(), Some("google/gemini-3.7-flash"));
+}
+
+/// Started by hand rather than spawned by us: nothing names the log, so the
+/// newest one in this project wins — and never one another session owns.
+#[test]
+fn an_unpinned_pi_session_takes_the_newest_unclaimed_log() {
+    let home = tempfile::tempdir().unwrap();
+    let project = home.path().join("Code").join("app");
+    fs::create_dir_all(&project).unwrap();
+    let dir = pi_dir(home.path(), &project);
+
+    let now = Utc::now();
+    let older = dir.join("2026-08-21T21-00-00-000Z_11111111-1111-4111-8111-111111111111.jsonl");
+    let newer = dir.join("2026-08-21T22-00-00-000Z_22222222-2222-4222-8222-222222222222.jsonl");
+    for (path, touched) in [(&older, now - ChronoDuration::seconds(30)), (&newer, now)] {
+        fs::write(path, "{}\n").unwrap();
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(std::time::SystemTime::from(touched))
+            .unwrap();
+    }
+
+    let root = home.path().join(".pi").join("agent").join("sessions");
+    let ctx = pi_ctx(&project, "33333333-3333-4333-8333-333333333333");
+
+    let claimed: HashSet<String> = [newer.to_string_lossy().into_owned()].into_iter().collect();
+    assert_eq!(
+        files::locate_pi(&root, &ctx, &claimed).as_deref(),
+        Some(older.as_path()),
+        "the newest log is another session's"
+    );
+}
+
+/// A project outside this cwd has its own directory, and is never read.
+#[test]
+fn a_pi_log_from_another_project_is_not_picked_up() {
+    let home = tempfile::tempdir().unwrap();
+    let mine = home.path().join("Code").join("app");
+    let other = home.path().join("Code").join("other");
+    fs::create_dir_all(&mine).unwrap();
+    fs::create_dir_all(&other).unwrap();
+    let dir = pi_dir(home.path(), &other);
+    fs::write(
+        dir.join("2026-08-21T22-00-00-000Z_44444444-4444-4444-8444-444444444444.jsonl"),
+        "{}\n",
+    )
+    .unwrap();
+    // The cwd's own directory exists but is empty.
+    pi_dir(home.path(), &mine);
+
+    let root = home.path().join(".pi").join("agent").join("sessions");
+    let ctx = pi_ctx(&mine, "55555555-5555-4555-8555-555555555555");
+    assert_eq!(files::locate_pi(&root, &ctx, &HashSet::new()), None);
+}
+
+/// The stamp ahead of the id carries its own dashes, so only a tail actually
+/// shaped like a uuid counts as one.
+#[test]
+fn a_pi_session_id_is_only_taken_from_a_well_formed_name() {
+    assert_eq!(
+        files::pi_session_id(Path::new(
+            "/s/2026-08-21T21-30-51-948Z_52cb8b04-c985-4506-9ff1-27e3dbcd15ae.jsonl"
+        ))
+        .as_deref(),
+        Some("52cb8b04-c985-4506-9ff1-27e3dbcd15ae")
+    );
+    assert_eq!(
+        files::pi_session_id(Path::new("/s/2026-08-21T21-30-51-948Z.jsonl")),
+        None
+    );
+    assert_eq!(files::pi_session_id(Path::new("/s/notes.jsonl")), None);
+}

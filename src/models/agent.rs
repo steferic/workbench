@@ -14,6 +14,15 @@ pub fn model_label(raw: &str) -> String {
     // `claude-opus-5[1m]` — a context-window variant, not another model, and
     // noise in a column this narrow.
     let trimmed = raw.split('[').next().unwrap_or(raw).trim();
+    // An agent that routes through a gateway names the vendor ahead of a slash
+    // — `google/gemini-3.7-flash`, `z-ai/glm-5v-turbo`. Same argument as the
+    // `claude-` prefix below: which company made it is not what a column this
+    // narrow is for. A trailing slash names nothing, so keep the whole id.
+    let trimmed = trimmed
+        .rsplit('/')
+        .next()
+        .filter(|name| !name.is_empty())
+        .unwrap_or(trimmed);
     let mut parts: Vec<&str> = trimmed.split('-').filter(|p| !p.is_empty()).collect();
     // A trailing 8-digit date is how a snapshot gets pinned. The version above
     // it already says which model this is.
@@ -166,6 +175,20 @@ mod model_label_tests {
         assert_eq!(model_label("claude-haiku-4-5-20251001"), "Haiku 4.5");
         // A context-window variant is the same model.
         assert_eq!(model_label("claude-opus-5[1m]"), "Opus 5");
+    }
+
+    /// An agent pointed at a gateway journals `vendor/model`, which would
+    /// otherwise print as "Google/gemini 3.7 Flash".
+    #[test]
+    fn a_gateway_id_loses_the_vendor_the_way_claude_ids_do() {
+        assert_eq!(model_label("google/gemini-3.7-flash"), "Gemini 3.7 Flash");
+        assert_eq!(model_label("z-ai/glm-5v-turbo"), "Glm 5v Turbo");
+        // The vendor segment goes before the `claude-` prefix does, so a
+        // Claude model reached through a gateway reads like a local one.
+        assert_eq!(model_label("anthropic/claude-sonnet-5"), "Sonnet 5");
+        // Nothing after the slash to use means the slash named no model, so
+        // the whole id is kept rather than trimmed away to nothing.
+        assert_eq!(model_label("google/"), "Google/");
     }
 
     #[test]
