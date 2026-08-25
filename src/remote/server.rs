@@ -54,6 +54,14 @@ pub enum RemoteCommand {
     NewAgent { project: String, provider: String },
     /// A device asking to be told when an agent needs you.
     Subscribe { endpoint: String },
+    /// A manager's suggestion for how an objective would be checked. Stored
+    /// as proposed, which is to say: not yet something anything will be held
+    /// to. Approving it is the user's step.
+    ProposeCheck {
+        manager: String,
+        objective: String,
+        command: String,
+    },
     /// A manager's suggestion. Recorded, never acted on: turning one into work
     /// is a separate step the user takes.
     Propose {

@@ -136,6 +136,157 @@ Report what you propose in this pane as you go, so it can be read here."
     )
 }
 
+
+/// How a verification command ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Outcome {
+    /// Exit 0, and nothing else.
+    Passed,
+    Failed,
+    /// Still running when its time ran out. Not a pass, and not quite a
+    /// failure either — worth telling apart, because it usually means the
+    /// timeout is wrong rather than the code.
+    TimedOut,
+    /// Never started: no such command, no such directory.
+    CouldNotRun,
+}
+
+impl Outcome {
+    pub fn passed(&self) -> bool {
+        matches!(self, Outcome::Passed)
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Outcome::Passed => "passed",
+            Outcome::Failed => "failed",
+            Outcome::TimedOut => "timed out",
+            Outcome::CouldNotRun => "could not run",
+        }
+    }
+}
+
+/// What happened when workbench ran the check.
+///
+/// A record of a real process, produced by workbench and handed to the
+/// manager. The manager never authors one — that asymmetry is the whole
+/// reason any of this can be trusted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VerificationRun {
+    pub at: DateTime<Utc>,
+    pub command: String,
+    /// `None` when it was killed or never started.
+    pub exit_code: Option<i32>,
+    pub duration_ms: u64,
+    /// The last few KB of output. Enough to see which test failed, bounded so
+    /// a runaway build log cannot become the saved state.
+    pub tail: String,
+    pub outcome: Outcome,
+}
+
+/// What the repository looked like at a moment.
+///
+/// Both halves are needed. Uncommitted work moves the shortstat; committed
+/// work moves HEAD and can leave the shortstat exactly where it was. Watching
+/// only one of them calls real work "nothing happened" about half the time —
+/// and on a shared branch, where a working-tree diff cannot be attributed to
+/// one assignment anyway, HEAD is the honest signal.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoMark {
+    #[serde(default)]
+    pub head: Option<String>,
+    /// A hash of the working tree's contents, gitignore respected.
+    ///
+    /// The stat below cannot see a file that is not tracked yet, and writing a
+    /// new file is the most ordinary thing an agent does — without this, that
+    /// work reads as "nothing changed" and a real result gets thrown away.
+    #[serde(default)]
+    pub tree: Option<String>,
+    #[serde(default)]
+    pub insertions: usize,
+    #[serde(default)]
+    pub deletions: usize,
+}
+
+impl RepoMark {
+    /// Whether anything happened between the two.
+    pub fn changed_from(&self, before: &RepoMark) -> bool {
+        self != before
+    }
+}
+
+/// What the two runs, taken together, mean.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Verdict {
+    /// The check passes and the repository moved. Worth your review — never
+    /// "shipped": a green suite is the absence of one kind of failure, not
+    /// correctness.
+    Verified,
+    Rejected { why: String },
+    /// Nothing can be concluded, usually because it was already broken.
+    /// Surfaced rather than retried: retrying a check that was failing before
+    /// anyone touched it just burns turns.
+    Inconclusive { why: String },
+}
+
+impl Verdict {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Verdict::Verified => "verified",
+            Verdict::Rejected { .. } => "rejected",
+            Verdict::Inconclusive { .. } => "inconclusive",
+        }
+    }
+
+    pub fn why(&self) -> &str {
+        match self {
+            Verdict::Verified => "the check passes and the repository moved",
+            Verdict::Rejected { why } | Verdict::Inconclusive { why } => why,
+        }
+    }
+}
+
+/// The verdict table.
+///
+/// Kept as a pure function of the three facts so it can be read, argued with,
+/// and tested without running anything. `baseline` is what the check said
+/// before the agent was given the work — without it, an agent is credited for
+/// a suite that was already green and blamed for one that was already red.
+pub fn judge(baseline: Option<&VerificationRun>, result: &VerificationRun, changed: bool) -> Verdict {
+    let was_passing = baseline.map(|run| run.outcome.passed());
+
+    match (was_passing, result.outcome.passed()) {
+        // It passes and something moved. True whether it was passing before
+        // (kept working) or failing (got fixed).
+        (_, true) if changed => Verdict::Verified,
+
+        // Passing but nothing moved: the most quietly wrong outcome there is,
+        // and the reason a diff is checked at all. An agent that reports
+        // success having done nothing lands exactly here.
+        (_, true) => Verdict::Rejected {
+            why: "the check passes but nothing in the repository changed".into(),
+        },
+
+        // It was passing before and is not now. That is a regression whatever
+        // else the work achieved.
+        (Some(true), false) => Verdict::Rejected {
+            why: format!("{} — it was passing before this", result.outcome.label()),
+        },
+
+        // Broken before, broken after. Say so; do not retry.
+        (Some(false), false) => Verdict::Inconclusive {
+            why: format!("{} — but it was already failing before this", result.outcome.label()),
+        },
+
+        // No baseline to compare against, so a failure is only a failure.
+        (None, false) => Verdict::Rejected {
+            why: format!("{}, with nothing to compare against", result.outcome.label()),
+        },
+    }
+}
+
 /// What has been decided about a suggestion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -180,6 +331,21 @@ pub struct Proposal {
     /// The queued item this became, once approved.
     #[serde(default)]
     pub todo_id: Option<Uuid>,
+    /// What the check said before the agent was handed the work.
+    #[serde(default)]
+    pub baseline: Option<VerificationRun>,
+    /// And after its turn ended.
+    #[serde(default)]
+    pub result: Option<VerificationRun>,
+    /// The repository as it stood at each point, so "did anything happen" is
+    /// a comparison rather than a guess.
+    #[serde(default)]
+    pub before: Option<RepoMark>,
+    #[serde(default)]
+    pub after: Option<RepoMark>,
+    /// What the two runs mean together. Set by workbench, never by a manager.
+    #[serde(default)]
+    pub verdict: Option<Verdict>,
 }
 
 impl Proposal {
@@ -194,6 +360,11 @@ impl Proposal {
             created_at: Utc::now(),
             state: ProposalState::default(),
             todo_id: None,
+            baseline: None,
+            result: None,
+            before: None,
+            after: None,
+            verdict: None,
         }
     }
 
@@ -247,6 +418,8 @@ impl Objective {
     /// one with no approved check has no definition of done — acting
     /// autonomously on either is how a manager ends up generating motion
     /// instead of progress.
+    /// Read by autonomous mode, which is not wired up yet.
+    #[allow(dead_code)]
     pub fn is_autonomous_ready(&self) -> bool {
         self.state == ObjectiveState::Active
             && self
@@ -353,5 +526,84 @@ mod tests {
         let before = objectives.clone();
         move_objective(&mut objectives, Uuid::new_v4(), -1);
         assert_eq!(objectives, before);
+    }
+}
+
+#[cfg(test)]
+mod verdict_tests {
+    use super::*;
+
+    fn run(outcome: Outcome) -> VerificationRun {
+        VerificationRun {
+            at: Utc::now(),
+            command: "cargo test".into(),
+            exit_code: if outcome.passed() { Some(0) } else { Some(1) },
+            duration_ms: 10,
+            tail: String::new(),
+            outcome,
+        }
+    }
+
+    #[test]
+    fn passing_with_a_change_is_verified() {
+        let pass = run(Outcome::Passed);
+        assert_eq!(judge(Some(&run(Outcome::Passed)), &pass, true), Verdict::Verified);
+        // Broken before, fixed now: the good case for a fix objective.
+        assert_eq!(judge(Some(&run(Outcome::Failed)), &pass, true), Verdict::Verified);
+        assert_eq!(judge(None, &pass, true), Verdict::Verified);
+    }
+
+    /// The quietly wrong outcome this whole mechanism exists to catch: an
+    /// agent reports success, the suite is green because it was already
+    /// green, and not a line was written.
+    #[test]
+    fn passing_with_nothing_changed_is_rejected() {
+        let verdict = judge(Some(&run(Outcome::Passed)), &run(Outcome::Passed), false);
+        assert!(matches!(verdict, Verdict::Rejected { .. }));
+        assert!(verdict.why().contains("nothing in the repository changed"));
+    }
+
+    /// A regression is a rejection whatever else the work achieved.
+    #[test]
+    fn breaking_something_that_worked_is_rejected() {
+        let verdict = judge(Some(&run(Outcome::Passed)), &run(Outcome::Failed), true);
+        assert!(matches!(verdict, Verdict::Rejected { .. }));
+        assert!(verdict.why().contains("was passing before"));
+    }
+
+    /// Already broken stays inconclusive rather than being blamed on whoever
+    /// touched it last — and rather than being retried forever.
+    #[test]
+    fn already_failing_is_inconclusive_not_a_rejection() {
+        let verdict = judge(Some(&run(Outcome::Failed)), &run(Outcome::Failed), true);
+        assert!(matches!(verdict, Verdict::Inconclusive { .. }));
+        assert!(verdict.why().contains("already failing"));
+    }
+
+    #[test]
+    fn failing_with_no_baseline_is_rejected_and_says_why() {
+        let verdict = judge(None, &run(Outcome::Failed), true);
+        assert!(matches!(verdict, Verdict::Rejected { .. }));
+        assert!(verdict.why().contains("nothing to compare"));
+    }
+
+    /// A timeout is reported as itself, not flattened into "failed".
+    #[test]
+    fn a_timeout_keeps_its_name() {
+        let verdict = judge(Some(&run(Outcome::Passed)), &run(Outcome::TimedOut), true);
+        assert!(verdict.why().contains("timed out"), "{}", verdict.why());
+    }
+
+    /// Committed work moves HEAD without moving the working-tree stat, which
+    /// is exactly the case a shortstat-only check would call "nothing done".
+    #[test]
+    fn a_commit_counts_as_a_change() {
+        let before = RepoMark { head: Some("aaa".into()), tree: Some("t1".into()), insertions: 0, deletions: 0 };
+        let committed = RepoMark { head: Some("bbb".into()), tree: Some("t1".into()), insertions: 0, deletions: 0 };
+        assert!(committed.changed_from(&before));
+
+        let uncommitted = RepoMark { head: Some("aaa".into()), tree: Some("t2".into()), insertions: 12, deletions: 3 };
+        assert!(uncommitted.changed_from(&before));
+        assert!(!before.clone().changed_from(&before));
     }
 }

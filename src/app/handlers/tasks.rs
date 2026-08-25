@@ -230,7 +230,14 @@ pub fn handle_task_action(
             super::save_state(state, "failed to save objectives");
         }
         Action::ApproveProposal => {
-            approve_selected_proposal(state);
+            // `a` means "yes, this" for whichever row the cursor is on: a
+            // proposal becomes work, a proposed check becomes the thing work
+            // will be held to.
+            if objectives_view::selected(state).and_then(|r| r.objective_id()).is_some() {
+                approve_selected_check(state);
+            } else {
+                approve_selected_proposal(state, action_tx);
+            }
         }
         Action::DeclineProposal => {
             let Some(id) = objectives_view::selected(state).and_then(|r| r.proposal_id()) else {
@@ -245,6 +252,15 @@ pub fn handle_task_action(
             objectives_view::clamp(state);
             state.ui.set_task_status("Declined");
             super::save_state(state, "failed to save the decision");
+        }
+        Action::VerificationFinished {
+            workspace_id,
+            proposal_id,
+            baseline,
+            run,
+            mark,
+        } => {
+            record_verification(state, workspace_id, proposal_id, baseline, *run, mark);
         }
         Action::DeleteSelectedTodo => {
             let Some(row) = tasks_view::selected_row(state) else {
@@ -372,6 +388,125 @@ fn record_provider_session_ids(
     }
 }
 
+/// Ask, off the event loop, what a check says right now.
+///
+/// A suite takes minutes and the UI has other agents to draw, so this hands
+/// the work to a blocking thread and hears back as an action. The repository
+/// is marked in the same breath: comparing the two marks is what decides
+/// whether anything actually happened.
+pub(crate) fn start_verification(
+    state: &AppState,
+    workspace_id: uuid::Uuid,
+    proposal_id: uuid::Uuid,
+    baseline: bool,
+    check: crate::models::Verification,
+    dir: std::path::PathBuf,
+    action_tx: &mpsc::UnboundedSender<Action>,
+) {
+    let _ = state;
+    let tx = action_tx.clone();
+    tokio::task::spawn_blocking(move || {
+        let mark = crate::app::verify::mark(&dir);
+        let run = crate::app::verify::run(
+            &check.command,
+            &dir,
+            std::time::Duration::from_secs(check.timeout_secs),
+        );
+        let _ = tx.send(Action::VerificationFinished {
+            workspace_id,
+            proposal_id,
+            baseline,
+            run: Box::new(run),
+            mark,
+        });
+    });
+}
+
+/// File a finished run against its proposal, and judge once both are in.
+fn record_verification(
+    state: &mut AppState,
+    workspace_id: uuid::Uuid,
+    proposal_id: uuid::Uuid,
+    baseline: bool,
+    run: crate::models::VerificationRun,
+    mark: crate::models::RepoMark,
+) {
+    let Some(workspace) = state
+        .data
+        .workspaces
+        .iter_mut()
+        .find(|ws| ws.id == workspace_id)
+    else {
+        return;
+    };
+    let Some(proposal) = workspace.proposals.iter_mut().find(|p| p.id == proposal_id) else {
+        return;
+    };
+
+    let outcome = run.outcome;
+    if baseline {
+        // The mark here is taken *before* the check runs, which is what the
+        // "after" is later compared against.
+        proposal.before = Some(mark);
+        proposal.baseline = Some(run);
+        crate::logger::info(format!("baseline for a proposal: {}", outcome.label()));
+        super::save_state(state, "failed to save a baseline");
+        return;
+    }
+
+    proposal.after = Some(mark);
+    proposal.result = Some(run);
+
+    let changed = match (proposal.after.as_ref(), proposal.before.as_ref()) {
+        (Some(after), Some(before)) => after.changed_from(before),
+        // Nothing to compare against: assume the work happened rather than
+        // reject it on a comparison that was never made.
+        _ => true,
+    };
+    let verdict = crate::models::judge(
+        proposal.baseline.as_ref(),
+        proposal.result.as_ref().expect("just set"),
+        changed,
+    );
+    crate::logger::info(format!("verdict: {} — {}", verdict.label(), verdict.why()));
+    let status = format!("{} — {}", verdict.label(), verdict.why());
+    proposal.verdict = Some(verdict);
+    state.ui.set_task_status(status);
+    super::save_state(state, "failed to save a verdict");
+}
+
+/// Agree to the check a manager suggested for the objective under the cursor.
+///
+/// Until this happens the command is a suggestion: shown, not trusted, and
+/// not enough to let anything run against that objective unattended.
+fn approve_selected_check(state: &mut AppState) {
+    let Some(id) = objectives_view::selected(state).and_then(|r| r.objective_id()) else {
+        return;
+    };
+    let mut approved = None;
+    if let Some(ws) = state.selected_workspace_mut() {
+        if let Some(objective) = ws.objectives.iter_mut().find(|o| o.id == id) {
+            match objective.done_when.as_mut() {
+                Some(check) if check.proposed => {
+                    check.proposed = false;
+                    approved = Some(check.command.clone());
+                }
+                Some(_) => {}
+                None => {}
+            }
+        }
+    }
+    match approved {
+        Some(command) => {
+            state.ui.set_task_status(format!("Check approved: {command}"));
+            super::save_state(state, "failed to approve a check");
+        }
+        None => state
+            .ui
+            .set_task_status("No check proposed for that objective"),
+    }
+}
+
 /// Turn the selected proposal into work.
 ///
 /// This is the only place a manager's suggestion becomes something an agent
@@ -379,7 +514,7 @@ fn record_provider_session_ids(
 /// refuses out loud: a proposal that names nobody, an agent that has gone, or
 /// one that is itself a manager has no sensible reading, and silently doing
 /// something adjacent would be worse than saying so.
-fn approve_selected_proposal(state: &mut AppState) {
+fn approve_selected_proposal(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) {
     let Some(proposal) = objectives_view::selected_proposal(state).cloned() else {
         state.ui.set_task_status("Select a proposal first");
         return;
@@ -419,10 +554,61 @@ fn approve_selected_proposal(state: &mut AppState) {
         }
     }
     objectives_view::clamp(state);
+
+    // Ask the check what it says *now*, before the agent has touched
+    // anything. Without this the agent is credited for a suite that was
+    // already green, or blamed for one that was already red.
+    if let Some((check, dir, workspace_id)) = baseline_for(state, &proposal, session_id) {
+        start_verification(
+            state,
+            workspace_id,
+            proposal.id,
+            true,
+            check,
+            dir,
+            action_tx,
+        );
+    }
+
     state
         .ui
         .set_task_status(format!("Queued for {target} — {left} to run"));
     super::save_state(state, "failed to save the approval");
+}
+
+/// The check to run for a proposal, and where to run it.
+///
+/// `None` when the objective it serves has no approved check — which is the
+/// ordinary case early on, and means the work simply arrives unverified
+/// rather than being blocked.
+pub(crate) fn baseline_for(
+    state: &AppState,
+    proposal: &crate::models::Proposal,
+    session_id: uuid::Uuid,
+) -> Option<(crate::models::Verification, std::path::PathBuf, uuid::Uuid)> {
+    let objective_id = proposal.objective_id?;
+    let workspace_id = state.workspace_id_for_session(session_id)?;
+    let workspace = state
+        .data
+        .workspaces
+        .iter()
+        .find(|ws| ws.id == workspace_id)?;
+    let check = workspace
+        .objectives
+        .iter()
+        .find(|o| o.id == objective_id)?
+        .done_when
+        .as_ref()
+        // A command a manager suggested is not one you agreed to run.
+        .filter(|check| !check.proposed && !check.command.trim().is_empty())?
+        .clone();
+    // A worktree-isolated agent is checked where it works, so its diff and its
+    // check describe the same tree.
+    let dir = state
+        .get_session(session_id)
+        .and_then(|s| s.worktree_path.clone())
+        .unwrap_or_else(|| workspace.path.clone());
+    Some((check, dir, workspace_id))
 }
 
 /// The objective under the cursor — `None` when the cursor is on a proposal.

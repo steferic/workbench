@@ -182,7 +182,7 @@ fn render_tab_bar(frame: &mut Frame, area: Rect, state: &AppState, is_focused: b
 /// rather than a colour alone, because "held" and "met" are decisions worth
 /// spelling out.
 fn render_objectives_tab(frame: &mut Frame, area: Rect, state: &AppState, is_focused: bool) {
-    use crate::models::{ObjectiveState, ProposalState};
+    use crate::models::{ObjectiveState, ProposalState, Verdict};
 
     let t = crate::theme::current();
     let Some(workspace) = state.selected_workspace() else {
@@ -273,8 +273,14 @@ fn render_objectives_tab(frame: &mut Frame, area: Rect, state: &AppState, is_foc
                     // Approved ones stay on the list, marked, until the queue
                     // is done with them: seeing that a suggestion became work
                     // is most of what this view is for.
-                    let (verb, verb_color) = match proposal.state {
-                        ProposalState::Approved => ("queued ", t.success),
+                    // Once a check has spoken, its verdict is the headline:
+                    // that is the fact worth reading, and the only one a
+                    // manager could not have written itself.
+                    let (verb, verb_color) = match (&proposal.verdict, proposal.state) {
+                        (Some(Verdict::Verified), _) => ("verified ", t.success),
+                        (Some(Verdict::Rejected { .. }), _) => ("rejected ", t.error),
+                        (Some(Verdict::Inconclusive { .. }), _) => ("unclear ", t.warning),
+                        (None, ProposalState::Approved) => ("queued ", t.info),
                         _ => ("proposes ", t.info),
                     };
                     let body_style = if selected {

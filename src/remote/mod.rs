@@ -76,12 +76,32 @@ pub struct ObjectiveView {
     pub proposed_check: Option<String>,
 }
 
+/// A suggestion and what became of it, for whoever is reading state.
+#[derive(Debug, Clone, Serialize)]
+pub struct ProposalView {
+    pub id: String,
+    pub objective: Option<String>,
+    pub agent: Option<String>,
+    pub instruction: String,
+    /// "pending" | "approved" | "declined"
+    pub state: String,
+    /// "verified" | "rejected" | "inconclusive", once a check has run.
+    pub verdict: Option<String>,
+    /// Why the verdict came out that way, in words.
+    pub why: Option<String>,
+    /// The last few lines the check printed, when it failed. What a manager
+    /// needs to propose something better next time.
+    pub tail: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ProjectView {
     pub id: String,
     pub name: String,
     /// Standing priorities, in priority order. What a manager works toward.
     pub objectives: Vec<ObjectiveView>,
+    /// What has been suggested here, and how each turned out.
+    pub proposals: Vec<ProposalView>,
     /// Dev servers running in this project, reachable from the phone.
     pub servers: Vec<ServerView>,
 }
@@ -333,6 +353,29 @@ fn publish_with(state: &AppState, shared: &Shared, open: Option<(Vec<Message>, u
                         .as_ref()
                         .filter(|v| v.proposed)
                         .map(|v| v.command.clone()),
+                })
+                .collect(),
+            proposals: workspace
+                .proposals
+                .iter()
+                .map(|proposal| ProposalView {
+                    id: proposal.id.to_string(),
+                    objective: proposal.objective_id.map(|id| id.to_string()),
+                    agent: proposal.agent.clone(),
+                    instruction: proposal.instruction.clone(),
+                    state: match proposal.state {
+                        crate::models::ProposalState::Pending => "pending",
+                        crate::models::ProposalState::Approved => "approved",
+                        crate::models::ProposalState::Declined => "declined",
+                    }
+                    .to_string(),
+                    verdict: proposal.verdict.as_ref().map(|v| v.label().to_string()),
+                    why: proposal.verdict.as_ref().map(|v| v.why().to_string()),
+                    tail: proposal
+                        .result
+                        .as_ref()
+                        .filter(|run| !run.outcome.passed())
+                        .map(|run| run.tail.clone()),
                 })
                 .collect(),
             servers: servers.get(&workspace.id).cloned().unwrap_or_default(),

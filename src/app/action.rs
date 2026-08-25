@@ -199,6 +199,15 @@ pub enum Action {
     ApproveProposal,
     /// Say no to the selected proposal.
     DeclineProposal,
+    /// A check finished off-thread. `baseline` distinguishes the run taken
+    /// before the work from the one taken after it.
+    VerificationFinished {
+        workspace_id: Uuid,
+        proposal_id: Uuid,
+        baseline: bool,
+        run: Box<crate::models::VerificationRun>,
+        mark: crate::models::RepoMark,
+    },
     /// Drop the items that have already run.
     ClearCompletedTodos,
     /// Off-thread scan for listening dev servers finished.

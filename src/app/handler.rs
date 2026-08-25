@@ -258,6 +258,7 @@ pub fn process_action(
                 Action::EditObjective(_) | Action::DeleteObjective |
                 Action::CycleObjectiveState | Action::MoveObjective(_) |
                 Action::ApproveProposal | Action::DeclineProposal |
+                Action::VerificationFinished { .. } |
                 Action::AgentTasksRefreshed(_) |
                 Action::ActivateUtility => {
                     tasks::handle_task_action(state, action, action_tx)?;
@@ -707,6 +708,49 @@ fn health_tick(state: &mut AppState) {
     ));
 }
 
+/// Record how a manager thinks an objective could be checked.
+///
+/// Stored with `proposed` set, which is the whole point: it appears in the
+/// pane for you to agree with, and until you do, nothing is held to it and no
+/// work runs unattended against that objective.
+fn apply_proposed_check(state: &mut AppState, manager: &str, objective: &str, command: &str) {
+    let command = command.trim();
+    if command.is_empty() {
+        return;
+    }
+    let Some(session_id) = crate::remote::session_for(state, manager) else {
+        return;
+    };
+    let Some(workspace_id) = state.workspace_id_for_session(session_id) else {
+        return;
+    };
+    let Ok(objective_id) = uuid::Uuid::parse_str(objective) else {
+        return;
+    };
+    let Some(workspace) = state
+        .data
+        .workspaces
+        .iter_mut()
+        .find(|ws| ws.id == workspace_id)
+    else {
+        return;
+    };
+    let Some(objective) = workspace
+        .objectives
+        .iter_mut()
+        .find(|o| o.id == objective_id)
+    else {
+        return;
+    };
+    // A check you already approved is not something a manager may replace.
+    if objective.done_when.as_ref().is_some_and(|c| !c.proposed) {
+        return;
+    }
+    objective.done_when = Some(crate::models::Verification::proposed(command));
+    crate::logger::info(format!("manager {manager} proposed a check: {command}"));
+    super::handlers::save_state(state, "failed to save a proposed check");
+}
+
 /// Record a manager's suggestion against the project it belongs to.
 ///
 /// Recorded and nothing else. No queue is touched and no agent is told
@@ -1001,6 +1045,16 @@ fn apply_remote(
         return;
     }
 
+    if let RemoteCommand::ProposeCheck {
+        manager,
+        objective,
+        command,
+    } = &command
+    {
+        apply_proposed_check(state, manager, objective, command);
+        return;
+    }
+
     if let RemoteCommand::Propose {
         manager,
         objective,
@@ -1020,8 +1074,8 @@ fn apply_remote(
         | RemoteCommand::Focus { agent } => agent.clone(),
         // Handled above.
         RemoteCommand::NewAgent { .. } | RemoteCommand::Subscribe { .. } => return,
-        // Applied above; it names a project, not an agent.
-        RemoteCommand::Propose { .. } => return,
+        // Applied above; they name a project, not an agent.
+        RemoteCommand::Propose { .. } | RemoteCommand::ProposeCheck { .. } => return,
     };
     let Some(session_id) = crate::remote::session_for(state, &agent) else {
         crate::logger::warn(format!("phone asked for unknown agent {agent}"));
@@ -1030,7 +1084,7 @@ fn apply_remote(
 
     match command {
         // Applied before the agent lookup above; unreachable here.
-        RemoteCommand::Propose { .. } => {}
+        RemoteCommand::Propose { .. } | RemoteCommand::ProposeCheck { .. } => {}
         RemoteCommand::Todo { text, .. } => {
             if let Some(session) = state.get_session_mut(session_id) {
                 session.todo_queue.add(text.clone());

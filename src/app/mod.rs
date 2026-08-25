@@ -11,6 +11,7 @@ mod session_start;
 mod state;
 pub mod tasks_view;
 pub mod todo_dispatch;
+pub mod verify;
 mod utilities;
 mod workspace_nav;
 

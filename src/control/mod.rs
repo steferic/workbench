@@ -479,6 +479,15 @@ fn dispatch(
                 agent: text_param(params, "agent")?,
             },
         ),
+        "manager.propose_check" => queue(
+            commands,
+            RemoteCommand::ProposeCheck {
+                manager: text_param(params, "manager")?,
+                objective: text_param(params, "objective")?,
+                command: text_param(params, "command")?,
+            },
+        ),
+
         // A manager's suggestion. Recorded against its project; nothing is
         // queued and no agent is touched.
         "manager.propose" => queue(
@@ -635,6 +644,8 @@ fn schema() -> Value {
             {"name": "agent.new", "params": ["project", "provider"], "kind": "write"},
             {"name": "events.subscribe", "params": [], "kind": "stream"},
             {"name": "hook", "params": ["workspace", "session", "event", "payload"], "kind": "write"},
+            {"name": "manager.propose_check",
+             "params": ["manager", "objective", "command"], "kind": "write"},
             {"name": "manager.propose",
              "params": ["manager", "instruction", "objective?", "agent?", "rationale?"],
              "kind": "write"}
@@ -660,6 +671,7 @@ mod tests {
                 id: "p1".into(),
                 name: "workbench".into(),
                 objectives: Vec::new(),
+                proposals: Vec::new(),
                 servers: Vec::new(),
             }],
             agents,

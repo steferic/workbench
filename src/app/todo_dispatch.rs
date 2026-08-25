@@ -119,7 +119,7 @@ pub fn tick(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) {
         .collect();
 
     for session_id in queued {
-        retire_finished(state, session_id);
+        retire_finished(state, session_id, action_tx);
         dispatch_next(state, session_id, action_tx);
     }
 }
@@ -127,7 +127,11 @@ pub fn tick(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) {
 /// An item is finished when the agent's turn ends after we sent it.
 ///
 /// A session that died mid-item gives the work back instead of losing it.
-fn retire_finished(state: &mut AppState, session_id: Uuid) {
+fn retire_finished(
+    state: &mut AppState,
+    session_id: Uuid,
+    action_tx: &mpsc::UnboundedSender<Action>,
+) {
     let Some(session) = state.get_session(session_id) else {
         return;
     };
@@ -155,10 +159,56 @@ fn retire_finished(state: &mut AppState, session_id: Uuid) {
     }
 
     if state.activity(session_id).is_free() {
-        if let Some(session) = state.get_session_mut(session_id) {
-            session.todo_queue.finish_running();
+        let finished = state
+            .get_session_mut(session_id)
+            .and_then(|session| session.todo_queue.finish_running());
+        // A finished item that came from a proposal is the moment to ask the
+        // check what it says now. The manager does not get to request this and
+        // cannot skip it: the turn ending is what triggers it.
+        if let Some(todo_id) = finished {
+            verify_finished_work(state, session_id, todo_id, action_tx);
         }
     }
+}
+
+/// Kick off the result run for whichever proposal produced this queued item.
+fn verify_finished_work(
+    state: &mut AppState,
+    session_id: Uuid,
+    todo_id: Uuid,
+    action_tx: &mpsc::UnboundedSender<Action>,
+) {
+    let Some(workspace_id) = state.workspace_id_for_session(session_id) else {
+        return;
+    };
+    let Some(proposal) = state
+        .data
+        .workspaces
+        .iter()
+        .find(|ws| ws.id == workspace_id)
+        .and_then(|ws| {
+            ws.proposals
+                .iter()
+                .find(|p| p.todo_id == Some(todo_id))
+                .cloned()
+        })
+    else {
+        return; // ordinary queued work, not something a manager proposed
+    };
+    let Some((check, dir, workspace_id)) =
+        crate::app::handlers::tasks::baseline_for(state, &proposal, session_id)
+    else {
+        return;
+    };
+    crate::app::handlers::tasks::start_verification(
+        state,
+        workspace_id,
+        proposal.id,
+        false,
+        check,
+        dir,
+        action_tx,
+    );
 }
 
 fn dispatch_next(state: &mut AppState, session_id: Uuid, action_tx: &mpsc::UnboundedSender<Action>) {
