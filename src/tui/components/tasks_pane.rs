@@ -182,7 +182,7 @@ fn render_tab_bar(frame: &mut Frame, area: Rect, state: &AppState, is_focused: b
 /// rather than a colour alone, because "held" and "met" are decisions worth
 /// spelling out.
 fn render_objectives_tab(frame: &mut Frame, area: Rect, state: &AppState, is_focused: bool) {
-    use crate::models::ObjectiveState;
+    use crate::models::{ObjectiveState, ProposalState};
 
     let t = crate::theme::current();
     let Some(workspace) = state.selected_workspace() else {
@@ -214,105 +214,88 @@ fn render_objectives_tab(frame: &mut Frame, area: Rect, state: &AppState, is_foc
         return;
     }
 
-    let lines: Vec<Line> = workspace
-        .objectives
+    // Drawn from the same row list the keys walk, so the highlighted line and
+    // the line a keypress acts on can never drift apart.
+    let rows = crate::app::objectives_view::rows(state);
+    let lines: Vec<Line> = rows
         .iter()
         .enumerate()
-        .map(|(i, objective)| {
-            let selected = is_focused && i == state.ui.selected_objective;
+        .map(|(row_index, row)| {
+            let selected = is_focused && row_index == state.ui.selected_objective;
             let marker = if selected { "> " } else { "  " };
-            let (state_label, state_color) = match objective.state {
-                ObjectiveState::Active => ("", t.fg),
-                ObjectiveState::Held => ("held ", t.fg_faint),
-                ObjectiveState::Met => ("met ", t.success),
-            };
-            let text_style = match objective.state {
-                ObjectiveState::Active if selected => {
-                    Style::default().fg(t.fg).add_modifier(Modifier::BOLD)
+
+            match row {
+                crate::app::objectives_view::ObjectiveRow::Objective { id, index } => {
+                    let Some(objective) = workspace.objectives.iter().find(|o| o.id == *id) else {
+                        return Line::from("");
+                    };
+                    let (state_label, state_color) = match objective.state {
+                        ObjectiveState::Active => ("", t.fg),
+                        ObjectiveState::Held => ("held ", t.fg_faint),
+                        ObjectiveState::Met => ("met ", t.success),
+                    };
+                    let text_style = match objective.state {
+                        ObjectiveState::Active if selected => {
+                            Style::default().fg(t.fg).add_modifier(Modifier::BOLD)
+                        }
+                        ObjectiveState::Active => Style::default().fg(t.fg),
+                        _ => Style::default().fg(t.fg_faint),
+                    };
+
+                    let mut spans = vec![
+                        Span::styled(marker, Style::default().fg(t.accent)),
+                        Span::styled(
+                            format!("{}. ", index + 1),
+                            Style::default().fg(t.fg_faint),
+                        ),
+                    ];
+                    if !state_label.is_empty() {
+                        spans.push(Span::styled(state_label, Style::default().fg(state_color)));
+                    }
+                    spans.push(Span::styled(objective.text.clone(), text_style));
+                    match objective.done_when.as_ref() {
+                        Some(check) if check.proposed => spans.push(Span::styled(
+                            format!("  ?{}", check.command),
+                            Style::default().fg(t.warning),
+                        )),
+                        Some(check) => spans.push(Span::styled(
+                            format!("  ✓{}", check.command),
+                            Style::default().fg(t.success),
+                        )),
+                        None => {}
+                    }
+                    Line::from(spans)
                 }
-                ObjectiveState::Active => Style::default().fg(t.fg),
-                _ => Style::default().fg(t.fg_faint),
-            };
-
-            let mut spans = vec![
-                Span::styled(marker, Style::default().fg(t.accent)),
-                // Position is the priority, so it is worth showing.
-                Span::styled(format!("{}. ", i + 1), Style::default().fg(t.fg_faint)),
-            ];
-            if !state_label.is_empty() {
-                spans.push(Span::styled(state_label, Style::default().fg(state_color)));
+                crate::app::objectives_view::ObjectiveRow::Proposal { id } => {
+                    let Some(proposal) = workspace.proposals.iter().find(|p| p.id == *id) else {
+                        return Line::from("");
+                    };
+                    // Approved ones stay on the list, marked, until the queue
+                    // is done with them: seeing that a suggestion became work
+                    // is most of what this view is for.
+                    let (verb, verb_color) = match proposal.state {
+                        ProposalState::Approved => ("queued ", t.success),
+                        _ => ("proposes ", t.info),
+                    };
+                    let body_style = if selected {
+                        Style::default().fg(t.fg)
+                    } else {
+                        Style::default().fg(t.fg_dim)
+                    };
+                    Line::from(vec![
+                        Span::styled(format!("   {marker}"), Style::default().fg(t.accent)),
+                        Span::styled(verb, Style::default().fg(verb_color)),
+                        Span::styled(
+                            proposal.agent.clone().unwrap_or_else(|| "nobody".into()),
+                            Style::default().fg(t.accent),
+                        ),
+                        Span::styled(": ", Style::default().fg(t.fg_faint)),
+                        Span::styled(first_line(&proposal.instruction), body_style),
+                    ])
+                }
             }
-            spans.push(Span::styled(objective.text.clone(), text_style));
-
-            // A check it can be held to, and whether you have agreed to it.
-            match objective.done_when.as_ref() {
-                Some(check) if check.proposed => spans.push(Span::styled(
-                    format!("  ?{}", check.command),
-                    Style::default().fg(t.warning),
-                )),
-                Some(check) => spans.push(Span::styled(
-                    format!("  ✓{}", check.command),
-                    Style::default().fg(t.success),
-                )),
-                None => {}
-            }
-            Line::from(spans)
         })
         .collect();
-
-    // A manager's suggestions, under the objective each serves. Indented and
-    // dimmer because none of it has happened: this is reading material, not a
-    // queue, until someone turns one into work.
-    let mut lines = lines;
-    for (i, objective) in workspace.objectives.iter().enumerate() {
-        let _ = i;
-        for proposal in workspace
-            .proposals
-            .iter()
-            .filter(|p| p.objective_id == Some(objective.id))
-        {
-            lines.push(Line::from(vec![
-                Span::styled("      ", Style::default()),
-                Span::styled("proposes ", Style::default().fg(t.info)),
-                Span::styled(
-                    proposal.agent.clone().unwrap_or_else(|| "someone".into()),
-                    Style::default().fg(t.accent),
-                ),
-                Span::styled(": ", Style::default().fg(t.fg_faint)),
-                Span::styled(
-                    first_line(&proposal.instruction),
-                    Style::default().fg(t.fg_dim),
-                ),
-            ]));
-        }
-    }
-    let loose: Vec<_> = workspace
-        .proposals
-        .iter()
-        .filter(|p| p.objective_id.is_none())
-        .collect();
-    if !loose.is_empty() {
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "  Not tied to an objective",
-            Style::default().fg(t.fg_faint),
-        )));
-        for proposal in loose {
-            lines.push(Line::from(vec![
-                Span::styled("      ", Style::default()),
-                Span::styled("proposes ", Style::default().fg(t.info)),
-                Span::styled(
-                    proposal.agent.clone().unwrap_or_else(|| "someone".into()),
-                    Style::default().fg(t.accent),
-                ),
-                Span::styled(": ", Style::default().fg(t.fg_faint)),
-                Span::styled(
-                    first_line(&proposal.instruction),
-                    Style::default().fg(t.fg_dim),
-                ),
-            ]));
-        }
-    }
 
     frame.render_widget(Paragraph::new(lines), area);
 }
@@ -360,6 +343,8 @@ fn render_action_bar(frame: &mut Frame, area: Rect, state: &AppState, is_focused
             ("d", ":del "),
             ("Space", ":state "),
             ("J/K", ":rank "),
+            ("a", ":approve "),
+            ("x", ":no "),
             ("h", ":help"),
         ]
     } else {

@@ -302,6 +302,10 @@ impl EventHandler {
             KeyCode::Char(' ') if objectives => Action::CycleObjectiveState,
             KeyCode::Char('K') if objectives => Action::MoveObjective(-1),
             KeyCode::Char('J') if objectives => Action::MoveObjective(1),
+            // On a proposal row: turn it into work, or say no. Approving is
+            // the only way a manager's suggestion reaches an agent.
+            KeyCode::Char('a') if objectives => Action::ApproveProposal,
+            KeyCode::Char('x') if objectives => Action::DeclineProposal,
 
             // -- TODO tab (the queue this agent works through) --
             KeyCode::Enter => Action::FocusSelectedTaskAgent,

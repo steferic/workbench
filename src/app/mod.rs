@@ -2,6 +2,7 @@ mod action;
 pub mod agent_input;
 pub mod comms_tick;
 mod handler;
+pub mod objectives_view;
 pub mod handlers;
 mod pty_ops;
 mod runtime;

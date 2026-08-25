@@ -5,6 +5,7 @@
 //! decides when an item may go out.
 
 use crate::app::utilities::load_utility_content;
+use crate::app::objectives_view;
 use crate::app::{
     tasks_view, Action, AppState, InputMode, TaskEdit, UtilityItem, UtilitySection,
 };
@@ -53,10 +54,7 @@ pub fn handle_task_action(
         // rather than each list owning its own pair of keys.
         Action::SelectNextTask => {
             if state.ui.selected_tasks_tab == crate::app::TasksTab::Objectives {
-                let count = state
-                    .selected_workspace()
-                    .map(|ws| ws.objectives.len())
-                    .unwrap_or(0);
+                let count = objectives_view::rows(state).len();
                 if count > 0 {
                     state.ui.selected_objective =
                         (state.ui.selected_objective + 1).min(count - 1);
@@ -133,9 +131,11 @@ pub fn handle_task_action(
                         state.ui.set_task_status("Objective updated");
                     }
                     None => {
-                        ws.objectives.push(crate::models::Objective::new(text));
+                        let objective = crate::models::Objective::new(text);
+                        let id = objective.id;
+                        ws.objectives.push(objective);
                         let n = ws.objectives.len();
-                        state.ui.selected_objective = n - 1;
+                        focus_objective_row(state, id);
                         state.ui.set_task_status(format!("Objective added — {n} total"));
                     }
                 }
@@ -224,14 +224,27 @@ pub fn handle_task_action(
             if let Some(ws) = state.selected_workspace_mut() {
                 crate::models::move_objective(&mut ws.objectives, id, delta);
             }
-            // Follow the item rather than the row, or the cursor lands on
-            // whatever was pushed out of the way.
-            if let Some(ws) = state.selected_workspace() {
-                if let Some(at) = ws.objectives.iter().position(|o| o.id == id) {
-                    state.ui.selected_objective = at;
+            // Follow the item, or the cursor lands on whatever was pushed out
+            // of the way.
+            focus_objective_row(state, id);
+            super::save_state(state, "failed to save objectives");
+        }
+        Action::ApproveProposal => {
+            approve_selected_proposal(state);
+        }
+        Action::DeclineProposal => {
+            let Some(id) = objectives_view::selected(state).and_then(|r| r.proposal_id()) else {
+                state.ui.set_task_status("Select a proposal first");
+                return Ok(());
+            };
+            if let Some(ws) = state.selected_workspace_mut() {
+                if let Some(proposal) = ws.proposals.iter_mut().find(|p| p.id == id) {
+                    proposal.decline();
                 }
             }
-            super::save_state(state, "failed to save objectives");
+            objectives_view::clamp(state);
+            state.ui.set_task_status("Declined");
+            super::save_state(state, "failed to save the decision");
         }
         Action::DeleteSelectedTodo => {
             let Some(row) = tasks_view::selected_row(state) else {
@@ -359,25 +372,84 @@ fn record_provider_session_ids(
     }
 }
 
-/// The objective under the cursor, if the list is non-empty.
-pub(crate) fn selected_objective(state: &AppState) -> Option<&crate::models::Objective> {
+/// Turn the selected proposal into work.
+///
+/// This is the only place a manager's suggestion becomes something an agent
+/// will see, and it is reached by a keypress. Everything it refuses, it
+/// refuses out loud: a proposal that names nobody, an agent that has gone, or
+/// one that is itself a manager has no sensible reading, and silently doing
+/// something adjacent would be worse than saying so.
+fn approve_selected_proposal(state: &mut AppState) {
+    let Some(proposal) = objectives_view::selected_proposal(state).cloned() else {
+        state.ui.set_task_status("Select a proposal first");
+        return;
+    };
+    if !proposal.is_pending() {
+        state.ui.set_task_status("Already decided");
+        return;
+    }
+    let Some(target) = proposal.agent.clone() else {
+        state.ui.set_task_status("That proposal names no agent");
+        return;
+    };
+    let Some(session_id) = crate::remote::session_for(state, &target) else {
+        state.ui.set_task_status(format!("No agent {target} here any more"));
+        return;
+    };
+    // The hierarchy stays one level deep, even by hand: approving a manager
+    // into another manager's queue is not a thing to allow by accident.
+    let directable = state
+        .get_session(session_id)
+        .map(|s| s.agent_type.is_directable())
+        .unwrap_or(false);
+    if !directable {
+        state.ui.set_task_status(format!("{target} is not an agent that takes work"));
+        return;
+    }
+
+    let Some(session) = state.get_session_mut(session_id) else {
+        return;
+    };
+    let todo_id = session.todo_queue.add(proposal.instruction.clone());
+    let left = session.todo_queue.pending_count();
+
+    if let Some(ws) = state.selected_workspace_mut() {
+        if let Some(stored) = ws.proposals.iter_mut().find(|p| p.id == proposal.id) {
+            stored.approve(todo_id);
+        }
+    }
+    objectives_view::clamp(state);
     state
-        .selected_workspace()?
-        .objectives
-        .get(state.ui.selected_objective)
+        .ui
+        .set_task_status(format!("Queued for {target} — {left} to run"));
+    super::save_state(state, "failed to save the approval");
+}
+
+/// The objective under the cursor — `None` when the cursor is on a proposal.
+pub(crate) fn selected_objective(state: &AppState) -> Option<&crate::models::Objective> {
+    objectives_view::selected_objective(state)
 }
 
 pub(crate) fn selected_objective_id(state: &AppState) -> Option<uuid::Uuid> {
     selected_objective(state).map(|o| o.id)
 }
 
-/// Keep the cursor on a row that exists after a removal.
 fn clamp_objective_cursor(state: &mut AppState) {
-    let len = state
-        .selected_workspace()
-        .map(|ws| ws.objectives.len())
-        .unwrap_or(0);
-    state.ui.selected_objective = state.ui.selected_objective.min(len.saturating_sub(1));
+    objectives_view::clamp(state);
+}
+
+/// Put the cursor on a given objective's row.
+///
+/// Rows are objectives and proposals interleaved, so an objective's position
+/// in the list is not its position on screen — following the item after it
+/// moves means finding its row, not its index.
+fn focus_objective_row(state: &mut AppState, id: uuid::Uuid) {
+    if let Some(at) = objectives_view::rows(state)
+        .iter()
+        .position(|row| row.objective_id() == Some(id))
+    {
+        state.ui.selected_objective = at;
+    }
 }
 
 #[cfg(test)]

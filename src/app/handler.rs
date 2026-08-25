@@ -257,6 +257,7 @@ pub fn process_action(
                 Action::ToggleTodoQueuePaused | Action::ClearCompletedTodos |
                 Action::EditObjective(_) | Action::DeleteObjective |
                 Action::CycleObjectiveState | Action::MoveObjective(_) |
+                Action::ApproveProposal | Action::DeclineProposal |
                 Action::AgentTasksRefreshed(_) |
                 Action::ActivateUtility => {
                     tasks::handle_task_action(state, action, action_tx)?;

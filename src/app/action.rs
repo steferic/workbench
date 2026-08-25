@@ -195,6 +195,10 @@ pub enum Action {
     CycleObjectiveState,
     /// Move the selected objective up (-1) or down (+1) in priority.
     MoveObjective(isize),
+    /// Turn the selected proposal into queued work for the agent it names.
+    ApproveProposal,
+    /// Say no to the selected proposal.
+    DeclineProposal,
     /// Drop the items that have already run.
     ClearCompletedTodos,
     /// Off-thread scan for listening dev servers finished.

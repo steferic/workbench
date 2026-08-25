@@ -7,7 +7,7 @@ mod workspace;
 
 pub use agent::{model_label, AgentType};
 pub use objective::{
-    manager_brief, move_objective, Objective, ObjectiveState, Proposal, Verification,
+    manager_brief, move_objective, Objective, ObjectiveState, Proposal, ProposalState, Verification,
 };
 pub use parallel_task::{AttemptStatus, ParallelTask, ParallelTaskAttempt, ParallelTaskStatus};
 pub use session::{Session, SessionStatus};

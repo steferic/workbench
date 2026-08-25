@@ -136,6 +136,21 @@ Report what you propose in this pane as you go, so it can be read here."
     )
 }
 
+/// What has been decided about a suggestion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProposalState {
+    /// Written by a manager, waiting to be read.
+    #[default]
+    Pending,
+    /// You turned it into work. The queued item it became is recorded, so the
+    /// suggestion and the work stay connected once results start arriving.
+    Approved,
+    /// You said no. Kept on disk rather than deleted so a manager can see it
+    /// asked and was refused, but dropped from the list you scroll.
+    Declined,
+}
+
 /// A manager's suggestion: this agent, this instruction, toward this
 /// objective, for this reason.
 ///
@@ -160,6 +175,11 @@ pub struct Proposal {
     #[serde(default)]
     pub rationale: String,
     pub created_at: DateTime<Utc>,
+    #[serde(default)]
+    pub state: ProposalState,
+    /// The queued item this became, once approved.
+    #[serde(default)]
+    pub todo_id: Option<Uuid>,
 }
 
 impl Proposal {
@@ -172,7 +192,27 @@ impl Proposal {
             instruction: instruction.into(),
             rationale: String::new(),
             created_at: Utc::now(),
+            state: ProposalState::default(),
+            todo_id: None,
         }
+    }
+
+    pub fn is_pending(&self) -> bool {
+        self.state == ProposalState::Pending
+    }
+
+    pub fn is_declined(&self) -> bool {
+        self.state == ProposalState::Declined
+    }
+
+    pub fn decline(&mut self) {
+        self.state = ProposalState::Declined;
+    }
+
+    /// Record that this became a queued item.
+    pub fn approve(&mut self, todo_id: Uuid) {
+        self.state = ProposalState::Approved;
+        self.todo_id = Some(todo_id);
     }
 }
 
