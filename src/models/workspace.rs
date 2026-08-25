@@ -21,6 +21,10 @@ pub struct Workspace {
     /// Parallel tasks for multi-agent task execution
     #[serde(default)]
     pub parallel_tasks: Vec<ParallelTask>,
+    /// Standing priorities for this project, in priority order. Written by
+    /// the user; read by a manager (see `models::objective`).
+    #[serde(default)]
+    pub objectives: Vec<super::Objective>,
     /// Currently active worktree session ID (None = viewing main branch)
     #[serde(default)]
     pub active_worktree_session_id: Option<Uuid>,
@@ -40,6 +44,7 @@ impl Workspace {
             pinned_terminal_ids: Vec::new(),
             last_active_at: Some(now),
             parallel_tasks: Vec::new(),
+            objectives: Vec::new(),
             active_worktree_session_id: None,
             last_active_session_id: None,
         }

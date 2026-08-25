@@ -183,6 +183,16 @@ pub enum Action {
     MoveSelectedTodo(isize),
     /// Hold the queue, or let it run again.
     ToggleTodoQueuePaused,
+
+    // Objectives — the project's standing priorities (see models::objective).
+    /// Start composing a new objective, or rewrite the selected one.
+    EditObjective(bool),
+    /// Remove the selected objective.
+    DeleteObjective,
+    /// Cycle the selected objective: active → held → met → active.
+    CycleObjectiveState,
+    /// Move the selected objective up (-1) or down (+1) in priority.
+    MoveObjective(isize),
     /// Drop the items that have already run.
     ClearCompletedTodos,
     /// Off-thread scan for listening dev servers finished.

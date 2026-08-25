@@ -76,6 +76,11 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         return;
     }
 
+    if state.ui.selected_tasks_tab == TasksTab::Objectives {
+        render_objectives_tab(frame, list_area, state, is_focused);
+        return;
+    }
+
     if rows.is_empty() {
         let msg = Paragraph::new(Line::from(vec![Span::styled(
             "  Select an agent in Sessions.",
@@ -148,18 +153,114 @@ fn render_tab_bar(frame: &mut Frame, area: Rect, state: &AppState, is_focused: b
         .and_then(|ws| ws.active_parallel_task())
         .map(|t| t.attempts.len())
         .unwrap_or(0);
-    let (tasks_style, reports_style) = match state.ui.selected_tasks_tab {
-        TasksTab::Tasks => (active, dim),
-        TasksTab::Reports => (dim, active),
+    let objectives_count = state
+        .selected_workspace()
+        .map(|ws| ws.objectives.len())
+        .unwrap_or(0);
+    let (tasks_style, objectives_style, reports_style) = match state.ui.selected_tasks_tab {
+        TasksTab::Tasks => (active, dim, dim),
+        TasksTab::Objectives => (dim, active, dim),
+        TasksTab::Reports => (dim, dim, active),
     };
 
     let tab_bar = Paragraph::new(Line::from(vec![
         Span::styled(" TODO ", tasks_style),
         Span::styled("│", dim),
+        Span::styled(" Objectives", objectives_style),
+        Span::styled(format!("({objectives_count}) "), objectives_style),
+        Span::styled("│", dim),
         Span::styled(" Reports", reports_style),
         Span::styled(format!("({reports_count}) "), reports_style),
     ]));
     frame.render_widget(tab_bar, area);
+}
+
+/// The project's standing priorities, in priority order.
+///
+/// Rank is position, so the top line is what matters most — which is the only
+/// thing a manager will need to read off this list. State is shown as a word
+/// rather than a colour alone, because "held" and "met" are decisions worth
+/// spelling out.
+fn render_objectives_tab(frame: &mut Frame, area: Rect, state: &AppState, is_focused: bool) {
+    use crate::models::ObjectiveState;
+
+    let t = crate::theme::current();
+    let Some(workspace) = state.selected_workspace() else {
+        let msg = Paragraph::new(Line::from(Span::styled(
+            "  Open a project first.",
+            Style::default().fg(t.fg_faint),
+        )));
+        frame.render_widget(msg, area);
+        return;
+    };
+
+    if workspace.objectives.is_empty() {
+        let msg = Paragraph::new(vec![
+            Line::from(Span::styled(
+                "  No objectives yet. Press n to write one.",
+                Style::default().fg(t.fg_faint),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "  Standing priorities for this project — what",
+                Style::default().fg(t.fg_faint),
+            )),
+            Line::from(Span::styled(
+                "  work should keep moving toward.",
+                Style::default().fg(t.fg_faint),
+            )),
+        ]);
+        frame.render_widget(msg, area);
+        return;
+    }
+
+    let lines: Vec<Line> = workspace
+        .objectives
+        .iter()
+        .enumerate()
+        .map(|(i, objective)| {
+            let selected = is_focused && i == state.ui.selected_objective;
+            let marker = if selected { "> " } else { "  " };
+            let (state_label, state_color) = match objective.state {
+                ObjectiveState::Active => ("", t.fg),
+                ObjectiveState::Held => ("held ", t.fg_faint),
+                ObjectiveState::Met => ("met ", t.success),
+            };
+            let text_style = match objective.state {
+                ObjectiveState::Active if selected => {
+                    Style::default().fg(t.fg).add_modifier(Modifier::BOLD)
+                }
+                ObjectiveState::Active => Style::default().fg(t.fg),
+                _ => Style::default().fg(t.fg_faint),
+            };
+
+            let mut spans = vec![
+                Span::styled(marker, Style::default().fg(t.accent)),
+                // Position is the priority, so it is worth showing.
+                Span::styled(format!("{}. ", i + 1), Style::default().fg(t.fg_faint)),
+            ];
+            if !state_label.is_empty() {
+                spans.push(Span::styled(state_label, Style::default().fg(state_color)));
+            }
+            spans.push(Span::styled(objective.text.clone(), text_style));
+
+            // A check it can be held to, and whether you have agreed to it.
+            match objective.done_when.as_ref() {
+                Some(check) if check.proposed => spans.push(Span::styled(
+                    format!("  ?{}", check.command),
+                    Style::default().fg(t.warning),
+                )),
+                Some(check) => spans.push(Span::styled(
+                    format!("  ✓{}", check.command),
+                    Style::default().fg(t.success),
+                )),
+                None => {}
+            }
+            Line::from(spans)
+        })
+        .collect();
+
+    frame.render_widget(Paragraph::new(lines), area);
 }
 
 fn render_action_bar(frame: &mut Frame, area: Rect, state: &AppState, is_focused: bool) {
@@ -188,6 +289,15 @@ fn render_action_bar(frame: &mut Frame, area: Rect, state: &AppState, is_focused
 
     let hints: &[(&str, &str)] = if state.ui.selected_tasks_tab == TasksTab::Reports {
         &[("v", ":view "), ("m", ":merge "), ("h", ":help")]
+    } else if state.ui.selected_tasks_tab == TasksTab::Objectives {
+        &[
+            ("n", ":add "),
+            ("e", ":edit "),
+            ("d", ":del "),
+            ("Space", ":state "),
+            ("J/K", ":rank "),
+            ("h", ":help"),
+        ]
     } else {
         &[
             ("n", ":add "),

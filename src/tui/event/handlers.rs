@@ -258,6 +258,7 @@ impl EventHandler {
         }
 
         let reports = state.ui.selected_tasks_tab == TasksTab::Reports;
+        let objectives = state.ui.selected_tasks_tab == TasksTab::Objectives;
 
         match key.code {
             KeyCode::Char('j') | KeyCode::Down => {
@@ -291,6 +292,16 @@ impl EventHandler {
                     Action::Tick
                 }
             }
+
+            // -- Objectives tab (the project's standing priorities) --
+            // Ahead of the TODO arms below: n/e/d/J/K mean the same verbs on
+            // whichever list is showing, and the tab decides which that is.
+            KeyCode::Char('n') if objectives => Action::EditObjective(false),
+            KeyCode::Char('e') if objectives => Action::EditObjective(true),
+            KeyCode::Char('d') if objectives => Action::DeleteObjective,
+            KeyCode::Char(' ') if objectives => Action::CycleObjectiveState,
+            KeyCode::Char('K') if objectives => Action::MoveObjective(-1),
+            KeyCode::Char('J') if objectives => Action::MoveObjective(1),
 
             // -- TODO tab (the queue this agent works through) --
             KeyCode::Enter => Action::FocusSelectedTaskAgent,

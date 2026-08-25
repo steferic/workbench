@@ -112,14 +112,24 @@ pub enum TasksTab {
     /// Live mirror of every agent's own task list.
     #[default]
     Tasks,
+    /// The project's standing priorities (see `models::objective`). What a
+    /// manager will eventually work toward; useful on its own before then.
+    Objectives,
     /// Reports from parallel task agents.
     Reports,
 }
 
 impl TasksTab {
+    /// Tab cycles rather than toggles now that there are three.
+    ///
+    /// Reports is slated to fold into the manager view once one exists —
+    /// judging what agents did is the manager's job, and two tabs read better
+    /// than three. Doing it now would mean building a merged row model for a
+    /// view that is about to be rewritten, so it waits for that rewrite.
     pub fn toggle(&self) -> Self {
         match self {
-            TasksTab::Tasks => TasksTab::Reports,
+            TasksTab::Tasks => TasksTab::Objectives,
+            TasksTab::Objectives => TasksTab::Reports,
             TasksTab::Reports => TasksTab::Tasks,
         }
     }

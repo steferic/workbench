@@ -241,6 +241,13 @@ pub struct UIState {
     // Parallel task modal
     pub parallel_task: ParallelTaskModalState,
 
+    /// Which objective is being written, when one is. Separate from
+    /// `task_edit` because an objective belongs to the project rather than to
+    /// a session; `Some((workspace, None))` is a new one.
+    pub objective_edit: Option<(Uuid, Option<Uuid>)>,
+    /// Cursor within the Objectives tab.
+    pub selected_objective: usize,
+
     // Debug overlay (F11)
     pub show_debug_overlay: bool,
 
@@ -296,6 +303,8 @@ impl UIState {
             selected_workspace_action: WorkspaceAction::default(),
             workspace_create_mode: false,
             parallel_task: ParallelTaskModalState::default(),
+            objective_edit: None,
+            selected_objective: 0,
             show_debug_overlay: false,
             config: ConfigWindowState::default(),
             palette: CommandPaletteState::default(),

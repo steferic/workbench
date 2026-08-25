@@ -49,18 +49,36 @@ pub fn handle_task_action(
     action_tx: &mpsc::UnboundedSender<Action>,
 ) -> Result<()> {
     match action {
+        // j/k mean "down/up the list in front of me", so they follow the tab
+        // rather than each list owning its own pair of keys.
         Action::SelectNextTask => {
+            if state.ui.selected_tasks_tab == crate::app::TasksTab::Objectives {
+                let count = state
+                    .selected_workspace()
+                    .map(|ws| ws.objectives.len())
+                    .unwrap_or(0);
+                if count > 0 {
+                    state.ui.selected_objective =
+                        (state.ui.selected_objective + 1).min(count - 1);
+                }
+                return Ok(());
+            }
             let count = tasks_view::rows(state).len();
             if count > 0 {
                 state.ui.selected_task_row = (state.ui.selected_task_row + 1).min(count - 1);
             }
         }
         Action::SelectPrevTask => {
+            if state.ui.selected_tasks_tab == crate::app::TasksTab::Objectives {
+                state.ui.selected_objective = state.ui.selected_objective.saturating_sub(1);
+                return Ok(());
+            }
             state.ui.selected_task_row = state.ui.selected_task_row.saturating_sub(1);
         }
         Action::ToggleTasksTab => {
             state.ui.selected_tasks_tab = state.ui.selected_tasks_tab.toggle();
             state.ui.selected_task_row = 0;
+            clamp_objective_cursor(state);
         }
         Action::FocusSelectedTaskAgent => {
             if let Some(row) = tasks_view::selected_row(state) {
@@ -92,6 +110,39 @@ pub fn handle_task_action(
             state.ui.input_mode = InputMode::ComposeTaskMessage;
         }
         Action::SendTaskMessage(text) => {
+            // An objective in progress owns the buffer: it was opened from the
+            // Objectives tab and has nothing to do with any session's queue.
+            if let Some((workspace_id, editing)) = state.ui.objective_edit.take() {
+                state.ui.input_mode = InputMode::Normal;
+                state.ui.input_buffer.clear();
+                let text = text.trim().to_string();
+                if text.is_empty() {
+                    return Ok(());
+                }
+                let Some(ws) = state
+                    .data
+                    .workspaces
+                    .iter_mut()
+                    .find(|ws| ws.id == workspace_id)
+                else {
+                    return Ok(());
+                };
+                match editing.and_then(|id| ws.objectives.iter_mut().find(|o| o.id == id)) {
+                    Some(objective) => {
+                        objective.text = text;
+                        state.ui.set_task_status("Objective updated");
+                    }
+                    None => {
+                        ws.objectives.push(crate::models::Objective::new(text));
+                        let n = ws.objectives.len();
+                        state.ui.selected_objective = n - 1;
+                        state.ui.set_task_status(format!("Objective added — {n} total"));
+                    }
+                }
+                super::save_state(state, "failed to save objectives");
+                return Ok(());
+            }
+
             let Some((session_id, edit, _)) = state.ui.task_edit.take() else {
                 state.ui.input_mode = InputMode::Normal;
                 return Ok(());
@@ -122,6 +173,65 @@ pub fn handle_task_action(
                 }
             }
             super::save_state(state, "failed to save the todo queue");
+        }
+        Action::EditObjective(rewrite) => {
+            let Some(workspace_id) = state.selected_workspace().map(|ws| ws.id) else {
+                state.ui.set_task_status("Open a project first");
+                return Ok(());
+            };
+            let existing = selected_objective_id(state);
+            if rewrite && existing.is_none() {
+                state.ui.set_task_status("Select an objective first");
+                return Ok(());
+            }
+            state.ui.input_buffer = if rewrite {
+                selected_objective(state).map(|o| o.text.clone()).unwrap_or_default()
+            } else {
+                String::new()
+            };
+            state.ui.objective_edit = Some((workspace_id, rewrite.then_some(existing).flatten()));
+            state.ui.input_mode = InputMode::ComposeTaskMessage;
+        }
+        Action::DeleteObjective => {
+            let Some(id) = selected_objective_id(state) else {
+                return Ok(());
+            };
+            if let Some(ws) = state.selected_workspace_mut() {
+                ws.objectives.retain(|o| o.id != id);
+            }
+            clamp_objective_cursor(state);
+            state.ui.set_task_status("Objective removed");
+            super::save_state(state, "failed to save objectives");
+        }
+        Action::CycleObjectiveState => {
+            let Some(id) = selected_objective_id(state) else {
+                return Ok(());
+            };
+            let mut label = "";
+            if let Some(ws) = state.selected_workspace_mut() {
+                if let Some(objective) = ws.objectives.iter_mut().find(|o| o.id == id) {
+                    objective.state = objective.state.next();
+                    label = objective.state.label();
+                }
+            }
+            state.ui.set_task_status(format!("Objective {label}"));
+            super::save_state(state, "failed to save objectives");
+        }
+        Action::MoveObjective(delta) => {
+            let Some(id) = selected_objective_id(state) else {
+                return Ok(());
+            };
+            if let Some(ws) = state.selected_workspace_mut() {
+                crate::models::move_objective(&mut ws.objectives, id, delta);
+            }
+            // Follow the item rather than the row, or the cursor lands on
+            // whatever was pushed out of the way.
+            if let Some(ws) = state.selected_workspace() {
+                if let Some(at) = ws.objectives.iter().position(|o| o.id == id) {
+                    state.ui.selected_objective = at;
+                }
+            }
+            super::save_state(state, "failed to save objectives");
         }
         Action::DeleteSelectedTodo => {
             let Some(row) = tasks_view::selected_row(state) else {
@@ -247,6 +357,27 @@ fn record_provider_session_ids(
     if changed {
         super::save_state(state, "failed to save agent conversation ids");
     }
+}
+
+/// The objective under the cursor, if the list is non-empty.
+pub(crate) fn selected_objective(state: &AppState) -> Option<&crate::models::Objective> {
+    state
+        .selected_workspace()?
+        .objectives
+        .get(state.ui.selected_objective)
+}
+
+pub(crate) fn selected_objective_id(state: &AppState) -> Option<uuid::Uuid> {
+    selected_objective(state).map(|o| o.id)
+}
+
+/// Keep the cursor on a row that exists after a removal.
+fn clamp_objective_cursor(state: &mut AppState) {
+    let len = state
+        .selected_workspace()
+        .map(|ws| ws.objectives.len())
+        .unwrap_or(0);
+    state.ui.selected_objective = state.ui.selected_objective.min(len.saturating_sub(1));
 }
 
 #[cfg(test)]
