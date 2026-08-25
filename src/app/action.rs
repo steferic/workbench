@@ -113,6 +113,8 @@ pub enum Action {
     EnterWorkspaceActionMode, // Opens the Create/Open workspace selector
     EnterWorkspaceNameMode,   // Text input for naming new workspace
     EnterCreateSessionMode,
+    /// Choose which CLI a new manager runs.
+    EnterCreateManagerMode,
     EnterSetStartCommandMode,
     ExitMode,
 

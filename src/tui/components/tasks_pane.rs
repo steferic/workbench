@@ -260,7 +260,71 @@ fn render_objectives_tab(frame: &mut Frame, area: Rect, state: &AppState, is_foc
         })
         .collect();
 
+    // A manager's suggestions, under the objective each serves. Indented and
+    // dimmer because none of it has happened: this is reading material, not a
+    // queue, until someone turns one into work.
+    let mut lines = lines;
+    for (i, objective) in workspace.objectives.iter().enumerate() {
+        let _ = i;
+        for proposal in workspace
+            .proposals
+            .iter()
+            .filter(|p| p.objective_id == Some(objective.id))
+        {
+            lines.push(Line::from(vec![
+                Span::styled("      ", Style::default()),
+                Span::styled("proposes ", Style::default().fg(t.info)),
+                Span::styled(
+                    proposal.agent.clone().unwrap_or_else(|| "someone".into()),
+                    Style::default().fg(t.accent),
+                ),
+                Span::styled(": ", Style::default().fg(t.fg_faint)),
+                Span::styled(
+                    first_line(&proposal.instruction),
+                    Style::default().fg(t.fg_dim),
+                ),
+            ]));
+        }
+    }
+    let loose: Vec<_> = workspace
+        .proposals
+        .iter()
+        .filter(|p| p.objective_id.is_none())
+        .collect();
+    if !loose.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  Not tied to an objective",
+            Style::default().fg(t.fg_faint),
+        )));
+        for proposal in loose {
+            lines.push(Line::from(vec![
+                Span::styled("      ", Style::default()),
+                Span::styled("proposes ", Style::default().fg(t.info)),
+                Span::styled(
+                    proposal.agent.clone().unwrap_or_else(|| "someone".into()),
+                    Style::default().fg(t.accent),
+                ),
+                Span::styled(": ", Style::default().fg(t.fg_faint)),
+                Span::styled(
+                    first_line(&proposal.instruction),
+                    Style::default().fg(t.fg_dim),
+                ),
+            ]));
+        }
+    }
+
     frame.render_widget(Paragraph::new(lines), area);
+}
+
+/// One line of what is often several paragraphs of instruction.
+fn first_line(text: &str) -> String {
+    let line = text.lines().next().unwrap_or("").trim();
+    if line.chars().count() > 60 {
+        format!("{}…", line.chars().take(59).collect::<String>())
+    } else {
+        line.to_string()
+    }
 }
 
 fn render_action_bar(frame: &mut Frame, area: Rect, state: &AppState, is_focused: bool) {

@@ -25,6 +25,10 @@ pub struct Workspace {
     /// the user; read by a manager (see `models::objective`).
     #[serde(default)]
     pub objectives: Vec<super::Objective>,
+    /// What the managers here have suggested, newest last. Suggestions only:
+    /// nothing in this list has been queued for anyone.
+    #[serde(default)]
+    pub proposals: Vec<super::Proposal>,
     /// Currently active worktree session ID (None = viewing main branch)
     #[serde(default)]
     pub active_worktree_session_id: Option<Uuid>,
@@ -45,6 +49,7 @@ impl Workspace {
             last_active_at: Some(now),
             parallel_tasks: Vec::new(),
             objectives: Vec::new(),
+            proposals: Vec::new(),
             active_worktree_session_id: None,
             last_active_session_id: None,
         }

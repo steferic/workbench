@@ -15,6 +15,10 @@ pub enum InputMode {
     CreateWorkspace,       // Browse to select existing directory (Open Existing)
     EnterWorkspaceName,    // Enter name for new workspace (Create New)
     CreateSession,
+    /// Picking which CLI a new manager runs. A manager is created the same way
+    /// an agent is — you choose the provider — so this is the agent dialog
+    /// with one extra keystroke in front of it.
+    CreateManager,
     /// Composing a message that steers an agent's task list.
     ComposeTaskMessage,
     SetStartCommand,

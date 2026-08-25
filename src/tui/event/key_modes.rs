@@ -75,6 +75,21 @@ pub(super) fn handle_input_mode_key(key: &KeyEvent, state: &AppState) -> Option<
                 match key.code {
                     KeyCode::Esc => Action::ExitMode,
                     KeyCode::Char('t') => Action::CreateTerminal,
+                    KeyCode::Char('m') => Action::EnterCreateManagerMode,
+                    _ => Action::Tick,
+                }
+            }
+        }
+        InputMode::CreateManager => {
+            // Same provider keys as an agent — a manager is one of those with
+            // a brief, and which CLI it runs stays your choice.
+            if let Some((agent_type, skip_permissions, with_worktree)) =
+                agent_shortcut(key, &state.system.user_config.agents)
+            {
+                Action::CreateSession(agent_type.as_manager(), skip_permissions, with_worktree)
+            } else {
+                match key.code {
+                    KeyCode::Esc => Action::ExitMode,
                     _ => Action::Tick,
                 }
             }

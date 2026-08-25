@@ -64,9 +64,24 @@ pub struct Snapshot {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct ObjectiveView {
+    pub id: String,
+    pub text: String,
+    /// "active" | "held" | "met"
+    pub state: String,
+    /// The approved command that decides this is done, if there is one.
+    pub done_when: Option<String>,
+    /// A command a manager suggested and you have not approved. Present so a
+    /// manager can see it has already asked and does not ask again.
+    pub proposed_check: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct ProjectView {
     pub id: String,
     pub name: String,
+    /// Standing priorities, in priority order. What a manager works toward.
+    pub objectives: Vec<ObjectiveView>,
     /// Dev servers running in this project, reachable from the phone.
     pub servers: Vec<ServerView>,
 }
@@ -89,6 +104,11 @@ pub struct AgentView {
     /// Which project to start a sibling agent in.
     pub project_id: String,
     pub provider: String,
+    /// Whether this session is a manager. Present so the control socket can
+    /// refuse to let one dispatch work while it is still read-only, without
+    /// having to reach into app state from the server thread.
+    #[serde(default)]
+    pub manager: bool,
     /// The name this agent gave itself with `workbench alias`. Unique within
     /// a project, and the only address that stays meaningful across a restart
     /// — session ids do not survive one.
@@ -296,6 +316,25 @@ fn publish_with(state: &AppState, shared: &Shared, open: Option<(Vec<Message>, u
         .map(|workspace| ProjectView {
             id: workspace.id.to_string(),
             name: workspace.name.clone(),
+            objectives: workspace
+                .objectives
+                .iter()
+                .map(|objective| ObjectiveView {
+                    id: objective.id.to_string(),
+                    text: objective.text.clone(),
+                    state: objective.state.label().to_string(),
+                    done_when: objective
+                        .done_when
+                        .as_ref()
+                        .filter(|v| !v.proposed)
+                        .map(|v| v.command.clone()),
+                    proposed_check: objective
+                        .done_when
+                        .as_ref()
+                        .filter(|v| v.proposed)
+                        .map(|v| v.command.clone()),
+                })
+                .collect(),
             servers: servers.get(&workspace.id).cloned().unwrap_or_default(),
         })
         .collect();
@@ -354,6 +393,7 @@ fn publish_with(state: &AppState, shared: &Shared, open: Option<(Vec<Message>, u
                 project: workspace.name.clone(),
                 project_id: workspace.id.to_string(),
                 provider: session.agent_type.display_name(),
+                manager: session.agent_type.is_manager(),
                 alias: session.alias.clone(),
                 model: state.session_model(session.id),
                 status: status.to_string(),
@@ -684,6 +724,7 @@ mod tests {
             project: "workbench".into(),
             project_id: "p".into(),
             provider: "Claude".into(),
+            manager: false,
             alias: None,
             model: Some("Opus 5".into()),
             status: "working".into(),
@@ -735,6 +776,7 @@ mod tests {
             project: "workbench".into(),
             project_id: "p".into(),
             provider: "Claude".into(),
+            manager: false,
             alias: None,
             model: None,
             status: "working".into(),

@@ -11,10 +11,14 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     let t = crate::theme::current();
     let agents = &state.system.user_config.agents;
     let enabled_count = agents.iter().filter(|a| a.enabled).count();
-    // Calculate height: header (5 lines) + agents + footer (3 lines)
-    let needed_lines = 8 + enabled_count;
+    // Height has to follow the content, because the content grew: with seven
+    // agents configured the box was already cutting off the Terminal line
+    // before Manager was added to it. Counted rather than guessed —
+    // header, one row per enabled agent, the two extra rows with their
+    // separating blanks, the Esc line, and the border.
+    let needed_lines = 5 + enabled_count + 6 + 2;
     let height_pct =
-        ((needed_lines * 100) / frame.area().height.max(1) as usize).clamp(25, 60) as u16;
+        ((needed_lines * 100) / frame.area().height.max(1) as usize).clamp(25, 85) as u16;
     let area = centered_rect(40, height_pct, frame.area());
     frame.render_widget(Clear, area);
 
@@ -59,6 +63,12 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         Span::styled("  [t] ", Style::default().fg(t.accent)),
         Span::styled("[T] ", Style::default().fg(t.special)),
         Span::raw("Terminal"),
+    ]));
+    content.push(Line::from(""));
+    content.push(Line::from(vec![
+        Span::styled("  [m] ", Style::default().fg(t.accent)),
+        Span::styled("[M] ", Style::default().fg(t.special)),
+        Span::raw("Manager, then pick its agent"),
     ]));
     content.push(Line::from(""));
     content.push(Line::from(Span::styled(

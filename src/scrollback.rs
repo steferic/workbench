@@ -27,15 +27,14 @@ pub enum LogFormat {
 
 impl LogFormat {
     pub fn for_agent(agent: &crate::models::AgentType) -> Option<Self> {
-        use crate::models::AgentType;
-        match agent {
-            AgentType::Claude => Some(LogFormat::Claude),
-            AgentType::Codex => Some(LogFormat::Codex),
-            AgentType::Custom { command, .. } => match command.as_str() {
-                "claude" => Some(LogFormat::Claude),
-                "codex" => Some(LogFormat::Codex),
-                _ => None,
-            },
+        if agent.is_terminal() {
+            return None;
+        }
+        // On the command, so a custom agent or a manager wrapping one of these
+        // reads back the same way the plain agent does.
+        match agent.command() {
+            "claude" => Some(LogFormat::Claude),
+            "codex" => Some(LogFormat::Codex),
             _ => None,
         }
     }

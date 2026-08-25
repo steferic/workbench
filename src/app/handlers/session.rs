@@ -189,6 +189,9 @@ pub fn handle_session_action(
                 state.ui.input_mode = InputMode::CreateSession;
             }
         }
+        Action::EnterCreateManagerMode => {
+            state.ui.input_mode = InputMode::CreateManager;
+        }
         Action::EnterSetStartCommandMode => {
             let session_info = state
                 .selected_session()

@@ -440,6 +440,18 @@ fn dispatch(
         }
         "projects.list" => with_snapshot(shared, |snapshot| Ok(to_value(&snapshot.projects))),
 
+        // Dispatching work is not a manager's to do — not yet, and not this
+        // way. A manager proposes; turning a proposal into work is a separate
+        // act the user takes. `from` is how a caller says who it is: the
+        // manager's brief tells it to send it, and this refuses the write when
+        // it names one. A guard against a manager overstepping its brief, not
+        // against one determined to lie about its identity — everything here
+        // runs on your machine because you started it.
+        "agent.prompt" | "agent.todo" if is_manager(params, shared) => Err((
+            "read_only",
+            "a manager proposes work with manager.propose; dispatching is the user's step".into(),
+        )),
+
         "agent.prompt" => queue(
             commands,
             RemoteCommand::Reply {
@@ -467,6 +479,19 @@ fn dispatch(
                 agent: text_param(params, "agent")?,
             },
         ),
+        // A manager's suggestion. Recorded against its project; nothing is
+        // queued and no agent is touched.
+        "manager.propose" => queue(
+            commands,
+            RemoteCommand::Propose {
+                manager: text_param(params, "manager")?,
+                objective: opt_param(params, "objective"),
+                agent: opt_param(params, "agent"),
+                instruction: text_param(params, "instruction")?,
+                rationale: opt_param(params, "rationale").unwrap_or_default(),
+            },
+        ),
+
         "agent.new" => queue(
             commands,
             RemoteCommand::NewAgent {
@@ -516,6 +541,25 @@ fn dispatch(
     }
 }
 
+/// Whether the caller identified itself as a manager.
+///
+/// False when it said nothing, which is the phone and every script: only a
+/// caller that names itself can be held to a manager's limits.
+fn is_manager(params: &Value, shared: &Shared) -> bool {
+    let Some(from) = params.get("from").and_then(Value::as_str) else {
+        return false;
+    };
+    shared
+        .lock()
+        .map(|snapshot| {
+            snapshot
+                .agents
+                .iter()
+                .any(|agent| agent.id.eq_ignore_ascii_case(from) && agent.manager)
+        })
+        .unwrap_or(false)
+}
+
 fn with_snapshot(shared: &Shared, read: impl FnOnce(&Snapshot) -> Answer) -> Answer {
     match shared.lock() {
         Ok(snapshot) => read(&snapshot),
@@ -530,6 +574,16 @@ fn queue(commands: &UnboundedSender<RemoteCommand>, command: RemoteCommand) -> A
         Ok(()) => Ok(json!({"accepted": true})),
         Err(_) => Err(("shutting_down", "workbench is going away".into())),
     }
+}
+
+/// An optional string parameter — absent and empty mean the same thing.
+fn opt_param(params: &Value, key: &str) -> Option<String> {
+    params
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 fn text_param(params: &Value, key: &'static str) -> std::result::Result<String, (&'static str, String)> {
@@ -580,7 +634,10 @@ fn schema() -> Value {
             {"name": "agent.focus", "params": ["agent"], "kind": "write"},
             {"name": "agent.new", "params": ["project", "provider"], "kind": "write"},
             {"name": "events.subscribe", "params": [], "kind": "stream"},
-            {"name": "hook", "params": ["workspace", "session", "event", "payload"], "kind": "write"}
+            {"name": "hook", "params": ["workspace", "session", "event", "payload"], "kind": "write"},
+            {"name": "manager.propose",
+             "params": ["manager", "instruction", "objective?", "agent?", "rationale?"],
+             "kind": "write"}
         ],
         "events": [
             "agent.added",
@@ -602,6 +659,7 @@ mod tests {
             projects: vec![ProjectView {
                 id: "p1".into(),
                 name: "workbench".into(),
+                objectives: Vec::new(),
                 servers: Vec::new(),
             }],
             agents,
@@ -616,6 +674,7 @@ mod tests {
             project: "workbench".into(),
             project_id: "p1".into(),
             provider: "Claude".into(),
+            manager: false,
             alias: None,
             model: Some("Opus 5".into()),
             status: status.into(),

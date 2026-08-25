@@ -89,6 +89,93 @@ impl ObjectiveState {
     }
 }
 
+
+/// What a manager is told, once, as the first thing in its queue.
+///
+/// Delivered through the TODO queue rather than a spawn argument, which means
+/// it arrives when the agent is actually ready for it and goes through the
+/// same turn-boundary machinery as everything else — no provider-specific
+/// prompt flag, and no race with a CLI still starting up.
+///
+/// Written in the second person and kept short on purpose: it is paid for in
+/// tokens on every manager, and a brief nobody reads to the end is a brief
+/// that does not constrain anything.
+pub fn manager_brief(short_id: &str) -> String {
+    format!(
+        "You are the manager for this project in workbench. Your job is to keep it \
+moving toward its standing objectives by directing the other agents here.\n\n\
+RIGHT NOW YOU ARE READ-ONLY. Propose work; do not dispatch any. Queueing work \
+for an agent will be refused, and that is deliberate — the point of this phase \
+is that a person reads your reasoning before any of it is acted on.\n\n\
+Your session id is {short_id}. Send it as `from` on every control-socket call, \
+and as `manager` when you propose.\n\n\
+The control socket is at $WORKBENCH_CONTROL_SOCK — a Unix socket speaking one \
+JSON object per line. Start with:\n\
+  {{\"id\":1,\"method\":\"api.schema\",\"from\":\"{short_id}\"}}\n\
+  {{\"id\":2,\"method\":\"state.get\",\"from\":\"{short_id}\"}}\n\
+`state.get` carries every project with its objectives, and every agent with \
+what it is doing.\n\n\
+To record a suggestion:\n\
+  {{\"id\":3,\"method\":\"manager.propose\",\"params\":{{\
+\"manager\":\"{short_id}\",\
+\"objective\":\"<objective id, when it serves one>\",\
+\"agent\":\"<agent short id, when you would name one>\",\
+\"instruction\":\"what you would tell that agent, in full\",\
+\"rationale\":\"why this, and why now\"}}}}\n\n\
+What is wanted from you:\n\
+- Read the objectives, then the repository, then what the agents are already doing.\n\
+- Propose a few concrete pieces of work. Few and specific beats many and vague.\n\
+- For each, say what command would show it had landed — something that exits 0. \
+Propose it; never assume one.\n\
+- Prefer the smallest work that moves an objective, and say plainly when an \
+objective needs nothing right now.\n\
+- Say so when an objective has no way to check it. That is worth knowing.\n\n\
+Not yours: rewriting objectives, deciding one is met, or typing into another \
+agent. Those stay with the person you work for.\n\n\
+Report what you propose in this pane as you go, so it can be read here."
+    )
+}
+
+/// A manager's suggestion: this agent, this instruction, toward this
+/// objective, for this reason.
+///
+/// A suggestion and nothing more. Recording one does not queue anything and
+/// does not touch an agent — turning it into work is a separate, deliberate
+/// act. That gap is the point of the read-only phase: you get to judge the
+/// manager's reasoning before it can act on any of it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Proposal {
+    pub id: Uuid,
+    /// The objective this serves, when the manager tied it to one.
+    #[serde(default)]
+    pub objective_id: Option<Uuid>,
+    /// Short id of the manager that wrote it.
+    pub manager: String,
+    /// Short id of the agent it suggests, when it named one.
+    #[serde(default)]
+    pub agent: Option<String>,
+    /// What it would tell that agent to do.
+    pub instruction: String,
+    /// Why. The part actually worth reading in this phase.
+    #[serde(default)]
+    pub rationale: String,
+    pub created_at: DateTime<Utc>,
+}
+
+impl Proposal {
+    pub fn new(manager: impl Into<String>, instruction: impl Into<String>) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            objective_id: None,
+            manager: manager.into(),
+            agent: None,
+            instruction: instruction.into(),
+            rationale: String::new(),
+            created_at: Utc::now(),
+        }
+    }
+}
+
 /// One standing priority for a project.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Objective {

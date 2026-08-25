@@ -64,8 +64,16 @@ impl Session {
         agent_type: AgentType,
         dangerously_skip_permissions: bool,
     ) -> Self {
+        let id = Uuid::new_v4();
+        // A manager starts with its brief already queued. Seeded here rather
+        // than at the call sites so no route into existence can produce a
+        // manager that was never told what it is.
+        let mut todo_queue = super::TodoQueue::default();
+        if agent_type.is_manager() {
+            todo_queue.add(super::manager_brief(&Self::short_id_of(id)));
+        }
         Self {
-            id: Uuid::new_v4(),
+            id,
             workspace_id,
             agent_type,
             dangerously_skip_permissions,
@@ -80,7 +88,7 @@ impl Session {
             alias: None,
             provider_session_id: None,
             journal_path: None,
-            todo_queue: super::TodoQueue::default(),
+            todo_queue,
         }
     }
 

@@ -54,6 +54,15 @@ pub enum RemoteCommand {
     NewAgent { project: String, provider: String },
     /// A device asking to be told when an agent needs you.
     Subscribe { endpoint: String },
+    /// A manager's suggestion. Recorded, never acted on: turning one into work
+    /// is a separate step the user takes.
+    Propose {
+        manager: String,
+        objective: Option<String>,
+        agent: Option<String>,
+        instruction: String,
+        rationale: String,
+    },
 }
 
 /// This machine's Tailscale address, if it is on a tailnet.

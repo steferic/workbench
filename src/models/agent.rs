@@ -87,6 +87,16 @@ pub enum AgentType {
         badge: String,
     },
     Terminal(String), // Named terminal with custom name
+    /// An agent given a manager's brief: it works toward the project's
+    /// standing objectives by directing the other agents, and is otherwise an
+    /// ordinary session running an ordinary CLI. Which CLI is your choice at
+    /// creation, exactly as for any agent, so a manager can be a different
+    /// provider from the agents it reviews.
+    Manager {
+        command: String,
+        display_name: String,
+        badge: String,
+    },
 }
 
 impl AgentType {
@@ -97,6 +107,7 @@ impl AgentType {
             AgentType::Codex => "codex",
             AgentType::Grok => "grok",
             AgentType::Custom { command, .. } => command.as_str(),
+            AgentType::Manager { command, .. } => command.as_str(),
             AgentType::Terminal(_) => {
                 // Use $SHELL or default to bash
                 std::env::var("SHELL")
@@ -114,6 +125,7 @@ impl AgentType {
             AgentType::Codex => "Codex".to_string(),
             AgentType::Grok => "Grok".to_string(),
             AgentType::Custom { display_name, .. } => display_name.clone(),
+            AgentType::Manager { display_name, .. } => display_name.clone(),
             AgentType::Terminal(name) => name.clone(),
         }
     }
@@ -125,6 +137,7 @@ impl AgentType {
             AgentType::Codex => "X".to_string(),
             AgentType::Grok => "K".to_string(),
             AgentType::Custom { badge, .. } => badge.clone(),
+            AgentType::Manager { badge, .. } => badge.clone(),
             AgentType::Terminal(_) => "T".to_string(),
         }
     }
@@ -137,20 +150,50 @@ impl AgentType {
         !self.is_terminal()
     }
 
+    pub fn is_manager(&self) -> bool {
+        matches!(self, AgentType::Manager { .. })
+    }
+
+    /// Whether a manager may hand this session work.
+    ///
+    /// Managers are excluded, which keeps the hierarchy one level deep: no
+    /// manager assigns to another, and none assigns to itself. Terminals are
+    /// excluded because they are shells, not agents.
+    pub fn is_directable(&self) -> bool {
+        self.is_agent() && !self.is_manager()
+    }
+
     pub fn is_codex_like(&self) -> bool {
         match self {
             AgentType::Codex => true,
-            AgentType::Custom { command, .. } => command == "codex",
+            AgentType::Custom { command, .. } | AgentType::Manager { command, .. } => {
+                command == "codex"
+            }
             _ => false,
         }
     }
 
-    pub fn is_redraw_style(&self) -> bool {
-        match self {
-            AgentType::Claude | AgentType::Codex => true,
-            AgentType::Custom { command, .. } => command == "claude" || command == "codex",
-            _ => false,
+    /// The same provider, as a manager. Used when creating one: you pick the
+    /// CLI the way you always do, and this wraps it.
+    pub fn as_manager(&self) -> Self {
+        self.as_manager_of(self.command())
+    }
+
+    /// Same, for an explicitly named command.
+    pub fn as_manager_of(&self, command: &str) -> Self {
+        AgentType::Manager {
+            command: command.to_string(),
+            display_name: format!("{} manager", crate::models::model_label(command)),
+            badge: "M".to_string(),
         }
+    }
+
+    pub fn is_redraw_style(&self) -> bool {
+        // Keyed off the command rather than the variant: a custom agent and a
+        // manager both run a real CLI, and whichever one they run decides how
+        // its output has to be parsed. Matching variants meant every new
+        // wrapper silently defaulted to the wrong parser.
+        !self.is_terminal() && matches!(self.command(), "claude" | "codex")
     }
 }
 
@@ -207,5 +250,45 @@ mod model_label_tests {
         // And nothing it cannot make sense of is lost.
         assert_eq!(model_label("mystery"), "Mystery");
         assert_eq!(model_label(""), "");
+    }
+}
+
+#[cfg(test)]
+mod manager_tests {
+    use super::AgentType;
+
+    fn manager(command: &str) -> AgentType {
+        AgentType::Claude.as_manager_of(command)
+    }
+
+    /// A manager is an ordinary CLI wearing a brief. Everything downstream —
+    /// which parser its output needs, which journal format to read, whether
+    /// hooks apply — has to key off the command it actually runs, or a manager
+    /// running Claude gets treated as though it were something else entirely.
+    #[test]
+    fn a_manager_is_handled_as_whatever_it_runs() {
+        let claude = manager("claude");
+        assert!(claude.is_redraw_style(), "Claude repaints, manager or not");
+        assert_eq!(claude.command(), "claude");
+        assert!(claude.is_agent());
+
+        let codex = manager("codex");
+        assert!(codex.is_codex_like());
+        assert!(codex.is_redraw_style());
+
+        // Something that streams rather than repaints must not be forced into
+        // the redraw path just because it is a manager.
+        assert!(!manager("gemini").is_redraw_style());
+    }
+
+    /// The hierarchy stays one level deep: a manager directs agents, never
+    /// another manager and never itself.
+    #[test]
+    fn managers_are_not_directable() {
+        assert!(AgentType::Claude.is_directable());
+        assert!(!manager("claude").is_directable());
+        assert!(!AgentType::Terminal("shell".into()).is_directable());
+        assert!(manager("claude").is_manager());
+        assert!(!AgentType::Claude.is_manager());
     }
 }

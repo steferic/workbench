@@ -237,7 +237,7 @@ pub fn process_action(
                 Action::CreateSession(_, _, _) | Action::CreateSessionIn(_, _, _, _) | Action::CreateTerminal |
                 Action::ActivateSession(_) | Action::RestartSession(_) | Action::StopSession(_) |
                 Action::KillSession(_) | Action::InitiateDeleteSession(_, _) |
-                Action::ConfirmDeleteSession | Action::CancelPendingDelete | Action::EnterCreateSessionMode |
+                Action::ConfirmDeleteSession | Action::CancelPendingDelete | Action::EnterCreateSessionMode | Action::EnterCreateManagerMode |
                 Action::EnterSetStartCommandMode | Action::SetStartCommand(_, _) | Action::PinSession(_) |
                 Action::UnpinSession(_) | Action::UnpinFocusedSession | Action::ToggleSplitView |
                 Action::SessionExited(_, _) | Action::PtyOutput(_, _) | Action::SendInput(_, _) |
@@ -706,6 +706,55 @@ fn health_tick(state: &mut AppState) {
     ));
 }
 
+/// Record a manager's suggestion against the project it belongs to.
+///
+/// Recorded and nothing else. No queue is touched and no agent is told
+/// anything — that step is the user's, and keeping it separate is what makes
+/// a manager's reasoning reviewable before it can act on any of it.
+fn apply_proposal(
+    state: &mut AppState,
+    manager: String,
+    objective: Option<String>,
+    agent: Option<String>,
+    instruction: String,
+    rationale: String,
+) {
+    let instruction = instruction.trim().to_string();
+    if instruction.is_empty() {
+        return;
+    }
+    // A manager only ever proposes within its own project, which is the one
+    // its session lives in — not whichever happens to be selected.
+    let Some(session_id) = crate::remote::session_for(state, &manager) else {
+        crate::logger::warn(format!("proposal from unknown manager {manager}"));
+        return;
+    };
+    let Some(workspace_id) = state.workspace_id_for_session(session_id) else {
+        return;
+    };
+    let objective_id = objective.and_then(|id| uuid::Uuid::parse_str(&id).ok());
+    let Some(workspace) = state
+        .data
+        .workspaces
+        .iter_mut()
+        .find(|ws| ws.id == workspace_id)
+    else {
+        return;
+    };
+    // An id for an objective that is not there would render as an orphan, so
+    // it is dropped rather than kept: the proposal still stands on its own.
+    let objective_id = objective_id.filter(|id| workspace.objectives.iter().any(|o| o.id == *id));
+
+    let mut proposal = crate::models::Proposal::new(manager.clone(), instruction);
+    proposal.objective_id = objective_id;
+    proposal.agent = agent.filter(|a| !a.trim().is_empty());
+    proposal.rationale = rationale.trim().to_string();
+    workspace.proposals.push(proposal);
+
+    crate::logger::info(format!("manager {manager} proposed work"));
+    super::handlers::save_state(state, "failed to save a proposal");
+}
+
 /// How often to look for dev servers. Two `lsof` calls, so not every tick —
 /// and a dev server you have just started is worth waiting a moment for.
 const PORT_SCAN_EVERY: Duration = Duration::from_secs(5);
@@ -951,6 +1000,18 @@ fn apply_remote(
         return;
     }
 
+    if let RemoteCommand::Propose {
+        manager,
+        objective,
+        agent,
+        instruction,
+        rationale,
+    } = command
+    {
+        apply_proposal(state, manager, objective, agent, instruction, rationale);
+        return;
+    }
+
     let agent = match &command {
         RemoteCommand::Todo { agent, .. }
         | RemoteCommand::Reply { agent, .. }
@@ -958,6 +1019,8 @@ fn apply_remote(
         | RemoteCommand::Focus { agent } => agent.clone(),
         // Handled above.
         RemoteCommand::NewAgent { .. } | RemoteCommand::Subscribe { .. } => return,
+        // Applied above; it names a project, not an agent.
+        RemoteCommand::Propose { .. } => return,
     };
     let Some(session_id) = crate::remote::session_for(state, &agent) else {
         crate::logger::warn(format!("phone asked for unknown agent {agent}"));
@@ -965,6 +1028,8 @@ fn apply_remote(
     };
 
     match command {
+        // Applied before the agent lookup above; unreachable here.
+        RemoteCommand::Propose { .. } => {}
         RemoteCommand::Todo { text, .. } => {
             if let Some(session) = state.get_session_mut(session_id) {
                 session.todo_queue.add(text.clone());

@@ -185,7 +185,7 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
         InputMode::EnterWorkspaceName => {
             workspace_name_dialog::render(frame, state);
         }
-        InputMode::CreateSession => {
+        InputMode::CreateSession | InputMode::CreateManager => {
             create_session_dialog::render(frame, state);
         }
         InputMode::SetStartCommand => {
