@@ -103,6 +103,7 @@ impl UtilitySection {
 
 /// What the text being composed will do to the queue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // reachable again if the queue regains a view
 pub enum TaskEdit {
     /// Append a new item.
     Add,
@@ -113,31 +114,20 @@ pub enum TaskEdit {
 /// Tab selection for the manager pane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TasksTab {
-    /// This project's managers. The pane opens here because a manager is the
-    /// thing the pane is named for; the queue is downstream of what one
-    /// suggests and you approve.
+    /// This project's managers.
     #[default]
     Managers,
-    /// The project's standing priorities (see `models::objective`) — what the
-    /// managers work toward.
+    /// What they are working toward (see `models::objective`).
     Objectives,
-    /// The work queued for whichever agent the Sessions cursor is on.
-    Queue,
-    /// Reports from parallel task agents.
-    Reports,
 }
 
 impl TasksTab {
-    /// Tab cycles rather than toggles now that there are several.
-    ///
-    /// The order is the order you read them in: who is working, what they are
-    /// working toward, what that turned into, and how it went.
+    /// Two tabs, so this is a toggle again: who is working, and what toward.
+    /// Everything else about a manager's work you get by talking to it.
     pub fn toggle(&self) -> Self {
         match self {
             TasksTab::Managers => TasksTab::Objectives,
-            TasksTab::Objectives => TasksTab::Queue,
-            TasksTab::Queue => TasksTab::Reports,
-            TasksTab::Reports => TasksTab::Managers,
+            TasksTab::Objectives => TasksTab::Managers,
         }
     }
 }

@@ -27,7 +27,6 @@ pub use action::{
     Action, ParallelMergePlan, ParallelWorktreeSpec, UtilityContentPayload, WorktreeMergeOutcome,
 };
 pub use runtime::run_tui;
-pub use tasks_view::TaskRow;
 pub use state::{
     AppState, ConfigTab, Divider, FocusPanel, InputMode, PendingDelete,
     PendingSessionStart, RawOutputBuffer, ReplayCache, SystemState, TextSelection,

@@ -180,11 +180,45 @@ impl AgentType {
     }
 
     /// Same, for an explicitly named command.
+    ///
+    /// The label comes from the agent's own name, not from `model_label` —
+    /// that one is for model ids like `claude-opus-5`, where it drops the
+    /// vendor prefix on purpose. Handed the bare command "claude" it dropped
+    /// the whole word, and the roster read "claude manager" next to "Codex
+    /// manager".
     pub fn as_manager_of(&self, command: &str) -> Self {
+        let name = if self.command() == command {
+            self.display_name()
+        } else {
+            AgentType::from_command(command).display_name()
+        };
         AgentType::Manager {
             command: command.to_string(),
-            display_name: format!("{} manager", crate::models::model_label(command)),
+            display_name: format!("{name} manager"),
             badge: "M".to_string(),
+        }
+    }
+
+    /// The agent that runs this command, for the few places that only have the
+    /// command string to go on.
+    fn from_command(command: &str) -> Self {
+        match command {
+            "claude" => AgentType::Claude,
+            "gemini" => AgentType::Gemini,
+            "codex" => AgentType::Codex,
+            "grok" => AgentType::Grok,
+            other => {
+                let mut chars = other.chars();
+                let display_name = match chars.next() {
+                    Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                    None => other.to_string(),
+                };
+                AgentType::Custom {
+                    command: other.to_string(),
+                    display_name,
+                    badge: "?".to_string(),
+                }
+            }
         }
     }
 
@@ -265,6 +299,13 @@ mod manager_tests {
     /// which parser its output needs, which journal format to read, whether
     /// hooks apply — has to key off the command it actually runs, or a manager
     /// running Claude gets treated as though it were something else entirely.
+    #[test]
+    fn a_manager_is_named_after_the_agent_it_runs() {
+        assert_eq!(manager("claude").display_name(), "Claude manager");
+        assert_eq!(manager("codex").display_name(), "Codex manager");
+        assert_eq!(manager("opencode").display_name(), "Opencode manager");
+    }
+
     #[test]
     fn a_manager_is_handled_as_whatever_it_runs() {
         let claude = manager("claude");

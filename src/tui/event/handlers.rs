@@ -1,4 +1,4 @@
-use crate::app::{Action, AppState, FocusPanel, PendingDelete, TaskEdit, TasksTab};
+use crate::app::{Action, AppState, FocusPanel, PendingDelete, TasksTab};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::key_modes::handle_input_mode_key;
@@ -257,48 +257,31 @@ impl EventHandler {
             return action;
         }
 
-        let reports = state.ui.selected_tasks_tab == TasksTab::Reports;
-        let objectives = state.ui.selected_tasks_tab == TasksTab::Objectives;
         let managers = state.ui.selected_tasks_tab == TasksTab::Managers;
 
+        // A manager is started exactly the way an agent is: the provider
+        // number, with the same Shift and Alt meanings. One key, no dialog —
+        // the only difference from Sessions is what the session is for.
+        if managers {
+            if let Some((agent_type, skip_permissions, with_worktree)) =
+                agent_shortcut(&key, &state.system.user_config.agents)
+            {
+                return Action::CreateSession(
+                    agent_type.as_manager(),
+                    skip_permissions,
+                    with_worktree,
+                );
+            }
+        }
+
         match key.code {
-            KeyCode::Char('j') | KeyCode::Down => {
-                if reports {
-                    Action::SelectNextReport
-                } else {
-                    Action::SelectNextTask
-                }
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                if reports {
-                    Action::SelectPrevReport
-                } else {
-                    Action::SelectPrevTask
-                }
-            }
+            KeyCode::Char('j') | KeyCode::Down => Action::SelectNextTask,
+            KeyCode::Char('k') | KeyCode::Up => Action::SelectPrevTask,
             KeyCode::Char('l') => Action::FocusRight,
             KeyCode::Tab => Action::ToggleTasksTab,
 
-            // -- Reports tab (parallel task attempts) --
-            KeyCode::Char('v') | KeyCode::Enter if reports => Action::ViewReport,
-            KeyCode::Char('m') if reports => Action::MergeSelectedReport,
-            KeyCode::Char('d') if reports => {
-                if let Some(task_id) = state
-                    .selected_workspace()
-                    .and_then(|ws| ws.active_parallel_task())
-                    .map(|t| t.id)
-                {
-                    Action::CancelParallelTask(task_id)
-                } else {
-                    Action::Tick
-                }
-            }
-
-            // -- Managers tab (this project's managers) --
-            // n is "add one of whatever this list holds", same as on the two
-            // lists below; here that means picking a provider, exactly as
-            // creating an agent in Sessions does.
-            KeyCode::Char('n') if managers => Action::EnterCreateManagerMode,
+            // -- Managers tab --
+            KeyCode::Enter if managers => Action::FocusSelectedTaskAgent,
             KeyCode::Char('d') if managers => {
                 match crate::app::managers_view::selected(state) {
                     Some(row) => Action::InitiateDeleteSession(row.session_id, row.name),
@@ -307,28 +290,16 @@ impl EventHandler {
             }
 
             // -- Objectives tab (the project's standing priorities) --
-            // Ahead of the TODO arms below: n/e/d/J/K mean the same verbs on
-            // whichever list is showing, and the tab decides which that is.
-            KeyCode::Char('n') if objectives => Action::EditObjective(false),
-            KeyCode::Char('e') if objectives => Action::EditObjective(true),
-            KeyCode::Char('d') if objectives => Action::DeleteObjective,
-            KeyCode::Char(' ') if objectives => Action::CycleObjectiveState,
-            KeyCode::Char('K') if objectives => Action::MoveObjective(-1),
-            KeyCode::Char('J') if objectives => Action::MoveObjective(1),
+            KeyCode::Char('n') => Action::EditObjective(false),
+            KeyCode::Char('e') => Action::EditObjective(true),
+            KeyCode::Char('d') => Action::DeleteObjective,
+            KeyCode::Char(' ') => Action::CycleObjectiveState,
+            KeyCode::Char('K') => Action::MoveObjective(-1),
+            KeyCode::Char('J') => Action::MoveObjective(1),
             // On a proposal row: turn it into work, or say no. Approving is
             // the only way a manager's suggestion reaches an agent.
-            KeyCode::Char('a') if objectives => Action::ApproveProposal,
-            KeyCode::Char('x') if objectives => Action::DeclineProposal,
-
-            // -- TODO tab (the queue this agent works through) --
-            KeyCode::Enter => Action::FocusSelectedTaskAgent,
-            KeyCode::Char('n') => Action::EnterTaskEditMode(TaskEdit::Add),
-            KeyCode::Char('e') => Action::EnterTaskEditMode(TaskEdit::Rewrite),
-            KeyCode::Char('d') => Action::DeleteSelectedTodo,
-            KeyCode::Char('p') => Action::ToggleTodoQueuePaused,
-            KeyCode::Char('c') => Action::ClearCompletedTodos,
-            KeyCode::Char('J') => Action::MoveSelectedTodo(1),
-            KeyCode::Char('K') => Action::MoveSelectedTodo(-1),
+            KeyCode::Char('a') => Action::ApproveProposal,
+            KeyCode::Char('x') => Action::DeclineProposal,
 
             KeyCode::Char('h') => Action::EnterConfigWindow,
             KeyCode::Char('?') => Action::EnterConfigWindow,

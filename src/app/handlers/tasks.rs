@@ -63,17 +63,9 @@ pub fn handle_task_action(
                 }
                 return Ok(());
             }
-            if state.ui.selected_tasks_tab == crate::app::TasksTab::Objectives {
-                let count = objectives_view::rows(state).len();
-                if count > 0 {
-                    state.ui.selected_objective =
-                        (state.ui.selected_objective + 1).min(count - 1);
-                }
-                return Ok(());
-            }
-            let count = tasks_view::rows(state).len();
+            let count = objectives_view::rows(state).len();
             if count > 0 {
-                state.ui.selected_task_row = (state.ui.selected_task_row + 1).min(count - 1);
+                state.ui.selected_objective = (state.ui.selected_objective + 1).min(count - 1);
             }
         }
         Action::SelectPrevTask => {
@@ -81,11 +73,7 @@ pub fn handle_task_action(
                 state.ui.selected_manager = state.ui.selected_manager.saturating_sub(1);
                 return Ok(());
             }
-            if state.ui.selected_tasks_tab == crate::app::TasksTab::Objectives {
-                state.ui.selected_objective = state.ui.selected_objective.saturating_sub(1);
-                return Ok(());
-            }
-            state.ui.selected_task_row = state.ui.selected_task_row.saturating_sub(1);
+            state.ui.selected_objective = state.ui.selected_objective.saturating_sub(1);
         }
         Action::ToggleTasksTab => {
             state.ui.selected_tasks_tab = state.ui.selected_tasks_tab.toggle();
@@ -664,7 +652,7 @@ fn focus_objective_row(state: &mut AppState, id: uuid::Uuid) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::TaskRow;
+    use crate::app::tasks_view::TaskRow;
     use crate::models::{AgentType, Session, Workspace};
     use tokio::sync::mpsc;
 

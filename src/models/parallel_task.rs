@@ -158,6 +158,7 @@ impl ParallelTaskAttempt {
     }
 
     /// Get a preview of the report (first 100 chars)
+    #[allow(dead_code)] // the Reports tab was its only reader
     pub fn report_preview(&self) -> Option<String> {
         self.report_content.as_ref().map(|content| {
             let preview: String = content.chars().take(100).collect();
@@ -183,6 +184,7 @@ pub enum AttemptStatus {
 
 impl AttemptStatus {
     /// Get a display string
+    #[allow(dead_code)] // the Reports tab was its only reader
     pub fn display(&self) -> &'static str {
         match self {
             Self::Running => "Running",

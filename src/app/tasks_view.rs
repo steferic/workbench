@@ -84,6 +84,7 @@ pub fn todo_at(state: &AppState, session_id: Uuid, todo: Uuid) -> Option<&Queued
         .find(|item| item.id == todo)
 }
 
+#[allow(dead_code)] // no viewer since the Queue tab went; the queue still runs
 pub fn task_at(state: &AppState, session_id: Uuid, batch: usize, task: usize) -> Option<&AgentTask> {
     state
         .system
