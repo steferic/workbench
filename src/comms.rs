@@ -17,6 +17,7 @@
 //! inverse. Self-identity travels via the `WORKBENCH_SESSION` /
 //! `WORKBENCH_WORKSPACE` env vars injected at PTY spawn.
 
+use crate::resolve::{Candidate, Scope};
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -139,80 +140,154 @@ pub fn find_workspace_for_cwd(cwd: &Path) -> Result<String> {
     })
 }
 
-// ---------------------------------------------------------------------------
-// Target resolution
-// ---------------------------------------------------------------------------
-
-/// Resolve a target query against the roster. Rules, in order:
-/// exact short id → exact alias → provider name (only if exactly one running
-/// match). Ambiguity or no match is an error whose message includes the
-/// candidates, so a calling agent can pick deliberately. `self_id` (if known)
-/// is excluded from provider matching and rejected as an explicit target.
-pub fn resolve_target<'a>(
-    roster: &'a Roster,
-    query: &str,
-    self_id: Option<&str>,
-) -> Result<&'a RosterAgent, String> {
-    let q = query.to_lowercase();
-    let live: Vec<&RosterAgent> = roster
-        .agents
-        .iter()
-        .filter(|a| a.status != "stopped")
-        .collect();
-
-    if let Some(agent) = live.iter().find(|a| a.id.to_lowercase() == q) {
-        if Some(agent.id.as_str()) == self_id {
-            return Err("target is yourself".to_string());
+/// Mark as stopped every agent in a roster whose workspace is not open.
+///
+/// A roster is only refreshed while the TUI holds its workspace open, so one
+/// left by a workspace since removed — or by a previous run with a different
+/// set open — goes on claiming its agents are idle forever. That was
+/// invisible while each agent read only its own workspace's roster; reading
+/// all of them turns it into a directory of peers that cannot be reached.
+///
+/// Retiring rather than deleting, because the directory beside the roster
+/// holds exported transcripts a peer may still want to read, and because a
+/// workspace reopened later just has its roster rewritten from live state.
+///
+/// Takes its root as an argument purely so it can be tested against a
+/// temporary one. Returns the number of rosters changed.
+pub fn retire_closed_rosters(root: &Path, open: &std::collections::HashSet<String>) -> usize {
+    let Ok(entries) = fs::read_dir(root) else {
+        return 0;
+    };
+    let mut retired = 0;
+    for entry in entries.flatten() {
+        let workspace_id = entry.file_name().to_string_lossy().to_string();
+        if open.contains(&workspace_id) {
+            continue;
         }
-        return Ok(agent);
-    }
-
-    if let Some(agent) = live
-        .iter()
-        .find(|a| a.alias.as_deref().map(str::to_lowercase) == Some(q.clone()))
-    {
-        if Some(agent.id.as_str()) == self_id {
-            return Err("target is yourself".to_string());
+        let path = entry.path().join("agents.json");
+        let Ok(bytes) = fs::read(&path) else {
+            continue;
+        };
+        let Ok(mut roster) = serde_json::from_slice::<Roster>(&bytes) else {
+            continue;
+        };
+        if roster.agents.iter().all(|agent| agent.status == "stopped") {
+            continue;
         }
-        return Ok(agent);
+        for agent in &mut roster.agents {
+            agent.status = "stopped".to_string();
+        }
+        let Ok(json) = serde_json::to_string_pretty(&roster) else {
+            continue;
+        };
+        if let Err(err) = write_atomic(&path, json.as_bytes()) {
+            crate::logger::warn(format!("failed to retire roster: {err}"));
+            continue;
+        }
+        retired += 1;
     }
+    retired
+}
 
-    let by_provider: Vec<&&RosterAgent> = live
-        .iter()
-        .filter(|a| a.provider.to_lowercase() == q && Some(a.id.as_str()) != self_id)
-        .collect();
+// ---------------------------------------------------------------------------
+// The directory: every agent on this machine
+// ---------------------------------------------------------------------------
 
-    match by_provider.len() {
-        1 => Ok(by_provider[0]),
-        0 => Err(format!(
-            "no agent matches '{query}'. Running agents:\n{}",
-            describe_agents(&live)
-        )),
-        _ => Err(format!(
-            "'{query}' is ambiguous — address by id or alias:\n{}",
-            describe_agents(&by_provider.iter().map(|a| **a).collect::<Vec<_>>())
-        )),
+/// One agent plus the workspace it belongs to.
+///
+/// The roster is per-workspace because that is how it is written, but an
+/// address is not: a short id is 8 hex chars of a uuid and means one session
+/// anywhere on the machine. Flattening the rosters is what lets a peer in
+/// another project be addressed at all.
+#[derive(Debug, Clone)]
+pub struct DirectoryEntry {
+    pub workspace_id: String,
+    pub workspace_name: String,
+    pub agent: RosterAgent,
+}
+
+impl DirectoryEntry {
+    fn candidate(&self) -> Candidate<'_> {
+        Candidate {
+            id: &self.agent.id,
+            alias: self.agent.alias.as_deref(),
+            provider: &self.agent.provider,
+            project_id: &self.workspace_id,
+            project: &self.workspace_name,
+        }
     }
 }
 
-pub fn describe_agents(agents: &[&RosterAgent]) -> String {
-    agents
-        .iter()
-        .map(|a| {
-            format!(
-                "  {}  {}{}  [{}]  {}",
-                a.id,
-                a.provider,
-                a.alias
-                    .as_deref()
-                    .map(|al| format!(" ({al})"))
-                    .unwrap_or_default(),
-                a.branch,
-                a.status,
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+#[derive(Debug, Clone, Default)]
+pub struct Directory {
+    pub entries: Vec<DirectoryEntry>,
+}
+
+impl Directory {
+    /// Read every workspace roster under the comms root.
+    ///
+    /// An unreadable or half-written roster is skipped rather than fatal. One
+    /// stale directory left by a workspace nobody has opened in months must
+    /// not make every other agent on the machine unaddressable.
+    pub fn load() -> Result<Self> {
+        let root = comms_root()?;
+        let mut entries = Vec::new();
+        let dir = fs::read_dir(&root)
+            .with_context(|| format!("no comms data at {}", root.display()))?;
+        for workspace in dir.flatten() {
+            let workspace_id = workspace.file_name().to_string_lossy().to_string();
+            let Ok(roster) = load_roster(&workspace_id) else {
+                continue;
+            };
+            for agent in roster.agents {
+                entries.push(DirectoryEntry {
+                    workspace_id: roster.workspace_id.clone(),
+                    workspace_name: roster.workspace_name.clone(),
+                    agent,
+                });
+            }
+        }
+        // Sorted so every listing and every error message that names
+        // candidates comes out in the same order; `read_dir` gives none.
+        entries.sort_by(|a, b| {
+            a.workspace_name
+                .cmp(&b.workspace_name)
+                .then_with(|| a.agent.id.cmp(&b.agent.id))
+        });
+        Ok(Self { entries })
+    }
+
+    /// Live agents anywhere else, grouped by project (entries are already
+    /// sorted, so equal project names are adjacent).
+    pub fn outside<'a>(&'a self, workspace_id: &str) -> Vec<&'a DirectoryEntry> {
+        self.entries
+            .iter()
+            .filter(|entry| entry.workspace_id != workspace_id && entry.agent.status != "stopped")
+            .collect()
+    }
+
+    /// Resolve an address to one agent, anywhere on the machine.
+    ///
+    /// Stopped sessions are dropped before the ladder runs: their roster row
+    /// is a tombstone, and there is no PTY left to type into. `Reach` is
+    /// deliberately the strict one — a bare name means "in my project", and
+    /// only a full id or an alias reaches out of it, because everything that
+    /// resolves through here goes on to spend a peer's model turn.
+    pub fn resolve(&self, target: &str, scope: &Scope) -> Result<&DirectoryEntry, String> {
+        let live: Vec<&DirectoryEntry> = self
+            .entries
+            .iter()
+            .filter(|entry| entry.agent.status != "stopped")
+            .collect();
+        let candidates: Vec<Candidate> = live.iter().map(|entry| entry.candidate()).collect();
+        let index = crate::resolve::pick(
+            &candidates,
+            target,
+            scope,
+            crate::resolve::Reach::ExplicitAcrossProjects,
+        )?;
+        Ok(live[index])
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -223,10 +298,18 @@ pub fn describe_agents(agents: &[&RosterAgent]) -> String {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum InboxMessage {
     /// A consult: deliver `message` to session `to` when idle; capture reply.
+    ///
+    /// The message is written to the ASKER's inbox, never the target's, so the
+    /// reply lands in the workspace the waiting CLI is already polling. That
+    /// makes `to_workspace` the only record of where the consult is bound, and
+    /// it defaults to the asker's own for messages written before consults
+    /// could cross a project at all.
     Ask {
         ticket: String,
         from: String,
         to: String,
+        #[serde(default)]
+        to_workspace: Option<String>,
         message: String,
         created_at: String,
     },
@@ -313,7 +396,7 @@ You are running inside the workbench TUI, possibly alongside other coding
 agents (Claude, Codex, ...). Your session id is in `$WORKBENCH_SESSION`.
 The `workbench` CLI lets you discover and communicate with peers:
 
-- `workbench agents` — list agent sessions here (id, provider, alias, branch, idle/busy)
+- `workbench agents` — list agent sessions here (id, provider, alias, branch, idle/busy); `--all` also lists agents in other projects
 - `workbench transcript <id|alias> --lines 200` — read a peer's recent conversation (exported each time it goes idle)
 - `workbench ask <id|alias> "question" --wait` — deliver a question to a live peer and collect its answer (or collect later: `workbench replies <ticket> --wait`)
 - `workbench handoff <id|alias> --wait` — ask a peer for a structured summary of its work (done/remaining/decisions/gotchas) before taking over or building on it
@@ -324,6 +407,23 @@ Address peers by id or alias. A provider name like `codex` also works when
 only one such agent runs in this project — and you are never a match for
 your own provider, so `codex` from a codex agent means the other one. What
 is still ambiguous is refused with the candidates named, never guessed at.
+
+### Reaching an agent in another project
+
+Every agent on this machine is addressable, not just the ones in this
+project — `workbench agents --all` lists them, and any verb above accepts
+one. But only a full id or an alias crosses a project boundary: a bare name
+like `codex` always means this project's codex, so that a habit formed here
+cannot silently reach into an unrelated repo. Asking for a name this
+project does not have names the outside candidates and their ids rather
+than guessing at one.
+
+Weigh a cross-project consult harder than a local one. The peer is working
+in a different repo and cannot see yours, so ask about what it knows — a
+decision it made, an interface it owns, a convention in its codebase — and
+put the context it needs INTO the question rather than assuming shared
+ground. It is told which project you are asking from, and will tell you
+when the question needs a repo it cannot see.
 
 A consult costs the peer a full model turn — consult when the user asks you
 to or you are genuinely blocked, not by default.
@@ -499,16 +599,6 @@ mod tests {
         }
     }
 
-    fn roster(agents: Vec<RosterAgent>) -> Roster {
-        Roster {
-            workspace_id: "ws".into(),
-            workspace_name: "w".into(),
-            workspace_path: "/tmp/w".into(),
-            updated_at: "now".into(),
-            agents,
-        }
-    }
-
     fn git_init(dir: &Path) {
         for args in [
             vec!["init", "-q"],
@@ -614,48 +704,108 @@ mod tests {
         assert!(!out.contains("stale"), "the fenced section is replaced");
     }
 
-    #[test]
-    fn resolves_by_short_id_alias_and_unique_provider() {
-        let r = roster(vec![
-            agent("ab12cd34", "claude", None, "idle"),
-            agent("ef56ab78", "codex", Some("parser"), "busy"),
-        ]);
-
-        assert_eq!(resolve_target(&r, "ef56ab78", None).unwrap().id, "ef56ab78");
-        assert_eq!(resolve_target(&r, "parser", None).unwrap().id, "ef56ab78");
-        assert_eq!(resolve_target(&r, "codex", None).unwrap().id, "ef56ab78");
-        assert_eq!(resolve_target(&r, "Claude", None).unwrap().id, "ab12cd34");
+    fn entry(id: &str, provider: &str, workspace: &str, status: &str) -> DirectoryEntry {
+        DirectoryEntry {
+            workspace_id: format!("{workspace}-id"),
+            workspace_name: workspace.into(),
+            agent: agent(id, provider, None, status),
+        }
     }
 
-    #[test]
-    fn ambiguous_provider_errors_with_candidates() {
-        let r = roster(vec![
-            agent("aaaa1111", "codex", None, "idle"),
-            agent("bbbb2222", "codex", Some("reviewer"), "busy"),
-        ]);
-        let err = resolve_target(&r, "codex", None).unwrap_err();
-        assert!(err.contains("ambiguous"));
-        assert!(err.contains("aaaa1111") && err.contains("bbbb2222"));
-        // Alias still resolves despite provider ambiguity.
-        assert_eq!(resolve_target(&r, "reviewer", None).unwrap().id, "bbbb2222");
+    fn scope(workspace: &str) -> Scope {
+        Scope {
+            project_id: Some(format!("{workspace}-id")),
+            exclude: None,
+        }
     }
 
+    /// The point of the directory: an id addresses a session anywhere on the
+    /// machine, not just one in the caller's own project.
     #[test]
-    fn provider_match_excludes_self_and_stopped() {
-        let r = roster(vec![
-            agent("aaaa1111", "claude", None, "idle"),
-            agent("bbbb2222", "claude", None, "busy"),
-            agent("cccc3333", "codex", None, "stopped"),
-        ]);
-        // With self excluded, "claude" becomes unambiguous.
-        assert_eq!(
-            resolve_target(&r, "claude", Some("aaaa1111")).unwrap().id,
-            "bbbb2222"
-        );
-        // Stopped agents never match.
-        assert!(resolve_target(&r, "codex", None).is_err());
-        // Explicitly addressing yourself is rejected.
-        assert!(resolve_target(&r, "aaaa1111", Some("aaaa1111")).is_err());
+    fn the_directory_resolves_across_workspaces_by_id() {
+        let directory = Directory {
+            entries: vec![
+                entry("ab12cd34", "claude", "workbench", "idle"),
+                entry("ef56ab78", "codex", "canvas", "idle"),
+            ],
+        };
+
+        let found = directory.resolve("ef56ab78", &scope("workbench")).unwrap();
+        assert_eq!(found.agent.id, "ef56ab78");
+        assert_eq!(found.workspace_name, "canvas");
+
+        // A bare provider name still means "mine", and says where the other is.
+        let err = directory.resolve("codex", &scope("workbench")).unwrap_err();
+        assert!(err.contains("ef56ab78") && err.contains("canvas"), "{err}");
+    }
+
+    /// A stopped session has no PTY to type into; its roster row is a
+    /// tombstone and must not be addressable, here or in another project.
+    #[test]
+    fn a_stopped_session_is_not_addressable() {
+        let directory = Directory {
+            entries: vec![
+                entry("ab12cd34", "claude", "workbench", "stopped"),
+                entry("ef56ab78", "codex", "canvas", "stopped"),
+            ],
+        };
+        assert!(directory.resolve("ab12cd34", &scope("workbench")).is_err());
+        assert!(directory.resolve("ef56ab78", &scope("workbench")).is_err());
+        assert!(directory.outside("workbench-id").is_empty());
+    }
+
+    /// A consult written before consults could cross a project still parses:
+    /// it simply names no target workspace, and the TUI falls back to the
+    /// asker's own.
+    #[test]
+    fn an_ask_without_a_target_workspace_still_parses() {
+        let raw = r#"{"kind":"ask","ticket":"c1","from":"aaaa1111","to":"bbbb2222",
+                      "message":"hi","created_at":"now"}"#;
+        let msg: InboxMessage = serde_json::from_str(raw).unwrap();
+        match msg {
+            InboxMessage::Ask { to_workspace, to, .. } => {
+                assert_eq!(to, "bbbb2222");
+                assert!(to_workspace.is_none());
+            }
+            _ => panic!("expected an ask"),
+        }
+    }
+
+    /// Rosters outlive the workspaces that wrote them, and a stale one claims
+    /// its agents are idle forever. Only the open ones survive a retirement.
+    #[test]
+    fn retiring_stops_the_agents_of_closed_workspaces() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        for (ws, status) in [("open-ws", "idle"), ("closed-ws", "idle")] {
+            fs::create_dir_all(root.join(ws)).unwrap();
+            let roster = Roster {
+                workspace_id: ws.into(),
+                workspace_name: ws.into(),
+                workspace_path: format!("/tmp/{ws}"),
+                updated_at: "now".into(),
+                agents: vec![agent("aaaa1111", "claude", None, status)],
+            };
+            fs::write(
+                root.join(ws).join("agents.json"),
+                serde_json::to_string(&roster).unwrap(),
+            )
+            .unwrap();
+        }
+        // A directory with no roster at all must not trip it up.
+        fs::create_dir_all(root.join("no-roster")).unwrap();
+
+        let open: std::collections::HashSet<String> = ["open-ws".to_string()].into_iter().collect();
+        assert_eq!(retire_closed_rosters(root, &open), 1);
+
+        let read = |ws: &str| -> Roster {
+            serde_json::from_slice(&fs::read(root.join(ws).join("agents.json")).unwrap()).unwrap()
+        };
+        assert_eq!(read("open-ws").agents[0].status, "idle", "an open workspace is left alone");
+        assert_eq!(read("closed-ws").agents[0].status, "stopped");
+
+        // Idempotent: a second pass finds nothing left to change.
+        assert_eq!(retire_closed_rosters(root, &open), 0);
     }
 
     #[test]

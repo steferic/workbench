@@ -16,6 +16,7 @@ mod ports;
 mod prompt_log;
 mod pty;
 mod remote;
+mod resolve;
 mod theme;
 mod tui;
 
@@ -57,10 +58,15 @@ enum Commands {
     /// List all workspaces
     List,
     /// List agent sessions in this workspace (agent-to-agent comms)
-    Agents,
+    Agents {
+        /// Also list agents running in other projects on this machine
+        #[arg(long)]
+        all: bool,
+    },
     /// Print a peer agent's recent conversation transcript
     Transcript {
-        /// Target agent: short id, alias, or provider name (if unique)
+        /// Target agent: short id, alias, or provider name (if unique). A
+        /// bare name means this project; a full id reaches any project.
         target: String,
         /// How many trailing lines to print
         #[arg(long, default_value_t = 200)]
@@ -71,7 +77,8 @@ enum Commands {
     },
     /// Queue a question for a live peer agent; prints a ticket
     Ask {
-        /// Target agent: short id, alias, or provider name (if unique)
+        /// Target agent: short id, alias, or provider name (if unique). A
+        /// bare name means this project; a full id reaches any project.
         target: String,
         /// The question to deliver
         message: String,
@@ -84,7 +91,8 @@ enum Commands {
     },
     /// Ask a peer for a structured handoff summary of its work
     Handoff {
-        /// Target agent: short id, alias, or provider name (if unique)
+        /// Target agent: short id, alias, or provider name (if unique). A
+        /// bare name means this project; a full id reaches any project.
         target: String,
         /// Block until the handoff arrives (or timeout)
         #[arg(long)]
@@ -176,7 +184,7 @@ fn main() -> Result<()> {
         Some(Commands::List) => {
             println!("Workspaces: (in-memory only, no persistence)");
         }
-        Some(Commands::Agents) => cli::cmd_agents()?,
+        Some(Commands::Agents { all }) => cli::cmd_agents(all)?,
         Some(Commands::Transcript { target, lines, all }) => {
             cli::cmd_transcript(target, lines, all)?
         }

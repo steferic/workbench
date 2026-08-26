@@ -26,7 +26,14 @@ const CONSULT_TTL: Duration = Duration::from_secs(15 * 60);
 #[derive(Debug)]
 pub struct PendingConsult {
     pub ticket: String,
-    pub workspace_id: Uuid,
+    /// The ASKER's workspace — where the reply is written, and the only one
+    /// the waiting CLI polls. Not necessarily the target's: a consult may
+    /// cross a project boundary, and the answer still has to come home.
+    pub origin_workspace: Uuid,
+    /// The asker's project name, when the target is in a different one.
+    /// Present means the framing has to say so; the target cannot see the
+    /// asker's repo and would otherwise answer as if it could.
+    pub origin_project: Option<String>,
     pub from_short: String,
     pub to_session: Uuid,
     pub to_short: String,
@@ -57,6 +64,8 @@ pub struct CommsState {
     pub pending: Vec<PendingConsult>,
     /// Workspaces whose instruction files were ensured this run.
     pub instructions_done: HashSet<Uuid>,
+    /// Whether the rosters of closed workspaces have been retired this run.
+    pub retired_closed: bool,
 }
 
 impl CommsState {
@@ -67,6 +76,7 @@ impl CommsState {
             roster_cache: std::collections::HashMap::new(),
             pending: Vec::new(),
             instructions_done: HashSet::new(),
+            retired_closed: false,
         }
     }
 }
@@ -145,11 +155,45 @@ fn export_transcript(state: &AppState, session_id: Uuid) {
     });
 }
 
+/// Retire the rosters of workspaces this workbench does not have open, so the
+/// machine-wide directory stops offering peers that cannot be reached. The
+/// work itself is `comms::retire_closed_rosters`; this decides when.
+///
+/// Once per run: the common case is "workbench restarted with other projects
+/// open", and re-reading every orphan directory on the roster tick would be
+/// steady IO for a condition that only changes at startup.
+fn retire_closed_workspaces(state: &mut AppState) {
+    if state.system.comms.retired_closed || state.data.workspaces.is_empty() {
+        return;
+    }
+    state.system.comms.retired_closed = true;
+
+    let open: HashSet<String> = state
+        .data
+        .workspaces
+        .iter()
+        .map(|w| w.id.to_string())
+        .collect();
+
+    tokio::task::spawn_blocking(move || {
+        let Ok(root) = comms::comms_root() else {
+            return;
+        };
+        let retired = comms::retire_closed_rosters(&root, &open);
+        if retired > 0 {
+            crate::logger::info(format!(
+                "retired {retired} roster(s) from workspaces that are not open"
+            ));
+        }
+    });
+}
+
 fn refresh_rosters(state: &mut AppState) {
     if state.system.comms.last_roster_refresh.elapsed() < ROSTER_REFRESH_INTERVAL {
         return;
     }
     state.system.comms.last_roster_refresh = Instant::now();
+    retire_closed_workspaces(state);
 
     let workspaces: Vec<(Uuid, String, std::path::PathBuf)> = state
         .data
@@ -275,9 +319,10 @@ fn poll_inbox(state: &mut AppState) {
                     ticket,
                     from,
                     to,
+                    to_workspace,
                     message,
                     ..
-                }) => ingest_ask(state, ws_id, ticket, from, to, message),
+                }) => ingest_ask(state, ws_id, ticket, from, to, to_workspace, message),
                 Some(InboxMessage::Alias { ticket, from, alias }) => {
                     ingest_alias(state, ws_id, ticket, from, alias)
                 }
@@ -301,6 +346,40 @@ fn find_session_by_short(state: &AppState, ws_id: Uuid, short: &str) -> Option<U
     })
 }
 
+/// The same lookup, unscoped. A short id is 8 hex chars of a uuid, so it
+/// names one session on the machine regardless of which project it sits in —
+/// which is what makes a consult across projects addressable at all.
+///
+/// `hint` is the workspace the asker resolved against; it is tried first so
+/// that a consult lands where the asker meant even in the vanishing case of
+/// two workspaces holding the same short id.
+fn find_session_anywhere(
+    state: &AppState,
+    hint: Option<Uuid>,
+    short: &str,
+) -> Option<(Uuid, Uuid)> {
+    if let Some(ws) = hint {
+        if let Some(session) = find_session_by_short(state, ws, short) {
+            return Some((ws, session));
+        }
+    }
+    state.data.sessions.iter().find_map(|(ws, sessions)| {
+        sessions
+            .iter()
+            .find(|s| s.short_id().eq_ignore_ascii_case(short))
+            .map(|s| (*ws, s.id))
+    })
+}
+
+fn workspace_name(state: &AppState, ws_id: Uuid) -> Option<String> {
+    state
+        .data
+        .workspaces
+        .iter()
+        .find(|w| w.id == ws_id)
+        .map(|w| w.name.clone())
+}
+
 fn refuse(state: &AppState, ws_id: Uuid, ticket: &str, from: &str, to: &str, q: &str, reason: String) {
     let reply = Reply {
         ticket: ticket.to_string(),
@@ -319,14 +398,27 @@ fn refuse(state: &AppState, ws_id: Uuid, ticket: &str, from: &str, to: &str, q: 
 
 fn ingest_ask(
     state: &mut AppState,
-    ws_id: Uuid,
+    origin_ws: Uuid,
     ticket: String,
     from: String,
     to: String,
+    to_workspace: Option<String>,
     message: String,
 ) {
-    let Some(target) = find_session_by_short(state, ws_id, &to) else {
-        refuse(state, ws_id, &ticket, &from, &to, &message, format!("no session {to} in this workspace"));
+    let hint = to_workspace
+        .as_deref()
+        .and_then(|ws| Uuid::parse_str(ws).ok())
+        .or(Some(origin_ws));
+    let Some((target_ws, target)) = find_session_anywhere(state, hint, &to) else {
+        refuse(
+            state,
+            origin_ws,
+            &ticket,
+            &from,
+            &to,
+            &message,
+            format!("no session {to} on this machine"),
+        );
         return;
     };
     let (running, consultable) = state
@@ -339,24 +431,30 @@ fn ingest_ask(
         })
         .unwrap_or((false, false));
     if !running {
-        refuse(state, ws_id, &ticket, &from, &to, &message, format!("session {to} is not running"));
+        refuse(state, origin_ws, &ticket, &from, &to, &message, format!("session {to} is not running"));
         return;
     }
     if !consultable {
         refuse(
-            state, ws_id, &ticket, &from, &to, &message,
+            state, origin_ws, &ticket, &from, &to, &message,
             format!("session {to} does not support consults (no transcript); read its terminal or files instead"),
         );
         return;
     }
+    // Both guards below key on the short id ALONE, never on a workspace. A
+    // short id already names one session on the machine, and now that a
+    // consult can cross a project, a per-workspace key would let one agent
+    // hold an outstanding consult in every project at once and would miss a
+    // deadlock whose two halves sit in different ones.
+    //
     // Cycle guard: refuse if the target is itself waiting on a consult it
     // sent to the asker (A→B while B→A would deadlock on idle-gating).
     let cycle = state.system.comms.pending.iter().any(|p| {
-        p.workspace_id == ws_id && p.from_short.eq_ignore_ascii_case(&to) && p.to_short.eq_ignore_ascii_case(&from)
+        p.from_short.eq_ignore_ascii_case(&to) && p.to_short.eq_ignore_ascii_case(&from)
     });
     if cycle {
         refuse(
-            state, ws_id, &ticket, &from, &to, &message,
+            state, origin_ws, &ticket, &from, &to, &message,
             format!("consult cycle: {to} is already waiting on a consult to {from}; answer it first"),
         );
         return;
@@ -367,23 +465,34 @@ fn ingest_ask(
         .comms
         .pending
         .iter()
-        .any(|p| p.workspace_id == ws_id && p.from_short.eq_ignore_ascii_case(&from))
+        .any(|p| p.from_short.eq_ignore_ascii_case(&from))
     {
         refuse(
-            state, ws_id, &ticket, &from, &to, &message,
+            state, origin_ws, &ticket, &from, &to, &message,
             "you already have an outstanding consult; collect its reply first".to_string(),
         );
         return;
     }
 
+    // Only named when the consult actually crosses a boundary — a local
+    // consult carries no project line, exactly as before.
+    let origin_project = (target_ws != origin_ws)
+        .then(|| workspace_name(state, origin_ws))
+        .flatten();
+    let crossing = origin_project
+        .as_deref()
+        .map(|name| format!(" (from {name})"))
+        .unwrap_or_default();
+
     toast(
         state,
-        format!("Consult {ticket}: {from} → {to} queued"),
+        format!("Consult {ticket}: {from} → {to} queued{crossing}"),
         ToastLevel::Info,
     );
     state.system.comms.pending.push(PendingConsult {
         ticket,
-        workspace_id: ws_id,
+        origin_workspace: origin_ws,
+        origin_project,
         from_short: from,
         to_session: target,
         to_short: to,
@@ -477,10 +586,20 @@ fn deliver_pending(
                 .get(&p.to_session)
                 .map(|t| t.len())
                 .unwrap_or(0);
-            let framed = format!(
-                "[workbench consult {} from agent {}] {}\n(Reply normally — your full response will be relayed back to {} when you finish. Do not use `workbench ask` to answer this.)",
-                p.ticket, p.from_short, p.question, p.from_short
-            );
+            // A consult from another project has to say so. The asker's repo
+            // is not on screen and never will be, so an unmarked question
+            // reads as being about the code the target is looking at — and
+            // the answer comes back confidently about the wrong codebase.
+            let framed = match p.origin_project.as_deref() {
+                None => format!(
+                    "[workbench consult {} from agent {}] {}\n(Reply normally — your full response will be relayed back to {} when you finish. Do not use `workbench ask` to answer this.)",
+                    p.ticket, p.from_short, p.question, p.from_short
+                ),
+                Some(project) => format!(
+                    "[workbench consult {} from agent {}, working in a DIFFERENT project: {}] {}\n(That agent cannot see your repo and you cannot see theirs — answer from what you know here, and say plainly if the question needs context you do not have rather than guessing at it. Reply normally; your full response will be relayed back to {} when you finish. Do not use `workbench ask` to answer this.)",
+                    p.ticket, p.from_short, project, p.question, p.from_short
+                ),
+            };
             (
                 p.to_session,
                 base,
@@ -570,7 +689,7 @@ fn capture_replies(state: &mut AppState, newly_idle: &[Uuid]) {
             reply: Some(reply_text),
             reason: None,
         };
-        let ws = p.workspace_id.to_string();
+        let ws = p.origin_workspace.to_string();
         tokio::task::spawn_blocking(move || {
             if let Err(err) = comms::write_reply(&ws, &reply) {
                 crate::logger::warn(format!("failed to write consult reply: {err}"));
@@ -608,7 +727,7 @@ fn expire_stale(state: &mut AppState) {
             reply: None,
             reason: Some("consult expired before the target went idle".into()),
         };
-        if let Err(err) = comms::write_reply(&p.workspace_id.to_string(), &reply) {
+        if let Err(err) = comms::write_reply(&p.origin_workspace.to_string(), &reply) {
             crate::logger::warn(format!("failed to write timeout reply: {err}"));
         }
     }

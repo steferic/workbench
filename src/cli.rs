@@ -2,7 +2,8 @@
 //! comms. These are pure file readers/writers against the comms directory —
 //! the running TUI does the live work (see `app::comms_tick`).
 
-use crate::comms::{self, InboxMessage, Reply};
+use crate::comms::{self, Directory, InboxMessage, Reply};
+use crate::resolve::Scope;
 use anyhow::{anyhow, bail, Result};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -29,8 +30,20 @@ fn caller_ctx() -> Result<CallerCtx> {
     })
 }
 
-pub fn cmd_agents() -> Result<()> {
+impl CallerCtx {
+    /// Where a bare name is looked up first. The caller's own project, and
+    /// never the caller itself.
+    fn scope(&self) -> Scope {
+        Scope {
+            project_id: Some(self.workspace_id.clone()),
+            exclude: self.session.clone(),
+        }
+    }
+}
+
+pub fn cmd_agents(all: bool) -> Result<()> {
     let ctx = caller_ctx()?;
+    let directory = Directory::load()?;
     let roster = comms::load_roster(&ctx.workspace_id)?;
     println!(
         "workspace: {} ({})  updated: {}",
@@ -38,7 +51,6 @@ pub fn cmd_agents() -> Result<()> {
     );
     if roster.agents.is_empty() {
         println!("no agent sessions");
-        return Ok(());
     }
     for a in &roster.agents {
         let you = if Some(&a.id) == ctx.session.as_ref() {
@@ -57,17 +69,82 @@ pub fn cmd_agents() -> Result<()> {
             a.id, a.provider, alias, you, a.branch, a.status, consult, a.cwd
         );
     }
+
+    // Agents elsewhere are summarised rather than listed by default. This
+    // output is read by a model on every turn it collaborates, and most turns
+    // are about the project it is sitting in; a machine-wide dump would bury
+    // the three peers that matter under twenty that do not.
+    let elsewhere = directory.outside(&ctx.workspace_id);
+    if !elsewhere.is_empty() {
+        println!();
+        if all {
+            println!("in other projects:");
+            let mut current = "";
+            for entry in &elsewhere {
+                if entry.workspace_name != current {
+                    current = &entry.workspace_name;
+                    println!("  {current}");
+                }
+                let alias = entry
+                    .agent
+                    .alias
+                    .as_deref()
+                    .map(|al| format!("  alias:{al}"))
+                    .unwrap_or_default();
+                let consult = if entry.agent.supports_consult {
+                    ""
+                } else {
+                    "  [no-consult]"
+                };
+                println!(
+                    "    {}  {:<8}{}  {}{}",
+                    entry.agent.id, entry.agent.provider, alias, entry.agent.status, consult
+                );
+            }
+        } else {
+            // Named, not enumerated. A machine running a dozen projects would
+            // otherwise spend a paragraph here on peers this turn is not about.
+            let mut projects: Vec<&str> = elsewhere
+                .iter()
+                .map(|entry| entry.workspace_name.as_str())
+                .collect();
+            projects.dedup();
+            const NAMED: usize = 4;
+            let shown = projects.len().min(NAMED);
+            let more = match projects.len() - shown {
+                0 => String::new(),
+                rest => format!(" and {rest} more"),
+            };
+            println!(
+                "{} agent(s) in {} ({}{}) — workbench agents --all to list them",
+                elsewhere.len(),
+                if projects.len() == 1 {
+                    "another project".to_string()
+                } else {
+                    format!("{} other projects", projects.len())
+                },
+                projects[..shown].join(", "),
+                more
+            );
+        }
+    }
+
     println!("\naddress a peer by id or alias (provider name works when unique):");
     println!("  workbench transcript <id> --lines 200");
     println!("  workbench ask <id> \"question\"");
+    if !elsewhere.is_empty() {
+        println!("a peer in another project needs its full id — a bare name means this project");
+    }
     Ok(())
 }
 
 pub fn cmd_transcript(target: String, lines: usize, all: bool) -> Result<()> {
     let ctx = caller_ctx()?;
-    let roster = comms::load_roster(&ctx.workspace_id)?;
-    let agent = comms::resolve_target(&roster, &target, ctx.session.as_deref())
+    let directory = Directory::load()?;
+    let entry = directory
+        .resolve(&target, &ctx.scope())
         .map_err(|e| anyhow!(e))?;
+    let agent = &entry.agent;
     let Some(path) = agent.transcript.as_ref().map(PathBuf::from) else {
         bail!(
             "{} ({}) has no transcript — it is not a transcript-capable agent",
@@ -114,9 +191,11 @@ pub fn cmd_ask(target: String, message: String, wait: bool, timeout_secs: u64) -
             comms::ENV_SESSION
         );
     };
-    let roster = comms::load_roster(&ctx.workspace_id)?;
-    let agent =
-        comms::resolve_target(&roster, &target, Some(from.as_str())).map_err(|e| anyhow!(e))?;
+    let directory = Directory::load()?;
+    let entry = directory
+        .resolve(&target, &ctx.scope())
+        .map_err(|e| anyhow!(e))?;
+    let agent = &entry.agent;
     if !agent.supports_consult {
         bail!(
             "{} ({}) does not support consults; read its files or transcript instead",
@@ -133,12 +212,22 @@ pub fn cmd_ask(target: String, message: String, wait: bool, timeout_secs: u64) -
         ticket: ticket.clone(),
         from,
         to: agent.id.clone(),
+        to_workspace: Some(entry.workspace_id.clone()),
         message,
         created_at: chrono::Utc::now().to_rfc3339(),
     };
+    // Written to the ASKER's inbox even when the target is elsewhere: the
+    // reply is written back beside it, which is the directory this process is
+    // about to poll. Routing by the message's own `to_workspace` keeps the
+    // waiting side ignorant of where the answer comes from.
     comms::write_inbox(&ctx.workspace_id, &msg)?;
+    let elsewhere = if entry.workspace_id == ctx.workspace_id {
+        String::new()
+    } else {
+        format!(" in project {}", entry.workspace_name)
+    };
     println!(
-        "queued consult {ticket} for {} ({}) — delivered when it is idle",
+        "queued consult {ticket} for {} ({}){elsewhere} — delivered when it is idle",
         agent.id, agent.provider
     );
     if wait {
