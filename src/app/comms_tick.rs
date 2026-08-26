@@ -188,6 +188,63 @@ fn retire_closed_workspaces(state: &mut AppState) {
     });
 }
 
+/// What one workspace's `agents.json` says right now.
+///
+/// Split out from the tick so it can be tested without touching the disk: the
+/// interesting part is the status word, and it used to be derived here from
+/// the idle queue rather than shared with the rest of workbench.
+fn build_roster(
+    state: &AppState,
+    ws_id: Uuid,
+    ws_name: &str,
+    ws_path: &std::path::Path,
+) -> Roster {
+    let mut agents: Vec<RosterAgent> = Vec::new();
+    if let Some(sessions) = state.data.sessions.get(&ws_id) {
+        for s in sessions {
+            if !s.agent_type.is_agent() {
+                continue;
+            }
+            let provider = s.agent_type.display_name().to_lowercase();
+            // The same derivation the phone and the control socket use, so a
+            // peer reading the roster learns that an agent is stopped on a
+            // permission prompt rather than merely busy — the difference
+            // between "wait for it" and "nobody is coming".
+            let (status, _) = crate::remote::agent_state(state, s);
+            let cwd = s
+                .worktree_path
+                .clone()
+                .unwrap_or_else(|| ws_path.to_path_buf())
+                .to_string_lossy()
+                .to_string();
+            let transcript = comms::transcript_path(&ws_id.to_string(), &provider, &s.short_id())
+                .ok()
+                .filter(|p| p.exists() || s.agent_type.is_redraw_style())
+                .map(|p| p.to_string_lossy().to_string());
+            agents.push(RosterAgent {
+                id: s.short_id(),
+                provider,
+                alias: s.alias.clone(),
+                branch: s
+                    .worktree_branch
+                    .clone()
+                    .unwrap_or_else(|| "workspace".to_string()),
+                cwd,
+                status: status.to_string(),
+                transcript,
+                supports_consult: s.agent_type.is_redraw_style(),
+            });
+        }
+    }
+    Roster {
+        workspace_id: ws_id.to_string(),
+        workspace_name: ws_name.to_string(),
+        workspace_path: ws_path.to_string_lossy().to_string(),
+        updated_at: chrono::Utc::now().to_rfc3339(),
+        agents,
+    }
+}
+
 fn refresh_rosters(state: &mut AppState) {
     if state.system.comms.last_roster_refresh.elapsed() < ROSTER_REFRESH_INTERVAL {
         return;
@@ -203,56 +260,7 @@ fn refresh_rosters(state: &mut AppState) {
         .collect();
 
     for (ws_id, ws_name, ws_path) in workspaces {
-        let mut agents: Vec<RosterAgent> = Vec::new();
-        if let Some(sessions) = state.data.sessions.get(&ws_id) {
-            for s in sessions {
-                if !s.agent_type.is_agent() {
-                    continue;
-                }
-                let provider = s.agent_type.display_name().to_lowercase();
-                let status = match s.status {
-                    SessionStatus::Running => {
-                        if state.data.idle_queue.contains(&s.id) {
-                            "idle"
-                        } else {
-                            "busy"
-                        }
-                    }
-                    _ => "stopped",
-                };
-                let cwd = s
-                    .worktree_path
-                    .clone()
-                    .unwrap_or_else(|| ws_path.clone())
-                    .to_string_lossy()
-                    .to_string();
-                let transcript = comms::transcript_path(&ws_id.to_string(), &provider, &s.short_id())
-                    .ok()
-                    .filter(|p| p.exists() || s.agent_type.is_redraw_style())
-                    .map(|p| p.to_string_lossy().to_string());
-                agents.push(RosterAgent {
-                    id: s.short_id(),
-                    provider,
-                    alias: s.alias.clone(),
-                    branch: s
-                        .worktree_branch
-                        .clone()
-                        .unwrap_or_else(|| "workspace".to_string()),
-                    cwd,
-                    status: status.to_string(),
-                    transcript,
-                    supports_consult: s.agent_type.is_redraw_style(),
-                });
-            }
-        }
-
-        let roster = Roster {
-            workspace_id: ws_id.to_string(),
-            workspace_name: ws_name,
-            workspace_path: ws_path.to_string_lossy().to_string(),
-            updated_at: chrono::Utc::now().to_rfc3339(),
-            agents,
-        };
+        let roster = build_roster(state, ws_id, &ws_name, &ws_path);
         // Compare everything except the timestamp so unchanged rosters skip IO.
         let fingerprint = serde_json::to_string(&roster.agents).unwrap_or_default();
         if state.system.comms.roster_cache.get(&ws_id) == Some(&fingerprint) {
@@ -730,5 +738,102 @@ fn expire_stale(state: &mut AppState) {
         if let Err(err) = comms::write_reply(&p.origin_workspace.to_string(), &reply) {
             crate::logger::warn(format!("failed to write timeout reply: {err}"));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent_status::{Activity, AgentStatus, Attention};
+    use crate::models::{AgentType, Session, Workspace};
+
+    /// The roster used to know only busy-or-not, so an agent stopped on a
+    /// permission prompt advertised itself to peers as merely busy —
+    /// indistinguishable from one that would finish on its own. It now reports
+    /// the same four words as the phone and the control socket.
+    #[test]
+    fn the_roster_reports_blocked_working_and_idle() {
+        let mut state = AppState::default();
+        let workspace = Workspace::new("zeta".into(), std::path::PathBuf::from("/tmp/z"));
+        let ws_id = workspace.id;
+        let working = Session::new(ws_id, AgentType::Claude, false);
+        let blocked = Session::new(ws_id, AgentType::Codex, false);
+        let quiet = Session::new(ws_id, AgentType::Claude, false);
+        let (working_id, blocked_id, quiet_id) = (working.id, blocked.id, quiet.id);
+        state.data.workspaces.push(workspace);
+        state
+            .data
+            .sessions
+            .insert(ws_id, vec![working, blocked, quiet]);
+
+        let report = |activity: Activity, event: &str| AgentStatus {
+            activity,
+            reason: "because".into(),
+            at: chrono::Utc::now(),
+            event: event.into(),
+            transcript: None,
+            model: None,
+        };
+        state
+            .system
+            .agent_status
+            .insert(working_id, report(Activity::Working, "PreToolUse"));
+        state.system.agent_status.insert(
+            blocked_id,
+            report(
+                Activity::NeedsAttention(Attention::Permission),
+                "PermissionRequest",
+            ),
+        );
+
+        let roster = build_roster(&state, ws_id, "zeta", std::path::Path::new("/tmp/z"));
+        let status_of = |id: uuid::Uuid| {
+            let short = crate::models::Session::short_id_of(id);
+            roster
+                .agents
+                .iter()
+                .find(|a| a.id == short)
+                .unwrap_or_else(|| panic!("{short} missing from the roster"))
+                .status
+                .clone()
+        };
+
+        assert_eq!(status_of(blocked_id), "blocked", "a peer waiting on a human says so");
+        assert_eq!(status_of(working_id), "working");
+        // No report at all and no output: nothing to do, and reachable.
+        assert_eq!(status_of(quiet_id), "idle");
+    }
+
+    /// Whatever the roster says, only `stopped` makes an agent unaddressable —
+    /// a blocked peer can still be consulted, the consult simply waits.
+    #[test]
+    fn a_blocked_agent_is_still_addressable() {
+        let entry = |status: &str| comms::DirectoryEntry {
+            workspace_id: "ws".into(),
+            workspace_name: "zeta".into(),
+            agent: comms::RosterAgent {
+                id: "aaaa1111".into(),
+                provider: "claude".into(),
+                alias: None,
+                branch: "main".into(),
+                cwd: "/tmp/z".into(),
+                status: status.into(),
+                transcript: None,
+                supports_consult: true,
+            },
+        };
+        let scope = crate::resolve::Scope {
+            project_id: Some("ws".into()),
+            exclude: None,
+        };
+        let directory = comms::Directory {
+            entries: vec![entry("blocked")],
+        };
+        assert!(directory.resolve("aaaa1111", &scope).is_ok());
+
+        let stopped = comms::Directory {
+            entries: vec![entry("stopped")],
+        };
+        assert!(stopped.resolve("aaaa1111", &scope).is_err());
     }
 }

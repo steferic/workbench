@@ -36,7 +36,7 @@ use uuid::Uuid;
 use crate::agent_status::Activity;
 use crate::agent_tasks::Source;
 use crate::app::{tasks_view, todo_dispatch, AppState};
-use crate::models::{SessionStatus, TodoState};
+use crate::models::{Session, SessionStatus, TodoState};
 
 /// How far back the open conversation goes. Enough to scroll through the
 /// morning; not so much that the snapshot stops being phone-sized.
@@ -390,18 +390,7 @@ fn publish_with(state: &AppState, shared: &Shared, open: Option<(Vec<Message>, u
             if !session.agent_type.is_agent() || session.worktree_viewer_for.is_some() {
                 continue;
             }
-            let live = session.status == SessionStatus::Running;
-            // A question on screen outranks the hook: hooks also fire for
-            // plain idleness, and a prompt we can read is proof.
-            let question = live.then(|| screen_prompt(state, session.id)).flatten();
-            let activity = state.activity(session.id);
-            let status = match (session.status, activity) {
-                _ if question.is_some() => "blocked",
-                (SessionStatus::Running, Activity::NeedsAttention(_)) => "blocked",
-                (SessionStatus::Running, Activity::Working) => "working",
-                (SessionStatus::Running, _) => "idle",
-                _ => "stopped",
-            };
+            let (status, question) = agent_state(state, session);
 
             let queue = &session.todo_queue;
             let running = queue.running().map(|item| item.text.clone());
@@ -523,6 +512,30 @@ pub fn session_for(state: &AppState, short_id: &str) -> Option<Uuid> {
 /// thing that made the old buttons feel broken.
 pub fn prompt_on_screen(state: &AppState, session_id: Uuid) -> Option<Prompt> {
     screen_prompt(state, session_id)
+}
+
+/// The one word an agent's state reduces to, plus the question that decided
+/// it — deciding the first requires finding the second, and both callers want
+/// both.
+///
+/// Shared so the phone, the control socket and a peer reading the roster
+/// cannot disagree about whether an agent needs a human. They did: the roster
+/// used to derive its own status from the idle queue, which knows only
+/// busy-or-not, so an agent stopped on a permission prompt advertised itself
+/// to peers as merely busy — as something that would finish on its own.
+pub fn agent_state(state: &AppState, session: &Session) -> (&'static str, Option<Prompt>) {
+    let live = session.status == SessionStatus::Running;
+    // A question on screen outranks the hook: hooks also fire for plain
+    // idleness, and a prompt we can read is proof.
+    let question = live.then(|| screen_prompt(state, session.id)).flatten();
+    let status = match (session.status, state.activity(session.id)) {
+        _ if question.is_some() => "blocked",
+        (SessionStatus::Running, Activity::NeedsAttention(_)) => "blocked",
+        (SessionStatus::Running, Activity::Working) => "working",
+        (SessionStatus::Running, _) => "idle",
+        _ => "stopped",
+    };
+    (status, question)
 }
 
 fn screen_prompt(state: &AppState, session_id: Uuid) -> Option<Prompt> {

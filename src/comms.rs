@@ -73,7 +73,9 @@ pub struct RosterAgent {
     pub branch: String,
     /// Directory the agent runs in (worktree path or workspace path).
     pub cwd: String,
-    /// "idle" | "busy" | "stopped"
+    /// "idle" | "working" | "blocked" | "stopped". The same four words the
+    /// control socket and the phone use; `blocked` means it is stopped on a
+    /// question and will not move until a human answers it.
     pub status: String,
     /// Absolute path of the exported transcript, if this agent has one.
     #[serde(default)]
@@ -396,7 +398,7 @@ You are running inside the workbench TUI, possibly alongside other coding
 agents (Claude, Codex, ...). Your session id is in `$WORKBENCH_SESSION`.
 The `workbench` CLI lets you discover and communicate with peers:
 
-- `workbench agents` — list agent sessions here (id, provider, alias, branch, idle/busy); `--all` also lists agents in other projects
+- `workbench agents` — list agent sessions here (id, provider, alias, branch, state); `--all` also lists agents in other projects
 - `workbench transcript <id|alias> --lines 200` — read a peer's recent conversation (exported each time it goes idle)
 - `workbench ask <id|alias> "question" --wait` — deliver a question to a live peer and collect its answer (or collect later: `workbench replies <ticket> --wait`)
 - `workbench handoff <id|alias> --wait` — ask a peer for a structured summary of its work (done/remaining/decisions/gotchas) before taking over or building on it
@@ -424,6 +426,12 @@ decision it made, an interface it owns, a convention in its codebase — and
 put the context it needs INTO the question rather than assuming shared
 ground. It is told which project you are asking from, and will tell you
 when the question needs a repo it cannot see.
+
+An agent is listed as `idle`, `working`, `blocked` or `stopped`. `blocked`
+is the one worth reading carefully: that peer is stopped on a question and
+will not move until a human answers it. Do not `workbench wait` on it
+expecting it to finish, and do not queue a consult behind it — say so to
+your user instead, since they are the only one who can unblock it.
 
 A consult costs the peer a full model turn — consult when the user asks you
 to or you are genuinely blocked, not by default.
