@@ -247,6 +247,8 @@ pub struct UIState {
     pub objective_edit: Option<(Uuid, Option<Uuid>)>,
     /// Cursor within the Objectives tab.
     pub selected_objective: usize,
+    /// Cursor in the Managers tab.
+    pub selected_manager: usize,
 
     // Debug overlay (F11)
     pub show_debug_overlay: bool,
@@ -305,6 +307,7 @@ impl UIState {
             parallel_task: ParallelTaskModalState::default(),
             objective_edit: None,
             selected_objective: 0,
+            selected_manager: 0,
             show_debug_overlay: false,
             config: ConfigWindowState::default(),
             palette: CommandPaletteState::default(),

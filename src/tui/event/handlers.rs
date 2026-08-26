@@ -259,6 +259,7 @@ impl EventHandler {
 
         let reports = state.ui.selected_tasks_tab == TasksTab::Reports;
         let objectives = state.ui.selected_tasks_tab == TasksTab::Objectives;
+        let managers = state.ui.selected_tasks_tab == TasksTab::Managers;
 
         match key.code {
             KeyCode::Char('j') | KeyCode::Down => {
@@ -290,6 +291,18 @@ impl EventHandler {
                     Action::CancelParallelTask(task_id)
                 } else {
                     Action::Tick
+                }
+            }
+
+            // -- Managers tab (this project's managers) --
+            // n is "add one of whatever this list holds", same as on the two
+            // lists below; here that means picking a provider, exactly as
+            // creating an agent in Sessions does.
+            KeyCode::Char('n') if managers => Action::EnterCreateManagerMode,
+            KeyCode::Char('d') if managers => {
+                match crate::app::managers_view::selected(state) {
+                    Some(row) => Action::InitiateDeleteSession(row.session_id, row.name),
+                    None => Action::Tick,
                 }
             }
 

@@ -27,19 +27,8 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     };
 
     let rows = tasks_view::rows(state);
-    let (left, total) = queue_counts(state);
 
-    let mut title_spans = vec![Span::raw(" TODO ")];
-    if total > 0 {
-        title_spans.push(Span::styled(
-            format!("({left} left) "),
-            if left > 0 {
-                Style::default().fg(t.active)
-            } else {
-                Style::default().fg(t.fg_faint)
-            },
-        ));
-    }
+    let mut title_spans = vec![Span::raw(" MANAGER ")];
     // Why nothing is moving, when nothing is moving — a queue that silently
     // sits there is indistinguishable from a broken one.
     if let Some(reason) = holding_reason(state) {
@@ -70,6 +59,11 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
 
     render_tab_bar(frame, tab_area, state, is_focused);
     render_action_bar(frame, action_area, state, is_focused);
+
+    if state.ui.selected_tasks_tab == TasksTab::Managers {
+        render_managers_tab(frame, list_area, state, is_focused);
+        return;
+    }
 
     if state.ui.selected_tasks_tab == TasksTab::Reports {
         render_reports_tab(frame, list_area, state, is_focused);
@@ -157,22 +151,182 @@ fn render_tab_bar(frame: &mut Frame, area: Rect, state: &AppState, is_focused: b
         .selected_workspace()
         .map(|ws| ws.objectives.len())
         .unwrap_or(0);
-    let (tasks_style, objectives_style, reports_style) = match state.ui.selected_tasks_tab {
-        TasksTab::Tasks => (active, dim, dim),
-        TasksTab::Objectives => (dim, active, dim),
-        TasksTab::Reports => (dim, dim, active),
+    let manager_count = crate::app::managers_view::rows(state).len();
+    let (left, total) = queue_counts(state);
+    let (managers_style, objectives_style, queue_style, reports_style) =
+        match state.ui.selected_tasks_tab {
+            TasksTab::Managers => (active, dim, dim, dim),
+            TasksTab::Objectives => (dim, active, dim, dim),
+            TasksTab::Queue => (dim, dim, active, dim),
+            TasksTab::Reports => (dim, dim, dim, active),
+        };
+
+    // The queue count rides on the Queue tab rather than the pane title: the
+    // pane is no longer only the queue, and a bare "(2 left)" up there would
+    // be counting something you cannot see from three of the four tabs.
+    let queue_count = if total > 0 {
+        format!("({left} left) ")
+    } else {
+        String::new()
     };
 
-    let tab_bar = Paragraph::new(Line::from(vec![
-        Span::styled(" TODO ", tasks_style),
-        Span::styled("│", dim),
-        Span::styled(" Objectives", objectives_style),
-        Span::styled(format!("({objectives_count}) "), objectives_style),
-        Span::styled("│", dim),
-        Span::styled(" Reports", reports_style),
-        Span::styled(format!("({reports_count}) "), reports_style),
-    ]));
-    frame.render_widget(tab_bar, area);
+    // Four tabs with their counts outgrow a narrow pane, and a bar cut
+    // mid-word hides that the later tabs exist at all. So it steps down: the
+    // counts go first (you can get those back by opening the tab), then the
+    // padding. Every name survives to the last step, because a tab you cannot
+    // see is a tab you will never press.
+    let names = [
+        ("Managers", managers_style, format!("({manager_count})")),
+        ("Objectives", objectives_style, format!("({objectives_count})")),
+        ("Queue", queue_style, queue_count.trim().to_string()),
+        ("Reports", reports_style, format!("({reports_count})")),
+    ];
+    let spans = tab_spans(&names, dim, area.width as usize);
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+/// The widest tab bar that fits, in three steps: with counts, without them,
+/// then without the padding too.
+fn tab_spans<'a>(
+    names: &'a [(&'a str, Style, String); 4],
+    dim: Style,
+    width: usize,
+) -> Vec<Span<'a>> {
+    for step in 0..3 {
+        let mut spans: Vec<Span> = Vec::new();
+        for (i, (name, style, count)) in names.iter().enumerate() {
+            if i > 0 {
+                spans.push(Span::styled("│", dim));
+            }
+            match step {
+                0 if count.is_empty() => spans.push(Span::styled(format!(" {name} "), *style)),
+                0 => spans.push(Span::styled(format!(" {name}{count} "), *style)),
+                1 => spans.push(Span::styled(format!(" {name} "), *style)),
+                _ => spans.push(Span::styled(*name, *style)),
+            }
+        }
+        let used: usize = spans.iter().map(|span| span.content.chars().count()).sum();
+        if used <= width || step == 2 {
+            return spans;
+        }
+    }
+    unreachable!("the loop returns on its last step")
+}
+
+/// This project's managers, and what each is waiting on you for.
+///
+/// Two lines apiece: who it is and whether it is mid-turn, then the one number
+/// that asks something of you. A manager with nothing pending says so in
+/// words — an empty second line reads as a rendering fault.
+fn render_managers_tab(frame: &mut Frame, area: Rect, state: &AppState, is_focused: bool) {
+    let t = crate::theme::current();
+
+    if state.selected_workspace().is_none() {
+        let msg = Paragraph::new(Line::from(Span::styled(
+            "  Open a project first.",
+            Style::default().fg(t.fg_faint),
+        )));
+        frame.render_widget(msg, area);
+        return;
+    }
+
+    let rows = crate::app::managers_view::rows(state);
+    if rows.is_empty() {
+        let msg = Paragraph::new(vec![
+            Line::from(Span::styled(
+                "  No managers yet. Press n to start one.",
+                Style::default().fg(t.fg_faint),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "  A manager reads your objectives and",
+                Style::default().fg(t.fg_faint),
+            )),
+            Line::from(Span::styled(
+                "  suggests work. Nothing runs unapproved.",
+                Style::default().fg(t.fg_faint),
+            )),
+        ]);
+        frame.render_widget(msg, area);
+        return;
+    }
+
+    let selected = state.ui.selected_manager.min(rows.len() - 1);
+    let mut items: Vec<ListItem> = Vec::new();
+    for (i, row) in rows.iter().enumerate() {
+        let on_cursor = i == selected && is_focused;
+        let name_style = if on_cursor {
+            Style::default().fg(t.fg).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(t.fg)
+        };
+
+        let (icon, icon_color, word) = manager_activity(state, row.session_id);
+        items.push(ListItem::new(Line::from(vec![
+            Span::styled(format!("  [{}] ", row.badge), Style::default().fg(t.special)),
+            Span::styled(row.name.clone(), name_style),
+            Span::raw("  "),
+            Span::styled(icon, Style::default().fg(icon_color)),
+            Span::styled(format!(" {word}"), Style::default().fg(t.fg_faint)),
+        ])));
+
+        let detail = if row.pending == 1 {
+            ("      1 proposal awaiting you".to_string(), t.active)
+        } else if row.pending > 1 {
+            (
+                format!("      {} proposals awaiting you", row.pending),
+                t.active,
+            )
+        } else {
+            ("      nothing proposed yet".to_string(), t.fg_faint)
+        };
+        items.push(ListItem::new(Line::from(Span::styled(
+            detail.0,
+            Style::default().fg(detail.1),
+        ))));
+    }
+
+    let highlight_style = if is_focused {
+        Style::default().bg(t.selection_bg)
+    } else {
+        Style::default()
+    };
+    let list = List::new(items).highlight_style(highlight_style);
+    let mut list_state = ListState::default();
+    // Two lines per manager, and the name line is the one to light up.
+    list_state.select(Some(selected * 2));
+    frame.render_stateful_widget(list, area, &mut list_state);
+}
+
+/// How a manager is doing right now, in the same vocabulary the Sessions pane
+/// uses — a manager stopped on a permission prompt is stuck in exactly the way
+/// an agent is, and should not read as merely idle.
+fn manager_activity(
+    state: &AppState,
+    session_id: uuid::Uuid,
+) -> (&'static str, ratatui::style::Color, &'static str) {
+    use crate::agent_status::Activity;
+    use crate::models::SessionStatus;
+
+    let t = crate::theme::current();
+    let stopped = state
+        .get_session(session_id)
+        .map(|session| session.status != SessionStatus::Running)
+        .unwrap_or(true);
+    if stopped {
+        return ("○", t.fg_dim, "stopped");
+    }
+    match state
+        .system
+        .agent_status
+        .get(&session_id)
+        .map(|status| status.activity)
+    {
+        Some(Activity::NeedsAttention(_)) => ("!", t.warning, "needs you"),
+        Some(Activity::Working) => ("●", t.active, "working"),
+        Some(Activity::Exited) => ("○", t.fg_dim, "exited"),
+        _ => ("◆", t.fg_faint, "idle"),
+    }
 }
 
 /// The project's standing priorities, in priority order.
@@ -340,7 +494,14 @@ fn render_action_bar(frame: &mut Frame, area: Rect, state: &AppState, is_focused
         Style::default().fg(t.fg_faint)
     };
 
-    let hints: &[(&str, &str)] = if state.ui.selected_tasks_tab == TasksTab::Reports {
+    let hints: &[(&str, &str)] = if state.ui.selected_tasks_tab == TasksTab::Managers {
+        &[
+            ("n", ":new "),
+            ("Enter", ":open "),
+            ("d", ":del "),
+            ("h", ":help"),
+        ]
+    } else if state.ui.selected_tasks_tab == TasksTab::Reports {
         &[("v", ":view "), ("m", ":merge "), ("h", ":help")]
     } else if state.ui.selected_tasks_tab == TasksTab::Objectives {
         &[
@@ -725,15 +886,23 @@ mod tests {
         let first = queue.add("fix the login redirect");
         queue.add("write the migration");
         queue.mark_running(first);
+        state.ui.selected_tasks_tab = TasksTab::Queue;
+        (state, session_id, dir)
+    }
+
+    fn state_with_queue_on(tab: TasksTab) -> (AppState, uuid::Uuid, tempfile::TempDir) {
+        let (mut state, session_id, dir) = state_with_queue();
+        state.ui.selected_tasks_tab = tab;
         (state, session_id, dir)
     }
 
     #[test]
     fn the_pane_shows_your_queue_with_the_agents_steps_under_the_running_item() {
         let (state, _session_id, _dir) = state_with_queue();
-        let out = screen(&state, 46, 12);
+        let out = screen(&state, 72, 12);
 
-        assert!(out.contains("TODO"), "{out}");
+        assert!(out.contains("MANAGER"), "{out}");
+        assert!(out.contains("Queue"), "{out}");
         assert!(out.contains("fix the login redirect"), "{out}");
         assert!(out.contains("write the migration"), "{out}");
         // The agent's own step, shown as progress for the running item.
@@ -764,16 +933,69 @@ mod tests {
 
     #[test]
     fn an_empty_queue_says_how_to_fill_it() {
-        let (state, _session_id, _dir) = crate::app::tasks_view::tests::fixture();
+        let (mut state, _session_id, _dir) = crate::app::tasks_view::tests::fixture();
+        state.ui.selected_tasks_tab = TasksTab::Queue;
         let out = screen(&state, 46, 10);
         assert!(out.contains("Press n to add"), "{out}");
     }
 
     #[test]
     fn pane_points_at_the_sessions_list_when_no_agent_is_selected() {
-        let state = AppState::default();
+        let mut state = AppState::default();
+        state.ui.selected_tasks_tab = TasksTab::Queue;
         let out = screen(&state, 60, 8);
         assert!(out.contains("Select an agent in Sessions"), "{out}");
+    }
+
+    /// The pane opens on the roster, and an empty one has to say what a
+    /// manager is for — this is the first thing a new project shows here.
+    #[test]
+    fn the_pane_opens_on_the_roster_and_an_empty_one_explains_itself() {
+        let (state, _session_id, _dir) = state_with_queue_on(TasksTab::Managers);
+        let out = screen(&state, 72, 12);
+        assert!(out.contains("MANAGER"), "{out}");
+        assert!(out.contains("Managers(0)"), "{out}");
+        assert!(out.contains("Press n to start one"), "{out}");
+        assert!(out.contains("Nothing runs unapproved"), "{out}");
+    }
+
+    /// A manager is listed with what it is waiting on you for. The count is
+    /// the whole reason to look at this tab.
+    #[test]
+    fn a_manager_is_listed_with_what_it_is_waiting_on_you_for() {
+        let (mut state, _session_id, _dir) = state_with_queue_on(TasksTab::Managers);
+        let workspace_id = state.data.workspaces[0].id;
+        let manager = crate::models::Session::new(
+            workspace_id,
+            crate::models::AgentType::Claude.as_manager(),
+            false,
+        );
+        let short = manager.short_id();
+        state
+            .data
+            .sessions
+            .get_mut(&workspace_id)
+            .unwrap()
+            .push(manager);
+        state.data.workspaces[0]
+            .proposals
+            .push(crate::models::Proposal::new(short, "split the auth module"));
+
+        let out = screen(&state, 72, 12);
+        assert!(out.contains("Managers(1)"), "{out}");
+        assert!(out.contains("[M]"), "{out}");
+        assert!(out.contains("1 proposal awaiting you"), "{out}");
+    }
+
+    /// A pane too narrow for the counts must still show every tab name —
+    /// otherwise the later tabs look like they do not exist.
+    #[test]
+    fn a_narrow_pane_drops_the_counts_rather_than_the_tabs() {
+        let (state, _session_id, _dir) = state_with_queue_on(TasksTab::Managers);
+        let out = screen(&state, 40, 8);
+        assert!(out.contains("Managers"), "{out}");
+        assert!(out.contains("Reports"), "{out}");
+        assert!(!out.contains("Managers("), "counts should be gone:\n{out}");
     }
 
     #[test]

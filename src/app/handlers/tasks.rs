@@ -42,6 +42,9 @@ pub fn sync_selection(state: &mut AppState) {
         state.ui.tasks_agent = agent;
         state.ui.selected_task_row = 0;
     }
+    // Deleting a manager, or switching project, can strand this cursor past
+    // the end of a list nobody pressed Tab on.
+    crate::app::managers_view::clamp(state);
 }
 
 pub fn handle_task_action(
@@ -53,6 +56,13 @@ pub fn handle_task_action(
         // j/k mean "down/up the list in front of me", so they follow the tab
         // rather than each list owning its own pair of keys.
         Action::SelectNextTask => {
+            if state.ui.selected_tasks_tab == crate::app::TasksTab::Managers {
+                let count = crate::app::managers_view::rows(state).len();
+                if count > 0 {
+                    state.ui.selected_manager = (state.ui.selected_manager + 1).min(count - 1);
+                }
+                return Ok(());
+            }
             if state.ui.selected_tasks_tab == crate::app::TasksTab::Objectives {
                 let count = objectives_view::rows(state).len();
                 if count > 0 {
@@ -67,6 +77,10 @@ pub fn handle_task_action(
             }
         }
         Action::SelectPrevTask => {
+            if state.ui.selected_tasks_tab == crate::app::TasksTab::Managers {
+                state.ui.selected_manager = state.ui.selected_manager.saturating_sub(1);
+                return Ok(());
+            }
             if state.ui.selected_tasks_tab == crate::app::TasksTab::Objectives {
                 state.ui.selected_objective = state.ui.selected_objective.saturating_sub(1);
                 return Ok(());
@@ -79,6 +93,15 @@ pub fn handle_task_action(
             clamp_objective_cursor(state);
         }
         Action::FocusSelectedTaskAgent => {
+            // Enter means "open what is under the cursor", and which list that
+            // is depends on the tab.
+            if state.ui.selected_tasks_tab == crate::app::TasksTab::Managers {
+                if let Some(row) = crate::app::managers_view::selected(state) {
+                    state.set_active_session_id(Some(row.session_id));
+                    state.ui.focus = crate::app::FocusPanel::OutputPane;
+                }
+                return Ok(());
+            }
             if let Some(row) = tasks_view::selected_row(state) {
                 state.set_active_session_id(Some(row.session_id()));
                 state.ui.focus = crate::app::FocusPanel::OutputPane;

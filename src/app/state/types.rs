@@ -110,31 +110,34 @@ pub enum TaskEdit {
     Rewrite,
 }
 
-/// Tab selection for the tasks pane
+/// Tab selection for the manager pane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TasksTab {
-    /// Live mirror of every agent's own task list.
+    /// This project's managers. The pane opens here because a manager is the
+    /// thing the pane is named for; the queue is downstream of what one
+    /// suggests and you approve.
     #[default]
-    Tasks,
-    /// The project's standing priorities (see `models::objective`). What a
-    /// manager will eventually work toward; useful on its own before then.
+    Managers,
+    /// The project's standing priorities (see `models::objective`) — what the
+    /// managers work toward.
     Objectives,
+    /// The work queued for whichever agent the Sessions cursor is on.
+    Queue,
     /// Reports from parallel task agents.
     Reports,
 }
 
 impl TasksTab {
-    /// Tab cycles rather than toggles now that there are three.
+    /// Tab cycles rather than toggles now that there are several.
     ///
-    /// Reports is slated to fold into the manager view once one exists —
-    /// judging what agents did is the manager's job, and two tabs read better
-    /// than three. Doing it now would mean building a merged row model for a
-    /// view that is about to be rewritten, so it waits for that rewrite.
+    /// The order is the order you read them in: who is working, what they are
+    /// working toward, what that turned into, and how it went.
     pub fn toggle(&self) -> Self {
         match self {
-            TasksTab::Tasks => TasksTab::Objectives,
-            TasksTab::Objectives => TasksTab::Reports,
-            TasksTab::Reports => TasksTab::Tasks,
+            TasksTab::Managers => TasksTab::Objectives,
+            TasksTab::Objectives => TasksTab::Queue,
+            TasksTab::Queue => TasksTab::Reports,
+            TasksTab::Reports => TasksTab::Managers,
         }
     }
 }
