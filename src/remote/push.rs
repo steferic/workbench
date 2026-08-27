@@ -241,8 +241,8 @@ fn send(endpoint: &str, authorization: &str) -> Delivery {
 
     match output {
         Ok(output) => {
-            let code = String::from_utf8_lossy(&output.stdout);
-            let code = code.trim();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let (code, body) = split_status(stdout.trim());
             if device_gone(code) {
                 // No warning here: the caller drops the subscription and says
                 // so once, which beats two lines of the same corpse per
@@ -252,7 +252,7 @@ fn send(endpoint: &str, authorization: &str) -> Delivery {
             // 201 is the success every service returns.
             if !code.starts_with('2') {
                 crate::logger::warn(format!(
-                    "push to {} refused: {code} {}",
+                    "push to {} refused: {code} {body} {}",
                     origin_of(endpoint).unwrap_or_default(),
                     String::from_utf8_lossy(&output.stderr).trim()
                 ));
@@ -261,6 +261,25 @@ fn send(endpoint: &str, authorization: &str) -> Delivery {
         Err(err) => crate::logger::warn(format!("could not run curl to push: {err}")),
     }
     Delivery::Attempted
+}
+
+/// Pull the status code off the end of curl's stdout.
+///
+/// `--write-out %{http_code}` *appends* three digits to whatever the service
+/// sent as a body — Apple sends a JSON complaint, so stdout arrives as
+/// `{"reason":"Unregistered",...}410`. The first cut of the cleanup compared
+/// that whole string against "410" and never matched: the corpses it existed
+/// to drop kept getting two warnings per notification, which is exactly how
+/// the bug was caught.
+fn split_status(stdout: &str) -> (&str, &str) {
+    let cut = stdout.len().saturating_sub(3);
+    if stdout.len() >= 3 && stdout[cut..].chars().all(|c| c.is_ascii_digit()) {
+        (&stdout[cut..], &stdout[..cut])
+    } else {
+        // No trailing code — curl died before writing one. Nothing here may
+        // read as a status, least of all as one that condemns a device.
+        ("", stdout)
+    }
 }
 
 /// Whether a status code says the subscription itself is dead.
@@ -362,6 +381,24 @@ mod tests {
         for code in ["201", "403", "429", "500", "000", ""] {
             assert!(!device_gone(code), "{code} does not condemn a device");
         }
+    }
+
+    /// The bug that shipped: Apple's 410 arrives glued to a JSON body, and
+    /// comparing the whole string against "410" never matched — so the
+    /// corpses this cleanup exists to drop kept warning forever.
+    #[test]
+    fn the_status_code_is_split_off_the_body_apple_glues_it_to() {
+        let apple = r#"{"reason":"Unregistered","timestamp":1785933971727}410"#;
+        let (code, body) = split_status(apple);
+        assert_eq!(code, "410");
+        assert!(body.ends_with('}'), "{body}");
+        assert!(device_gone(code));
+
+        assert_eq!(split_status("201"), ("201", ""));
+        // A body that merely ends in digits must not invent a status.
+        assert_eq!(split_status(""), ("", ""));
+        let (code, _) = split_status("connection reset");
+        assert!(!device_gone(code));
     }
 
     #[test]
