@@ -8,6 +8,7 @@ mod comms;
 mod control;
 mod config;
 mod git;
+mod lifecycle;
 mod logger;
 mod models;
 mod persistence;

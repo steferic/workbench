@@ -56,6 +56,11 @@ fn stop_radio_process(mut child: std::process::Child) {
 }
 
 pub async fn run_tui(initial_workspace: Option<PathBuf>, use_alternate_screen: bool) -> Result<()> {
+    // First thing, before anything that could fail: if the last instance
+    // never said goodbye, say so while the log around the old heartbeats is
+    // still warm.
+    crate::lifecycle::note_boot();
+
     // Initialize terminal
     let mut terminal = tui::init(use_alternate_screen)?;
 
@@ -159,6 +164,10 @@ pub async fn run_tui(initial_workspace: Option<PathBuf>, use_alternate_screen: b
 
     // Restore terminal
     tui::restore(use_alternate_screen)?;
+
+    // This is the one deliberate way out; everything else is what the boot
+    // marker exists to catch.
+    crate::lifecycle::note_clean_exit();
 
     result
 }

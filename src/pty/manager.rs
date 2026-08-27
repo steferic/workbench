@@ -33,6 +33,14 @@ pub struct PtyHandle {
     /// issued; Drop then skips its safety-net kill so a recycled pid can't be
     /// signalled by mistake.
     cleanup_done: bool,
+    /// The child's kernel start time, captured at spawn. Before any signal is
+    /// sent, the pid is checked against this: a pid whose start time changed
+    /// belongs to someone else now, and gets left alone. See `proc_identity`.
+    spawned_start: Option<crate::pty::proc_identity::ProcStart>,
+    /// Who this handle belongs to, for the kill log — every signal this
+    /// process sends is written down, so an abrupt end elsewhere on the
+    /// machine can be checked against what workbench itself was doing.
+    label: String,
 }
 
 /// Safety net: a handle dropped without an explicit kill (session deletion,
@@ -81,11 +89,11 @@ impl PtyHandle {
         self.cleanup_done = true;
         #[cfg(unix)]
         {
-            if let Some(pgid) = self.process_group_id() {
+            if let Some(pgid) = self.verified_pgid("interrupt") {
                 // Send SIGINT to the process group for a graceful shutdown.
+                self.log_signal("SIGINT", pgid);
                 if self.signal_process_group(pgid, libc::SIGINT).is_err() {
-                    self.child_killer.kill()?;
-                    return Ok(());
+                    return self.kill_via_handle();
                 }
 
                 let start = Instant::now();
@@ -96,16 +104,84 @@ impl PtyHandle {
                     std::thread::sleep(Duration::from_millis(25));
                 }
 
-                // Escalate to SIGKILL if the group is still alive.
-                if let Err(err) = self.signal_process_group(pgid, libc::SIGKILL) {
-                    crate::logger::warn(format!("failed to kill PTY process group: {err}"));
+                // Escalate to SIGKILL if the group is still alive — re-checked
+                // first: the group being "alive" is exactly what a recycled
+                // pid looks like, and the grace period is a window for the
+                // child to exit and the number to move on.
+                if self.verified_pgid("escalate").is_some() {
+                    self.log_signal("SIGKILL", pgid);
+                    if let Err(err) = self.signal_process_group(pgid, libc::SIGKILL) {
+                        crate::logger::warn(format!("failed to kill PTY process group: {err}"));
+                    }
                 }
+                return Ok(());
+            }
+            if self.process_id.is_some() {
+                // Named a pid but could not vouch for it; nothing to signal.
                 return Ok(());
             }
         }
 
+        self.kill_via_handle()
+    }
+
+    /// portable-pty's own killer. It signals by raw pid too, so it gets the
+    /// same identity check and the same log line as the group paths.
+    fn kill_via_handle(&mut self) -> Result<()> {
+        if let (Some(pid), Some(spawned)) = (self.process_id, self.spawned_start) {
+            use crate::pty::proc_identity::{owner, PidOwner};
+            match owner(pid, spawned) {
+                PidOwner::Ours => {}
+                PidOwner::Gone => return Ok(()),
+                PidOwner::Recycled => {
+                    crate::logger::warn(format!(
+                        "kill: pid {pid} ({}) was recycled to another process; not signalling",
+                        self.label
+                    ));
+                    return Ok(());
+                }
+            }
+        }
+        crate::logger::info(format!(
+            "kill: SIGKILL pid {:?} ({}) via child handle",
+            self.process_id, self.label
+        ));
         self.child_killer.kill()?;
         Ok(())
+    }
+
+    /// One line per signal actually sent. `info`, not debug: these are rare,
+    /// and the whole point is that they survive in the log.
+    #[cfg(unix)]
+    fn log_signal(&self, signal: &str, pgid: libc::pid_t) {
+        crate::logger::info(format!("kill: {signal} group -{pgid} ({})", self.label));
+    }
+
+    /// The process group to signal, but only if the pid still names the child
+    /// we spawned.
+    ///
+    /// `None` for a recycled or vanished pid — with a warning for recycled,
+    /// because that is the friendly-fire case this exists to catch. A spawn
+    /// whose start time was never readable is treated as ours: the guard must
+    /// fail open there or an unreadable /proc would strand every kill.
+    #[cfg(unix)]
+    fn verified_pgid(&self, doing: &str) -> Option<libc::pid_t> {
+        use crate::pty::proc_identity::{owner, PidOwner};
+        let pgid = self.process_group_id()?;
+        let Some(spawned) = self.spawned_start else {
+            return Some(pgid);
+        };
+        match owner(pgid as u32, spawned) {
+            PidOwner::Ours => Some(pgid),
+            PidOwner::Gone => None,
+            PidOwner::Recycled => {
+                crate::logger::warn(format!(
+                    "kill: pid {pgid} ({}) was recycled to another process; {doing} skipped",
+                    self.label
+                ));
+                None
+            }
+        }
     }
 
     #[cfg(unix)]
@@ -150,11 +226,16 @@ impl PtyHandle {
 
     #[cfg(unix)]
     fn kill_process_group(&mut self) -> Result<()> {
-        if let Some(pgid) = self.process_group_id() {
+        if let Some(pgid) = self.verified_pgid("group kill") {
             // portable-pty uses setsid() on spawn, so pid == pgid for the child.
+            self.log_signal("SIGKILL", pgid);
             if self.signal_process_group(pgid, libc::SIGKILL).is_ok() {
                 return Ok(());
             }
+        } else if self.process_id.is_some() {
+            // Named a pid but could not vouch for it: recycled or gone, and
+            // in neither case is there anything of ours left to signal.
+            return Ok(());
         }
 
         self.child_killer.kill()?;
@@ -501,12 +582,22 @@ impl PtyManager {
             Self::read_pty_output(sid, &mut reader, pty_tx, child, strip_alt_screen);
         });
 
+        // Captured now, while the pid is certainly still the child: this is
+        // what lets every later kill check it is not aiming at a stranger.
+        let spawned_start =
+            process_id.and_then(crate::pty::proc_identity::start_time);
         Ok(PtyHandle {
             master: pair.master,
             child_killer,
             process_id,
             writer,
             cleanup_done: false,
+            spawned_start,
+            label: format!(
+                "{} {}",
+                &session_id.to_string()[..8],
+                agent_type.command()
+            ),
         })
     }
 
@@ -1341,6 +1432,83 @@ mod tests {
         })
     }
 
+    /// A real child in its own process group, the shape `kill()` targets.
+    #[cfg(unix)]
+    fn group_leader_child() -> std::process::Child {
+        use std::os::unix::process::CommandExt;
+        let mut cmd = std::process::Command::new("sleep");
+        cmd.arg("30");
+        // SAFETY: setsid in the forked child before exec; no allocation, no
+        // locks — the narrow set of things async-signal-safety allows.
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
+        cmd.spawn().expect("spawn a group-leader child")
+    }
+
+    #[cfg(unix)]
+    fn alive(pid: u32) -> bool {
+        unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+    }
+
+    /// The guard's whole reason to exist: a pid whose start time no longer
+    /// matches is somebody else, and a kill aimed at it must not fire. On a
+    /// machine cycling its pid space in minutes, "must not" is not academic.
+    #[test]
+    #[cfg(unix)]
+    fn a_recycled_pid_is_not_killed() {
+        let mut child = group_leader_child();
+        let pid = child.id();
+        let real = crate::pty::proc_identity::start_time(pid).unwrap();
+
+        let counter = Arc::new(AtomicUsize::new(0));
+        let mut handle = test_handle(counter.clone());
+        handle.process_id = Some(pid);
+        handle.spawned_start = Some(crate::pty::proc_identity::ProcStart {
+            sec: 1,
+            usec: 1,
+        });
+        // Forged identity: to the handle, this pid belongs to someone else.
+        assert_ne!(handle.spawned_start, Some(real));
+
+        handle.kill().unwrap();
+        assert!(alive(pid), "an innocent process group was signalled");
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            0,
+            "the fallback killer must not fire on an unvouched pid either"
+        );
+
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    /// And the mirror image: the same path with a truthful identity still
+    /// kills — the guard must not turn every kill into a no-op.
+    #[test]
+    #[cfg(unix)]
+    fn our_own_child_is_still_killed() {
+        let mut child = group_leader_child();
+        let pid = child.id();
+
+        let counter = Arc::new(AtomicUsize::new(0));
+        let mut handle = test_handle(counter);
+        handle.process_id = Some(pid);
+        handle.spawned_start = crate::pty::proc_identity::start_time(pid);
+
+        handle.kill().unwrap();
+        // Not `alive(pid)`: a SIGKILLed child is a zombie until reaped, and
+        // signal 0 counts zombies as alive. try_wait is the honest question.
+        let gone = (0..40).any(|_| {
+            std::thread::sleep(std::time::Duration::from_millis(25));
+            matches!(child.try_wait(), Ok(Some(_)))
+        });
+        assert!(gone, "a vouched-for child should die");
+    }
+
     fn test_handle(counter: Arc<AtomicUsize>) -> PtyHandle {
         PtyHandle {
             master: Box::new(DummyMaster),
@@ -1348,6 +1516,8 @@ mod tests {
             process_id: None,
             writer: Box::new(io::sink()),
             cleanup_done: false,
+            spawned_start: None,
+            label: "test".to_string(),
         }
     }
 
