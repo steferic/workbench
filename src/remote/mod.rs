@@ -24,7 +24,7 @@ mod server;
 mod thread;
 
 pub use prompt::Prompt;
-pub use push::Push;
+pub use push::{push_origin, Push};
 pub use server::{new_token, Remote, RemoteCommand};
 pub use thread::{Cursor, Message};
 

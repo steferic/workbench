@@ -133,14 +133,30 @@ impl Push {
     ///
     /// Runs off the event loop: a push service is a network round trip, and
     /// the loop it would block is the one drawing the TUI.
-    pub fn notify(&self) {
+    ///
+    /// A device the service says is gone comes back as an action, so the
+    /// event loop can drop the subscription instead of warning about the same
+    /// corpse on every notification forever.
+    pub fn notify(&self, action_tx: &tokio::sync::mpsc::UnboundedSender<crate::app::Action>) {
         for subscription in &self.subscriptions {
             let endpoint = subscription.endpoint.clone();
             let Ok(token) = self.authorization(&endpoint) else {
                 continue;
             };
-            std::thread::spawn(move || send(&endpoint, &token));
+            let tx = action_tx.clone();
+            std::thread::spawn(move || {
+                if send(&endpoint, &token) == Delivery::DeviceGone {
+                    let _ = tx.send(crate::app::Action::PushEndpointGone(endpoint));
+                }
+            });
         }
+    }
+
+    /// Drop a device. True if it was known.
+    pub fn forget(&mut self, endpoint: &str) -> bool {
+        let before = self.subscriptions.len();
+        self.subscriptions.retain(|s| s.endpoint != endpoint);
+        self.subscriptions.len() != before
     }
 
     /// The `Authorization` header for one endpoint: a JWT naming that service
@@ -166,6 +182,12 @@ impl Push {
     }
 }
 
+/// The service half of an endpoint, for log lines — the path is an opaque
+/// per-device secret and has no business in a log.
+pub fn push_origin(endpoint: &str) -> String {
+    origin_of(endpoint).unwrap_or_else(|_| "an unparseable endpoint".to_string())
+}
+
 /// `https://web.push.apple.com/abc123` → `https://web.push.apple.com`.
 ///
 /// The audience claim names the service, not the subscription — signing for
@@ -181,12 +203,23 @@ fn origin_of(endpoint: &str) -> Result<String> {
     Ok(format!("{scheme}://{host}"))
 }
 
+/// What one push attempt established about the subscription.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Delivery {
+    /// Delivered, or failed in a way that says nothing about the device —
+    /// a timeout, a 5xx, a bad JWT are all our problem or the service's.
+    Attempted,
+    /// The service said this subscription no longer exists. Permanent:
+    /// re-subscribing mints a new endpoint, it never revives this one.
+    DeviceGone,
+}
+
 /// POST the empty push.
 ///
 /// Through `curl` rather than a Rust client: this is the only outbound TLS in
 /// workbench, and a whole TLS stack in the dependency tree to make one request
 /// an hour is a poor trade on a machine that ships curl.
-fn send(endpoint: &str, authorization: &str) {
+fn send(endpoint: &str, authorization: &str) -> Delivery {
     let output = Command::new("curl")
         .args([
             "--silent",
@@ -210,9 +243,13 @@ fn send(endpoint: &str, authorization: &str) {
         Ok(output) => {
             let code = String::from_utf8_lossy(&output.stdout);
             let code = code.trim();
-            // 201 is the success every service returns; 404/410 mean the
-            // device unsubscribed or was wiped, and it will simply keep
-            // failing until it subscribes again.
+            if device_gone(code) {
+                // No warning here: the caller drops the subscription and says
+                // so once, which beats two lines of the same corpse per
+                // notification forever.
+                return Delivery::DeviceGone;
+            }
+            // 201 is the success every service returns.
             if !code.starts_with('2') {
                 crate::logger::warn(format!(
                     "push to {} refused: {code} {}",
@@ -223,6 +260,17 @@ fn send(endpoint: &str, authorization: &str) {
         }
         Err(err) => crate::logger::warn(format!("could not run curl to push: {err}")),
     }
+    Delivery::Attempted
+}
+
+/// Whether a status code says the subscription itself is dead.
+///
+/// 404 and 410 are the two the Web Push spec assigns that meaning. Nothing
+/// else qualifies — dropping a device over a 403 (our JWT's fault) or a 5xx
+/// (the service's bad day) would silently unsubscribe a phone that still
+/// wants to hear.
+fn device_gone(code: &str) -> bool {
+    code == "404" || code == "410"
 }
 
 #[cfg(test)]
@@ -301,6 +349,40 @@ mod tests {
             !rest.contains("localhost") && !rest.contains("127.0.0.1"),
             "a push service cannot reach {rest}, and Apple rejects it outright"
         );
+    }
+
+    /// 404/410 are the spec's words for "this subscription is dead". A 403 is
+    /// our JWT's fault and a 5xx is the service's bad day — dropping a device
+    /// over either would silently unsubscribe a phone that still wants to
+    /// hear.
+    #[test]
+    fn only_the_gone_codes_mean_the_device_is_gone() {
+        assert!(device_gone("404"));
+        assert!(device_gone("410"));
+        for code in ["201", "403", "429", "500", "000", ""] {
+            assert!(!device_gone(code), "{code} does not condemn a device");
+        }
+    }
+
+    #[test]
+    fn a_forgotten_device_is_gone_and_forgetting_it_twice_is_calm() {
+        let mut push = keyed();
+        push.subscribe("https://push/1".into());
+        push.subscribe("https://push/2".into());
+
+        assert!(push.forget("https://push/1"));
+        assert!(!push.forget("https://push/1"), "already gone");
+        assert!(!push.forget("https://push/none"), "never existed");
+        assert_eq!(push.subscriptions.len(), 1, "the live one survives");
+    }
+
+    #[test]
+    fn the_log_never_carries_the_secret_path() {
+        assert_eq!(
+            push_origin("https://web.push.apple.com/secret-device-token"),
+            "https://web.push.apple.com"
+        );
+        assert_eq!(push_origin("gibberish"), "an unparseable endpoint");
     }
 
     #[test]

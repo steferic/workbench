@@ -212,6 +212,9 @@ pub enum Action {
     ClearCompletedTodos,
     /// Off-thread scan for listening dev servers finished.
     PortsScanned(Vec<crate::ports::DevServer>),
+    /// A push service answered 404/410 for this endpoint: the device
+    /// unsubscribed or was wiped, and the subscription can never work again.
+    PushEndpointGone(String),
     /// Durable scrollback parsed from an agent's session log (off-thread).
     ScrollbackLoaded {
         session_id: Uuid,

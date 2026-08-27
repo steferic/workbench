@@ -200,6 +200,18 @@ pub fn process_action(
             state.system.port_scan_inflight = false;
             expose_project_servers(state);
         }
+        Action::PushEndpointGone(endpoint) => {
+            // Said once, at the moment of dropping — not on every notification.
+            if state.system.push.forget(&endpoint) {
+                crate::logger::info(format!(
+                    "dropping a push subscription the service says is gone: {}",
+                    crate::remote::push_origin(&endpoint)
+                ));
+                if let Err(err) = state.system.push.save() {
+                    crate::logger::warn(format!("could not store the push list: {err}"));
+                }
+            }
+        }
         Action::OpenRepositoryMap => open_repository_map(state),
         Action::Resize(w, h) => {
             state.system.terminal_size = (w, h);
@@ -372,7 +384,8 @@ pub fn process_action(
                 Action::Quit | Action::ConfirmQuit | Action::Tick | Action::Resize(_, _) |
                 Action::ForceRedraw | Action::OpenRepositoryMap |
                 Action::UtilityContentLoaded(_) | Action::DiffStatsUpdated(_) |
-                Action::PortsScanned(_) | Action::ScrollbackLoaded { .. } => {}
+                Action::PortsScanned(_) | Action::PushEndpointGone(_) |
+                Action::ScrollbackLoaded { .. } => {}
             }
 
             // A new project was just created or opened: select it and start its
@@ -599,7 +612,7 @@ fn remote_tick(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) 
     }
 
     crate::remote::publish(state, &state.system.remote_state.clone());
-    notify_phone(state);
+    notify_phone(state, action_tx);
     control_tick(state);
 
     let mut pending = Vec::new();
@@ -919,7 +932,7 @@ const TURN_FLOOR: Duration = Duration::from_secs(10);
 /// Returns what it told the phone, which is what the tests read. The state is
 /// tracked even with nobody subscribed, so turning notifications on does not
 /// immediately fire for everything already in progress.
-fn notify_phone(state: &mut AppState) -> Vec<String> {
+fn notify_phone(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) -> Vec<String> {
     let statuses: Vec<(String, String)> = match state.system.remote_state.lock() {
         Ok(snapshot) => snapshot
             .agents
@@ -992,7 +1005,7 @@ fn notify_phone(state: &mut AppState) -> Vec<String> {
 
     if !news.is_empty() && !state.system.push.is_empty() {
         crate::logger::info(format!("telling the phone: {}", news.join(", ")));
-        state.system.push.notify();
+        state.system.push.notify(action_tx);
     }
     news
 }
@@ -1367,6 +1380,13 @@ fn refresh_agent_tasks(state: &mut AppState, action_tx: &mpsc::UnboundedSender<A
 
 #[cfg(test)]
 mod tests {
+    /// `notify_phone` with a throwaway action channel: these tests are about
+    /// what counts as news, not about the push delivery behind it.
+    fn poke(state: &mut super::AppState) -> Vec<String> {
+        let (tx, _rx) = super::mpsc::unbounded_channel();
+        super::notify_phone(state, &tx)
+    }
+
     use super::{apply_remote, notify_phone, plan_task_refresh, process_action};
     use crate::models::{AgentType, Session, SessionStatus, Workspace};
     use chrono::{Duration as ChronoDuration, Utc};
@@ -1425,20 +1445,20 @@ mod tests {
         };
 
         set(&mut state, crate::agent_status::Activity::Working);
-        assert!(notify_phone(&mut state).is_empty(), "starting is not news");
+        assert!(poke(&mut state).is_empty(), "starting is not news");
 
         set(&mut state, crate::agent_status::Activity::Idle);
         assert_eq!(
-            notify_phone(&mut state),
+            poke(&mut state),
             vec![format!("{short} stopped")],
             "every finished turn is worth saying, however short"
         );
 
         // And again next time round, not only the first.
         set(&mut state, crate::agent_status::Activity::Working);
-        notify_phone(&mut state);
+        poke(&mut state);
         set(&mut state, crate::agent_status::Activity::Idle);
-        assert_eq!(notify_phone(&mut state), vec![format!("{short} stopped")]);
+        assert_eq!(poke(&mut state), vec![format!("{short} stopped")]);
 
         // And the phone can tell which kind of news it was.
         let shared = state.system.remote_state.clone();
@@ -1449,7 +1469,7 @@ mod tests {
 
         // Staying idle is not news again.
         drop(snapshot);
-        assert!(notify_phone(&mut state).is_empty());
+        assert!(poke(&mut state).is_empty());
     }
 
     /// A blocked agent stays blocked until you answer it. The phone should
@@ -1486,21 +1506,21 @@ mod tests {
         };
 
         block(&mut state, false);
-        assert!(notify_phone(&mut state).is_empty(), "working is not news");
+        assert!(poke(&mut state).is_empty(), "working is not news");
 
         block(&mut state, true);
-        assert_eq!(notify_phone(&mut state), vec![format!("{short} stopped")]);
+        assert_eq!(poke(&mut state), vec![format!("{short} stopped")]);
         block(&mut state, true);
         assert!(
-            notify_phone(&mut state).is_empty(),
+            poke(&mut state).is_empty(),
             "still blocked is not a new thing to say"
         );
 
         // Answered, then blocked again: that is news a second time.
         block(&mut state, false);
-        assert!(notify_phone(&mut state).is_empty());
+        assert!(poke(&mut state).is_empty());
         block(&mut state, true);
-        assert_eq!(notify_phone(&mut state), vec![format!("{short} stopped")]);
+        assert_eq!(poke(&mut state), vec![format!("{short} stopped")]);
     }
 
     /// The bug: one stop arriving as two notifications.
@@ -1535,11 +1555,11 @@ mod tests {
         };
 
         set(&mut state, crate::agent_status::Activity::Working);
-        assert!(notify_phone(&mut state).is_empty());
+        assert!(poke(&mut state).is_empty());
 
         // It stops. One poke.
         set(&mut state, crate::agent_status::Activity::Idle);
-        assert_eq!(notify_phone(&mut state), vec![format!("{short} stopped")]);
+        assert_eq!(poke(&mut state), vec![format!("{short} stopped")]);
 
         // The question on its screen is read a tick later, and a minute after
         // that the harness says it is waiting. Same stop; nothing new to say.
@@ -1550,15 +1570,15 @@ mod tests {
             ),
         );
         assert!(
-            notify_phone(&mut state).is_empty(),
+            poke(&mut state).is_empty(),
             "the phone was already told this agent stopped"
         );
 
         // Answer it, and the next stop is news again.
         set(&mut state, crate::agent_status::Activity::Working);
-        assert!(notify_phone(&mut state).is_empty());
+        assert!(poke(&mut state).is_empty());
         set(&mut state, crate::agent_status::Activity::Idle);
-        assert_eq!(notify_phone(&mut state), vec![format!("{short} stopped")]);
+        assert_eq!(poke(&mut state), vec![format!("{short} stopped")]);
     }
 
     /// The other half of the bug, and the louder one: an idle agent whose
@@ -1595,7 +1615,7 @@ mod tests {
         };
 
         publish(&mut state);
-        assert!(notify_phone(&mut state).is_empty());
+        assert!(poke(&mut state).is_empty());
 
         // A repaint: output lands, so it reads as working for a moment.
         state
@@ -1603,7 +1623,7 @@ mod tests {
             .last_activity
             .insert(agent, std::time::Instant::now());
         publish(&mut state);
-        assert!(notify_phone(&mut state).is_empty(), "starting is not news");
+        assert!(poke(&mut state).is_empty(), "starting is not news");
 
         // The window passes with no more output and it reads as idle again.
         state.data.last_activity.insert(
@@ -1612,7 +1632,7 @@ mod tests {
         );
         publish(&mut state);
         assert!(
-            notify_phone(&mut state).is_empty(),
+            poke(&mut state).is_empty(),
             "two seconds of redraw is not a turn"
         );
     }
