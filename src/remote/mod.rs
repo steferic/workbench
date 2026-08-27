@@ -256,7 +256,7 @@ fn dev_servers(state: &AppState) -> std::collections::HashMap<Uuid, Vec<ServerVi
         if server.port == state.system.user_config.remote_port {
             continue;
         }
-        if server.loopback_only && !state.system.forwarded.contains(&server.port) {
+        if server.loopback_only && !state.system.forwarded.contains_key(&server.port) {
             continue;
         }
         by_project.entry(project).or_default().push(ServerView {

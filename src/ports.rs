@@ -205,9 +205,133 @@ fn parse_cwds(output: &str) -> HashMap<u32, PathBuf> {
 /// Callers pass the same port on both sides on purpose: the URL becomes the
 /// one already in your browser with the host swapped, rather than a number to
 /// look up.
-pub fn expose(bind: SocketAddr, upstream: SocketAddr) -> std::io::Result<SocketAddr> {
+/// A forwarded port, and the process or thread doing the work.
+///
+/// The child dying is an expected event, not a failure: projects free their
+/// dev ports with `kill $(lsof -ti:PORT)`, which matches every listener on
+/// the number — the forwarder is a separate process precisely so that it is
+/// the thing that dies instead of the TUI. `alive` is how the scan notices
+/// and respawns it.
+pub struct Forwarder {
+    /// Where the forwarder is listening. The caller usually named the port,
+    /// but a bind to port 0 only learns it here.
+    bound: SocketAddr,
+    worker: Worker,
+}
+
+enum Worker {
+    /// A `wbport` child owns the socket. Killable, reapable, respawnable.
+    Child {
+        child: std::process::Child,
+        /// Held so the child's stdin stays open: its EOF tells the child
+        /// workbench is gone and it should leave too.
+        _lifeline: Option<std::process::ChildStdin>,
+    },
+    /// Forwarding from a thread in this process — the fallback when the
+    /// helper binary is missing, and the marker for "do not retry" when the
+    /// bind failed. Reports alive forever, exactly the old behavior.
+    Thread,
+}
+
+impl Forwarder {
+    /// A forwarder that is nothing but the "do not retry this port" marker.
+    pub fn unretryable(bind: SocketAddr) -> Self {
+        Forwarder {
+            bound: bind,
+            worker: Worker::Thread,
+        }
+    }
+
+    pub fn addr(&self) -> SocketAddr {
+        self.bound
+    }
+
+    /// Still standing? Reaps the child if it died.
+    pub fn alive(&mut self) -> bool {
+        match &mut self.worker {
+            Worker::Child { child, .. } => !matches!(child.try_wait(), Ok(Some(_))),
+            Worker::Thread => true,
+        }
+    }
+}
+
+/// Forward `bind` to `upstream` from a separate process.
+///
+/// The listener is bound *here*, so "address in use" surfaces at the call
+/// site exactly as it always did; the socket is then handed to a `wbport`
+/// child on fd 3. If the helper cannot be found or spawned, fall back to
+/// forwarding in-process — reachable-but-mortal beats not reachable.
+#[cfg(unix)]
+pub fn expose(bind: SocketAddr, upstream: SocketAddr) -> std::io::Result<Forwarder> {
+    use std::os::unix::io::AsRawFd;
+    use std::os::unix::process::CommandExt;
+
+    let listener = TcpListener::bind(bind)?;
+    let fd = listener.as_raw_fd();
+
+    let helper = std::env::current_exe()
+        .ok()
+        .map(|exe| exe.with_file_name("wbport"))
+        .filter(|path| path.is_file());
+    let bound = listener.local_addr()?;
+    let Some(helper) = helper else {
+        splice_in_process(listener, upstream);
+        return Ok(Forwarder {
+            bound,
+            worker: Worker::Thread,
+        });
+    };
+
+    let mut command = std::process::Command::new(helper);
+    command
+        .arg(upstream.to_string())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    // SAFETY: dup2 in the forked child before exec — async-signal-safe, and
+    // the dup clears CLOEXEC so the socket survives into wbport as fd 3.
+    unsafe {
+        command.pre_exec(move || {
+            if libc::dup2(fd, 3) == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    match command.spawn() {
+        Ok(mut child) => {
+            let lifeline = child.stdin.take();
+            Ok(Forwarder {
+                bound,
+                worker: Worker::Child {
+                    child,
+                    _lifeline: lifeline,
+                },
+            })
+        }
+        Err(_) => {
+            splice_in_process(listener, upstream);
+            Ok(Forwarder {
+                bound,
+                worker: Worker::Thread,
+            })
+        }
+    }
+}
+
+#[cfg(not(unix))]
+pub fn expose(bind: SocketAddr, upstream: SocketAddr) -> std::io::Result<Forwarder> {
     let listener = TcpListener::bind(bind)?;
     let bound = listener.local_addr()?;
+    splice_in_process(listener, upstream);
+    Ok(Forwarder {
+        bound,
+        worker: Worker::Thread,
+    })
+}
+
+/// The old in-process forwarding, kept as the fallback.
+fn splice_in_process(listener: TcpListener, upstream: SocketAddr) {
     std::thread::spawn(move || {
         for incoming in listener.incoming() {
             let Ok(from_phone) = incoming else { continue };
@@ -220,7 +344,6 @@ pub fn expose(bind: SocketAddr, upstream: SocketAddr) -> std::io::Result<SocketA
             forward::splice(from_phone, to_server);
         }
     });
-    Ok(bound)
 }
 
 #[cfg(test)]
@@ -391,9 +514,9 @@ n/Users/me/Code/site/packages/api
         });
 
         let front = expose("127.0.0.1:0".parse().unwrap(), upstream).expect("the forwarder binds");
-        assert_ne!(front.port(), upstream.port(), "a different socket entirely");
+        assert_ne!(front.addr().port(), upstream.port(), "a different socket entirely");
 
-        let mut client = TcpStream::connect(front).unwrap();
+        let mut client = TcpStream::connect(front.addr()).unwrap();
         client.write_all(b"a request\n").unwrap();
         let mut reply = String::new();
         BufReader::new(client).read_line(&mut reply).unwrap();

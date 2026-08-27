@@ -768,11 +768,13 @@ pub struct SystemState {
     pub push: crate::remote::Push,
     /// Dev servers found listening, refreshed on a slow timer (`crate::ports`).
     pub dev_servers: Vec<crate::ports::DevServer>,
-    /// Ports already spliced to the tailnet. Forwarders are never taken down:
-    /// a dev server that restarts on the same port is picked up again with no
-    /// bookkeeping, and one that is gone refuses the dial exactly as it would
-    /// locally.
-    pub forwarded: std::collections::HashSet<u16>,
+    /// Ports spliced to the tailnet, and the `wbport` child serving each.
+    /// Forwarders are not taken down while wanted — a dev server that
+    /// restarts on the same port is picked up with no bookkeeping — but they
+    /// *are* killed out from under us: `kill $(lsof -ti:PORT)` is how
+    /// projects free a port, and it matches the forwarder too. The scan
+    /// reaps the corpse and spawns a replacement.
+    pub forwarded: std::collections::HashMap<u16, crate::ports::Forwarder>,
     pub last_port_scan: Option<Instant>,
     pub port_scan_inflight: bool,
     /// What each agent was doing last tick, so the phone is poked on a change

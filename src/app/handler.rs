@@ -867,6 +867,19 @@ fn expose_project_servers(state: &mut AppState) {
         }
     }
 
+    // Reap forwarders that were shot. Port-freeing scripts kill by number
+    // and hit ours too; the whole design is that the death lands on a
+    // disposable child. Removing it here lets the loop below respawn it.
+    state.system.forwarded.retain(|port, forwarder| {
+        let standing = forwarder.alive();
+        if !standing {
+            crate::logger::info(format!(
+                "forwarder for port {port} was killed; respawning if still wanted"
+            ));
+        }
+        standing
+    });
+
     let wanted: Vec<u16> = crate::ports::owned_by(&state.system.dev_servers, &roots)
         .into_iter()
         .filter(|(server, _)| server.loopback_only && server.port != phone_port)
@@ -874,25 +887,28 @@ fn expose_project_servers(state: &mut AppState) {
         .collect();
 
     for port in wanted {
-        if state.system.forwarded.contains(&port) {
+        if state.system.forwarded.contains_key(&port) {
             continue;
         }
         let bind = std::net::SocketAddr::new(tailnet, port);
         let upstream =
             std::net::SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), port);
         match crate::ports::expose(bind, upstream) {
-            Ok(_) => {
+            Ok(forwarder) => {
                 crate::logger::info(format!(
                     "dev server on {port} is now reachable from the phone"
                 ));
-                state.system.forwarded.insert(port);
+                state.system.forwarded.insert(port, forwarder);
             }
             // Almost always "address in use" — something else already has that
-            // port on the tailnet address. Remember it either way, so we do not
-            // try again every five seconds.
+            // port on the tailnet address. A Thread entry is the "do not try
+            // again every five seconds" marker: it always reports alive.
             Err(err) => {
                 crate::logger::warn(format!("could not forward port {port}: {err}"));
-                state.system.forwarded.insert(port);
+                state
+                    .system
+                    .forwarded
+                    .insert(port, crate::ports::Forwarder::unretryable(bind));
             }
         }
     }

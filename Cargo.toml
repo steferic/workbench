@@ -33,6 +33,10 @@ path = "src/main.rs"
 name = "wbhook"
 path = "src/bin/wbhook.rs"
 
+[[bin]]
+name = "wbport"
+path = "src/bin/wbport.rs"
+
 [dependencies]
 # Reading agent session stores (opencode, hermes keep theirs in SQLite).
 # `bundled` compiles SQLite itself so there is no system dependency.
