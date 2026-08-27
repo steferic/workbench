@@ -470,6 +470,28 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
                     ));
                 }
 
+                // System swap, because it is the number that predicts death:
+                // every abrupt exit so far happened with swap in the 90s while
+                // the kernel shot a process a second. The health log records
+                // it once a minute for the postmortem; this is for noticing
+                // *before* the postmortem. Read per frame — one sysctl,
+                // microseconds — so the alarm is never a minute stale.
+                if let Some((used, total)) = state.system.perf.system_swap() {
+                    if total > 0 {
+                        let pct = used as f64 / total as f64 * 100.0;
+                        let style = if pct >= 90.0 {
+                            // The kernel is already hunting, or about to be.
+                            Style::default().fg(t.error).add_modifier(Modifier::BOLD)
+                        } else if pct >= 70.0 {
+                            Style::default().fg(t.active)
+                        } else {
+                            Style::default().fg(t.fg_faint)
+                        };
+                        status.push(Span::raw(" | "));
+                        status.push(Span::styled(format!("swap {pct:.0}%"), style));
+                    }
+                }
+
                 waiting.unwrap_or((status, context_hints))
             }
         };
@@ -490,4 +512,30 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         Paragraph::new(Line::from(spans)).style(Style::default().bg(t.fg_faint).fg(t.fg));
 
     frame.render_widget(paragraph, area);
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::*;
+    use ratatui::{backend::TestBackend, Terminal};
+
+    /// Swap is the number that predicts death on this machine, so the bar
+    /// must carry it whenever the kernel will answer the question.
+    #[test]
+    fn the_bar_reports_system_swap() {
+        let state = AppState::default();
+        assert!(
+            state.system.perf.system_swap().is_some(),
+            "macos answers the sysctl"
+        );
+
+        let mut terminal = Terminal::new(TestBackend::new(120, 1)).unwrap();
+        terminal
+            .draw(|frame| render(frame, frame.area(), &state))
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let line: String = (0..120).map(|x| buffer[(x, 0)].symbol().to_string()).collect();
+        assert!(line.contains("swap "), "{line}");
+        assert!(line.contains('%'), "{line}");
+    }
 }
