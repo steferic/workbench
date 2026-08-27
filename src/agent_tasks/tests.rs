@@ -190,6 +190,36 @@ fn codex_plan(steps: Vec<(&str, &str)>) -> String {
     .to_string()
 }
 
+/// gpt-5.6-era rollouts carry the prompt as a completed item, not as a
+/// user_message event. A new prompt must still open a new batch.
+fn codex_user_item(text: &str) -> String {
+    serde_json::json!({
+        "type": "event_msg",
+        "timestamp": "2026-08-27T10:00:00.000Z",
+        "payload": {"type": "item_completed", "item": {
+            "type": "UserMessage", "id": "u1",
+            "content": [{"type": "text", "text": text}]
+        }}
+    })
+    .to_string()
+}
+
+#[test]
+fn a_new_format_prompt_still_opens_a_batch() {
+    let mut t = TaskTracker::new(Provider::Codex);
+    feed(
+        &mut t,
+        &[
+            &codex_user_item("audit the repo"),
+            &codex_plan(vec![("Map repo", "in_progress")]),
+            &codex_user_item("now fix the worst one"),
+            &codex_plan(vec![("Fix hotspot", "in_progress")]),
+        ],
+    );
+    assert_eq!(t.batches().len(), 2, "each spoken prompt starts its batch");
+    assert_eq!(t.batches()[1].tasks[0].subject, "Fix hotspot");
+}
+
 #[test]
 fn codex_plan_snapshots_replace_within_a_batch() {
     let mut t = TaskTracker::new(Provider::Codex);

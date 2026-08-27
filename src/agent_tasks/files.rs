@@ -331,6 +331,28 @@ pub(super) fn ingest_codex(batches: &mut BatchBuilder, v: &Value) {
                 batches.note_prompt(text, ts);
             }
         }
+        // Newer rollouts (gpt-5.6 era) dropped user_message events; the
+        // prompt arrives as a completed item instead.
+        (Some("event_msg"), Some("item_completed")) => {
+            let item = payload.get("item");
+            let is_user = item
+                .and_then(|item| item.get("type"))
+                .and_then(Value::as_str)
+                == Some("UserMessage");
+            if is_user {
+                let text = item
+                    .and_then(|item| item.get("content"))
+                    .and_then(Value::as_array)
+                    .and_then(|parts| {
+                        parts
+                            .iter()
+                            .find_map(|part| part.get("text").and_then(Value::as_str))
+                    });
+                if let Some(text) = text {
+                    batches.note_prompt(text, ts);
+                }
+            }
+        }
         (Some("response_item"), Some("function_call"))
             if payload.get("name").and_then(Value::as_str) == Some("update_plan") =>
         {

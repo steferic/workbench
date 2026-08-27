@@ -339,6 +339,30 @@ fn codex(v: &Value, out: &mut Vec<Message>) {
                 .and_then(|raw| serde_json::from_str::<Value>(raw).ok());
             push(out, Role::Tool, &codex_tool_line(name, args.as_ref()), at);
         }
+        // Newer rollouts (the gpt-5.6 era) stopped emitting user_message /
+        // agent_message events entirely — the spoken turns arrive only as
+        // completed items. Without this arm a session reads as nothing but
+        // tool calls, and a reply typed on the phone never appears to land.
+        (Some("event_msg"), Some("item_completed")) => {
+            let Some(item) = payload.get("item") else {
+                return;
+            };
+            match item.get("type").and_then(Value::as_str) {
+                Some("UserMessage") => {
+                    if let Some(text) = item_text(item) {
+                        if !is_plumbing(&text) {
+                            push(out, Role::You, &text, at);
+                        }
+                    }
+                }
+                Some("AgentMessage") => {
+                    if let Some(text) = item_text(item) {
+                        push(out, Role::Agent, &text, at);
+                    }
+                }
+                _ => {}
+            }
+        }
         (Some("response_item"), Some("custom_tool_call")) => {
             let name = payload
                 .get("name")
@@ -352,6 +376,32 @@ fn codex(v: &Value, out: &mut Vec<Message>) {
             push(out, Role::Tool, &line, at);
         }
         _ => {}
+    }
+}
+
+/// The words inside a completed item's content array.
+///
+/// The casing is the format's, not a typo: a UserMessage carries
+/// `{"type":"text"}` while an AgentMessage carries `{"type":"Text"}` —
+/// observed side by side in one rollout.
+fn item_text(item: &Value) -> Option<String> {
+    let parts: Vec<&str> = item
+        .get("content")?
+        .as_array()?
+        .iter()
+        .filter(|part| {
+            matches!(
+                part.get("type").and_then(Value::as_str),
+                Some("text" | "Text" | "input_text" | "output_text")
+            )
+        })
+        .filter_map(|part| part.get("text").and_then(Value::as_str))
+        .filter(|text| !text.trim().is_empty())
+        .collect();
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("\n\n"))
     }
 }
 
@@ -449,6 +499,39 @@ mod tests {
         assert_eq!(messages[0].text, "build the radio case");
         assert_eq!(messages[1].text, "I'll inspect the app structure first.");
         assert_eq!(messages[2].text, "exec_command · pwd && ls");
+    }
+
+    /// Shapes verbatim from a real gpt-5.6-sol rollout (2026-08-27): no
+    /// user_message/agent_message events exist any more; the conversation
+    /// arrives only as completed items, and the two roles disagree about the
+    /// casing of "text". Before this was handled, a session read as nothing
+    /// but tool calls and phone replies never appeared to land.
+    #[test]
+    fn a_new_format_rollout_still_reads_as_a_conversation() {
+        let log = write_log(&[
+            r#"{"timestamp":"2026-08-27T14:11:13.969Z","ordinal":0,"type":"session_meta","payload":{"session_id":"01a0438e","cwd":"/tmp"}}"#,
+            r#"{"timestamp":"2026-08-27T14:11:14.166Z","type":"response_item","payload":{"type":"message","id":"m1","role":"developer","content":[{"type":"input_text","text":"<skills_instructions>plumbing</skills_instructions>"}]}}"#,
+            r#"{"timestamp":"2026-08-27T14:11:14.166Z","type":"response_item","payload":{"type":"message","id":"m2","role":"user","content":[{"type":"input_text","text":"<environment_context><cwd>/tmp</cwd></environment_context>"}]}}"#,
+            r#"{"timestamp":"2026-08-27T14:11:15.000Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","id":"01a0438f","content":[{"type":"text","text":"make the knobs keyboard-movable"}]}}}"#,
+            r#"{"timestamp":"2026-08-27T14:11:20.000Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"Reasoning","id":"r1","content":[{"type":"Text","text":"thinking..."}]}}}"#,
+            r#"{"timestamp":"2026-08-27T14:11:22.000Z","type":"response_item","payload":{"type":"custom_tool_call","name":"shell","input":"rg -n knobs src/"}}"#,
+            r#"{"timestamp":"2026-08-27T14:11:30.000Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"AgentMessage","id":"msg_0ee6","content":[{"type":"Text","text":"I’ll trace the parameter keyboard handling."}]}}}"#,
+        ]);
+
+        let messages = read(log.path(), Provider::Codex, 50);
+        let spoken: Vec<(Role, &str)> = messages
+            .iter()
+            .map(|m| (m.role, m.text.as_str()))
+            .collect();
+        assert_eq!(
+            spoken,
+            vec![
+                (Role::You, "make the knobs keyboard-movable"),
+                (Role::Tool, "shell · rg -n knobs src/"),
+                (Role::Agent, "I’ll trace the parameter keyboard handling."),
+            ],
+            "speech from items, tools from response_items, plumbing dropped"
+        );
     }
 
     #[test]
