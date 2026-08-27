@@ -139,6 +139,35 @@ impl PerformanceMetrics {
         None
     }
 
+    /// The kernel's own memory-pressure verdict: 1 normal, 2 warning, 4
+    /// critical. This is the signal its killer acts on, which makes it the
+    /// honest gauge — swap *percent* reads high on a perfectly healthy
+    /// machine, because macOS only deletes empty swapfiles and idle pages
+    /// stay swapped until their owner touches them. Percent said 91 while
+    /// free memory sat at 53; this said 1.
+    #[cfg(target_os = "macos")]
+    pub fn memory_pressure_level(&self) -> Option<i32> {
+        let mut level: i32 = 0;
+        let mut size = std::mem::size_of::<i32>();
+        let name = c"kern.memorystatus_vm_pressure_level";
+        // SAFETY: sysctlbyname writes at most `size` bytes into `level`.
+        let ok = unsafe {
+            libc::sysctlbyname(
+                name.as_ptr(),
+                &mut level as *mut _ as *mut libc::c_void,
+                &mut size,
+                std::ptr::null_mut(),
+                0,
+            )
+        } == 0;
+        ok.then_some(level)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub fn memory_pressure_level(&self) -> Option<i32> {
+        None
+    }
+
     /// Get memory usage in MB (RSS - resident set size)
     pub fn memory_mb(&self) -> f64 {
         #[cfg(target_os = "macos")]

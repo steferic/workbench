@@ -470,25 +470,28 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
                     ));
                 }
 
-                // System swap, because it is the number that predicts death:
-                // every abrupt exit so far happened with swap in the 90s while
-                // the kernel shot a process a second. The health log records
-                // it once a minute for the postmortem; this is for noticing
-                // *before* the postmortem. Read per frame — one sysctl,
+                // System memory, because it is what predicts death: every
+                // abrupt exit happened while the kernel was shooting a
+                // process a second. The number shown is swap; the *colour*
+                // is the kernel's own pressure verdict — the signal its
+                // killer acts on. Swap percent alone cried wolf: idle pages
+                // stay swapped on a healthy machine, so it read 91% while
+                // free memory sat at 53%. Read per frame — two sysctls,
                 // microseconds — so the alarm is never a minute stale.
                 if let Some((used, total)) = state.system.perf.system_swap() {
                     if total > 0 {
                         let pct = used as f64 / total as f64 * 100.0;
-                        let style = if pct >= 90.0 {
-                            // The kernel is already hunting, or about to be.
-                            Style::default().fg(t.error).add_modifier(Modifier::BOLD)
-                        } else if pct >= 70.0 {
-                            Style::default().fg(t.active)
-                        } else {
-                            Style::default().fg(t.fg_faint)
+                        let (style, word) = match state.system.perf.memory_pressure_level() {
+                            // The kernel is hunting. Anything can be next.
+                            Some(4) => (
+                                Style::default().fg(t.error).add_modifier(Modifier::BOLD),
+                                " MEM CRITICAL",
+                            ),
+                            Some(2) => (Style::default().fg(t.active), " mem warn"),
+                            _ => (Style::default().fg(t.fg_faint), ""),
                         };
                         status.push(Span::raw(" | "));
-                        status.push(Span::styled(format!("swap {pct:.0}%"), style));
+                        status.push(Span::styled(format!("swap {pct:.0}%{word}"), style));
                     }
                 }
 
