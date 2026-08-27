@@ -60,6 +60,7 @@ pub async fn run_tui(initial_workspace: Option<PathBuf>, use_alternate_screen: b
     // never said goodbye, say so while the log around the old heartbeats is
     // still warm.
     crate::lifecycle::note_boot();
+    crate::lifecycle::watch_termination();
 
     // Initialize terminal
     let mut terminal = tui::init(use_alternate_screen)?;
@@ -380,6 +381,15 @@ async fn run_main_loop(
         ocean.sync(state.system.ocean_waves_playing);
         chimes.sync(state.system.wind_chimes_playing);
         rain.sync(state.system.rainforest_rain_playing);
+
+        // A SIGTERM/SIGHUP arrives here as a notice, not a death: log who
+        // asked, then leave through the same door as Ctrl+Q — agents shut
+        // down, terminal restored, marker rewritten. Before this, a polite
+        // kill was indistinguishable from a power cut.
+        if let Some(notice) = crate::lifecycle::termination_notice() {
+            crate::logger::warn(format!("shutting down: asked to terminate by {notice}"));
+            state.system.should_quit = true;
+        }
 
         if state.system.should_quit {
             // Final synchronous save so pending changes survive shutdown.
