@@ -169,40 +169,51 @@ impl PerformanceMetrics {
     }
 
     /// Get memory usage in MB (RSS - resident set size)
+    /// This process's memory, as the kernel bills it *right now*.
+    ///
+    /// `ri_phys_footprint` — the same number `footprint(1)` prints — rather
+    /// than getrusage's `ru_maxrss`, which is the lifetime *peak*: a metric
+    /// that can only rise. One transient spike (586 MB, one moment, cause
+    /// unseen) was reported as the steady state for hours, and a gauge that
+    /// cannot come back down cannot show the next spike either.
+    #[cfg(target_os = "macos")]
     pub fn memory_mb(&self) -> f64 {
-        #[cfg(target_os = "macos")]
-        {
-            use std::mem::MaybeUninit;
-            // SAFETY: MaybeUninit provides a valid pointer for getrusage to write into.
-            // RUSAGE_SELF is always valid. We only read the struct after confirming success.
-            unsafe {
-                let mut rusage = MaybeUninit::<libc::rusage>::uninit();
-                if libc::getrusage(libc::RUSAGE_SELF, rusage.as_mut_ptr()) == 0 {
-                    let rusage = rusage.assume_init();
-                    // On macOS, ru_maxrss is in bytes
-                    return rusage.ru_maxrss as f64 / (1024.0 * 1024.0);
-                }
-            }
-            0.0
+        let mut info = std::mem::MaybeUninit::<libc::rusage_info_v2>::uninit();
+        // SAFETY: proc_pid_rusage fills the struct for our own pid; the
+        // flavor constant matches the struct we hand it.
+        let ok = unsafe {
+            libc::proc_pid_rusage(
+                std::process::id() as libc::c_int,
+                libc::RUSAGE_INFO_V2,
+                info.as_mut_ptr() as *mut libc::rusage_info_t,
+            )
+        } == 0;
+        if ok {
+            // SAFETY: only read after the call reported success.
+            let info = unsafe { info.assume_init() };
+            return info.ri_phys_footprint as f64 / (1024.0 * 1024.0);
         }
-        #[cfg(target_os = "linux")]
-        {
-            use std::mem::MaybeUninit;
-            // SAFETY: Same as macOS block above — valid pointer, valid resource argument.
-            unsafe {
-                let mut rusage = MaybeUninit::<libc::rusage>::uninit();
-                if libc::getrusage(libc::RUSAGE_SELF, rusage.as_mut_ptr()) == 0 {
-                    let rusage = rusage.assume_init();
-                    // On Linux, ru_maxrss is in kilobytes
-                    return rusage.ru_maxrss as f64 / 1024.0;
-                }
-            }
-            0.0
-        }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-        {
-            0.0
-        }
+        0.0
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn memory_mb(&self) -> f64 {
+        // Current, not peak, for the same reason as macOS: /proc's VmRSS.
+        std::fs::read_to_string("/proc/self/status")
+            .ok()
+            .and_then(|status| {
+                status.lines().find_map(|line| {
+                    let rest = line.strip_prefix("VmRSS:")?;
+                    rest.trim().strip_suffix("kB")?.trim().parse::<f64>().ok()
+                })
+            })
+            .map(|kb| kb / 1024.0)
+            .unwrap_or(0.0)
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    pub fn memory_mb(&self) -> f64 {
+        0.0
     }
 }
 

@@ -29,6 +29,13 @@ fn handle() -> Option<&'static Mutex<File>> {
 }
 
 fn write(level: &str, msg: &str) {
+    // The unit-test binary runs the same code paths and used to write its
+    // fixtures' side effects — "(test)" kills, phantom phone replies, fake
+    // "disk full" warnings — into the real log, where they derailed two real
+    // investigations. Tests exercise what would be logged, never the file.
+    if cfg!(test) {
+        return;
+    }
     let Some(h) = handle() else {
         return;
     };
