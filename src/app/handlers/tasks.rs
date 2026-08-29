@@ -255,14 +255,13 @@ pub fn handle_task_action(
                 state.ui.set_task_status("Select a proposal first");
                 return Ok(());
             };
-            if let Some(ws) = state.selected_workspace_mut() {
-                if let Some(proposal) = ws.proposals.iter_mut().find(|p| p.id == id) {
-                    proposal.decline();
-                }
+            let Some(workspace) = state.selected_workspace().map(|ws| ws.id) else {
+                return Ok(());
+            };
+            match decide_proposal(state, workspace, id, false, action_tx) {
+                Ok(message) | Err(message) => state.ui.set_task_status(message),
             }
             objectives_view::clamp(state);
-            state.ui.set_task_status("Declined");
-            super::save_state(state, "failed to save the decision");
         }
         Action::VerificationFinished {
             workspace_id,
@@ -526,22 +525,66 @@ fn approve_selected_check(state: &mut AppState) {
 /// one that is itself a manager has no sensible reading, and silently doing
 /// something adjacent would be worse than saying so.
 fn approve_selected_proposal(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) {
-    let Some(proposal) = objectives_view::selected_proposal(state).cloned() else {
+    let Some(proposal) = objectives_view::selected_proposal(state).map(|p| p.id) else {
         state.ui.set_task_status("Select a proposal first");
         return;
     };
-    if !proposal.is_pending() {
-        state.ui.set_task_status("Already decided");
+    let Some(workspace) = state.selected_workspace().map(|ws| ws.id) else {
         return;
+    };
+    match decide_proposal(state, workspace, proposal, true, action_tx) {
+        Ok(message) | Err(message) => state.ui.set_task_status(message),
     }
-    let Some(target) = proposal.agent.clone() else {
-        state.ui.set_task_status("That proposal names no agent");
-        return;
-    };
-    let Some(session_id) = crate::remote::session_for(state, &target) else {
-        state.ui.set_task_status(format!("No agent {target} here any more"));
-        return;
-    };
+    objectives_view::clamp(state);
+}
+
+/// Approve or decline one proposal, wherever it lives.
+///
+/// The one implementation behind the TUI's `a`/`x` and the phone's buttons:
+/// approving queues the instruction for the named agent and runs the
+/// baseline check, exactly as pressing `a` does. By id and workspace rather
+/// than by cursor, because the phone has no cursor and the proposal need not
+/// be in the selected workspace.
+pub(crate) fn decide_proposal(
+    state: &mut AppState,
+    workspace_id: uuid::Uuid,
+    proposal_id: uuid::Uuid,
+    approve: bool,
+    action_tx: &mpsc::UnboundedSender<Action>,
+) -> Result<String, String> {
+    let proposal = state
+        .data
+        .workspaces
+        .iter()
+        .find(|ws| ws.id == workspace_id)
+        .and_then(|ws| ws.proposals.iter().find(|p| p.id == proposal_id))
+        .cloned()
+        .ok_or_else(|| "No such proposal".to_string())?;
+    if !proposal.is_pending() {
+        return Err("Already decided".to_string());
+    }
+
+    if !approve {
+        if let Some(ws) = state
+            .data
+            .workspaces
+            .iter_mut()
+            .find(|ws| ws.id == workspace_id)
+        {
+            if let Some(stored) = ws.proposals.iter_mut().find(|p| p.id == proposal_id) {
+                stored.decline();
+            }
+        }
+        super::save_state(state, "failed to save the decision");
+        return Ok("Declined".to_string());
+    }
+
+    let target = proposal
+        .agent
+        .clone()
+        .ok_or_else(|| "That proposal names no agent".to_string())?;
+    let session_id = crate::remote::session_for(state, &target)
+        .ok_or_else(|| format!("No agent {target} here any more"))?;
     // The hierarchy stays one level deep, even by hand: approving a manager
     // into another manager's queue is not a thing to allow by accident.
     let directable = state
@@ -549,42 +592,35 @@ fn approve_selected_proposal(state: &mut AppState, action_tx: &mpsc::UnboundedSe
         .map(|s| s.agent_type.is_directable())
         .unwrap_or(false);
     if !directable {
-        state.ui.set_task_status(format!("{target} is not an agent that takes work"));
-        return;
+        return Err(format!("{target} is not an agent that takes work"));
     }
 
     let Some(session) = state.get_session_mut(session_id) else {
-        return;
+        return Err(format!("No agent {target} here any more"));
     };
     let todo_id = session.todo_queue.add(proposal.instruction.clone());
     let left = session.todo_queue.pending_count();
 
-    if let Some(ws) = state.selected_workspace_mut() {
-        if let Some(stored) = ws.proposals.iter_mut().find(|p| p.id == proposal.id) {
+    if let Some(ws) = state
+        .data
+        .workspaces
+        .iter_mut()
+        .find(|ws| ws.id == workspace_id)
+    {
+        if let Some(stored) = ws.proposals.iter_mut().find(|p| p.id == proposal_id) {
             stored.approve(todo_id);
         }
     }
-    objectives_view::clamp(state);
 
     // Ask the check what it says *now*, before the agent has touched
     // anything. Without this the agent is credited for a suite that was
     // already green, or blamed for one that was already red.
-    if let Some((check, dir, workspace_id)) = baseline_for(state, &proposal, session_id) {
-        start_verification(
-            state,
-            workspace_id,
-            proposal.id,
-            true,
-            check,
-            dir,
-            action_tx,
-        );
+    if let Some((check, dir, ws_id)) = baseline_for(state, &proposal, session_id) {
+        start_verification(state, ws_id, proposal.id, true, check, dir, action_tx);
     }
 
-    state
-        .ui
-        .set_task_status(format!("Queued for {target} — {left} to run"));
     super::save_state(state, "failed to save the approval");
+    Ok(format!("Queued for {target} — {left} to run"))
 }
 
 /// The check to run for a proposal, and where to run it.

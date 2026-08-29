@@ -1163,9 +1163,20 @@ pub const HTML: &str = r##"<!doctype html>
   .objective .st { font-size:11px; color:var(--dim); margin-right:6px;
     letter-spacing:.05em; text-transform:uppercase; }
   .objective.met, .objective.held { color:var(--dim); }
-  .proposal { padding:3px 8px 3px 40px; font-size:12px; color:var(--dim); }
+  .proposal { padding:3px 8px 3px 40px; font-size:12px; color:var(--dim);
+    display:flex; align-items:center; gap:8px; }
+  .proposal .text { flex:1; min-width:0; }
   .proposal .verdict-verified { color:var(--ok); }
   .proposal .verdict-rejected { color:var(--warn); }
+  /* Decision buttons meet the 44px touch minimum even inside a 12px row:
+     a mis-tap here queues work for an agent, which is not a fat-finger
+     kind of mistake. */
+  .proposal .yes, .proposal .no {
+    flex:none; min-width:44px; min-height:34px; border-radius:9px;
+    border:1px solid var(--line); background:none; font:inherit; font-size:13px;
+  }
+  .proposal .yes { color:var(--ok); }
+  .proposal .no { color:var(--warn); }
 
   .palette {
     position:fixed; left:0; right:0; bottom:0; z-index:5;
@@ -2111,6 +2122,15 @@ function toggleManagers() {
 
    Rebuilt only when the content changes, for the same reason as the log:
    replacing the DOM under a finger swallows the tap it was aiming. */
+/* Approve queues the instruction for the named agent — the same act as
+   pressing `a` at the desk, through the same code. The row repaints from the
+   next snapshot rather than optimistically: what the desktop actually did
+   (queued, or refused with a reason in its log) is the truth worth showing. */
+function decide(id, approve) {
+  post("/api/proposal", { agent: id, text: approve ? "approve" : "decline" });
+  managersSig = "";                       // repaint from the next snapshot
+}
+
 let managersSig = "";
 function renderManagers() {
   const managers = (data?.agents || []).filter(a => a.manager);
@@ -2135,8 +2155,13 @@ function renderManagers() {
       </div>`).join("");
     const proposals = (p.proposals || []).filter(x => x.state !== "declined").map(x => `
       <div class="proposal">
-        ${x.verdict ? '<span class="verdict-' + esc(x.verdict) + '">' + esc(x.verdict) + "</span> · "
-          : esc(x.state) + " · "}${esc(x.instruction)}
+        <span class="text">
+          ${x.verdict ? '<span class="verdict-' + esc(x.verdict) + '">' + esc(x.verdict) + "</span> · "
+            : esc(x.state) + " · "}${esc(x.instruction)}
+        </span>
+        ${x.state === "pending" ? `
+          <button class="yes" onclick="decide('${x.id}', true)" aria-label="approve">✓</button>
+          <button class="no" onclick="decide('${x.id}', false)" aria-label="decline">✕</button>` : ""}
       </div>`).join("");
     const doing = m.status === "blocked" ? "needs you"
       : m.running || (m.queued.length ? m.queued.length + " queued" : m.status);

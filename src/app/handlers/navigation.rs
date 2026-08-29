@@ -413,59 +413,52 @@ fn handle_mouse_click(
     pty_manager: &PtyManager,
     pty_tx: &mpsc::Sender<Action>,
 ) {
-    // Simplified MouseClick logic using stored areas
-    let (w, h) = state.system.terminal_size;
+    // The left column's dividers are found from the rects the renderer
+    // stored, never from parallel arithmetic. The old float math disagreed
+    // with ratatui's integer percentages by a column or two — more when the
+    // banner shifted everything down a row — and a divider you cannot hit is
+    // a pane you cannot resize.
+    let (_, h) = state.system.terminal_size;
     let main_height = h.saturating_sub(1);
     let divider_tolerance = 1u16;
 
-    let left_width = (w as f32 * state.ui.layout.left_panel_ratio) as u16;
-    if x >= left_width.saturating_sub(divider_tolerance)
-        && x <= left_width + divider_tolerance
-        && y < main_height
-    {
-        state.ui.layout.dragging_divider = Some(Divider::LeftRight);
-        state.ui.layout.drag_start_pos = Some((x, y));
-        state.ui.layout.drag_start_ratio = state.ui.layout.left_panel_ratio;
-        return;
-    }
+    if let (Some(workspace), Some(sessions), Some(tasks), Some(utilities)) = (
+        state.ui.workspace_area,
+        state.ui.session_area,
+        state.ui.tasks_area,
+        state.ui.utilities_area,
+    ) {
+        // A boundary sits between two panes' border rows; a press on either
+        // border char, or one cell of grace outside them, counts.
+        let near = |a: u16, boundary: u16| a + 2 >= boundary && a <= boundary + 1;
+        let left_edge = workspace.0 + workspace.2;
+        let top = workspace.1;
+        let bottom = utilities.1 + utilities.3;
 
-    let workspace_height = (main_height as f32 * state.ui.layout.workspace_ratio) as u16;
-    if x < left_width
-        && y >= workspace_height.saturating_sub(divider_tolerance)
-        && y <= workspace_height + divider_tolerance
-    {
-        state.ui.layout.dragging_divider = Some(Divider::WorkspaceSession);
-        state.ui.layout.drag_start_pos = Some((x, y));
-        state.ui.layout.drag_start_ratio = state.ui.layout.workspace_ratio;
-        return;
-    }
-
-    let lower_left_height = main_height.saturating_sub(workspace_height);
-    let sessions_height = (lower_left_height as f32 * state.ui.layout.sessions_ratio) as u16;
-    let sessions_tasks_divider_y = workspace_height + sessions_height;
-
-    if x < left_width
-        && y >= sessions_tasks_divider_y.saturating_sub(divider_tolerance)
-        && y <= sessions_tasks_divider_y + divider_tolerance
-    {
-        state.ui.layout.dragging_divider = Some(Divider::SessionsTasks);
-        state.ui.layout.drag_start_pos = Some((x, y));
-        state.ui.layout.drag_start_ratio = state.ui.layout.sessions_ratio;
-        return;
-    }
-
-    let remaining_height = lower_left_height.saturating_sub(sessions_height);
-    let tasks_height = (remaining_height as f32 * state.ui.layout.tasks_ratio) as u16;
-    let tasks_utilities_divider_y = sessions_tasks_divider_y + tasks_height;
-
-    if x < left_width
-        && y >= tasks_utilities_divider_y.saturating_sub(divider_tolerance)
-        && y <= tasks_utilities_divider_y + divider_tolerance
-    {
-        state.ui.layout.dragging_divider = Some(Divider::TasksUtilities);
-        state.ui.layout.drag_start_pos = Some((x, y));
-        state.ui.layout.drag_start_ratio = state.ui.layout.tasks_ratio;
-        return;
+        if near(x, left_edge) && y >= top && y < bottom {
+            state.ui.layout.dragging_divider = Some(Divider::LeftRight);
+            state.ui.layout.drag_start_pos = Some((x, y));
+            state.ui.layout.drag_start_ratio = state.ui.layout.left_panel_ratio;
+            return;
+        }
+        if x < left_edge && near(y, sessions.1) {
+            state.ui.layout.dragging_divider = Some(Divider::WorkspaceSession);
+            state.ui.layout.drag_start_pos = Some((x, y));
+            state.ui.layout.drag_start_ratio = state.ui.layout.workspace_ratio;
+            return;
+        }
+        if x < left_edge && near(y, tasks.1) {
+            state.ui.layout.dragging_divider = Some(Divider::SessionsTasks);
+            state.ui.layout.drag_start_pos = Some((x, y));
+            state.ui.layout.drag_start_ratio = state.ui.layout.sessions_ratio;
+            return;
+        }
+        if x < left_edge && near(y, utilities.1) {
+            state.ui.layout.dragging_divider = Some(Divider::TasksUtilities);
+            state.ui.layout.drag_start_pos = Some((x, y));
+            state.ui.layout.drag_start_ratio = state.ui.layout.tasks_ratio;
+            return;
+        }
     }
 
     if state.should_show_split() {
@@ -592,35 +585,46 @@ fn handle_mouse_click(
 /// text selection in whichever pane is being dragged.
 fn handle_mouse_drag(state: &mut AppState, x: u16, y: u16) {
     if let Some(divider) = state.ui.layout.dragging_divider {
-        let (w, h) = state.system.terminal_size;
-        let main_height = h.saturating_sub(1);
+        let (w, _) = state.system.terminal_size;
 
         match divider {
             Divider::LeftRight => {
                 let new_ratio = (x as f32 / w as f32).clamp(0.15, 0.50);
                 state.ui.layout.left_panel_ratio = new_ratio;
             }
+            // The vertical splits measure from the rects the renderer stored:
+            // the column starts below the banner when one is showing, and the
+            // old math measured from the top of the screen instead — a drag
+            // then landed a row away from the pointer.
             Divider::WorkspaceSession => {
-                let new_ratio = (y as f32 / main_height as f32).clamp(0.20, 0.80);
+                let (Some(ws), Some(ut)) = (state.ui.workspace_area, state.ui.utilities_area)
+                else {
+                    return;
+                };
+                let top = ws.1;
+                let span = (ut.1 + ut.3).saturating_sub(top).max(1) as f32;
+                let new_ratio =
+                    (y.saturating_sub(top) as f32 / span).clamp(0.20, 0.80);
                 state.ui.layout.workspace_ratio = new_ratio;
             }
             Divider::SessionsTasks => {
-                let workspace_height = (main_height as f32 * state.ui.layout.workspace_ratio) as u16;
-                let lower_left_height = main_height.saturating_sub(workspace_height);
-                let y_in_lower_left = y.saturating_sub(workspace_height);
+                let (Some(se), Some(ut)) = (state.ui.session_area, state.ui.utilities_area)
+                else {
+                    return;
+                };
+                let span = (ut.1 + ut.3).saturating_sub(se.1).max(1) as f32;
                 let new_ratio =
-                    (y_in_lower_left as f32 / lower_left_height as f32).clamp(0.15, 0.70);
+                    (y.saturating_sub(se.1) as f32 / span).clamp(0.15, 0.70);
                 state.ui.layout.sessions_ratio = new_ratio;
             }
             Divider::TasksUtilities => {
-                let workspace_height = (main_height as f32 * state.ui.layout.workspace_ratio) as u16;
-                let lower_left_height = main_height.saturating_sub(workspace_height);
-                let sessions_height = (lower_left_height as f32 * state.ui.layout.sessions_ratio) as u16;
-                let remaining_height = lower_left_height.saturating_sub(sessions_height);
-                let y_in_remaining = y
-                    .saturating_sub(workspace_height)
-                    .saturating_sub(sessions_height);
-                let new_ratio = (y_in_remaining as f32 / remaining_height as f32).clamp(0.20, 0.80);
+                let (Some(ta), Some(ut)) = (state.ui.tasks_area, state.ui.utilities_area)
+                else {
+                    return;
+                };
+                let span = (ut.1 + ut.3).saturating_sub(ta.1).max(1) as f32;
+                let new_ratio =
+                    (y.saturating_sub(ta.1) as f32 / span).clamp(0.20, 0.80);
                 state.ui.layout.tasks_ratio = new_ratio;
             }
             Divider::OutputPinned => {

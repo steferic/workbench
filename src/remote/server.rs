@@ -54,6 +54,9 @@ pub enum RemoteCommand {
     NewAgent { project: String, provider: String },
     /// A device asking to be told when an agent needs you.
     Subscribe { endpoint: String },
+    /// The user deciding a proposal from the phone: the same act as `a`/`x`
+    /// at the desk. `proposal` is the full id; approving queues the work.
+    Decide { proposal: String, approve: bool },
     /// A manager's suggestion for how an objective would be checked. Stored
     /// as proposed, which is to say: not yet something anything will be held
     /// to. Approving it is the user's step.
@@ -250,6 +253,12 @@ fn handle(
         ("POST", "/api/focus") => {
             command_from(request, commands, |agent, _| Some(RemoteCommand::Focus { agent }))
         }
+        ("POST", "/api/proposal") => command_from(request, commands, |proposal, decision| {
+            Some(RemoteCommand::Decide {
+                proposal,
+                approve: decision == "approve",
+            })
+        }),
         ("POST", "/api/new-agent") => command_from(request, commands, |project, provider| {
             Some(RemoteCommand::NewAgent { project, provider })
         }),

@@ -1034,6 +1034,32 @@ fn apply_remote(
 ) {
     use crate::remote::RemoteCommand;
 
+    // A decision names a proposal, not a session. Routed to the same core
+    // the TUI's `a` and `x` use, found in whichever workspace holds it.
+    if let RemoteCommand::Decide { proposal, approve } = &command {
+        let found = state.data.workspaces.iter().find_map(|ws| {
+            ws.proposals
+                .iter()
+                .find(|p| p.id.to_string() == *proposal)
+                .map(|p| (ws.id, p.id))
+        });
+        let Some((workspace_id, proposal_id)) = found else {
+            crate::logger::warn(format!("phone decided an unknown proposal {proposal}"));
+            return;
+        };
+        match crate::app::handlers::tasks::decide_proposal(
+            state,
+            workspace_id,
+            proposal_id,
+            *approve,
+            action_tx,
+        ) {
+            Ok(outcome) => crate::logger::info(format!("phone decided a proposal: {outcome}")),
+            Err(err) => crate::logger::warn(format!("phone's decision failed: {err}")),
+        }
+        return;
+    }
+
     // A subscription names a device, not a session.
     if let RemoteCommand::Subscribe { endpoint } = &command {
         if state.system.push.subscribe(endpoint.clone()) {
@@ -1103,8 +1129,10 @@ fn apply_remote(
         | RemoteCommand::Focus { agent } => agent.clone(),
         // Handled above.
         RemoteCommand::NewAgent { .. } | RemoteCommand::Subscribe { .. } => return,
-        // Applied above; they name a project, not an agent.
-        RemoteCommand::Propose { .. } | RemoteCommand::ProposeCheck { .. } => return,
+        // Applied above; they name a project or a proposal, not an agent.
+        RemoteCommand::Propose { .. }
+        | RemoteCommand::ProposeCheck { .. }
+        | RemoteCommand::Decide { .. } => return,
     };
     let Some(session_id) = crate::remote::session_for(state, &agent) else {
         crate::logger::warn(format!("phone asked for unknown agent {agent}"));
@@ -1113,7 +1141,9 @@ fn apply_remote(
 
     match command {
         // Applied before the agent lookup above; unreachable here.
-        RemoteCommand::Propose { .. } | RemoteCommand::ProposeCheck { .. } => {}
+        RemoteCommand::Propose { .. }
+        | RemoteCommand::ProposeCheck { .. }
+        | RemoteCommand::Decide { .. } => {}
         RemoteCommand::Todo { text, .. } => {
             if let Some(session) = state.get_session_mut(session_id) {
                 session.todo_queue.add(text.clone());

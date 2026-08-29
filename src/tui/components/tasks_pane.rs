@@ -11,7 +11,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
     Frame,
 };
 
@@ -388,7 +388,11 @@ fn render_objectives_tab(frame: &mut Frame, area: Rect, state: &AppState, is_foc
         })
         .collect();
 
-    frame.render_widget(Paragraph::new(lines), area);
+    // Wrapped, not clipped: an objective is a standing priority in the
+    // user's own words, and words that fall off the pane edge read as a
+    // different priority than the one written. Rows keep their identity —
+    // the cursor walks rows, and a row is merely taller when it wraps.
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
 }
 
 /// One line of what is often several paragraphs of instruction.
