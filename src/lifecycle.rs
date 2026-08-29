@@ -44,7 +44,7 @@ pub fn watch_termination() {
     // SAFETY: installing a handler whose body is two atomic stores.
     unsafe {
         let mut action: libc::sigaction = std::mem::zeroed();
-        action.sa_sigaction = on_termination as usize;
+        action.sa_sigaction = on_termination as extern "C" fn(_, _, _) as usize;
         action.sa_flags = libc::SA_SIGINFO;
         libc::sigemptyset(&mut action.sa_mask);
         libc::sigaction(libc::SIGTERM, &action, std::ptr::null_mut());

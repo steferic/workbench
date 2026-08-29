@@ -271,13 +271,17 @@ fn state_body(
         .iter()
         .find(|(key, _)| key == "have")
         .and_then(|(_, value)| value.parse::<usize>().ok());
+    let epoch = params
+        .iter()
+        .find(|(key, _)| key == "epoch")
+        .map(|(_, value)| value.as_str());
 
     let body = {
         let Ok(snapshot) = shared.lock() else {
             return status(500, "state unavailable");
         };
         match have {
-            Some(have) => serde_json::to_string(&super::since(&snapshot, have)),
+            Some(have) => serde_json::to_string(&super::since(&snapshot, have, epoch)),
             None => serde_json::to_string(&*snapshot),
         }
         .unwrap_or_default()

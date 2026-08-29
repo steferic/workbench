@@ -805,6 +805,12 @@ pub struct ThreadCache {
     /// Messages ever read, including any since trimmed off the front — the
     /// name the phone uses to say how much of the conversation it holds.
     pub total: usize,
+    /// Which counting life `total` belongs to. Minted when the cache is
+    /// (re)built, echoed by the phone: `total` restarts at the window size on
+    /// every rebuild while the phone's `have` survives in a page that stays
+    /// open for days, and comparing counts from different lives is what
+    /// repeated the tail of a conversation once per workbench restart.
+    pub epoch: String,
 }
 
 impl SystemState {

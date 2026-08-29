@@ -700,6 +700,7 @@ mod tests {
             messages: Vec::new(),
             msg_total: 0,
             msg_reset: false,
+            msg_epoch: String::new(),
             tail: Vec::new(),
             finished_ago: None,
         }

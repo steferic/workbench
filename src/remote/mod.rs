@@ -170,6 +170,11 @@ pub struct AgentView {
     /// a replacement rather than a continuation.
     #[serde(default)]
     pub msg_reset: bool,
+    /// Which counting life `msg_total` belongs to (see `ThreadCache::epoch`).
+    /// A phone quoting `have` from another epoch gets a replacement, not a
+    /// splice — its count and ours share no origin.
+    #[serde(default)]
+    pub msg_epoch: String,
     /// Screen lines, for an agent whose journal workbench cannot read. Worse
     /// than `messages`, and only ever used instead of it.
     pub tail: Vec<String>,
@@ -205,14 +210,22 @@ pub fn publish(state: &mut AppState, shared: &Shared) {
 /// Sending all eighty every second is what a phone notices: measured at 36 KB
 /// a tick, which is two megabytes a minute of cellular radio to say almost
 /// nothing. Usually the answer here is "none, you are up to date".
-pub fn since(snapshot: &Snapshot, have: usize) -> Snapshot {
+pub fn since(snapshot: &Snapshot, have: usize, epoch: Option<&str>) -> Snapshot {
     let mut trimmed = snapshot.clone();
     for agent in &mut trimmed.agents {
         if agent.messages.is_empty() {
             continue;
         }
+        // A `have` counted in another life is not a position in this one.
+        // Totals restart at the window size whenever the cache rebuilds — a
+        // workbench restart, a focus flip — while the phone's count survives
+        // in a page that stays open for days. Splicing across that boundary
+        // is what appended the tail of a conversation again after every
+        // restart: the phone held 40, the reborn cache counted its 80-message
+        // window, and the "40 it was owed" were ones it already had.
+        let same_life = epoch == Some(agent.msg_epoch.as_str());
         let owed = agent.msg_total.saturating_sub(have);
-        if have > agent.msg_total || owed >= agent.messages.len() {
+        if !same_life || have > agent.msg_total || owed >= agent.messages.len() {
             // Three clients look alike from here and all need a replacement
             // rather than a splice: one further behind than the window we
             // keep, one with nothing, and one *ahead* of us — quoting a count
@@ -291,7 +304,7 @@ fn journal(state: &AppState, session_id: Uuid) -> Option<(crate::agent_tasks::Pr
 ///
 /// `None` for a provider with no journal we can read; the caller falls back to
 /// the terminal.
-fn conversation(state: &mut AppState, session_id: Uuid) -> Option<(Vec<Message>, usize)> {
+fn conversation(state: &mut AppState, session_id: Uuid) -> Option<(Vec<Message>, usize, String)> {
     let (provider, path) = journal(state, session_id)?;
 
     // A cache for another session, or another of its journals, is of no use.
@@ -303,6 +316,9 @@ fn conversation(state: &mut AppState, session_id: Uuid) -> Option<(Vec<Message>,
             cursor: Default::default(),
             messages: Vec::new(),
             total: 0,
+            // A new cache is a new counting life — the phone must not splice
+            // a `have` from the old one onto totals from this one.
+            epoch: Uuid::new_v4().simple().to_string(),
         },
     };
     let before = cache.messages.len();
@@ -313,7 +329,10 @@ fn conversation(state: &mut AppState, session_id: Uuid) -> Option<(Vec<Message>,
         // is a different conversation's worth of history, so the count
         // restarts with it — `+=` here underflowed, and one wrapped total
         // poisoned the phone's `have` into a number that never parses again.
+        // A restarted count is a new life too: an epoch change makes the
+        // phone replace rather than splice.
         cache.total = cache.messages.len();
+        cache.epoch = Uuid::new_v4().simple().to_string();
     } else {
         cache.total += cache.messages.len() - before;
     }
@@ -321,12 +340,12 @@ fn conversation(state: &mut AppState, session_id: Uuid) -> Option<(Vec<Message>,
         cache.messages.drain(..cache.messages.len() - MAX_MESSAGES);
     }
 
-    let read = (cache.messages.clone(), cache.total);
+    let read = (cache.messages.clone(), cache.total, cache.epoch.clone());
     state.system.remote_thread = Some(cache);
     Some(read)
 }
 
-fn publish_with(state: &AppState, shared: &Shared, open: Option<(Vec<Message>, usize)>) {
+fn publish_with(state: &AppState, shared: &Shared, open: Option<(Vec<Message>, usize, String)>) {
     let mut agents = Vec::new();
     let servers = dev_servers(state);
     let projects: Vec<ProjectView> = state
@@ -444,19 +463,26 @@ fn publish_with(state: &AppState, shared: &Shared, open: Option<(Vec<Message>, u
                 // Only the conversation you have open travels, so the snapshot
                 // stays phone-sized however many agents are running.
                 messages: match state.system.remote_focus == Some(session.id) {
-                    true => open.clone().map(|(msgs, _)| msgs).unwrap_or_default(),
+                    true => open.clone().map(|(msgs, _, _)| msgs).unwrap_or_default(),
                     false => Vec::new(),
                 },
                 msg_total: match state.system.remote_focus == Some(session.id) {
-                    true => open.as_ref().map(|(_, total)| *total).unwrap_or(0),
+                    true => open.as_ref().map(|(_, total, _)| *total).unwrap_or(0),
                     false => 0,
                 },
                 msg_reset: false,
+                msg_epoch: match state.system.remote_focus == Some(session.id) {
+                    true => open
+                        .as_ref()
+                        .map(|(_, _, epoch)| epoch.clone())
+                        .unwrap_or_default(),
+                    false => String::new(),
+                },
                 // Also the fallback for a session whose journal exists but has
                 // nothing in it yet: an agent still booting has said nothing,
                 // and an empty screen would look like a broken page.
                 tail: match state.system.remote_focus == Some(session.id)
-                    && open.as_ref().map(|(msgs, _)| msgs.is_empty()).unwrap_or(true)
+                    && open.as_ref().map(|(msgs, _, _)| msgs.is_empty()).unwrap_or(true)
                 {
                     true => output_tail(state, session.id, FALLBACK_TAIL),
                     false => Vec::new(),
@@ -794,17 +820,18 @@ mod tests {
             messages: vec![say("one"), say("two"), say("three")],
             msg_total: 3,
             msg_reset: false,
+            msg_epoch: "life-1".into(),
             tail: Vec::new(),
             finished_ago: None,
         });
 
         // Up to date: nothing owed.
-        let caught_up = since(&snapshot, 3);
+        let caught_up = since(&snapshot, 3, Some("life-1"));
         assert!(caught_up.agents[0].messages.is_empty());
         assert!(!caught_up.agents[0].msg_reset);
 
         // Two behind: the last two, to be appended.
-        let behind = since(&snapshot, 1);
+        let behind = since(&snapshot, 1, Some("life-1"));
         assert_eq!(
             behind.agents[0].messages.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(),
             vec!["two", "three"]
@@ -813,7 +840,7 @@ mod tests {
 
         // Nothing at all, or further behind than the window we keep: take
         // ours wholesale rather than splicing onto a gap.
-        let fresh = since(&snapshot, 0);
+        let fresh = since(&snapshot, 0, Some("life-1"));
         assert_eq!(fresh.agents[0].messages.len(), 3);
         assert!(fresh.agents[0].msg_reset);
     }
@@ -850,11 +877,12 @@ mod tests {
             }],
             msg_total: 1,
             msg_reset: false,
+            msg_epoch: "life-1".into(),
             tail: Vec::new(),
             finished_ago: None,
         });
 
-        let ahead = since(&snapshot, 347);
+        let ahead = since(&snapshot, 347, Some("life-1"));
         assert!(
             ahead.agents[0].msg_reset,
             "a client quoting a count we never issued needs a replacement, not silence"
@@ -925,7 +953,7 @@ mod tests {
 
         // And the phone that held the old count is reset on its next poll.
         assert!(
-            since(&snapshot, 10)
+            since(&snapshot, 10, Some("life-1"))
                 .agents
                 .iter()
                 .find(|a| a.id == agent.id)
@@ -963,16 +991,75 @@ mod tests {
         assert_eq!(agent.messages.last().unwrap().text, format!("m{}", MAX_MESSAGES + 4));
 
         // A phone holding all of them is owed nothing, even though the five
-        // it holds from the start are no longer in the window.
+        // it holds from the start are no longer in the window. It quotes the
+        // epoch it was told, as the page does.
         let short = agent.id.clone();
-        let caught_up = since(&snapshot, MAX_MESSAGES + 5);
+        let life = agent.msg_epoch.clone();
+        let caught_up = since(&snapshot, MAX_MESSAGES + 5, Some(&life));
         let same = caught_up.agents.iter().find(|a| a.id == short).unwrap();
         assert!(same.messages.is_empty() && !same.msg_reset);
 
         // One behind gets exactly one, not the window.
-        let behind = since(&snapshot, MAX_MESSAGES + 4);
+        let behind = since(&snapshot, MAX_MESSAGES + 4, Some(&life));
         let same = behind.agents.iter().find(|a| a.id == short).unwrap();
         assert_eq!(same.messages.len(), 1);
+    }
+
+    /// The bug this whole mechanism exists for: after a workbench restart the
+    /// count restarts at the window size, while the phone's `have` survives in
+    /// a page that stays open for days. The old splice saw "have 40, total 80,
+    /// owed 40" and served 40 messages the phone already held — the visible
+    /// symptom was the last page of a conversation repeated once per restart.
+    #[test]
+    fn a_have_from_another_life_is_replaced_not_spliced() {
+        let say = |text: &str| Message {
+            role: crate::remote::thread::Role::Agent,
+            text: text.into(),
+            at: None,
+        };
+        let mut snapshot = Snapshot::default();
+        snapshot.agents.push(AgentView {
+            id: "aaaa1111".into(),
+            project: "demo".into(),
+            project_id: "p".into(),
+            provider: "Codex".into(),
+            manager: false,
+            alias: None,
+            model: None,
+            status: "idle".into(),
+            reason: None,
+            running: None,
+            steps: Vec::new(),
+            queued: Vec::new(),
+            paused: false,
+            holding: None,
+            prompt: None,
+            messages: (0..80).map(|i| say(&format!("m{i}"))).collect(),
+            msg_total: 80,
+            msg_reset: false,
+            msg_epoch: "life-2".into(),
+            tail: Vec::new(),
+            finished_ago: None,
+        });
+
+        // The phone holds 40 messages counted in life-1. In life-2's terms it
+        // looks merely behind — but its 40 overlap the window it would be
+        // served, and splicing would duplicate them.
+        let crossed = since(&snapshot, 40, Some("life-1"));
+        let agent = &crossed.agents[0];
+        assert!(agent.msg_reset, "a foreign have must reset, not splice");
+        assert_eq!(agent.messages.len(), 80, "the reset carries the window");
+
+        // The same numbers within one life are an ordinary splice.
+        let native = since(&snapshot, 40, Some("life-2"));
+        let agent = &native.agents[0];
+        assert!(!agent.msg_reset);
+        assert_eq!(agent.messages.len(), 40, "owed exactly the newer half");
+
+        // A page that has never seen an epoch (or predates them) resets too:
+        // no shared origin, no splice.
+        let blank = since(&snapshot, 40, None);
+        assert!(blank.agents[0].msg_reset);
     }
 
     #[test]

@@ -242,6 +242,8 @@ impl Forwarder {
         }
     }
 
+    /// Only tests need to ask — production names the port up front.
+    #[allow(dead_code)]
     pub fn addr(&self) -> SocketAddr {
         self.bound
     }

@@ -1374,6 +1374,7 @@ const store = {
 let data = null;                        // last snapshot
 let thread = [];                        // the open conversation, accumulated
 let have = 0;                           // how much of it we hold (see msg_total)
+let epoch = "";                         // which counting life `have` belongs to
 let current = store.get("agent", null); // the conversation on screen
 let sent = [];                          // your messages, until the journal catches up
 let busy = false;
@@ -1415,6 +1416,11 @@ function merge(a) {
   if (a.msg_reset) thread = a.messages;
   else if (a.messages.length) thread = thread.concat(a.messages);
   if (a.msg_total) have = a.msg_total;
+  // Counts only mean anything within one life; quoting the epoch back is
+  // what lets the desktop tell a resumable `have` from a stale one. Without
+  // it, every workbench restart re-served the tail of the conversation and
+  // the page showed its last screen of messages twice per restart.
+  if (a.msg_epoch) epoch = a.msg_epoch;
 }
 
 function pick(id) {
@@ -1426,6 +1432,7 @@ function pick(id) {
   thread = [];
   drawn = 0;
   have = 0;
+  epoch = "";
   // The ETag says "same as the body you already folded in". Having just
   // thrown that away, a 304 would leave the log empty.
   tag = null;
@@ -2242,7 +2249,7 @@ async function refresh() {
   try {
     // `have` asks for only the messages we do not hold; the ETag turns a
     // tick where nothing moved at all into an empty 304.
-    const res = await fetch(q("/api/state?have=" + have), {
+    const res = await fetch(q("/api/state?have=" + have + "&epoch=" + encodeURIComponent(epoch)), {
       cache: "no-store",
       headers: tag ? { "If-None-Match": tag } : {},
       signal: AbortSignal.timeout ? AbortSignal.timeout(20000) : undefined,
