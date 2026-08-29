@@ -1133,6 +1133,40 @@ pub const HTML: &str = r##"<!doctype html>
 
   /* The palette panel: everything about how the page looks, in one place,
      one tap from the header rather than buried in the projects drawer. */
+  /* ---- managers sheet --------------------------------------------------
+     The same bottom sheet as the theme palette: managers are something you
+     check on, not somewhere you live, so they slide over the conversation
+     rather than replacing it. */
+  .managers {
+    position:fixed; left:0; right:0; bottom:0; z-index:5;
+    transform:translateY(101%); transition:transform var(--dur-slow) var(--ease);
+    background:var(--chrome); border-top:1px solid var(--line);
+    border-radius:16px 16px 0 0;
+    padding:4px 16px calc(18px + env(safe-area-inset-bottom));
+    max-height:76vh; overflow-y:auto;
+  }
+  .managers.open { transform:none; }
+  .managers h2 {
+    margin:14px 0 6px; font-size:11px; font-weight:600;
+    letter-spacing:.09em; text-transform:uppercase; color:var(--dim);
+  }
+  .mgr {
+    display:flex; align-items:center; gap:10px; width:100%;
+    padding:10px 8px; border:0; border-radius:10px; background:none;
+    color:var(--fg); font:inherit; text-align:left;
+  }
+  .mgr .who { flex:1; min-width:0; }
+  .mgr .who b { display:block; font-weight:600; }
+  .mgr .who span { font-size:12px; color:var(--dim); }
+  .mgr .state { font-size:12px; color:var(--dim); flex:none; }
+  .objective { padding:4px 8px 4px 26px; font-size:13px; color:var(--fg); }
+  .objective .st { font-size:11px; color:var(--dim); margin-right:6px;
+    letter-spacing:.05em; text-transform:uppercase; }
+  .objective.met, .objective.held { color:var(--dim); }
+  .proposal { padding:3px 8px 3px 40px; font-size:12px; color:var(--dim); }
+  .proposal .verdict-verified { color:var(--ok); }
+  .proposal .verdict-rejected { color:var(--warn); }
+
   .palette {
     position:fixed; left:0; right:0; bottom:0; z-index:5;
     transform:translateY(101%); transition:transform var(--dur-slow) var(--ease);
@@ -1283,6 +1317,7 @@ pub const HTML: &str = r##"<!doctype html>
   </div>
   <nav class="tools">
     <button class="icon" onclick="togglePalette()" title="theme">◑</button>
+    <button class="icon" onclick="toggleManagers()" title="managers">◆<span class="badge" id="mbadge" hidden></span></button>
     <button class="icon" onclick="toggleDrawer()" title="projects">☰<span class="badge" id="hbadge" hidden></span></button>
   </nav>
 </header>
@@ -1341,6 +1376,12 @@ pub const HTML: &str = r##"<!doctype html>
          oninput="setBubbles(this.value)">
   <h2>blur <span id="blurValue"></span></h2>
   <input type="range" id="blur" min="0" max="240" step="10" oninput="setBlur(this.value)">
+</section>
+
+<div class="scrim" id="managersScrim" onclick="toggleManagers()"></div>
+<section class="managers" id="managersSheet">
+  <h2>managers</h2>
+  <div id="managersList"></div>
 </section>
 
 <div class="scrim" id="scrim" onclick="toggleDrawer()"></div>
@@ -2055,6 +2096,59 @@ function togglePalette() {
   document.getElementById("paletteScrim").classList.toggle("open", paletteOpen);
 }
 
+let managersOpen = false;
+function toggleManagers() {
+  managersOpen = !managersOpen;
+  document.getElementById("managersSheet").classList.toggle("open", managersOpen);
+  document.getElementById("managersScrim").classList.toggle("open", managersOpen);
+  if (managersOpen) renderManagers();
+}
+
+/* Every manager across every project, each with what its project is working
+   toward and what it has proposed. Tapping one opens its conversation — a
+   manager is an ordinary agent with a brief, and the chat already speaks to
+   it. Verdicts render in words: "verified" is why this view exists.
+
+   Rebuilt only when the content changes, for the same reason as the log:
+   replacing the DOM under a finger swallows the tap it was aiming. */
+let managersSig = "";
+function renderManagers() {
+  const managers = (data?.agents || []).filter(a => a.manager);
+  const el = document.getElementById("managersList");
+  const sig = managers.map(m => [m.id, m.status, m.running, m.queued.length].join(":")).join("|")
+    + "||" + (data?.projects || []).map(p =>
+        (p.objectives || []).map(o => o.id + o.state + (o.done_when || "")).join(",") + ";" +
+        (p.proposals || []).map(x => x.id + x.state + (x.verdict || "")).join(",")).join("|");
+  if (sig === managersSig) return;
+  managersSig = sig;
+  if (!managers.length) {
+    el.innerHTML = '<div class="empty">No managers. Start one from the ' +
+                   'desktop: MANAGER pane, press a provider number.</div>';
+    return;
+  }
+  el.innerHTML = managers.map(m => {
+    const p = (data.projects || []).find(x => x.id === m.project_id) || {};
+    const objectives = (p.objectives || []).map(o => `
+      <div class="objective ${o.state}">
+        <span class="st">${esc(o.state)}</span> ${esc(o.text)}
+        ${o.done_when ? '<span class="st"> ✓ ' + esc(o.done_when) + "</span>" : ""}
+      </div>`).join("");
+    const proposals = (p.proposals || []).filter(x => x.state !== "declined").map(x => `
+      <div class="proposal">
+        ${x.verdict ? '<span class="verdict-' + esc(x.verdict) + '">' + esc(x.verdict) + "</span> · "
+          : esc(x.state) + " · "}${esc(x.instruction)}
+      </div>`).join("");
+    const doing = m.status === "blocked" ? "needs you"
+      : m.running || (m.queued.length ? m.queued.length + " queued" : m.status);
+    return `
+      <button class="mgr" onclick="toggleManagers(); pick('${m.id}')">
+        <span class="dot ${m.status}"></span>
+        <span class="who"><b>${esc(named(m))}</b><span>${esc(m.project)}</span></span>
+        <span class="state">${esc(doing)}</span>
+      </button>${objectives}${proposals}`;
+  }).join("");
+}
+
 let drawerOpen = false;
 function toggleDrawer() {
   drawerOpen = !drawerOpen;
@@ -2189,6 +2283,15 @@ function render() {
   const badge = document.getElementById("hbadge");
   badge.textContent = waiting;
   badge.hidden = !waiting;
+
+  // The managers badge counts suggestions waiting on you — the one number
+  // there that asks for a decision rather than reporting one.
+  const pending = (data.projects || [])
+    .flatMap(p => p.proposals || []).filter(x => x.state === "pending").length;
+  const mbadge = document.getElementById("mbadge");
+  mbadge.textContent = pending;
+  mbadge.hidden = !pending;
+  if (managersOpen) renderManagers();
 
   // Nothing chosen yet: open whoever needs you, else the first agent.
   if (!agent(current)) {
