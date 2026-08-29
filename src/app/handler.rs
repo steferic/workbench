@@ -698,13 +698,19 @@ fn health_tick(state: &mut AppState) {
     }
     state.system.last_health_log = Some(std::time::Instant::now());
 
-    let agents = state
+    // Counted apart, because they cost differently: an agent is a
+    // 300–600 MB claude or codex process, a terminal is a shell. "39 running
+    // agents" once sent a memory investigation toward a fleet two-thirds of
+    // which was fish prompts.
+    let running: Vec<_> = state
         .data
         .sessions
         .values()
         .flatten()
         .filter(|s| s.status == crate::models::SessionStatus::Running)
-        .count();
+        .collect();
+    let agents = running.iter().filter(|s| s.agent_type.is_agent()).count();
+    let terminals = running.len() - agents;
     let swap = match state.system.perf.system_swap() {
         Some((used, total)) if total > 0 => format!(
             "swap {:.1}/{:.1}GB ({:.0}%)",
@@ -715,7 +721,7 @@ fn health_tick(state: &mut AppState) {
         _ => "swap unknown".to_string(),
     };
     crate::logger::info(format!(
-        "health: pid {} rss {:.0}MB, {agents} running agents, {swap}",
+        "health: pid {} rss {:.0}MB, {agents} agents + {terminals} terminals, {swap}",
         std::process::id(),
         state.system.perf.memory_mb(),
     ));
