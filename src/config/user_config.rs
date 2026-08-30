@@ -72,6 +72,15 @@ pub struct UserConfig {
     /// bookmark survives restarts; delete the line to rotate it.
     #[serde(default)]
     pub remote_token: String,
+    /// Minutes of manager idleness before workbench wakes it to reassess its
+    /// project's objectives on its own. 0 turns the heartbeat off. Wakes are
+    /// also capped per day (`manager_wake_daily_cap`) — a heartbeat is a
+    /// budget, not a metronome with your API bill.
+    #[serde(default = "default_manager_wake_minutes")]
+    pub manager_wake_minutes: u64,
+    /// Most heartbeat wakes any one manager gets per day.
+    #[serde(default = "default_manager_wake_daily_cap")]
+    pub manager_wake_daily_cap: u32,
     /// Make each project's dev servers reachable from the phone, on the
     /// tailnet address and their own port number (see `crate::ports`). Only
     /// processes running inside a project are ever forwarded, so databases and
@@ -244,6 +253,14 @@ fn default_scrollback_mb() -> usize {
     2
 }
 
+fn default_manager_wake_minutes() -> u64 {
+    30
+}
+
+fn default_manager_wake_daily_cap() -> u32 {
+    10
+}
+
 fn default_remote_port() -> u16 {
     8765
 }
@@ -275,6 +292,8 @@ impl Default for UserConfig {
             global_hotkeys: default_global_hotkeys(),
             scrollback_mb: default_scrollback_mb(),
             remote_port: default_remote_port(),
+            manager_wake_minutes: default_manager_wake_minutes(),
+            manager_wake_daily_cap: default_manager_wake_daily_cap(),
             remote_token: String::new(),
             expose_dev_servers: true,
             use_alternate_screen: default_true(),

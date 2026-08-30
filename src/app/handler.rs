@@ -270,6 +270,8 @@ pub fn process_action(
                 Action::EditObjective(_) | Action::DeleteObjective |
                 Action::CycleObjectiveState | Action::MoveObjective(_) |
                 Action::ApproveProposal | Action::DeclineProposal |
+                Action::DeskDecide(_) | Action::DeskOpen |
+                Action::OpenDetail | Action::CloseDetail | Action::DeskDecideDetail(_) |
                 Action::VerificationFinished { .. } |
                 Action::AgentTasksRefreshed(_) |
                 Action::ActivateUtility => {

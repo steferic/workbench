@@ -249,6 +249,11 @@ pub struct UIState {
     pub selected_objective: usize,
     /// Cursor in the Managers tab.
     pub selected_manager: usize,
+    /// Cursor on the Desk tab.
+    pub selected_desk_row: usize,
+    /// A proposal or objective opened for reading in full — the context a
+    /// decision deserves, without traveling to it.
+    pub detail: Option<crate::app::DetailTarget>,
     /// How far `j` has read into an objectives-tab row taller than the pane.
     /// Written by the keys, consumed by the renderer's scroll.
     pub objective_scroll: u16,
@@ -315,6 +320,8 @@ impl UIState {
             objective_edit: None,
             selected_objective: 0,
             selected_manager: 0,
+            selected_desk_row: 0,
+            detail: None,
             objective_scroll: 0,
             objective_overflow: 0,
             show_debug_overlay: false,

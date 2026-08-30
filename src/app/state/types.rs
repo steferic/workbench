@@ -114,20 +114,22 @@ pub enum TaskEdit {
 /// Tab selection for the manager pane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TasksTab {
-    /// This project's managers.
+    /// Everything waiting on the user, across every project. Opens first:
+    /// "what needs me?" is the question this pane exists to answer.
     #[default]
+    Desk,
+    /// This project's managers.
     Managers,
     /// What they are working toward (see `models::objective`).
     Objectives,
 }
 
 impl TasksTab {
-    /// Two tabs, so this is a toggle again: who is working, and what toward.
-    /// Everything else about a manager's work you get by talking to it.
     pub fn toggle(&self) -> Self {
         match self {
+            TasksTab::Desk => TasksTab::Managers,
             TasksTab::Managers => TasksTab::Objectives,
-            TasksTab::Objectives => TasksTab::Managers,
+            TasksTab::Objectives => TasksTab::Desk,
         }
     }
 }

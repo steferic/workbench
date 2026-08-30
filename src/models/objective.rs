@@ -145,6 +145,68 @@ Report what you propose in this pane as you go, so it can be read here.",
 }
 
 
+/// One objective's recent history, derived from its proposals — the answer
+/// to the morning question "is this moving?", and what the burn is.
+///
+/// Turns are estimated from structure rather than metered: each approved
+/// proposal cost its agent one turn plus one per correction round, and its
+/// manager one review per round reached. Honest enough to compare objectives
+/// against each other, which is all a burn number is for.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ObjectiveLedger {
+    /// Accepted in the last seven days.
+    pub resolved_this_week: usize,
+    /// Working, in rework, or awaiting review right now.
+    pub in_flight: usize,
+    /// Parked on the user.
+    pub needs_user: usize,
+    /// Estimated agent turns spent, ever.
+    pub agent_turns: usize,
+    /// Estimated manager review turns spent, ever.
+    pub reviews: usize,
+    /// The newest movement of any kind, for "last activity".
+    pub last_activity: Option<DateTime<Utc>>,
+}
+
+/// The ledger for one objective, out of the project's proposal list.
+pub fn objective_ledger(proposals: &[Proposal], objective_id: Uuid) -> ObjectiveLedger {
+    let mut ledger = ObjectiveLedger::default();
+    let week_ago = Utc::now() - chrono::Duration::days(7);
+    for proposal in proposals
+        .iter()
+        .filter(|p| p.objective_id == Some(objective_id))
+    {
+        let touched = proposal.resolved_at.unwrap_or(proposal.created_at);
+        if ledger.last_activity.is_none_or(|seen| touched > seen) {
+            ledger.last_activity = Some(touched);
+        }
+        match proposal.review {
+            Some(ReviewPhase::Resolved) => {
+                if proposal.resolved_at.is_some_and(|at| at > week_ago) {
+                    ledger.resolved_this_week += 1;
+                }
+            }
+            Some(ReviewPhase::Working) | Some(ReviewPhase::AwaitingReview) => {
+                ledger.in_flight += 1;
+            }
+            Some(ReviewPhase::NeedsUser) => ledger.needs_user += 1,
+            None => {}
+        }
+        if proposal.state == ProposalState::Approved {
+            let rounds = proposal.review_rounds as usize;
+            ledger.agent_turns += 1 + rounds;
+            ledger.reviews += rounds
+                + usize::from(matches!(
+                    proposal.review,
+                    Some(ReviewPhase::AwaitingReview)
+                        | Some(ReviewPhase::Resolved)
+                        | Some(ReviewPhase::NeedsUser)
+                ));
+        }
+    }
+    ledger
+}
+
 /// How a verification command ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -391,6 +453,9 @@ pub struct Proposal {
     /// why it punted to the user.
     #[serde(default)]
     pub findings: Option<String>,
+    /// When the manager accepted, for the objective's ledger.
+    #[serde(default)]
+    pub resolved_at: Option<DateTime<Utc>>,
 }
 
 impl Proposal {
@@ -413,6 +478,7 @@ impl Proposal {
             review: None,
             review_rounds: 0,
             findings: None,
+            resolved_at: None,
         }
     }
 
@@ -458,6 +524,7 @@ impl Proposal {
 
     pub fn accept(&mut self) {
         self.review = Some(ReviewPhase::Resolved);
+        self.resolved_at = Some(Utc::now());
     }
 
     pub fn needs_user(&mut self, why: String) {
@@ -689,5 +756,36 @@ mod verdict_tests {
         let uncommitted = RepoMark { head: Some("aaa".into()), tree: Some("t2".into()), insertions: 12, deletions: 3 };
         assert!(uncommitted.changed_from(&before));
         assert!(!before.clone().changed_from(&before));
+    }
+
+    /// The ledger answers "is this moving, and at what burn" from structure
+    /// alone: resolved-this-week, in flight, parked, and estimated turns.
+    #[test]
+    fn the_ledger_reads_movement_and_burn_off_the_proposals() {
+        let objective = Objective::new("stay green");
+        let mut done = Proposal::new("m", "fix a");
+        done.objective_id = Some(objective.id);
+        done.approve(Uuid::new_v4());
+        done.review_rounds = 2;
+        done.accept();
+        let mut flying = Proposal::new("m", "fix b");
+        flying.objective_id = Some(objective.id);
+        flying.approve(Uuid::new_v4());
+        let mut parked = Proposal::new("m", "fix c");
+        parked.objective_id = Some(objective.id);
+        parked.approve(Uuid::new_v4());
+        parked.needs_user("unclear".into());
+        let unrelated = Proposal::new("m", "other objective");
+
+        let ledger =
+            objective_ledger(&[done, flying, parked, unrelated], objective.id);
+        assert_eq!(ledger.resolved_this_week, 1);
+        assert_eq!(ledger.in_flight, 1);
+        assert_eq!(ledger.needs_user, 1);
+        // done: 1+2 agent turns, 2+1 reviews; flying: 1, 0+0 (still working);
+        // parked: 1, 0+1.
+        assert_eq!(ledger.agent_turns, 5);
+        assert_eq!(ledger.reviews, 4);
+        assert!(ledger.last_activity.is_some());
     }
 }

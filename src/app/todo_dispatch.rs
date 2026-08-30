@@ -123,11 +123,97 @@ pub fn tick(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) {
         dispatch_next(state, session_id, action_tx);
     }
 
+    wake_idle_managers(state);
+
     // Records from before the review lifecycle existed — approved, finished,
     // and no verdict — sat in the pane saying "queued" forever, because a
     // proposal without an approved check finished into nothing at all. Hand
     // each one to its manager the way new work now is.
     migrate_stranded(state, action_tx);
+}
+
+/// The manager's heartbeat: an idle manager in a project with active
+/// objectives gets woken to reassess on its own, so the user is no longer
+/// its scheduler. Budgeted twice over — a minimum idle gap and a daily cap —
+/// because a heartbeat is a standing spend of real turns.
+fn wake_idle_managers(state: &mut AppState) {
+    use std::time::{Duration, Instant};
+
+    let every = state.system.user_config.manager_wake_minutes;
+    if every == 0 {
+        return;
+    }
+    let cap = state.system.user_config.manager_wake_daily_cap;
+    let gap = Duration::from_secs(every * 60);
+    let today = chrono::Local::now().date_naive();
+
+    let candidates: Vec<(Uuid, Uuid)> = state
+        .data
+        .workspaces
+        .iter()
+        .filter(|ws| {
+            ws.objectives
+                .iter()
+                .any(|o| o.state == crate::models::ObjectiveState::Active)
+        })
+        .flat_map(|ws| {
+            state
+                .data
+                .sessions
+                .get(&ws.id)
+                .into_iter()
+                .flatten()
+                .filter(|s| {
+                    s.agent_type.is_manager() && s.status == SessionStatus::Running
+                })
+                .map(|s| (ws.id, s.id))
+        })
+        .collect();
+
+    for (_ws, manager_id) in candidates {
+        // Only a truly idle manager: no queue, no running item, agent free.
+        let idle = state
+            .get_session(manager_id)
+            .map(|s| {
+                s.todo_queue.running().is_none() && s.todo_queue.next_pending().is_none()
+            })
+            .unwrap_or(false)
+            && state.activity(manager_id).is_free();
+        if !idle {
+            continue;
+        }
+        let entry = state
+            .system
+            .manager_wakes
+            .entry(manager_id)
+            .or_insert((today, 0, Instant::now()));
+        if entry.0 != today {
+            *entry = (today, 0, entry.2);
+        }
+        if entry.1 >= cap || entry.2.elapsed() < gap {
+            // A fresh entry starts its clock now, so a newly created manager
+            // is not woken the moment it boots.
+            continue;
+        }
+        entry.1 += 1;
+        entry.2 = Instant::now();
+        let wake = entry.1;
+
+        if let Some(session) = state.get_session_mut(manager_id) {
+            session.todo_queue.add(
+                "HEARTBEAT — reassess on your own initiative.\n\n\
+Read the objectives, what the agents are doing, and what changed since you \
+last looked. Then either propose the next concrete piece of work \
+(manager.propose), or state in one line that nothing is needed right now and \
+why. Do not repeat proposals that are pending or in flight."
+                    .to_string(),
+            );
+            crate::logger::info(format!(
+                "heartbeat: woke manager {} (wake {wake} today)",
+                crate::models::Session::short_id_of(manager_id)
+            ));
+        }
+    }
 }
 
 /// One-time repair, run cheaply on the tick: an approved proposal whose
@@ -549,5 +635,62 @@ mod tests {
             .last()
             .unwrap();
         assert!(turn.text.contains("REVIEW TURN"), "{}", turn.text);
+    }
+
+    /// The heartbeat wakes an idle manager in a project with active
+    /// objectives — once per gap, capped per day, and never the moment it
+    /// boots.
+    #[test]
+    fn an_idle_manager_is_woken_on_the_heartbeat_budget() {
+        let mut state = AppState::default();
+        let mut ws = Workspace::new("w".into(), std::path::PathBuf::from("/tmp/w"));
+        ws.objectives.push(crate::models::Objective::new("stay green"));
+        let ws_id = ws.id;
+        let mut manager = Session::new(ws_id, AgentType::Claude.as_manager(), false);
+        manager.status = crate::models::SessionStatus::Running;
+        manager.todo_queue.items.clear(); // drop the boot brief; truly idle
+        let manager_id = manager.id;
+        state.data.workspaces.push(ws);
+        state.data.sessions.insert(ws_id, vec![manager]);
+        report(&mut state, manager_id, Activity::Idle);
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+
+        // First sight only starts the clock: booting is not idling.
+        tick(&mut state, &tx);
+        assert!(queue(&state, manager_id).items.is_empty(), "no wake at boot");
+
+        // Pretend the gap has long passed.
+        let gap = std::time::Duration::from_secs(
+            state.system.user_config.manager_wake_minutes * 60 * 2,
+        );
+        if let Some(entry) = state.system.manager_wakes.get_mut(&manager_id) {
+            entry.2 = std::time::Instant::now() - gap;
+        }
+        tick(&mut state, &tx);
+        let items = &queue(&state, manager_id).items;
+        assert_eq!(items.len(), 1, "one wake");
+        assert!(items[0].text.contains("HEARTBEAT"), "{}", items[0].text);
+
+        // The wake is in the queue, so the manager is no longer idle — and
+        // even once idle again, the gap holds.
+        tick(&mut state, &tx);
+        assert_eq!(queue(&state, manager_id).items.len(), 1, "no double wake");
+
+        // The daily cap is a hard stop however long the gap.
+        if let Some(entry) = state.system.manager_wakes.get_mut(&manager_id) {
+            entry.1 = state.system.user_config.manager_wake_daily_cap;
+            entry.2 = std::time::Instant::now() - gap;
+        }
+        state
+            .get_session_mut(manager_id)
+            .unwrap()
+            .todo_queue
+            .items
+            .clear();
+        tick(&mut state, &tx);
+        assert!(
+            queue(&state, manager_id).items.is_empty(),
+            "capped for the day"
+        );
     }
 }

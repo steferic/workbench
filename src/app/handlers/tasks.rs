@@ -45,6 +45,7 @@ pub fn sync_selection(state: &mut AppState) {
     // Deleting a manager, or switching project, can strand this cursor past
     // the end of a list nobody pressed Tab on.
     crate::app::managers_view::clamp(state);
+    crate::app::desk_view::clamp(state);
 }
 
 pub fn handle_task_action(
@@ -56,6 +57,14 @@ pub fn handle_task_action(
         // j/k mean "down/up the list in front of me", so they follow the tab
         // rather than each list owning its own pair of keys.
         Action::SelectNextTask => {
+            if state.ui.selected_tasks_tab == crate::app::TasksTab::Desk {
+                let count = crate::app::desk_view::rows(state).len();
+                if count > 0 {
+                    state.ui.selected_desk_row =
+                        (state.ui.selected_desk_row + 1).min(count - 1);
+                }
+                return Ok(());
+            }
             if state.ui.selected_tasks_tab == crate::app::TasksTab::Managers {
                 let count = crate::app::managers_view::rows(state).len();
                 if count > 0 {
@@ -80,6 +89,10 @@ pub fn handle_task_action(
             }
         }
         Action::SelectPrevTask => {
+            if state.ui.selected_tasks_tab == crate::app::TasksTab::Desk {
+                state.ui.selected_desk_row = state.ui.selected_desk_row.saturating_sub(1);
+                return Ok(());
+            }
             if state.ui.selected_tasks_tab == crate::app::TasksTab::Managers {
                 state.ui.selected_manager = state.ui.selected_manager.saturating_sub(1);
                 return Ok(());
@@ -99,6 +112,113 @@ pub fn handle_task_action(
             state.ui.selected_task_row = 0;
             state.ui.objective_scroll = 0;
             clamp_objective_cursor(state);
+        }
+        // The desk acts wherever the row lives — the whole point is not
+        // having to travel to a decision before making it.
+        Action::DeskDecide(yes) => {
+            match crate::app::desk_view::selected(state) {
+                Some(crate::app::desk_view::DeskRow::PendingProposal {
+                    workspace_id,
+                    proposal_id,
+                    ..
+                }) => {
+                    match decide_proposal(state, workspace_id, proposal_id, yes, action_tx) {
+                        Ok(message) | Err(message) => state.ui.set_task_status(message),
+                    }
+                }
+                Some(crate::app::desk_view::DeskRow::ProposedCheck {
+                    workspace_id,
+                    objective_id,
+                    ..
+                }) => {
+                    decide_check(state, workspace_id, objective_id, yes);
+                }
+                Some(crate::app::desk_view::DeskRow::NeedsUser {
+                    workspace_id,
+                    proposal_id,
+                    ..
+                }) => {
+                    // Yes re-arms the loop with a fresh set of rounds — the
+                    // user's approval buys what the manager's could not. No
+                    // declines it for good.
+                    if yes {
+                        rearm_review(state, workspace_id, proposal_id, action_tx);
+                    } else {
+                        match decide_proposal(state, workspace_id, proposal_id, false, action_tx)
+                        {
+                            Ok(message) | Err(message) => state.ui.set_task_status(message),
+                        }
+                    }
+                }
+                Some(crate::app::desk_view::DeskRow::BlockedAgent { .. }) => {
+                    state
+                        .ui
+                        .set_task_status("Open it (Enter) and answer the agent directly");
+                }
+                None => {}
+            }
+            crate::app::desk_view::clamp(state);
+        }
+        Action::OpenDetail => {
+            let Some(workspace_id) = state.selected_workspace().map(|ws| ws.id) else {
+                return Ok(());
+            };
+            state.ui.detail = objectives_view::selected(state).map(|row| match row {
+                crate::app::objectives_view::ObjectiveRow::Proposal { id } => {
+                    crate::app::DetailTarget::Proposal {
+                        workspace_id,
+                        proposal_id: id,
+                    }
+                }
+                crate::app::objectives_view::ObjectiveRow::Objective { id, .. } => {
+                    crate::app::DetailTarget::Objective {
+                        workspace_id,
+                        objective_id: id,
+                    }
+                }
+            });
+        }
+        Action::CloseDetail => {
+            state.ui.detail = None;
+        }
+        Action::DeskDecideDetail(yes) => {
+            let Some(crate::app::DetailTarget::Proposal {
+                workspace_id,
+                proposal_id,
+            }) = state.ui.detail
+            else {
+                state.ui.detail = None;
+                return Ok(());
+            };
+            state.ui.detail = None;
+            let phase = state
+                .data
+                .workspaces
+                .iter()
+                .find(|ws| ws.id == workspace_id)
+                .and_then(|ws| ws.proposals.iter().find(|p| p.id == proposal_id))
+                .map(|p| (p.is_pending(), p.review));
+            match phase {
+                Some((true, _)) => {
+                    match decide_proposal(state, workspace_id, proposal_id, yes, action_tx) {
+                        Ok(message) | Err(message) => state.ui.set_task_status(message),
+                    }
+                }
+                Some((false, Some(crate::models::ReviewPhase::NeedsUser))) if yes => {
+                    rearm_review(state, workspace_id, proposal_id, action_tx);
+                }
+                Some((false, Some(crate::models::ReviewPhase::NeedsUser))) => {
+                    match decide_proposal(state, workspace_id, proposal_id, false, action_tx) {
+                        Ok(message) | Err(message) => state.ui.set_task_status(message),
+                    }
+                }
+                _ => state.ui.set_task_status("Nothing to decide here"),
+            }
+        }
+        Action::DeskOpen => {
+            if let Some(row) = crate::app::desk_view::selected(state) {
+                open_desk_row(state, row);
+            }
         }
         Action::FocusSelectedTaskAgent => {
             // Enter means "open what is under the cursor", and which list that
@@ -645,6 +765,141 @@ After round {}/{} the loop stops and the user takes over.",
 ///
 /// Until this happens the command is a suggestion: shown, not trusted, and
 /// not enough to let anything run against that objective unattended.
+/// Approve or drop a proposed check, wherever its objective lives.
+fn decide_check(
+    state: &mut AppState,
+    workspace_id: uuid::Uuid,
+    objective_id: uuid::Uuid,
+    yes: bool,
+) {
+    let Some(objective) = state
+        .data
+        .workspaces
+        .iter_mut()
+        .find(|ws| ws.id == workspace_id)
+        .and_then(|ws| ws.objectives.iter_mut().find(|o| o.id == objective_id))
+    else {
+        return;
+    };
+    match objective.done_when.as_mut() {
+        Some(check) if check.proposed => {
+            if yes {
+                check.proposed = false;
+                let command = check.command.clone();
+                state.ui.set_task_status(format!("Check approved: {command}"));
+            } else {
+                objective.done_when = None;
+                state.ui.set_task_status("Check dropped");
+            }
+            super::save_state(state, "failed to save the check decision");
+        }
+        _ => {}
+    }
+}
+
+/// The user overriding an exhausted or punted review loop: the last findings
+/// go back to the agent as a fresh job, and the round counter starts over —
+/// the user's approval buys what the manager's could not.
+fn rearm_review(
+    state: &mut AppState,
+    workspace_id: uuid::Uuid,
+    proposal_id: uuid::Uuid,
+    _action_tx: &mpsc::UnboundedSender<Action>,
+) {
+    let Some(snapshot) = state
+        .data
+        .workspaces
+        .iter()
+        .find(|ws| ws.id == workspace_id)
+        .and_then(|ws| ws.proposals.iter().find(|p| p.id == proposal_id))
+        .cloned()
+    else {
+        return;
+    };
+    let Some(agent) = snapshot.agent.clone() else {
+        state.ui.set_task_status("No agent named on that proposal");
+        return;
+    };
+    let Some(session_id) = crate::remote::session_for(state, &agent) else {
+        state.ui.set_task_status(format!("No agent {agent} here any more"));
+        return;
+    };
+    let text = match &snapshot.findings {
+        Some(findings) => format!(
+            "The user re-approved this after review stalled. Address exactly:\n{findings}\n\n\
+Original job: {}",
+            snapshot.instruction
+        ),
+        None => snapshot.instruction.clone(),
+    };
+    let Some(session) = state.get_session_mut(session_id) else {
+        return;
+    };
+    let todo = session.todo_queue.add(text);
+    if let Some(stored) = state
+        .data
+        .workspaces
+        .iter_mut()
+        .find(|ws| ws.id == workspace_id)
+        .and_then(|ws| ws.proposals.iter_mut().find(|p| p.id == proposal_id))
+    {
+        stored.review_rounds = 0;
+        stored.todo_id = Some(todo);
+        stored.review = Some(crate::models::ReviewPhase::Working);
+    }
+    state.ui.set_task_status(format!("Re-armed and queued for {agent}"));
+    super::save_state(state, "failed to save the re-arm");
+}
+
+/// Jump to whatever a desk row is about: the agent's terminal, or the
+/// objectives tab of the project it lives in, cursor on the item.
+fn open_desk_row(state: &mut AppState, row: crate::app::desk_view::DeskRow) {
+    use crate::app::desk_view::DeskRow;
+    match row {
+        DeskRow::BlockedAgent { session_id, .. } => {
+            if let Some(idx) = state
+                .data
+                .workspaces
+                .iter()
+                .position(|ws| Some(ws.id) == state.workspace_id_for_session(session_id))
+            {
+                state.ui.selected_workspace_idx = idx;
+            }
+            state.set_active_session_id(Some(session_id));
+            state.ui.focus = crate::app::FocusPanel::OutputPane;
+        }
+        // A proposal's Enter is the decision context, not a journey: the
+        // detail overlay carries everything the manager saw.
+        DeskRow::NeedsUser { workspace_id, proposal_id, .. }
+        | DeskRow::PendingProposal { workspace_id, proposal_id, .. } => {
+            state.ui.detail = Some(crate::app::DetailTarget::Proposal {
+                workspace_id,
+                proposal_id,
+            });
+        }
+        DeskRow::ProposedCheck { workspace_id, objective_id, .. } => {
+            focus_objectives(state, workspace_id);
+            let rows = objectives_view::rows(state);
+            if let Some(at) = rows.iter().position(|r| r.objective_id() == Some(objective_id)) {
+                state.ui.selected_objective = at;
+            }
+        }
+    }
+}
+
+fn focus_objectives(state: &mut AppState, workspace_id: uuid::Uuid) {
+    if let Some(idx) = state
+        .data
+        .workspaces
+        .iter()
+        .position(|ws| ws.id == workspace_id)
+    {
+        state.ui.selected_workspace_idx = idx;
+    }
+    state.ui.selected_tasks_tab = crate::app::TasksTab::Objectives;
+    state.ui.objective_scroll = 0;
+}
+
 fn approve_selected_check(state: &mut AppState) {
     let Some(id) = objectives_view::selected(state).and_then(|r| r.objective_id()) else {
         return;

@@ -215,6 +215,15 @@ pub enum Action {
     /// A push service answered 404/410 for this endpoint: the device
     /// unsubscribed or was wiped, and the subscription can never work again.
     PushEndpointGone(String),
+    /// Yes/no on whatever desk row is under the cursor, wherever it lives.
+    DeskDecide(bool),
+    /// Jump to the thing the desk row is about.
+    DeskOpen,
+    /// Open the selected objectives-tab row for reading in full.
+    OpenDetail,
+    CloseDetail,
+    /// a/x pressed while the detail overlay is open: decide what it shows.
+    DeskDecideDetail(bool),
     /// Durable scrollback parsed from an agent's session log (off-thread).
     ScrollbackLoaded {
         session_id: Uuid,

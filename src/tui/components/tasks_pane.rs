@@ -46,9 +46,141 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
     render_action_bar(frame, action_area, state, is_focused);
 
     match state.ui.selected_tasks_tab {
+        TasksTab::Desk => render_desk_tab(frame, list_area, state, is_focused),
         TasksTab::Managers => render_managers_tab(frame, list_area, state, is_focused),
         TasksTab::Objectives => render_objectives_tab(frame, list_area, state, is_focused),
     }
+}
+
+/// Everything waiting on the user, every project, most urgent first.
+fn render_desk_tab(frame: &mut Frame, area: Rect, state: &AppState, is_focused: bool) {
+    let t = crate::theme::current();
+    let rows = crate::app::desk_view::rows(state);
+    if rows.is_empty() {
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::from(""),
+                Line::from(Span::styled(
+                    "  Nothing needs you.",
+                    Style::default().fg(t.success),
+                )),
+                Line::from(Span::styled(
+                    "  Approvals, punted reviews, blocked agents and",
+                    Style::default().fg(t.fg_faint),
+                )),
+                Line::from(Span::styled(
+                    "  unapproved checks would all land here.",
+                    Style::default().fg(t.fg_faint),
+                )),
+            ]),
+            area,
+        );
+        return;
+    }
+
+    let width = area.width as usize;
+    let selected_row = state.ui.selected_desk_row.min(rows.len() - 1);
+    let mut lines: Vec<Line> = Vec::new();
+    let mut selected_span = (0usize, 0usize);
+
+    for (i, row) in rows.iter().enumerate() {
+        let selected = is_focused && i == selected_row;
+        let marker = if selected { "> " } else { "  " };
+        let start = lines.len();
+        let body_style = if selected {
+            Style::default().fg(t.fg).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(t.fg)
+        };
+
+        let (tag, tag_color, project, text) = match row {
+            crate::app::desk_view::DeskRow::BlockedAgent { session_id, project } => {
+                let name = state
+                    .get_session(*session_id)
+                    .map(|s| s.display_name())
+                    .unwrap_or_else(|| "an agent".into());
+                let why = state
+                    .activity_reason(*session_id)
+                    .filter(|reason| !reason.is_empty())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| "stopped on a question".into());
+                ("blocked ", t.warning, project, format!("{name} — {why}"))
+            }
+            crate::app::desk_view::DeskRow::NeedsUser {
+                workspace_id,
+                proposal_id,
+                project,
+            } => {
+                let detail = proposal_text(state, *workspace_id, *proposal_id);
+                ("on you ", t.warning, project, detail)
+            }
+            crate::app::desk_view::DeskRow::PendingProposal {
+                workspace_id,
+                proposal_id,
+                project,
+            } => {
+                let detail = proposal_text(state, *workspace_id, *proposal_id);
+                ("approve? ", t.info, project, detail)
+            }
+            crate::app::desk_view::DeskRow::ProposedCheck {
+                workspace_id,
+                objective_id,
+                project,
+            } => {
+                let text = state
+                    .data
+                    .workspaces
+                    .iter()
+                    .find(|ws| ws.id == *workspace_id)
+                    .and_then(|ws| ws.objectives.iter().find(|o| o.id == *objective_id))
+                    .and_then(|o| o.done_when.as_ref().map(|c| c.command.clone()))
+                    .unwrap_or_default();
+                ("check? ", t.info, project, text)
+            }
+        };
+
+        let head = format!("{marker}{tag}");
+        let indent = head.len() + project.len() + 2;
+        for (n, piece) in wrapped(&text, width.saturating_sub(indent)).into_iter().enumerate() {
+            let mut spans = Vec::new();
+            if n == 0 {
+                spans.push(Span::styled(marker, Style::default().fg(t.accent)));
+                spans.push(Span::styled(tag, Style::default().fg(tag_color)));
+                spans.push(Span::styled(
+                    format!("{project}: "),
+                    Style::default().fg(t.fg_faint),
+                ));
+            } else {
+                spans.push(Span::raw(" ".repeat(indent)));
+            }
+            spans.push(Span::styled(piece, body_style));
+            lines.push(Line::from(spans));
+        }
+        if selected {
+            selected_span = (start, lines.len());
+        }
+    }
+
+    let height = area.height as usize;
+    let (top, end) = selected_span;
+    let offset = top.min(end.saturating_sub(height));
+    frame.render_widget(Paragraph::new(lines).scroll((offset as u16, 0)), area);
+}
+
+fn proposal_text(state: &AppState, workspace_id: uuid::Uuid, proposal_id: uuid::Uuid) -> String {
+    state
+        .data
+        .workspaces
+        .iter()
+        .find(|ws| ws.id == workspace_id)
+        .and_then(|ws| ws.proposals.iter().find(|p| p.id == proposal_id))
+        .map(|p| match &p.findings {
+            Some(findings) if p.review == Some(crate::models::ReviewPhase::NeedsUser) => {
+                format!("{} — {}", p.instruction.lines().next().unwrap_or(""), findings)
+            }
+            _ => p.instruction.clone(),
+        })
+        .unwrap_or_default()
 }
 
 fn render_tab_bar(frame: &mut Frame, area: Rect, state: &AppState, is_focused: bool) {
@@ -65,12 +197,15 @@ fn render_tab_bar(frame: &mut Frame, area: Rect, state: &AppState, is_focused: b
         .map(|ws| ws.objectives.len())
         .unwrap_or(0);
     let manager_count = crate::app::managers_view::count(state);
-    let (managers_style, objectives_style) = match state.ui.selected_tasks_tab {
-        TasksTab::Managers => (active, dim),
-        TasksTab::Objectives => (dim, active),
+    let desk_count = crate::app::desk_view::rows(state).len();
+    let (desk_style, managers_style, objectives_style) = match state.ui.selected_tasks_tab {
+        TasksTab::Desk => (active, dim, dim),
+        TasksTab::Managers => (dim, active, dim),
+        TasksTab::Objectives => (dim, dim, active),
     };
 
     let names = [
+        ("Desk", desk_style, format!("({desk_count})")),
         ("Managers", managers_style, format!("({manager_count})")),
         (
             "Objectives",
@@ -85,7 +220,7 @@ fn render_tab_bar(frame: &mut Frame, area: Rect, state: &AppState, is_focused: b
 /// The widest tab bar that fits, in three steps: with counts, without them,
 /// then without the padding too.
 fn tab_spans<'a>(
-    names: &'a [(&'a str, Style, String); 2],
+    names: &'a [(&'a str, Style, String); 3],
     dim: Style,
     width: usize,
 ) -> Vec<Span<'a>> {
@@ -357,6 +492,42 @@ fn render_objectives_tab(frame: &mut Frame, area: Rect, state: &mut AppState, is
                     spans.push(Span::styled(piece, text_style));
                     lines.push(Line::from(spans));
                 }
+                // The morning question, answered under the priority itself:
+                // is this moving, and at what burn.
+                let ledger =
+                    crate::models::objective_ledger(&workspace.proposals, objective.id);
+                if ledger != crate::models::ObjectiveLedger::default() {
+                    let mut bits: Vec<String> = Vec::new();
+                    if ledger.resolved_this_week > 0 {
+                        bits.push(format!("{} resolved this wk", ledger.resolved_this_week));
+                    }
+                    if ledger.in_flight > 0 {
+                        bits.push(format!("{} in flight", ledger.in_flight));
+                    }
+                    if ledger.needs_user > 0 {
+                        bits.push(format!("{} on you", ledger.needs_user));
+                    }
+                    if ledger.agent_turns > 0 {
+                        bits.push(format!(
+                            "≈{} agent turns, {} reviews",
+                            ledger.agent_turns, ledger.reviews
+                        ));
+                    }
+                    if let Some(at) = ledger.last_activity {
+                        let mins = (chrono::Utc::now() - at).num_minutes();
+                        bits.push(if mins < 60 {
+                            format!("active {mins}m ago")
+                        } else if mins < 60 * 48 {
+                            format!("active {}h ago", mins / 60)
+                        } else {
+                            format!("active {}d ago", mins / (60 * 24))
+                        });
+                    }
+                    lines.push(Line::from(Span::styled(
+                        format!("{}{}", " ".repeat(indent), bits.join(" · ")),
+                        Style::default().fg(t.fg_faint),
+                    )));
+                }
                 if let Some(check) = objective.done_when.as_ref() {
                     let (mark, color) = if check.proposed {
                         ("?", t.warning)
@@ -521,7 +692,14 @@ fn render_action_bar(frame: &mut Frame, area: Rect, state: &AppState, is_focused
         Style::default().fg(t.fg_faint)
     };
 
-    let hints: &[(&str, &str)] = if state.ui.selected_tasks_tab == TasksTab::Managers {
+    let hints: &[(&str, &str)] = if state.ui.selected_tasks_tab == TasksTab::Desk {
+        &[
+            ("a", ":yes "),
+            ("x", ":no "),
+            ("Enter", ":open "),
+            ("h", ":help"),
+        ]
+    } else if state.ui.selected_tasks_tab == TasksTab::Managers {
         &[
             ("1-9", ":new "),
             ("Enter", ":open "),
@@ -655,4 +833,156 @@ mod tests {
 
 
 
+}
+
+/// The detail overlay: everything a decision deserves, in one modal.
+///
+/// Drawn last so it floats above the panes. `a`/`x` decide what it shows;
+/// any other key closes it.
+pub fn render_detail(frame: &mut Frame, state: &AppState) {
+    use crate::models::ReviewPhase;
+
+    let Some(target) = state.ui.detail else {
+        return;
+    };
+    let t = crate::theme::current();
+    let screen = frame.area();
+    let w = (screen.width as f32 * 0.72) as u16;
+    let h = (screen.height as f32 * 0.72) as u16;
+    let area = Rect {
+        x: (screen.width - w) / 2,
+        y: (screen.height - h) / 2,
+        width: w,
+        height: h,
+    };
+    frame.render_widget(ratatui::widgets::Clear, area);
+
+    let inner_width = w.saturating_sub(4) as usize;
+    let mut lines: Vec<Line> = vec![Line::from("")];
+    let mut field = |label: &str, value: &str, color| {
+        if value.trim().is_empty() {
+            return;
+        }
+        lines.push(Line::from(Span::styled(
+            format!("  {label}"),
+            Style::default().fg(t.fg_faint),
+        )));
+        for piece in wrapped(value.trim(), inner_width.saturating_sub(2)) {
+            lines.push(Line::from(Span::styled(
+                format!("  {piece}"),
+                Style::default().fg(color),
+            )));
+        }
+        lines.push(Line::from(""));
+    };
+
+    let title;
+    match target {
+        crate::app::DetailTarget::Proposal {
+            workspace_id,
+            proposal_id,
+        } => {
+            let Some(proposal) = state
+                .data
+                .workspaces
+                .iter()
+                .find(|ws| ws.id == workspace_id)
+                .and_then(|ws| ws.proposals.iter().find(|p| p.id == proposal_id))
+            else {
+                return;
+            };
+            title = " Proposal ";
+            let phase = match (proposal.review, &proposal.verdict) {
+                (Some(ReviewPhase::Resolved), _) => "resolved".to_string(),
+                (Some(ReviewPhase::NeedsUser), _) => "needs you".to_string(),
+                (Some(ReviewPhase::AwaitingReview), _) => "in review".to_string(),
+                (Some(ReviewPhase::Working), _) if proposal.review_rounds > 0 => {
+                    format!("rework, round {}", proposal.review_rounds)
+                }
+                (Some(ReviewPhase::Working), _) => "working".to_string(),
+                (None, _) => format!("{:?}", proposal.state).to_lowercase(),
+            };
+            field("STATE", &phase, t.fg);
+            field("INSTRUCTION", &proposal.instruction, t.fg);
+            field("WHY", &proposal.rationale, t.fg_dim);
+            field(
+                "WHO",
+                &format!(
+                    "manager {} → agent {}",
+                    proposal.manager,
+                    proposal.agent.as_deref().unwrap_or("(none)")
+                ),
+                t.fg_dim,
+            );
+            if let Some(findings) = &proposal.findings {
+                field("FINDINGS", findings, t.warning);
+            }
+            if let Some(verdict) = &proposal.verdict {
+                field(
+                    "VERDICT",
+                    &format!("{} — {}", verdict.label(), verdict.why()),
+                    t.fg,
+                );
+            }
+            if let Some(run) = &proposal.result {
+                field("CHECK OUTPUT", &run.tail, t.fg_faint);
+            }
+        }
+        crate::app::DetailTarget::Objective {
+            workspace_id,
+            objective_id,
+        } => {
+            let Some(workspace) = state
+                .data
+                .workspaces
+                .iter()
+                .find(|ws| ws.id == workspace_id)
+            else {
+                return;
+            };
+            let Some(objective) = workspace.objectives.iter().find(|o| o.id == objective_id)
+            else {
+                return;
+            };
+            title = " Objective ";
+            field("OBJECTIVE", &objective.text, t.fg);
+            field("STATE", &format!("{:?}", objective.state).to_lowercase(), t.fg_dim);
+            if let Some(check) = &objective.done_when {
+                field(
+                    "DONE WHEN",
+                    &format!(
+                        "{}{}",
+                        check.command,
+                        if check.proposed { "  (proposed, unapproved)" } else { "" }
+                    ),
+                    if check.proposed { t.warning } else { t.success },
+                );
+            }
+            let ledger = crate::models::objective_ledger(&workspace.proposals, objective.id);
+            field(
+                "THIS WEEK",
+                &format!(
+                    "{} resolved · {} in flight · {} on you · ≈{} agent turns, {} reviews",
+                    ledger.resolved_this_week,
+                    ledger.in_flight,
+                    ledger.needs_user,
+                    ledger.agent_turns,
+                    ledger.reviews
+                ),
+                t.fg_dim,
+            );
+        }
+    }
+
+    lines.push(Line::from(Span::styled(
+        "  a: yes   x: no   any other key: close",
+        Style::default().fg(t.fg_faint),
+    )));
+
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(t.special))
+        .style(Style::default().bg(t.bg));
+    frame.render_widget(Paragraph::new(lines).block(block), area);
 }

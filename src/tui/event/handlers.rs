@@ -257,7 +257,18 @@ impl EventHandler {
             return action;
         }
 
+        // The detail overlay swallows the pane's keys while open: the row it
+        // shows is the row a/x act on, and everything else just closes it.
+        if state.ui.detail.is_some() {
+            return match key.code {
+                KeyCode::Char('a') => Action::DeskDecideDetail(true),
+                KeyCode::Char('x') => Action::DeskDecideDetail(false),
+                _ => Action::CloseDetail,
+            };
+        }
+
         let managers = state.ui.selected_tasks_tab == TasksTab::Managers;
+        let desk = state.ui.selected_tasks_tab == TasksTab::Desk;
 
         // A manager is started exactly the way an agent is: the provider
         // number, with the same Shift and Alt meanings. One key, no dialog —
@@ -280,6 +291,11 @@ impl EventHandler {
             KeyCode::Char('l') => Action::FocusRight,
             KeyCode::Tab => Action::ToggleTasksTab,
 
+            // -- Desk (everything waiting on you) --
+            KeyCode::Char('a') if desk => Action::DeskDecide(true),
+            KeyCode::Char('x') if desk => Action::DeskDecide(false),
+            KeyCode::Enter if desk => Action::DeskOpen,
+
             // -- Managers tab --
             KeyCode::Enter if managers => Action::FocusSelectedTaskAgent,
             KeyCode::Char('d') if managers => {
@@ -290,6 +306,7 @@ impl EventHandler {
             }
 
             // -- Objectives tab (the project's standing priorities) --
+            KeyCode::Enter => Action::OpenDetail,
             KeyCode::Char('n') => Action::EditObjective(false),
             KeyCode::Char('e') => Action::EditObjective(true),
             KeyCode::Char('d') => Action::DeleteObjective,

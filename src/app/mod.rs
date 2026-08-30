@@ -2,6 +2,21 @@ mod action;
 pub mod agent_input;
 pub mod comms_tick;
 mod handler;
+pub mod desk_view;
+
+/// What the detail overlay is showing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DetailTarget {
+    Proposal {
+        workspace_id: uuid::Uuid,
+        proposal_id: uuid::Uuid,
+    },
+    Objective {
+        workspace_id: uuid::Uuid,
+        objective_id: uuid::Uuid,
+    },
+}
+
 pub mod managers_view;
 pub mod objectives_view;
 pub mod handlers;

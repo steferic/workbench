@@ -185,6 +185,9 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
         InputMode::EnterWorkspaceName => {
             workspace_name_dialog::render(frame, state);
         }
+        _ if state.ui.detail.is_some() => {
+            tasks_pane::render_detail(frame, state);
+        }
         InputMode::CreateSession | InputMode::CreateManager => {
             create_session_dialog::render(frame, state);
         }

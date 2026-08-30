@@ -786,6 +786,9 @@ pub struct SystemState {
     /// projects free a port, and it matches the forwarder too. The scan
     /// reaps the corpse and spawns a replacement.
     pub forwarded: std::collections::HashMap<u16, crate::ports::Forwarder>,
+    /// Heartbeat bookkeeping per manager: (day, wakes so far today, last wake).
+    pub manager_wakes:
+        std::collections::HashMap<uuid::Uuid, (chrono::NaiveDate, u32, std::time::Instant)>,
     pub last_port_scan: Option<Instant>,
     pub port_scan_inflight: bool,
     /// What each agent was doing last tick, so the phone is poked on a change
@@ -877,6 +880,7 @@ impl SystemState {
             push: Default::default(),
             dev_servers: Vec::new(),
             forwarded: Default::default(),
+            manager_wakes: Default::default(),
             last_port_scan: None,
             port_scan_inflight: false,
             remote_seen: Default::default(),
