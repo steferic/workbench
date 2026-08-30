@@ -236,6 +236,21 @@ pub fn process_action(
             );
 
             match action {
+                Action::PostProposalToBoard => {
+                    let Some((workspace_id, proposal_id)) = state.ui.assign.take() else {
+                        state.ui.input_mode = crate::app::InputMode::Normal;
+                        return Ok(());
+                    };
+                    state.ui.input_mode = crate::app::InputMode::Normal;
+                    match super::handlers::tasks::approve_to_board(
+                        state,
+                        workspace_id,
+                        proposal_id,
+                    ) {
+                        Ok(message) | Err(message) => state.ui.set_task_status(message),
+                    }
+                    return Ok(());
+                }
                 // The provider picked for an unassigned proposal. Reuse an
                 // idle agent of that kind already in the project — spawning a
                 // second Claude to avoid queueing on the first is how a

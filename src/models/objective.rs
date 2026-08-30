@@ -119,7 +119,8 @@ To record a suggestion:\n\
   {{\"id\":3,\"method\":\"manager.propose\",\"params\":{{\
 \"manager\":\"{short_id}\",\
 \"objective\":\"<objective id, when it serves one>\",\
-\"agent\":\"<agent short id, when you would name one>\",\
+\"agent\":\"<agent short id — omit it to put approved work on the board, \
+where the first idle agent claims it>\",\
 \"instruction\":\"what you would tell that agent, in full\",\
 \"rationale\":\"why this, and why now\"}}}}\n\n\
 What is wanted from you:\n\
@@ -549,6 +550,15 @@ impl Proposal {
     /// Whether this proposal is waiting on its manager's review.
     pub fn awaiting_review(&self) -> bool {
         self.review == Some(ReviewPhase::AwaitingReview)
+    }
+
+    /// An approved job on the board, waiting for an idle agent to claim it:
+    /// no agent named, nothing queued yet.
+    pub fn open_on_board(&self) -> bool {
+        self.state == ProposalState::Approved
+            && self.review == Some(ReviewPhase::Working)
+            && self.agent.is_none()
+            && self.todo_id.is_none()
     }
 }
 

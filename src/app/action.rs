@@ -227,6 +227,9 @@ pub enum Action {
     /// The provider chosen for an unassigned proposal's approval: reuse an
     /// idle agent of that kind in the project, or spawn one, then queue.
     AssignProposalAgent(crate::models::AgentType, bool, bool),
+    /// Approve the pending assignment onto the board instead of a specific
+    /// agent: first idle agent in the project claims it.
+    PostProposalToBoard,
     /// Durable scrollback parsed from an agent's session log (off-thread).
     ScrollbackLoaded {
         session_id: Uuid,

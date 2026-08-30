@@ -576,7 +576,9 @@ fn render_objectives_tab(frame: &mut Frame, area: Rect, state: &mut AppState, is
                 } else {
                     Style::default().fg(t.fg_dim)
                 };
-                let agent = proposal.agent.clone().unwrap_or_else(|| "nobody".into());
+                let agent = proposal.agent.clone().unwrap_or_else(|| {
+                    if proposal.open_on_board() { "anyone" } else { "nobody" }.into()
+                });
                 let head = format!("   {marker}");
                 let indent = head.len() + verb.len();
                 // The instruction in full — a job whose tail is an ellipsis

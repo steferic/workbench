@@ -123,6 +123,7 @@ pub fn tick(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) {
         dispatch_next(state, session_id, action_tx);
     }
 
+    claim_open_jobs(state, action_tx);
     wake_idle_managers(state);
 
     // Records from before the review lifecycle existed — approved, finished,
@@ -130,6 +131,97 @@ pub fn tick(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) {
     // proposal without an approved check finished into nothing at all. Hand
     // each one to its manager the way new work now is.
     migrate_stranded(state, action_tx);
+}
+
+/// The board's pull model: open jobs go to whichever directable agent is
+/// idle, oldest job first, one claim per agent per pass — taking a job makes
+/// the agent non-idle, so at-most-one-winner needs no protocol beyond the
+/// event loop itself. The baseline check runs at claim time: the last moment
+/// before the agent touches anything is exactly what a baseline is.
+fn claim_open_jobs(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) {
+    let open: Vec<(Uuid, Uuid)> = state
+        .data
+        .workspaces
+        .iter()
+        .flat_map(|ws| {
+            let mut jobs: Vec<_> = ws
+                .proposals
+                .iter()
+                .filter(|p| p.open_on_board())
+                .collect();
+            jobs.sort_by_key(|p| p.created_at);
+            jobs.into_iter()
+                .map(|p| (ws.id, p.id))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+
+    for (workspace_id, proposal_id) in open {
+        let claimant = state
+            .data
+            .sessions
+            .get(&workspace_id)
+            .into_iter()
+            .flatten()
+            .find(|s| {
+                s.status == SessionStatus::Running
+                    && s.agent_type.is_directable()
+                    && s.todo_queue.running().is_none()
+                    && s.todo_queue.next_pending().is_none()
+                    && state.activity(s.id).is_free()
+            })
+            .map(|s| s.id);
+        let Some(session_id) = claimant else {
+            continue; // stays on the board until someone frees up
+        };
+        let short = crate::models::Session::short_id_of(session_id);
+
+        let instruction = state
+            .data
+            .workspaces
+            .iter()
+            .find(|ws| ws.id == workspace_id)
+            .and_then(|ws| ws.proposals.iter().find(|p| p.id == proposal_id))
+            .map(|p| p.instruction.clone())
+            .unwrap_or_default();
+        let Some(session) = state.get_session_mut(session_id) else {
+            continue;
+        };
+        let todo = session.todo_queue.add(instruction);
+
+        if let Some(stored) = state
+            .data
+            .workspaces
+            .iter_mut()
+            .find(|ws| ws.id == workspace_id)
+            .and_then(|ws| ws.proposals.iter_mut().find(|p| p.id == proposal_id))
+        {
+            stored.agent = Some(short.clone());
+            stored.todo_id = Some(todo);
+        }
+        crate::logger::info(format!(
+            "board: {short} claimed a job (proposal {proposal_id})"
+        ));
+
+        // The baseline, now that where-it-runs is known.
+        let snapshot = state
+            .data
+            .workspaces
+            .iter()
+            .find(|ws| ws.id == workspace_id)
+            .and_then(|ws| ws.proposals.iter().find(|p| p.id == proposal_id))
+            .cloned();
+        if let Some(proposal) = snapshot {
+            if let Some((check, dir, ws_id)) =
+                crate::app::handlers::tasks::baseline_for(state, &proposal, session_id)
+            {
+                crate::app::handlers::tasks::start_verification(
+                    state, ws_id, proposal_id, true, check, dir, action_tx,
+                );
+            }
+        }
+        crate::app::handlers::save_state(state, "failed to save a board claim");
+    }
 }
 
 /// The manager's heartbeat: an idle manager in a project with active
@@ -692,5 +784,62 @@ mod tests {
             queue(&state, manager_id).items.is_empty(),
             "capped for the day"
         );
+    }
+
+    /// The board's pull model: an approved job with no agent named waits
+    /// until someone goes idle, then exactly one claimant takes exactly the
+    /// oldest job — claiming makes the agent non-idle, so a second open job
+    /// stays on the board for the next free agent.
+    #[test]
+    fn board_jobs_are_claimed_by_the_first_idle_agent_oldest_first() {
+        let (mut state, worker_id) = state_with_queue(&[]);
+        let ws_id = state.data.workspaces[0].id;
+        state.get_session_mut(worker_id).unwrap().status =
+            crate::models::SessionStatus::Running;
+        report(&mut state, worker_id, Activity::Idle);
+
+        let mut older = crate::models::Proposal::new("m", "first posted");
+        older.state = crate::models::ProposalState::Approved;
+        older.review = Some(crate::models::ReviewPhase::Working);
+        older.created_at = Utc::now() - chrono::Duration::minutes(10);
+        let older_id = older.id;
+        let mut newer = crate::models::Proposal::new("m", "second posted");
+        newer.state = crate::models::ProposalState::Approved;
+        newer.review = Some(crate::models::ReviewPhase::Working);
+        let newer_id = newer.id;
+        state.data.workspaces[0].proposals.push(newer);
+        state.data.workspaces[0].proposals.push(older);
+
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        tick(&mut state, &tx);
+
+        let by = |id: Uuid, state: &AppState| {
+            state.data.workspaces[0]
+                .proposals
+                .iter()
+                .find(|p| p.id == id)
+                .cloned()
+                .unwrap()
+        };
+        let claimed = by(older_id, &state);
+        assert_eq!(
+            claimed.agent,
+            Some(crate::models::Session::short_id_of(worker_id)),
+            "oldest job claimed by the idle agent"
+        );
+        assert!(claimed.todo_id.is_some(), "and queued");
+        let waiting = by(newer_id, &state);
+        assert!(
+            waiting.open_on_board(),
+            "one claim made the agent non-idle; the second job waits"
+        );
+        let queued = &queue(&state, worker_id).items;
+        assert_eq!(queued.len(), 1);
+        assert!(queued[0].text.contains("first posted"));
+
+        // A busy agent claims nothing.
+        report(&mut state, worker_id, Activity::Working);
+        tick(&mut state, &tx);
+        assert!(by(newer_id, &state).open_on_board(), "still on the board");
     }
 }

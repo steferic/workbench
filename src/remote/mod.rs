@@ -420,6 +420,11 @@ fn publish_with(state: &AppState, shared: &Shared, open: Option<(Vec<Message>, u
                     id: proposal.id.to_string(),
                     phase: proposal.review.map(|phase| {
                         match phase {
+                            crate::models::ReviewPhase::Working
+                                if proposal.open_on_board() =>
+                            {
+                                "open"
+                            }
                             crate::models::ReviewPhase::Working if proposal.review_rounds > 0 => {
                                 "rework"
                             }

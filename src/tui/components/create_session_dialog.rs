@@ -20,7 +20,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     // before Manager was added to it. Counted rather than guessed —
     // header, one row per enabled agent, the two extra rows with their
     // separating blanks, the Esc line, and the border.
-    let needed_lines = 5 + enabled_count + if for_manager || for_assign { 2 } else { 6 } + 2;
+    let needed_lines = 5 + enabled_count + if for_manager { 2 } else if for_assign { 4 } else { 6 } + 2;
     let height_pct =
         ((needed_lines * 100) / frame.area().height.max(1) as usize).clamp(25, 85) as u16;
     let area = centered_rect(40, height_pct, frame.area());
@@ -68,6 +68,14 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         ]));
     }
 
+    if for_assign {
+        content.push(Line::from(""));
+        content.push(Line::from(vec![
+            Span::styled("  [0] ", Style::default().fg(t.accent)),
+            Span::styled("[·] ", Style::default().fg(t.special)),
+            Span::raw("Anyone — board it, first idle agent claims"),
+        ]));
+    }
     if !for_manager && !for_assign {
         content.push(Line::from(""));
         content.push(Line::from(vec![

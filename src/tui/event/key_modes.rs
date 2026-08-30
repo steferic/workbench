@@ -82,13 +82,15 @@ pub(super) fn handle_input_mode_key(key: &KeyEvent, state: &AppState) -> Option<
         }
         InputMode::AssignAgent => {
             // Same provider keys as everywhere else; the difference is only
-            // what the chosen agent is immediately handed.
+            // what the chosen agent is immediately handed. Zero posts it to
+            // the board instead: whoever goes idle first takes it.
             if let Some((agent_type, skip_permissions, with_worktree)) =
                 agent_shortcut(key, &state.system.user_config.agents)
             {
                 Action::AssignProposalAgent(agent_type, skip_permissions, with_worktree)
             } else {
                 match key.code {
+                    KeyCode::Char('0') => Action::PostProposalToBoard,
                     KeyCode::Esc => Action::ExitMode,
                     _ => Action::Tick,
                 }

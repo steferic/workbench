@@ -1062,6 +1062,35 @@ pub(crate) fn assignment_first(
     unassigned
 }
 
+/// Approve a proposal onto the project's board: no agent named, no queueing
+/// — the first agent to go idle claims it (see `todo_dispatch`). The pull
+/// half of the scheduling model: the manager decomposes and reviews; who
+/// does the work is decided by who is free.
+pub(crate) fn approve_to_board(
+    state: &mut AppState,
+    workspace_id: uuid::Uuid,
+    proposal_id: uuid::Uuid,
+) -> Result<String, String> {
+    let Some(proposal) = state
+        .data
+        .workspaces
+        .iter_mut()
+        .find(|ws| ws.id == workspace_id)
+        .and_then(|ws| ws.proposals.iter_mut().find(|p| p.id == proposal_id))
+    else {
+        return Err("No such proposal".to_string());
+    };
+    if !proposal.is_pending() {
+        return Err("Already decided".to_string());
+    }
+    proposal.state = crate::models::ProposalState::Approved;
+    proposal.review = Some(crate::models::ReviewPhase::Working);
+    proposal.agent = None;
+    proposal.todo_id = None;
+    super::save_state(state, "failed to save the board post");
+    Ok("On the board — first idle agent takes it".to_string())
+}
+
 /// Approve or decline one proposal, wherever it lives.
 ///
 /// The one implementation behind the TUI's `a`/`x` and the phone's buttons:
