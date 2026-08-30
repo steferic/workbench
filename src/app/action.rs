@@ -224,6 +224,9 @@ pub enum Action {
     CloseDetail,
     /// a/x pressed while the detail overlay is open: decide what it shows.
     DeskDecideDetail(bool),
+    /// The provider chosen for an unassigned proposal's approval: reuse an
+    /// idle agent of that kind in the project, or spawn one, then queue.
+    AssignProposalAgent(crate::models::AgentType, bool, bool),
     /// Durable scrollback parsed from an agent's session log (off-thread).
     ScrollbackLoaded {
         session_id: Uuid,

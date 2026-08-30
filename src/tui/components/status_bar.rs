@@ -111,7 +111,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     let (left_text, right_text) =
         match state.ui.input_mode {
             // The modal itself says what the keys are; nothing to add here.
-            InputMode::CreateManager => (Vec::new(), Vec::new()),
+            InputMode::CreateManager | InputMode::AssignAgent => (Vec::new(), Vec::new()),
             InputMode::CreateWorkspace => (
                 vec![Span::styled(
                     " NEW WORKSPACE ",

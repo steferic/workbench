@@ -80,6 +80,20 @@ pub(super) fn handle_input_mode_key(key: &KeyEvent, state: &AppState) -> Option<
                 }
             }
         }
+        InputMode::AssignAgent => {
+            // Same provider keys as everywhere else; the difference is only
+            // what the chosen agent is immediately handed.
+            if let Some((agent_type, skip_permissions, with_worktree)) =
+                agent_shortcut(key, &state.system.user_config.agents)
+            {
+                Action::AssignProposalAgent(agent_type, skip_permissions, with_worktree)
+            } else {
+                match key.code {
+                    KeyCode::Esc => Action::ExitMode,
+                    _ => Action::Tick,
+                }
+            }
+        }
         InputMode::CreateManager => {
             // Same provider keys as an agent — a manager is one of those with
             // a brief, and which CLI it runs stays your choice.

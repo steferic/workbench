@@ -122,6 +122,9 @@ pub fn handle_task_action(
                     proposal_id,
                     ..
                 }) => {
+                    if yes && assignment_first(state, workspace_id, proposal_id) {
+                        return Ok(());
+                    }
                     match decide_proposal(state, workspace_id, proposal_id, yes, action_tx) {
                         Ok(message) | Err(message) => state.ui.set_task_status(message),
                     }
@@ -200,6 +203,9 @@ pub fn handle_task_action(
                 .map(|p| (p.is_pending(), p.review));
             match phase {
                 Some((true, _)) => {
+                    if yes && assignment_first(state, workspace_id, proposal_id) {
+                        return Ok(());
+                    }
                     match decide_proposal(state, workspace_id, proposal_id, yes, action_tx) {
                         Ok(message) | Err(message) => state.ui.set_task_status(message),
                     }
@@ -943,10 +949,39 @@ fn approve_selected_proposal(state: &mut AppState, action_tx: &mpsc::UnboundedSe
     let Some(workspace) = state.selected_workspace().map(|ws| ws.id) else {
         return;
     };
+    if assignment_first(state, workspace, proposal) {
+        return;
+    }
     match decide_proposal(state, workspace, proposal, true, action_tx) {
         Ok(message) | Err(message) => state.ui.set_task_status(message),
     }
     objectives_view::clamp(state);
+}
+
+/// An approval that names nobody first asks who: sets up the Assign Agent
+/// picker and reports whether it did. "Approve" silently doing nothing is
+/// how this flow was discovered broken.
+pub(crate) fn assignment_first(
+    state: &mut AppState,
+    workspace_id: uuid::Uuid,
+    proposal_id: uuid::Uuid,
+) -> bool {
+    let unassigned = state
+        .data
+        .workspaces
+        .iter()
+        .find(|ws| ws.id == workspace_id)
+        .and_then(|ws| ws.proposals.iter().find(|p| p.id == proposal_id))
+        .is_some_and(|p| p.is_pending() && p.agent.is_none());
+    if unassigned {
+        state.ui.assign = Some((workspace_id, proposal_id));
+        state.ui.detail = None;
+        state.ui.input_mode = crate::app::InputMode::AssignAgent;
+        state
+            .ui
+            .set_task_status("No agent named — pick who does it");
+    }
+    unassigned
 }
 
 /// Approve or decline one proposal, wherever it lives.

@@ -13,13 +13,14 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     // Same dialog, two errands. Picking the provider is identical either way —
     // a manager is one of these with a brief — so only the framing changes.
     let for_manager = state.ui.input_mode == crate::app::InputMode::CreateManager;
+    let for_assign = state.ui.input_mode == crate::app::InputMode::AssignAgent;
     let enabled_count = agents.iter().filter(|a| a.enabled).count();
     // Height has to follow the content, because the content grew: with seven
     // agents configured the box was already cutting off the Terminal line
     // before Manager was added to it. Counted rather than guessed —
     // header, one row per enabled agent, the two extra rows with their
     // separating blanks, the Esc line, and the border.
-    let needed_lines = 5 + enabled_count + if for_manager { 2 } else { 6 } + 2;
+    let needed_lines = 5 + enabled_count + if for_manager || for_assign { 2 } else { 6 } + 2;
     let height_pct =
         ((needed_lines * 100) / frame.area().height.max(1) as usize).clamp(25, 85) as u16;
     let area = centered_rect(40, height_pct, frame.area());
@@ -40,6 +41,8 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         Line::from(Span::styled(
             if for_manager {
                 "  Which agent runs it?"
+            } else if for_assign {
+                "  Who should do this work?"
             } else {
                 "  Select an agent:"
             },
@@ -65,7 +68,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         ]));
     }
 
-    if !for_manager {
+    if !for_manager && !for_assign {
         content.push(Line::from(""));
         content.push(Line::from(vec![
             Span::styled("  [t] ", Style::default().fg(t.accent)),
@@ -88,6 +91,8 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     let block = Block::default()
         .title(if for_manager {
             " New Manager "
+        } else if for_assign {
+            " Assign Agent "
         } else {
             " New Session "
         })

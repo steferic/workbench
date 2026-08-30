@@ -19,6 +19,8 @@ pub enum InputMode {
     /// an agent is — you choose the provider — so this is the agent dialog
     /// with one extra keystroke in front of it.
     CreateManager,
+    /// Picking which agent gets an approved-but-unassigned proposal.
+    AssignAgent,
     /// Composing a message that steers an agent's task list.
     ComposeTaskMessage,
     SetStartCommand,

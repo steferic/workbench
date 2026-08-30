@@ -254,6 +254,9 @@ pub struct UIState {
     /// A proposal or objective opened for reading in full — the context a
     /// decision deserves, without traveling to it.
     pub detail: Option<crate::app::DetailTarget>,
+    /// An approval waiting on the user to pick who does the work: the
+    /// proposal named no agent, and "approve" is not allowed to mean nothing.
+    pub assign: Option<(uuid::Uuid, uuid::Uuid)>,
     /// How far `j` has read into an objectives-tab row taller than the pane.
     /// Written by the keys, consumed by the renderer's scroll.
     pub objective_scroll: u16,
@@ -322,6 +325,7 @@ impl UIState {
             selected_manager: 0,
             selected_desk_row: 0,
             detail: None,
+            assign: None,
             objective_scroll: 0,
             objective_overflow: 0,
             show_debug_overlay: false,

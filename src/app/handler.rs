@@ -236,6 +236,70 @@ pub fn process_action(
             );
 
             match action {
+                // The provider picked for an unassigned proposal. Reuse an
+                // idle agent of that kind already in the project — spawning a
+                // second Claude to avoid queueing on the first is how a
+                // machine drowns — and only spawn when there is none.
+                Action::AssignProposalAgent(agent_type, skip_permissions, with_worktree) => {
+                    let Some((workspace_id, proposal_id)) = state.ui.assign.take() else {
+                        state.ui.input_mode = crate::app::InputMode::Normal;
+                        return Ok(());
+                    };
+                    state.ui.input_mode = crate::app::InputMode::Normal;
+
+                    let existing = state
+                        .data
+                        .sessions
+                        .get(&workspace_id)
+                        .into_iter()
+                        .flatten()
+                        .filter(|s| {
+                            s.status == crate::models::SessionStatus::Running
+                                && s.agent_type.is_directable()
+                                && s.agent_type.command() == agent_type.command()
+                        })
+                        .map(|s| (s.id, state.activity(s.id).is_free()))
+                        .max_by_key(|(_, free)| *free)
+                        .map(|(id, _)| id);
+
+                    let session_id = match existing {
+                        Some(id) => Some(id),
+                        None => super::handlers::session::create_session_in(
+                            state,
+                            workspace_id,
+                            agent_type,
+                            skip_permissions,
+                            with_worktree,
+                            pty_manager,
+                            action_tx,
+                            pty_tx,
+                        ),
+                    };
+                    let Some(session_id) = session_id else {
+                        state.ui.set_task_status("Could not start an agent for it");
+                        return Ok(());
+                    };
+                    let short = crate::models::Session::short_id_of(session_id);
+                    if let Some(stored) = state
+                        .data
+                        .workspaces
+                        .iter_mut()
+                        .find(|ws| ws.id == workspace_id)
+                        .and_then(|ws| ws.proposals.iter_mut().find(|p| p.id == proposal_id))
+                    {
+                        stored.agent = Some(short);
+                    }
+                    match super::handlers::tasks::decide_proposal(
+                        state,
+                        workspace_id,
+                        proposal_id,
+                        true,
+                        action_tx,
+                    ) {
+                        Ok(message) | Err(message) => state.ui.set_task_status(message),
+                    }
+                    return Ok(());
+                }
                 // Workspace actions
                 Action::InitiateDeleteWorkspace(_, _) | Action::ConfirmDeleteWorkspace |
                 Action::EnterWorkspaceActionMode |
@@ -1230,6 +1294,59 @@ fn apply_remote(
             crate::logger::warn(format!("phone decided an unknown proposal {proposal}"));
             return;
         };
+        // The phone has no picker, so an unassigned approval takes the best
+        // default instead of failing: an idle directable agent already in
+        // that project. If there is none at all, it stays pending with a log
+        // line — spawning agents is a decision the desk's picker owns.
+        if *approve {
+            let unassigned = state
+                .data
+                .workspaces
+                .iter()
+                .find(|ws| ws.id == workspace_id)
+                .and_then(|ws| ws.proposals.iter().find(|p| p.id == proposal_id))
+                .is_some_and(|p| p.agent.is_none());
+            if unassigned {
+                let pick = state
+                    .data
+                    .sessions
+                    .get(&workspace_id)
+                    .into_iter()
+                    .flatten()
+                    .filter(|s| {
+                        s.status == crate::models::SessionStatus::Running
+                            && s.agent_type.is_directable()
+                    })
+                    .map(|s| (s.id, state.activity(s.id).is_free()))
+                    .max_by_key(|(_, free)| *free)
+                    .map(|(id, _)| id);
+                match pick {
+                    Some(id) => {
+                        let short = crate::models::Session::short_id_of(id);
+                        crate::logger::info(format!(
+                            "phone approval auto-assigned {short} to an unassigned proposal"
+                        ));
+                        if let Some(stored) = state
+                            .data
+                            .workspaces
+                            .iter_mut()
+                            .find(|ws| ws.id == workspace_id)
+                            .and_then(|ws| {
+                                ws.proposals.iter_mut().find(|p| p.id == proposal_id)
+                            })
+                        {
+                            stored.agent = Some(short);
+                        }
+                    }
+                    None => {
+                        crate::logger::warn(
+                            "phone approved an unassigned proposal in a project with no                              agents; left pending — assign one from the desk",
+                        );
+                        return;
+                    }
+                }
+            }
+        }
         match crate::app::handlers::tasks::decide_proposal(
             state,
             workspace_id,

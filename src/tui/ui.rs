@@ -188,7 +188,7 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
         _ if state.ui.detail.is_some() => {
             tasks_pane::render_detail(frame, state);
         }
-        InputMode::CreateSession | InputMode::CreateManager => {
+        InputMode::CreateSession | InputMode::CreateManager | InputMode::AssignAgent => {
             create_session_dialog::render(frame, state);
         }
         InputMode::SetStartCommand => {
