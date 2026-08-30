@@ -21,6 +21,7 @@ pub fn handle_input_action(state: &mut AppState, action: Action) -> Result<()> {
             }
         }
         Action::ExitMode => {
+            state.ui.assign = None;
             state.ui.input_mode = InputMode::Normal;
             state.ui.input_buffer.clear();
             state.ui.file_browser.query.clear();
