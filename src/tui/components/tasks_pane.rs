@@ -11,11 +11,11 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
     Frame,
 };
 
-pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
+pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
     let t = crate::theme::current();
     let is_focused = state.ui.focus == FocusPanel::TasksPane;
     let border_style = if is_focused {
@@ -266,7 +266,7 @@ fn manager_activity(
 /// thing a manager will need to read off this list. State is shown as a word
 /// rather than a colour alone, because "held" and "met" are decisions worth
 /// spelling out.
-fn render_objectives_tab(frame: &mut Frame, area: Rect, state: &AppState, is_focused: bool) {
+fn render_objectives_tab(frame: &mut Frame, area: Rect, state: &mut AppState, is_focused: bool) {
     use crate::models::{ObjectiveState, ProposalState, Verdict};
 
     let t = crate::theme::current();
@@ -300,109 +300,190 @@ fn render_objectives_tab(frame: &mut Frame, area: Rect, state: &AppState, is_foc
     }
 
     // Drawn from the same row list the keys walk, so the highlighted line and
-    // the line a keypress acts on can never drift apart.
+    // the line a keypress acts on can never drift apart. Text is wrapped by
+    // hand rather than by ratatui: knowing exactly how many screen lines each
+    // row takes is what lets the view scroll to the cursor, and a hanging
+    // indent keeps a wrapped objective reading as one item rather than three.
+    let width = area.width as usize;
     let rows = crate::app::objectives_view::rows(state);
-    let lines: Vec<Line> = rows
-        .iter()
-        .enumerate()
-        .map(|(row_index, row)| {
-            let selected = is_focused && row_index == state.ui.selected_objective;
-            let marker = if selected { "> " } else { "  " };
+    let mut lines: Vec<Line> = Vec::new();
+    let mut selected_span = (0usize, 0usize);
 
-            match row {
-                crate::app::objectives_view::ObjectiveRow::Objective { id, index } => {
-                    let Some(objective) = workspace.objectives.iter().find(|o| o.id == *id) else {
-                        return Line::from("");
-                    };
-                    let (state_label, state_color) = match objective.state {
-                        ObjectiveState::Active => ("", t.fg),
-                        ObjectiveState::Held => ("held ", t.fg_faint),
-                        ObjectiveState::Met => ("met ", t.success),
-                    };
-                    let text_style = match objective.state {
-                        ObjectiveState::Active if selected => {
-                            Style::default().fg(t.fg).add_modifier(Modifier::BOLD)
-                        }
-                        ObjectiveState::Active => Style::default().fg(t.fg),
-                        _ => Style::default().fg(t.fg_faint),
-                    };
+    for (row_index, row) in rows.iter().enumerate() {
+        let selected = is_focused && row_index == state.ui.selected_objective;
+        let marker = if selected { "> " } else { "  " };
+        let row_start = lines.len();
 
-                    let mut spans = vec![
-                        Span::styled(marker, Style::default().fg(t.accent)),
-                        Span::styled(
-                            format!("{}. ", index + 1),
+        match row {
+            crate::app::objectives_view::ObjectiveRow::Objective { id, index } => {
+                let Some(objective) = workspace.objectives.iter().find(|o| o.id == *id) else {
+                    continue;
+                };
+                let (state_label, state_color) = match objective.state {
+                    ObjectiveState::Active => ("", t.fg),
+                    ObjectiveState::Held => ("held ", t.fg_faint),
+                    ObjectiveState::Met => ("met ", t.success),
+                };
+                let text_style = match objective.state {
+                    ObjectiveState::Active if selected => {
+                        Style::default().fg(t.fg).add_modifier(Modifier::BOLD)
+                    }
+                    ObjectiveState::Active => Style::default().fg(t.fg),
+                    _ => Style::default().fg(t.fg_faint),
+                };
+
+                let number = format!("{}. ", index + 1);
+                let indent = marker.len() + number.len() + state_label.len();
+                for (i, piece) in wrapped(&objective.text, width.saturating_sub(indent))
+                    .into_iter()
+                    .enumerate()
+                {
+                    let mut spans = Vec::new();
+                    if i == 0 {
+                        spans.push(Span::styled(marker, Style::default().fg(t.accent)));
+                        spans.push(Span::styled(
+                            number.clone(),
                             Style::default().fg(t.fg_faint),
-                        ),
-                    ];
-                    if !state_label.is_empty() {
-                        spans.push(Span::styled(state_label, Style::default().fg(state_color)));
-                    }
-                    spans.push(Span::styled(objective.text.clone(), text_style));
-                    match objective.done_when.as_ref() {
-                        Some(check) if check.proposed => spans.push(Span::styled(
-                            format!("  ?{}", check.command),
-                            Style::default().fg(t.warning),
-                        )),
-                        Some(check) => spans.push(Span::styled(
-                            format!("  ✓{}", check.command),
-                            Style::default().fg(t.success),
-                        )),
-                        None => {}
-                    }
-                    Line::from(spans)
-                }
-                crate::app::objectives_view::ObjectiveRow::Proposal { id } => {
-                    let Some(proposal) = workspace.proposals.iter().find(|p| p.id == *id) else {
-                        return Line::from("");
-                    };
-                    // Approved ones stay on the list, marked, until the queue
-                    // is done with them: seeing that a suggestion became work
-                    // is most of what this view is for.
-                    // Once a check has spoken, its verdict is the headline:
-                    // that is the fact worth reading, and the only one a
-                    // manager could not have written itself.
-                    let (verb, verb_color) = match (&proposal.verdict, proposal.state) {
-                        (Some(Verdict::Verified), _) => ("verified ", t.success),
-                        (Some(Verdict::Rejected { .. }), _) => ("rejected ", t.error),
-                        (Some(Verdict::Inconclusive { .. }), _) => ("unclear ", t.warning),
-                        (None, ProposalState::Approved) => ("queued ", t.info),
-                        _ => ("proposes ", t.info),
-                    };
-                    let body_style = if selected {
-                        Style::default().fg(t.fg)
+                        ));
+                        if !state_label.is_empty() {
+                            spans.push(Span::styled(
+                                state_label,
+                                Style::default().fg(state_color),
+                            ));
+                        }
                     } else {
-                        Style::default().fg(t.fg_dim)
+                        spans.push(Span::raw(" ".repeat(indent)));
+                    }
+                    spans.push(Span::styled(piece, text_style));
+                    lines.push(Line::from(spans));
+                }
+                if let Some(check) = objective.done_when.as_ref() {
+                    let (mark, color) = if check.proposed {
+                        ("?", t.warning)
+                    } else {
+                        ("✓", t.success)
                     };
-                    Line::from(vec![
-                        Span::styled(format!("   {marker}"), Style::default().fg(t.accent)),
-                        Span::styled(verb, Style::default().fg(verb_color)),
-                        Span::styled(
-                            proposal.agent.clone().unwrap_or_else(|| "nobody".into()),
-                            Style::default().fg(t.accent),
-                        ),
-                        Span::styled(": ", Style::default().fg(t.fg_faint)),
-                        Span::styled(first_line(&proposal.instruction), body_style),
-                    ])
+                    for (i, piece) in wrapped(&check.command, width.saturating_sub(indent + 1))
+                        .into_iter()
+                        .enumerate()
+                    {
+                        let lead = if i == 0 {
+                            format!("{}{mark}", " ".repeat(indent))
+                        } else {
+                            " ".repeat(indent + 1)
+                        };
+                        lines.push(Line::from(vec![
+                            Span::styled(lead, Style::default().fg(color)),
+                            Span::styled(piece, Style::default().fg(color)),
+                        ]));
+                    }
                 }
             }
-        })
-        .collect();
+            crate::app::objectives_view::ObjectiveRow::Proposal { id } => {
+                let Some(proposal) = workspace.proposals.iter().find(|p| p.id == *id) else {
+                    continue;
+                };
+                // Approved ones stay on the list, marked, until the queue
+                // is done with them: seeing that a suggestion became work
+                // is most of what this view is for.
+                // Once a check has spoken, its verdict is the headline:
+                // that is the fact worth reading, and the only one a
+                // manager could not have written itself.
+                let (verb, verb_color) = match (&proposal.verdict, proposal.state) {
+                    (Some(Verdict::Verified), _) => ("verified ", t.success),
+                    (Some(Verdict::Rejected { .. }), _) => ("rejected ", t.error),
+                    (Some(Verdict::Inconclusive { .. }), _) => ("unclear ", t.warning),
+                    (None, ProposalState::Approved) => ("queued ", t.info),
+                    _ => ("proposes ", t.info),
+                };
+                let body_style = if selected {
+                    Style::default().fg(t.fg)
+                } else {
+                    Style::default().fg(t.fg_dim)
+                };
+                let agent = proposal.agent.clone().unwrap_or_else(|| "nobody".into());
+                let head = format!("   {marker}");
+                let indent = head.len() + verb.len();
+                // The instruction in full — a job whose tail is an ellipsis
+                // is a job you approve on faith.
+                for (i, piece) in wrapped(&proposal.instruction, width.saturating_sub(indent))
+                    .into_iter()
+                    .enumerate()
+                {
+                    let mut spans = Vec::new();
+                    if i == 0 {
+                        spans.push(Span::styled(head.clone(), Style::default().fg(t.accent)));
+                        spans.push(Span::styled(verb, Style::default().fg(verb_color)));
+                        spans.push(Span::styled(
+                            format!("{agent}: "),
+                            Style::default().fg(t.accent),
+                        ));
+                    } else {
+                        spans.push(Span::raw(" ".repeat(indent)));
+                    }
+                    spans.push(Span::styled(piece, body_style));
+                    lines.push(Line::from(spans));
+                }
+            }
+        }
 
-    // Wrapped, not clipped: an objective is a standing priority in the
-    // user's own words, and words that fall off the pane edge read as a
-    // different priority than the one written. Rows keep their identity —
-    // the cursor walks rows, and a row is merely taller when it wraps.
-    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
+        if selected {
+            selected_span = (row_start, lines.len());
+        }
+    }
+
+    // Scroll so the cursor's whole row is on screen. A row taller than the
+    // pane opens at its head, and `j` reads deeper into it line by line —
+    // `objective_scroll` is how far in; `objective_overflow`, written here,
+    // is how the keys know when the tail has finally been reached.
+    let height = area.height as usize;
+    let (row_top, row_end) = selected_span;
+    let base = row_top.min(row_end.saturating_sub(height));
+    let deepest = row_end.saturating_sub(height).max(base);
+    let offset = (base + state.ui.objective_scroll as usize).min(deepest);
+    state.ui.objective_scroll = (offset - base) as u16;
+    state.ui.objective_overflow = row_end.saturating_sub(offset + height) as u16;
+    frame.render_widget(
+        Paragraph::new(lines).scroll((offset as u16, 0)),
+        area,
+    );
 }
 
-/// One line of what is often several paragraphs of instruction.
-fn first_line(text: &str) -> String {
-    let line = text.lines().next().unwrap_or("").trim();
-    if line.chars().count() > 60 {
-        format!("{}…", line.chars().take(59).collect::<String>())
-    } else {
-        line.to_string()
+/// Greedy word wrap to `width`, splitting words longer than a line. Never
+/// drops or elides anything: elision is how this pane lost the user's own
+/// words twice.
+fn wrapped(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(8);
+    let mut out = Vec::new();
+    let mut line = String::new();
+    for word in text.split_whitespace() {
+        let mut word = word;
+        // A word longer than the line is cut, not dropped.
+        while word.chars().count() > width {
+            if !line.is_empty() {
+                out.push(std::mem::take(&mut line));
+            }
+            let head: String = word.chars().take(width).collect();
+            let taken = head.len();
+            out.push(head);
+            word = &word[taken..];
+        }
+        let need = word.chars().count() + if line.is_empty() { 0 } else { 1 };
+        if line.chars().count() + need > width && !line.is_empty() {
+            out.push(std::mem::take(&mut line));
+        }
+        if !line.is_empty() {
+            line.push(' ');
+        }
+        line.push_str(word);
     }
+    if !line.is_empty() {
+        out.push(line);
+    }
+    if out.is_empty() {
+        out.push(String::new());
+    }
+    out
 }
 
 fn render_action_bar(frame: &mut Frame, area: Rect, state: &AppState, is_focused: bool) {
@@ -467,7 +548,7 @@ mod tests {
     use ratatui::{backend::TestBackend, Terminal};
 
     /// Render the pane over a fixture workspace and return the screen as text.
-    fn screen(state: &AppState, width: u16, height: u16) -> String {
+    fn screen(state: &mut AppState, width: u16, height: u16) -> String {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal
             .draw(|frame| render(frame, frame.area(), state))
@@ -492,10 +573,27 @@ mod tests {
         (state, session_id, dir)
     }
 
+    /// Nothing the user wrote may be dropped or elided — elision is how this
+    /// pane lost their words twice.
+    #[test]
+    fn wrapping_keeps_every_word() {
+        let text = "make absolutely sure that every objective wraps onto following lines";
+        let lines = wrapped(text, 20);
+        assert!(lines.len() > 1, "{lines:?}");
+        assert!(lines.iter().all(|l| l.chars().count() <= 20), "{lines:?}");
+        assert_eq!(lines.join(" "), text, "every word survives");
+
+        let monster = "a".repeat(45);
+        let lines = wrapped(&monster, 20);
+        assert_eq!(lines.join(""), monster, "a monster token is cut, not lost");
+
+        assert_eq!(wrapped("", 20), vec![String::new()], "empty stays one row");
+    }
+
     #[test]
     fn the_pane_opens_on_the_roster_and_an_empty_one_explains_itself() {
-        let (state, _session_id, _dir) = state_on(TasksTab::Managers);
-        let out = screen(&state, 72, 12);
+        let (mut state, _session_id, _dir) = state_on(TasksTab::Managers);
+        let out = screen(&mut state, 72, 12);
         assert!(out.contains("MANAGER"), "{out}");
         assert!(out.contains("Managers(0)"), "{out}");
         assert!(out.contains("Press a number"), "{out}");
@@ -525,7 +623,7 @@ mod tests {
             .proposals
             .push(crate::models::Proposal::new(short, "split the auth module"));
 
-        let out = screen(&state, 72, 12);
+        let out = screen(&mut state, 72, 12);
         assert!(out.contains("Managers(1)"), "{out}");
         assert!(out.contains("[M]"), "{out}");
         assert!(out.contains("1 proposal awaiting you"), "{out}");
@@ -535,8 +633,8 @@ mod tests {
     /// otherwise the later tabs look like they do not exist.
     #[test]
     fn a_narrow_pane_drops_the_counts_rather_than_the_tabs() {
-        let (state, _session_id, _dir) = state_on(TasksTab::Managers);
-        let out = screen(&state, 26, 10);
+        let (mut state, _session_id, _dir) = state_on(TasksTab::Managers);
+        let out = screen(&mut state, 26, 10);
         assert!(out.contains("Managers"), "{out}");
         assert!(out.contains("Objectives"), "{out}");
         assert!(!out.contains("Managers("), "counts should be gone:\n{out}");

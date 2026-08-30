@@ -63,9 +63,20 @@ pub fn handle_task_action(
                 }
                 return Ok(());
             }
+            // A row taller than the pane is read through before it is left:
+            // j walks the hidden lines into view first, like a pager, and
+            // only then moves to the next row.
+            if state.ui.objective_overflow > 0 {
+                state.ui.objective_scroll += 1;
+                return Ok(());
+            }
             let count = objectives_view::rows(state).len();
             if count > 0 {
-                state.ui.selected_objective = (state.ui.selected_objective + 1).min(count - 1);
+                let next = (state.ui.selected_objective + 1).min(count - 1);
+                if next != state.ui.selected_objective {
+                    state.ui.selected_objective = next;
+                    state.ui.objective_scroll = 0;
+                }
             }
         }
         Action::SelectPrevTask => {
@@ -73,11 +84,20 @@ pub fn handle_task_action(
                 state.ui.selected_manager = state.ui.selected_manager.saturating_sub(1);
                 return Ok(());
             }
-            state.ui.selected_objective = state.ui.selected_objective.saturating_sub(1);
+            if state.ui.objective_scroll > 0 {
+                state.ui.objective_scroll -= 1;
+                return Ok(());
+            }
+            let prev = state.ui.selected_objective.saturating_sub(1);
+            if prev != state.ui.selected_objective {
+                state.ui.selected_objective = prev;
+                state.ui.objective_scroll = 0;
+            }
         }
         Action::ToggleTasksTab => {
             state.ui.selected_tasks_tab = state.ui.selected_tasks_tab.toggle();
             state.ui.selected_task_row = 0;
+            state.ui.objective_scroll = 0;
             clamp_objective_cursor(state);
         }
         Action::FocusSelectedTaskAgent => {

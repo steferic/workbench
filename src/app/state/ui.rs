@@ -249,6 +249,13 @@ pub struct UIState {
     pub selected_objective: usize,
     /// Cursor in the Managers tab.
     pub selected_manager: usize,
+    /// How far `j` has read into an objectives-tab row taller than the pane.
+    /// Written by the keys, consumed by the renderer's scroll.
+    pub objective_scroll: u16,
+    /// How many lines of the selected row are still below the fold. Written
+    /// by the renderer each frame, read by `j` to decide between reading
+    /// further into the row and moving to the next one.
+    pub objective_overflow: u16,
 
     // Debug overlay (F11)
     pub show_debug_overlay: bool,
@@ -308,6 +315,8 @@ impl UIState {
             objective_edit: None,
             selected_objective: 0,
             selected_manager: 0,
+            objective_scroll: 0,
+            objective_overflow: 0,
             show_debug_overlay: false,
             config: ConfigWindowState::default(),
             palette: CommandPaletteState::default(),
