@@ -80,6 +80,10 @@ pub struct ObjectiveView {
 #[derive(Debug, Clone, Serialize)]
 pub struct ProposalView {
     pub id: String,
+    /// Where the work stands after approval: "working" | "rework" |
+    /// "in_review" | "resolved" | "needs_user". Absent before approval.
+    #[serde(default)]
+    pub phase: Option<String>,
     pub objective: Option<String>,
     pub agent: Option<String>,
     pub instruction: String,
@@ -379,6 +383,18 @@ fn publish_with(state: &AppState, shared: &Shared, open: Option<(Vec<Message>, u
                 .iter()
                 .map(|proposal| ProposalView {
                     id: proposal.id.to_string(),
+                    phase: proposal.review.map(|phase| {
+                        match phase {
+                            crate::models::ReviewPhase::Working if proposal.review_rounds > 0 => {
+                                "rework"
+                            }
+                            crate::models::ReviewPhase::Working => "working",
+                            crate::models::ReviewPhase::AwaitingReview => "in_review",
+                            crate::models::ReviewPhase::Resolved => "resolved",
+                            crate::models::ReviewPhase::NeedsUser => "needs_user",
+                        }
+                        .to_string()
+                    }),
                     objective: proposal.objective_id.map(|id| id.to_string()),
                     agent: proposal.agent.clone(),
                     instruction: proposal.instruction.clone(),

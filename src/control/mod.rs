@@ -490,6 +490,19 @@ fn dispatch(
 
         // A manager's suggestion. Recorded against its project; nothing is
         // queued and no agent is touched.
+        // A manager closing its review turn. Allowed for managers — the
+        // review loop is the one sanctioned path from a manager to an agent,
+        // and the handler still checks the caller proposed this very job.
+        "manager.review" => queue(
+            commands,
+            RemoteCommand::Review {
+                manager: text_param(params, "manager")?,
+                proposal: text_param(params, "proposal")?,
+                outcome: text_param(params, "outcome")?,
+                findings: opt_param(params, "findings").unwrap_or_default(),
+            },
+        ),
+
         "manager.propose" => queue(
             commands,
             RemoteCommand::Propose {
@@ -646,6 +659,8 @@ fn schema() -> Value {
             {"name": "hook", "params": ["workspace", "session", "event", "payload"], "kind": "write"},
             {"name": "manager.propose_check",
              "params": ["manager", "objective", "command"], "kind": "write"},
+            {"name": "manager.review",
+             "params": ["manager", "proposal", "outcome", "findings"], "kind": "write"},
             {"name": "manager.propose",
              "params": ["manager", "instruction", "objective?", "agent?", "rationale?"],
              "kind": "write"}

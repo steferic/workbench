@@ -122,6 +122,53 @@ pub fn tick(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) {
         retire_finished(state, session_id, action_tx);
         dispatch_next(state, session_id, action_tx);
     }
+
+    // Records from before the review lifecycle existed — approved, finished,
+    // and no verdict — sat in the pane saying "queued" forever, because a
+    // proposal without an approved check finished into nothing at all. Hand
+    // each one to its manager the way new work now is.
+    migrate_stranded(state, action_tx);
+}
+
+/// One-time repair, run cheaply on the tick: an approved proposal whose
+/// queued item is done (or gone) but whose review never started gets moved to
+/// AwaitingReview and its manager gets a review turn.
+fn migrate_stranded(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) {
+    use crate::models::TodoState;
+
+    let mut stranded: Vec<(Uuid, Uuid)> = Vec::new();
+    for workspace in &state.data.workspaces {
+        for proposal in &workspace.proposals {
+            if proposal.state != crate::models::ProposalState::Approved
+                || proposal.review.is_some()
+            {
+                continue;
+            }
+            let in_flight = proposal.todo_id.is_some_and(|todo| {
+                state.data.sessions.values().flatten().any(|session| {
+                    session
+                        .todo_queue
+                        .items
+                        .iter()
+                        .any(|item| item.id == todo && item.state != TodoState::Done)
+                })
+            });
+            if !in_flight {
+                stranded.push((workspace.id, proposal.id));
+            }
+        }
+    }
+    for (workspace_id, proposal_id) in stranded {
+        crate::logger::info(format!(
+            "migrating a stranded proposal {proposal_id} to the review lifecycle"
+        ));
+        crate::app::handlers::tasks::finish_into_review(
+            state,
+            workspace_id,
+            proposal_id,
+            action_tx,
+        );
+    }
 }
 
 /// An item is finished when the agent's turn ends after we sent it.
@@ -195,20 +242,35 @@ fn verify_finished_work(
     else {
         return; // ordinary queued work, not something a manager proposed
     };
-    let Some((check, dir, workspace_id)) =
+    if let Some((check, dir, workspace_id)) =
         crate::app::handlers::tasks::baseline_for(state, &proposal, session_id)
-    else {
+    {
+        // The check runs first; the manager's review turn follows once the
+        // verdict lands, so the packet carries it.
+        crate::app::handlers::tasks::start_verification(
+            state,
+            workspace_id,
+            proposal.id,
+            false,
+            check,
+            dir,
+            action_tx,
+        );
+        if let Some(stored) = state
+            .data
+            .workspaces
+            .iter_mut()
+            .find(|ws| ws.id == workspace_id)
+            .and_then(|ws| ws.proposals.iter_mut().find(|p| p.id == proposal.id))
+        {
+            stored.work_finished();
+        }
         return;
-    };
-    crate::app::handlers::tasks::start_verification(
-        state,
-        workspace_id,
-        proposal.id,
-        false,
-        check,
-        dir,
-        action_tx,
-    );
+    }
+    // No approved check: this used to end here, recording nothing — the pane
+    // then said "queued" until the end of time. The manager reviews it
+    // instead, with the repo marks standing in for the verdict.
+    crate::app::handlers::tasks::finish_into_review(state, workspace_id, proposal.id, action_tx);
 }
 
 fn dispatch_next(state: &mut AppState, session_id: Uuid, action_tx: &mpsc::UnboundedSender<Action>) {
@@ -434,5 +496,58 @@ mod tests {
         let queue = queue(&state, id);
         assert!(queue.running().is_none());
         assert_eq!(queue.pending_count(), 1, "the item is back in the queue");
+    }
+
+    /// The rows that started all this: approved before the review lifecycle
+    /// existed, finished, and displayed as "queued" until the end of time.
+    /// One tick moves them into review and hands their manager a turn.
+    #[test]
+    fn stranded_proposals_migrate_into_review() {
+        let (mut state, worker_id) = state_with_queue(&["old work"]);
+        let workspace_id = state.data.workspaces[0].id;
+        let mut manager = Session::new(workspace_id, AgentType::Claude.as_manager(), false);
+        manager.status = crate::models::SessionStatus::Running;
+        let manager_id = manager.id;
+        let manager_short = Session::short_id_of(manager_id);
+        state
+            .data
+            .sessions
+            .get_mut(&workspace_id)
+            .unwrap()
+            .push(manager);
+
+        // An approved proposal whose queued item is long done, from before
+        // the `review` field existed.
+        let todo_id = {
+            let session = state.get_session_mut(worker_id).unwrap();
+            let id = session.todo_queue.items[0].id;
+            session.todo_queue.items[0].state = crate::models::TodoState::Done;
+            id
+        };
+        let mut proposal = crate::models::Proposal::new(manager_short, "old work");
+        proposal.agent = Some(Session::short_id_of(worker_id));
+        proposal.state = crate::models::ProposalState::Approved;
+        proposal.todo_id = Some(todo_id);
+        proposal.review = None; // the pre-lifecycle shape
+        let proposal_id = proposal.id;
+        state.data.workspaces[0].proposals.push(proposal);
+
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        tick(&mut state, &tx);
+
+        let migrated = state.data.workspaces[0]
+            .proposals
+            .iter()
+            .find(|p| p.id == proposal_id)
+            .unwrap();
+        assert!(migrated.awaiting_review(), "no longer stranded at queued");
+        let turn = state
+            .get_session(manager_id)
+            .unwrap()
+            .todo_queue
+            .items
+            .last()
+            .unwrap();
+        assert!(turn.text.contains("REVIEW TURN"), "{}", turn.text);
     }
 }

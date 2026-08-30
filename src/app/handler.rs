@@ -770,6 +770,167 @@ fn apply_proposed_check(state: &mut AppState, manager: &str, objective: &str, co
     super::handlers::save_state(state, "failed to save a proposed check");
 }
 
+/// Apply a manager's review outcome to the proposal it reviewed.
+///
+/// `accept` resolves the job — the job, never its objective. /// `request_changes` sends the findings back to the same agent, within the
+/// bounded loop the original approval authorized. `needs_user` parks it for a
+/// person, as does anything malformed enough to distrust.
+fn apply_review(
+    state: &mut AppState,
+    manager: &str,
+    proposal: &str,
+    outcome: &str,
+    findings: &str,
+    action_tx: &mpsc::UnboundedSender<Action>,
+) {
+    let _ = action_tx;
+    let found = state.data.workspaces.iter().find_map(|ws| {
+        ws.proposals
+            .iter()
+            .find(|p| p.id.to_string() == *proposal)
+            .map(|p| (ws.id, p.clone()))
+    });
+    let Some((workspace_id, snapshot)) = found else {
+        crate::logger::warn(format!("review of an unknown proposal {proposal}"));
+        return;
+    };
+    if !snapshot.manager.eq_ignore_ascii_case(manager) {
+        crate::logger::warn(format!(
+            "manager {manager} tried to review a proposal that belongs to {}",
+            snapshot.manager
+        ));
+        return;
+    }
+    if !snapshot.awaiting_review() {
+        crate::logger::warn(format!(
+            "manager {manager} reviewed proposal {proposal}, which is not awaiting review"
+        ));
+        return;
+    }
+
+    fn stored<'a>(
+        state: &'a mut AppState,
+        workspace_id: uuid::Uuid,
+        proposal: &str,
+    ) -> Option<&'a mut crate::models::Proposal> {
+        state
+            .data
+            .workspaces
+            .iter_mut()
+            .find(|ws| ws.id == workspace_id)
+            .and_then(|ws| {
+                ws.proposals
+                    .iter_mut()
+                    .find(|p| p.id.to_string() == proposal)
+            })
+    }
+
+    match outcome {
+        "accept" => {
+            if let Some(p) = stored(state, workspace_id, proposal) {
+                p.accept();
+            }
+            let line = format!(
+                "manager {manager} accepted after round {}: {}",
+                snapshot.review_rounds,
+                first_line_of(&snapshot.instruction)
+            );
+            crate::logger::info(&line);
+            state.ui.set_task_status(line);
+        }
+        "request_changes" => {
+            if findings.trim().is_empty() {
+                if let Some(p) = stored(state, workspace_id, proposal) {
+                    p.needs_user("manager requested changes but named none".into());
+                }
+                crate::logger::warn("request_changes with no findings; parked for the user");
+                super::handlers::save_state(state, "failed to save a review");
+                return;
+            }
+            // Corrections go to the agent the approved proposal named — the
+            // same authorization, one more lap, if any laps remain.
+            let Some(agent) = snapshot.agent.clone() else {
+                if let Some(p) = stored(state, workspace_id, proposal) {
+                    p.needs_user("no agent to send corrections to".into());
+                }
+                super::handlers::save_state(state, "failed to save a review");
+                return;
+            };
+            let Some(session_id) = crate::remote::session_for(state, &agent) else {
+                if let Some(p) = stored(state, workspace_id, proposal) {
+                    p.needs_user(format!("agent {agent} is no longer here"));
+                }
+                super::handlers::save_state(state, "failed to save a review");
+                return;
+            };
+            if snapshot.review_rounds >= crate::models::MAX_REVIEW_ROUNDS {
+                if let Some(p) = stored(state, workspace_id, proposal) {
+                    p.needs_user(format!(
+                        "correction rounds exhausted; last findings: {findings}"
+                    ));
+                }
+                let line = format!(
+                    "proposal used its {} correction rounds — over to you",
+                    crate::models::MAX_REVIEW_ROUNDS
+                );
+                crate::logger::warn(&line);
+                state.ui.set_task_status(line);
+                super::handlers::save_state(state, "failed to save a review");
+                return;
+            }
+            let text = format!(
+                "Manager review (round {} of {}) requested changes on the work you just did for: {}
+
+Findings to address, and nothing beyond them:
+{}",
+                snapshot.review_rounds + 1,
+                crate::models::MAX_REVIEW_ROUNDS,
+                first_line_of(&snapshot.instruction),
+                findings.trim()
+            );
+            let Some(session) = state.get_session_mut(session_id) else {
+                return;
+            };
+            let todo = session.todo_queue.add(text);
+            if let Some(p) = stored(state, workspace_id, proposal) {
+                p.request_changes(findings.trim().to_string(), todo);
+            }
+            let line = format!("manager {manager} sent corrections back to {agent}");
+            crate::logger::info(&line);
+            state.ui.set_task_status(line);
+        }
+        "needs_user" => {
+            if let Some(p) = stored(state, workspace_id, proposal) {
+                p.needs_user(if findings.trim().is_empty() {
+                    "the manager asked for your eyes".into()
+                } else {
+                    findings.trim().to_string()
+                });
+            }
+            let line = format!(
+                "manager {manager} needs you on: {}",
+                first_line_of(&snapshot.instruction)
+            );
+            crate::logger::warn(&line);
+            state.ui.set_task_status(line);
+        }
+        other => {
+            crate::logger::warn(format!("unknown review outcome {other:?}; ignored"));
+            return;
+        }
+    }
+    super::handlers::save_state(state, "failed to save a review");
+}
+
+fn first_line_of(text: &str) -> String {
+    let line = text.lines().next().unwrap_or("").trim();
+    let mut out: String = line.chars().take(70).collect();
+    if line.chars().count() > 70 {
+        out.push('…');
+    }
+    out
+}
+
 /// Record a manager's suggestion against the project it belongs to.
 ///
 /// Recorded and nothing else. No queue is touched and no agent is told
@@ -1040,6 +1201,20 @@ fn apply_remote(
 ) {
     use crate::remote::RemoteCommand;
 
+    // A manager answering its review turn. Validated hard: only the manager
+    // that proposed the job may close its review, and corrections can only
+    // go to the agent the approved proposal already named.
+    if let RemoteCommand::Review {
+        manager,
+        proposal,
+        outcome,
+        findings,
+    } = &command
+    {
+        apply_review(state, manager, proposal, outcome, findings, action_tx);
+        return;
+    }
+
     // A decision names a proposal, not a session. Routed to the same core
     // the TUI's `a` and `x` use, found in whichever workspace holds it.
     if let RemoteCommand::Decide { proposal, approve } = &command {
@@ -1138,7 +1313,8 @@ fn apply_remote(
         // Applied above; they name a project or a proposal, not an agent.
         RemoteCommand::Propose { .. }
         | RemoteCommand::ProposeCheck { .. }
-        | RemoteCommand::Decide { .. } => return,
+        | RemoteCommand::Decide { .. }
+        | RemoteCommand::Review { .. } => return,
     };
     let Some(session_id) = crate::remote::session_for(state, &agent) else {
         crate::logger::warn(format!("phone asked for unknown agent {agent}"));
@@ -1149,7 +1325,8 @@ fn apply_remote(
         // Applied before the agent lookup above; unreachable here.
         RemoteCommand::Propose { .. }
         | RemoteCommand::ProposeCheck { .. }
-        | RemoteCommand::Decide { .. } => {}
+        | RemoteCommand::Decide { .. }
+        | RemoteCommand::Review { .. } => {}
         RemoteCommand::Todo { text, .. } => {
             if let Some(session) = state.get_session_mut(session_id) {
                 session.todo_queue.add(text.clone());
@@ -1439,7 +1616,7 @@ mod tests {
         super::notify_phone(state, &tx)
     }
 
-    use super::{apply_remote, notify_phone, plan_task_refresh, process_action};
+    use super::{apply_remote, apply_review, notify_phone, plan_task_refresh, process_action};
     use crate::models::{AgentType, Session, SessionStatus, Workspace};
     use chrono::{Duration as ChronoDuration, Utc};
 
@@ -1933,5 +2110,164 @@ mod tests {
         assert_eq!(state.ui.pie_chart_data.len(), 1);
         assert_eq!(state.ui.pie_chart_data[0].0, "new");
         assert!(state.ui.show_calendar);
+    }
+    /// A world with one manager, one worker, and one approved proposal that
+    /// has just finished — the moment the review loop begins.
+    fn review_world() -> (AppState, uuid::Uuid, uuid::Uuid, uuid::Uuid, uuid::Uuid) {
+        let mut state = AppState::default();
+        let workspace = Workspace::new("w".into(), std::path::PathBuf::from("/tmp/w"));
+        let workspace_id = workspace.id;
+        state.data.workspaces.push(workspace);
+
+        let mut worker = Session::new(workspace_id, AgentType::Claude, false);
+        worker.status = SessionStatus::Running;
+        let worker_id = worker.id;
+        let mut manager = Session::new(workspace_id, AgentType::Claude.as_manager(), false);
+        manager.status = SessionStatus::Running;
+        let manager_id = manager.id;
+
+        let mut proposal = crate::models::Proposal::new(
+            Session::short_id_of(manager_id),
+            "tighten the recorder supervision",
+        );
+        proposal.agent = Some(Session::short_id_of(worker_id));
+        let todo = worker.todo_queue.add("tighten the recorder supervision");
+        proposal.approve(todo);
+        let proposal_id = proposal.id;
+        state.data.workspaces[0].proposals.push(proposal);
+        state
+            .data
+            .sessions
+            .insert(workspace_id, vec![worker, manager]);
+        (state, workspace_id, proposal_id, worker_id, manager_id)
+    }
+
+    fn the_proposal(state: &AppState, id: uuid::Uuid) -> crate::models::Proposal {
+        state.data.workspaces[0]
+            .proposals
+            .iter()
+            .find(|p| p.id == id)
+            .cloned()
+            .unwrap()
+    }
+
+    /// Piece one and two of the lifecycle: finishing always enters review —
+    /// even with no approved check — and the manager receives a turn that
+    /// says how to answer.
+    #[test]
+    fn manager_review_turn_follows_every_finish() {
+        let (mut state, ws, proposal_id, _worker, manager_id) = review_world();
+        let (tx, _rx) = mpsc::unbounded_channel();
+
+        crate::app::handlers::tasks::finish_into_review(&mut state, ws, proposal_id, &tx);
+
+        let after = the_proposal(&state, proposal_id);
+        assert!(after.awaiting_review(), "no check, yet review still begins");
+
+        let queue = &state.get_session(manager_id).unwrap().todo_queue;
+        let turn = queue.items.last().expect("the manager got a turn");
+        assert!(turn.text.contains("REVIEW TURN"), "{}", turn.text);
+        assert!(turn.text.contains(&proposal_id.to_string()));
+        assert!(turn.text.contains("manager.review"), "says how to answer");
+        assert!(
+            turn.text.contains("round 1/3"),
+            "the bound is stated up front: {}",
+            turn.text
+        );
+    }
+
+    /// A finished proposal whose manager has left runs to the user, not to
+    /// nobody: work reviewed by nobody must not read as done.
+    #[test]
+    fn manager_review_without_a_manager_goes_to_the_user() {
+        let (mut state, ws, proposal_id, _worker, manager_id) = review_world();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        state
+            .data
+            .sessions
+            .get_mut(&ws)
+            .unwrap()
+            .retain(|s| s.id != manager_id);
+
+        crate::app::handlers::tasks::finish_into_review(&mut state, ws, proposal_id, &tx);
+
+        let after = the_proposal(&state, proposal_id);
+        assert_eq!(after.review, Some(crate::models::ReviewPhase::NeedsUser));
+    }
+
+    /// The full loop: request_changes re-queues the findings on the same
+    /// agent and burns a round; the next finish reviews again; accept
+    /// resolves. And only the proposing manager's word counts.
+    #[test]
+    fn proposal_review_cycle_corrects_then_resolves() {
+        let (mut state, ws, proposal_id, worker_id, _manager) = review_world();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let manager_short = the_proposal(&state, proposal_id).manager.clone();
+        let pid = proposal_id.to_string();
+
+        crate::app::handlers::tasks::finish_into_review(&mut state, ws, proposal_id, &tx);
+
+        // A stranger's review is refused outright.
+        apply_review(&mut state, "deadbeef", &pid, "accept", "", &tx);
+        assert!(the_proposal(&state, proposal_id).awaiting_review());
+
+        // Corrections go back to the worker, verbatim, and cost a round.
+        apply_review(
+            &mut state,
+            &manager_short,
+            &pid,
+            "request_changes",
+            "the restart counter never resets",
+            &tx,
+        );
+        let after = the_proposal(&state, proposal_id);
+        assert_eq!(after.review, Some(crate::models::ReviewPhase::Working));
+        assert_eq!(after.review_rounds, 1);
+        let worker_queue = &state.get_session(worker_id).unwrap().todo_queue;
+        let correction = worker_queue.items.last().unwrap();
+        assert!(
+            correction.text.contains("the restart counter never resets"),
+            "{}",
+            correction.text
+        );
+        assert_eq!(after.todo_id, Some(correction.id), "the loop tracks the new item");
+
+        // Round two ends in acceptance.
+        crate::app::handlers::tasks::finish_into_review(&mut state, ws, proposal_id, &tx);
+        apply_review(&mut state, &manager_short, &pid, "accept", "", &tx);
+        assert_eq!(
+            the_proposal(&state, proposal_id).review,
+            Some(crate::models::ReviewPhase::Resolved)
+        );
+    }
+
+    /// The loop is bounded: past its rounds, one more request_changes parks
+    /// the proposal on the user instead of buying another lap.
+    #[test]
+    fn proposal_review_cycle_is_bounded() {
+        let (mut state, ws, proposal_id, _worker, _manager) = review_world();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let manager_short = the_proposal(&state, proposal_id).manager.clone();
+        let pid = proposal_id.to_string();
+
+        state.data.workspaces[0]
+            .proposals
+            .iter_mut()
+            .find(|p| p.id == proposal_id)
+            .unwrap()
+            .review_rounds = crate::models::MAX_REVIEW_ROUNDS;
+        crate::app::handlers::tasks::finish_into_review(&mut state, ws, proposal_id, &tx);
+
+        apply_review(
+            &mut state,
+            &manager_short,
+            &pid,
+            "request_changes",
+            "still broken",
+            &tx,
+        );
+        let after = the_proposal(&state, proposal_id);
+        assert_eq!(after.review, Some(crate::models::ReviewPhase::NeedsUser));
+        assert!(after.findings.unwrap().contains("still broken"));
     }
 }

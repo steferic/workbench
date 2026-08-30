@@ -57,6 +57,16 @@ pub enum RemoteCommand {
     /// The user deciding a proposal from the phone: the same act as `a`/`x`
     /// at the desk. `proposal` is the full id; approving queues the work.
     Decide { proposal: String, approve: bool },
+    /// A manager answering its review turn. The one write a manager is
+    /// allowed that reaches an agent — and only because approving the
+    /// original job authorized exactly this loop.
+    Review {
+        manager: String,
+        proposal: String,
+        /// "accept" | "request_changes" | "needs_user"
+        outcome: String,
+        findings: String,
+    },
     /// A manager's suggestion for how an objective would be checked. Stored
     /// as proposed, which is to say: not yet something anything will be held
     /// to. Approving it is the user's step.

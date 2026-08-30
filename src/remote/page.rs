@@ -2138,7 +2138,7 @@ function renderManagers() {
   const sig = managers.map(m => [m.id, m.status, m.running, m.queued.length].join(":")).join("|")
     + "||" + (data?.projects || []).map(p =>
         (p.objectives || []).map(o => o.id + o.state + (o.done_when || "")).join(",") + ";" +
-        (p.proposals || []).map(x => x.id + x.state + (x.verdict || "")).join(",")).join("|");
+        (p.proposals || []).map(x => x.id + x.state + (x.verdict || "") + (x.phase || "")).join(",")).join("|");
   if (sig === managersSig) return;
   managersSig = sig;
   if (!managers.length) {
@@ -2156,7 +2156,11 @@ function renderManagers() {
     const proposals = (p.proposals || []).filter(x => x.state !== "declined").map(x => `
       <div class="proposal">
         <span class="text">
-          ${x.verdict ? '<span class="verdict-' + esc(x.verdict) + '">' + esc(x.verdict) + "</span> · "
+          ${x.phase === "resolved" ? '<span class="verdict-verified">resolved</span> · '
+            : x.phase === "needs_user" ? '<span class="verdict-rejected">needs you</span> · '
+            : x.phase === "in_review" ? "in review · "
+            : x.phase === "rework" ? "rework · "
+            : x.verdict ? '<span class="verdict-' + esc(x.verdict) + '">' + esc(x.verdict) + "</span> · "
             : esc(x.state) + " · "}${esc(x.instruction)}
         </span>
         ${x.state === "pending" ? `

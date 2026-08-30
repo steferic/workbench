@@ -389,11 +389,22 @@ fn render_objectives_tab(frame: &mut Frame, area: Rect, state: &mut AppState, is
                 // Once a check has spoken, its verdict is the headline:
                 // that is the fact worth reading, and the only one a
                 // manager could not have written itself.
-                let (verb, verb_color) = match (&proposal.verdict, proposal.state) {
-                    (Some(Verdict::Verified), _) => ("verified ", t.success),
-                    (Some(Verdict::Rejected { .. }), _) => ("rejected ", t.error),
-                    (Some(Verdict::Inconclusive { .. }), _) => ("unclear ", t.warning),
-                    (None, ProposalState::Approved) => ("queued ", t.info),
+                // The lifecycle outranks the check's verdict once review has
+                // spoken: "resolved" and "needs you" are decisions, a verdict
+                // is evidence. Mid-flight, the verdict is the best headline.
+                use crate::models::ReviewPhase;
+                let (verb, verb_color) = match (proposal.review, &proposal.verdict, proposal.state)
+                {
+                    (Some(ReviewPhase::Resolved), _, _) => ("resolved ", t.success),
+                    (Some(ReviewPhase::NeedsUser), _, _) => ("needs you ", t.warning),
+                    (Some(ReviewPhase::AwaitingReview), _, _) => ("in review ", t.info),
+                    (Some(ReviewPhase::Working), _, _) if proposal.review_rounds > 0 => {
+                        ("rework ", t.info)
+                    }
+                    (_, Some(Verdict::Verified), _) => ("verified ", t.success),
+                    (_, Some(Verdict::Rejected { .. }), _) => ("rejected ", t.error),
+                    (_, Some(Verdict::Inconclusive { .. }), _) => ("unclear ", t.warning),
+                    (_, None, ProposalState::Approved) => ("queued ", t.info),
                     _ => ("proposes ", t.info),
                 };
                 let body_style = if selected {

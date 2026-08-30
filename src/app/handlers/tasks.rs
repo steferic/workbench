@@ -503,6 +503,142 @@ fn record_verification(
     proposal.verdict = Some(verdict);
     state.ui.set_task_status(status);
     super::save_state(state, "failed to save a verdict");
+    // The verdict was the last thing the review turn waited on.
+    queue_review_turn(state, workspace_id, proposal_id);
+}
+
+/// The agent's turn on a proposal ended: record where the repository landed,
+/// move the proposal to AwaitingReview, and hand its manager a review turn.
+///
+/// The path for work with no approved check — the marks stand in for the
+/// verdict — and for records stranded from before the lifecycle existed.
+pub(crate) fn finish_into_review(
+    state: &mut AppState,
+    workspace_id: uuid::Uuid,
+    proposal_id: uuid::Uuid,
+    _action_tx: &mpsc::UnboundedSender<Action>,
+) {
+    let dir = state
+        .data
+        .workspaces
+        .iter()
+        .find(|ws| ws.id == workspace_id)
+        .map(|ws| ws.path.clone());
+    let Some(workspace) = state
+        .data
+        .workspaces
+        .iter_mut()
+        .find(|ws| ws.id == workspace_id)
+    else {
+        return;
+    };
+    let Some(proposal) = workspace.proposals.iter_mut().find(|p| p.id == proposal_id) else {
+        return;
+    };
+    proposal.work_finished();
+    if proposal.after.is_none() {
+        if let Some(dir) = dir {
+            proposal.after = Some(crate::app::verify::mark(&dir));
+        }
+    }
+    super::save_state(state, "failed to save a finished proposal");
+    queue_review_turn(state, workspace_id, proposal_id);
+}
+
+/// Queue the review turn on the manager that proposed the work.
+///
+/// The whole packet an accept/request-changes decision needs: what was asked,
+/// where the repository moved, what the check said if one ran, and the exact
+/// call to answer with. If the manager is gone, the proposal goes to the user
+/// instead — work reviewed by nobody must not read as done.
+pub(crate) fn queue_review_turn(
+    state: &mut AppState,
+    workspace_id: uuid::Uuid,
+    proposal_id: uuid::Uuid,
+) {
+    let Some(proposal) = state
+        .data
+        .workspaces
+        .iter()
+        .find(|ws| ws.id == workspace_id)
+        .and_then(|ws| ws.proposals.iter().find(|p| p.id == proposal_id))
+        .cloned()
+    else {
+        return;
+    };
+    if !proposal.awaiting_review() {
+        return;
+    }
+
+    let Some(manager_session) = crate::remote::session_for(state, &proposal.manager) else {
+        if let Some(stored) = state
+            .data
+            .workspaces
+            .iter_mut()
+            .find(|ws| ws.id == workspace_id)
+            .and_then(|ws| ws.proposals.iter_mut().find(|p| p.id == proposal_id))
+        {
+            stored.needs_user("its manager is no longer running".to_string());
+        }
+        super::save_state(state, "failed to save an orphaned review");
+        return;
+    };
+
+    let repo_moved = match (proposal.after.as_ref(), proposal.before.as_ref()) {
+        (Some(after), Some(before)) => {
+            if after.changed_from(before) { "the repository moved" } else { "NOTHING CHANGED in the repository" }
+        }
+        _ => "no before/after comparison was possible",
+    };
+    let verification = match (&proposal.verdict, &proposal.result) {
+        (Some(verdict), Some(run)) => format!(
+            "{} — {}\nlast output:\n{}",
+            verdict.label(),
+            verdict.why(),
+            run.tail.trim()
+        ),
+        _ => "no approved check ran".to_string(),
+    };
+    let agent = proposal.agent.clone().unwrap_or_else(|| "unknown".into());
+    let text = format!(
+        "REVIEW TURN — round {}/{} for proposal {}\n\n\
+You proposed, and it was approved: {}\n\
+Agent: {} (read its work: `workbench transcript {}` and the diff: `git diff` / `git log`)\n\
+Repository: {}\n\
+Verification: {}\n\n\
+Judge whether the work as delivered does what the proposal asked — no more, no wider. \
+Then answer on the control socket with exactly one of:\n\
+  {{\"method\":\"manager.review\",\"params\":{{\"manager\":\"{}\",\"proposal\":\"{}\",\"outcome\":\"accept\"}}}}\n\
+  {{\"method\":\"manager.review\",\"params\":{{\"manager\":\"{}\",\"proposal\":\"{}\",\"outcome\":\"request_changes\",\"findings\":\"exact, bounded corrections within the original scope\"}}}}\n\
+  {{\"method\":\"manager.review\",\"params\":{{\"manager\":\"{}\",\"proposal\":\"{}\",\"outcome\":\"needs_user\",\"findings\":\"what a person must decide\"}}}}\n\n\
+Corrections may only tighten this same job; new or wider work takes a new proposal. \
+After round {}/{} the loop stops and the user takes over.",
+        proposal.review_rounds + 1,
+        crate::models::MAX_REVIEW_ROUNDS,
+        proposal.id,
+        proposal.instruction.trim(),
+        agent,
+        agent,
+        repo_moved,
+        verification,
+        proposal.manager,
+        proposal.id,
+        proposal.manager,
+        proposal.id,
+        proposal.manager,
+        proposal.id,
+        crate::models::MAX_REVIEW_ROUNDS,
+        crate::models::MAX_REVIEW_ROUNDS,
+    );
+
+    if let Some(session) = state.get_session_mut(manager_session) {
+        session.todo_queue.add(text);
+        crate::logger::info(format!(
+            "review turn queued for manager {} (proposal {})",
+            proposal.manager, proposal_id
+        ));
+    }
+    super::save_state(state, "failed to save a review turn");
 }
 
 /// Agree to the check a manager suggested for the objective under the cursor.

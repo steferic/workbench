@@ -130,9 +130,17 @@ Propose it; never assume one.\n\
 - Prefer the smallest work that moves an objective, and say plainly when an \
 objective needs nothing right now.\n\
 - Say so when an objective has no way to check it. That is worth knowing.\n\n\
+When work you proposed finishes, a REVIEW TURN arrives in your queue with the \
+proposal, the repository movement, and any verification output. Judge whether \
+the delivered work does what the proposal asked — no more, no wider — then \
+answer with `manager.review` and one outcome: `accept` resolves the job; \
+`request_changes` (with exact findings) sends corrections back to the same \
+agent, at most {max_rounds} rounds; `needs_user` hands it to the person. \
+Accepting a job never marks its objective met — that stays with them.\n\n\
 Not yours: rewriting objectives, deciding one is met, or typing into another \
 agent. Those stay with the person you work for.\n\n\
-Report what you propose in this pane as you go, so it can be read here."
+Report what you propose in this pane as you go, so it can be read here.",
+        max_rounds = MAX_REVIEW_ROUNDS
     )
 }
 
@@ -215,6 +223,31 @@ impl RepoMark {
         self != before
     }
 }
+
+/// Where a proposal's work stands after approval — the loop the manager
+/// closes.
+///
+/// The manager that proposed the work reviews what came back; approving the
+/// original job authorized exactly this loop and nothing wider. New or
+/// expanded work still takes a new proposal, and resolving a job never marks
+/// its objective met — that decision stays with the user.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewPhase {
+    /// Queued or running with the agent.
+    Working,
+    /// The agent finished; a review turn is with the manager.
+    AwaitingReview,
+    /// The manager accepted. Done — but "done" for the job, not the objective.
+    Resolved,
+    /// The manager could not decide, or the correction loop hit its bound.
+    /// The one state that asks for a person.
+    NeedsUser,
+}
+
+/// How many correction rounds a single approval buys. Past this the loop has
+/// earned a person's eyes, not another lap.
+pub const MAX_REVIEW_ROUNDS: u8 = 3;
 
 /// What the two runs, taken together, mean.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -346,6 +379,18 @@ pub struct Proposal {
     /// What the two runs mean together. Set by workbench, never by a manager.
     #[serde(default)]
     pub verdict: Option<Verdict>,
+    /// Where the work stands after approval. `None` until approved (and on
+    /// records from before this field existed, which the retire pass
+    /// migrates).
+    #[serde(default)]
+    pub review: Option<ReviewPhase>,
+    /// Correction rounds so far (see `MAX_REVIEW_ROUNDS`).
+    #[serde(default)]
+    pub review_rounds: u8,
+    /// The manager's latest findings, verbatim — what it asked to change, or
+    /// why it punted to the user.
+    #[serde(default)]
+    pub findings: Option<String>,
 }
 
 impl Proposal {
@@ -365,6 +410,9 @@ impl Proposal {
             before: None,
             after: None,
             verdict: None,
+            review: None,
+            review_rounds: 0,
+            findings: None,
         }
     }
 
@@ -384,6 +432,42 @@ impl Proposal {
     pub fn approve(&mut self, todo_id: Uuid) {
         self.state = ProposalState::Approved;
         self.todo_id = Some(todo_id);
+        self.review = Some(ReviewPhase::Working);
+    }
+
+    /// The agent's turn ended: the work now waits on the manager.
+    pub fn work_finished(&mut self) {
+        self.review = Some(ReviewPhase::AwaitingReview);
+    }
+
+    /// The manager asked for corrections. Returns false — and parks the
+    /// proposal on the user — once the loop has used up its rounds: past the
+    /// bound, another lap is not the manager's to grant.
+    pub fn request_changes(&mut self, findings: String, new_todo: Uuid) -> bool {
+        if self.review_rounds >= MAX_REVIEW_ROUNDS {
+            self.findings = Some(findings);
+            self.review = Some(ReviewPhase::NeedsUser);
+            return false;
+        }
+        self.review_rounds += 1;
+        self.findings = Some(findings);
+        self.todo_id = Some(new_todo);
+        self.review = Some(ReviewPhase::Working);
+        true
+    }
+
+    pub fn accept(&mut self) {
+        self.review = Some(ReviewPhase::Resolved);
+    }
+
+    pub fn needs_user(&mut self, why: String) {
+        self.findings = Some(why);
+        self.review = Some(ReviewPhase::NeedsUser);
+    }
+
+    /// Whether this proposal is waiting on its manager's review.
+    pub fn awaiting_review(&self) -> bool {
+        self.review == Some(ReviewPhase::AwaitingReview)
     }
 }
 
