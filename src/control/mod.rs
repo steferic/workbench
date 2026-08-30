@@ -690,6 +690,7 @@ mod tests {
                 servers: Vec::new(),
             }],
             agents,
+            desk: Vec::new(),
             open: None,
             at: 0,
         }))

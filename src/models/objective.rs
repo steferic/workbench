@@ -190,7 +190,10 @@ pub fn objective_ledger(proposals: &[Proposal], objective_id: Uuid) -> Objective
                 ledger.in_flight += 1;
             }
             Some(ReviewPhase::NeedsUser) => ledger.needs_user += 1,
-            None => {}
+            // Closed is over: not in flight, not waiting on anyone, and not a
+            // resolution — nobody accepted it. The turns it burned are still
+            // counted below.
+            Some(ReviewPhase::Closed) | None => {}
         }
         if proposal.state == ProposalState::Approved {
             let rounds = proposal.review_rounds as usize;
@@ -201,6 +204,9 @@ pub fn objective_ledger(proposals: &[Proposal], objective_id: Uuid) -> Objective
                     Some(ReviewPhase::AwaitingReview)
                         | Some(ReviewPhase::Resolved)
                         | Some(ReviewPhase::NeedsUser)
+                        // Closing does not un-spend the review turn the
+                        // manager burned to punt it.
+                        | Some(ReviewPhase::Closed)
                 ));
         }
     }
@@ -305,6 +311,14 @@ pub enum ReviewPhase {
     /// The manager could not decide, or the correction loop hit its bound.
     /// The one state that asks for a person.
     NeedsUser,
+    /// The person answered, and the answer was stop: a punted review declined
+    /// rather than bought another lap. Terminal, and the one phase a manager
+    /// never writes — it is the record of a user ending the loop.
+    ///
+    /// Distinct from `ProposalState::Declined`, which means the suggestion was
+    /// never taken up at all. This one was approved and worked on first, so it
+    /// stays `Approved` and goes on owing the ledger the turns it burned.
+    Closed,
 }
 
 /// How many correction rounds a single approval buys. Past this the loop has

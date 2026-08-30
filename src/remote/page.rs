@@ -1166,17 +1166,55 @@ pub const HTML: &str = r##"<!doctype html>
   .proposal { padding:3px 8px 3px 40px; font-size:12px; color:var(--dim);
     display:flex; align-items:center; gap:8px; }
   .proposal .text { flex:1; min-width:0; }
+  .proposal .waiting { flex:none; font-size:11px; color:var(--dim); }
   .proposal .verdict-verified { color:var(--ok); }
   .proposal .verdict-rejected { color:var(--warn); }
-  /* Decision buttons meet the 44px touch minimum even inside a 12px row:
-     a mis-tap here queues work for an agent, which is not a fat-finger
-     kind of mistake. */
-  .proposal .yes, .proposal .no {
-    flex:none; min-width:44px; min-height:34px; border-radius:9px;
-    border:1px solid var(--line); background:none; font:inherit; font-size:13px;
+
+  /* The desk: one urgency-ordered list of everything waiting on you, from
+     every project. Rows are wider than a proposal line because a decision
+     needs its context on screen — the manager's reasoning, the findings it
+     punted on, the question the agent is stopped at. */
+  .deskrow {
+    display:flex; align-items:flex-start; gap:8px;
+    padding:9px 8px; border-bottom:1px solid var(--line);
   }
-  .proposal .yes { color:var(--ok); }
-  .proposal .no { color:var(--warn); }
+  .deskrow:last-child { border-bottom:0; }
+  .deskrow .body { flex:1; min-width:0; }
+  .deskrow .head {
+    display:flex; align-items:baseline; gap:6px;
+    font-size:11px; letter-spacing:.05em; text-transform:uppercase;
+  }
+  .deskrow .head .proj { color:var(--dim); text-transform:none; letter-spacing:0; }
+  .deskrow.blocked .head .kind { color:var(--warn); }
+  .deskrow.needs_user .head .kind { color:var(--warn); }
+  .deskrow.pending .head .kind { color:var(--accent, var(--fg)); }
+  .deskrow.check .head .kind { color:var(--dim); }
+  .deskrow .title { font-size:13px; color:var(--fg); margin-top:2px;
+    overflow-wrap:anywhere; }
+  .deskrow.check .title { font-family:var(--mono, ui-monospace, monospace); }
+  /* Pre-wrap: a parsed prompt is laid out in lines, and reflowing them turns
+     a command and its explanation into one run-on sentence.
+
+     Nothing is clipped. This text IS the decision — the command an agent is
+     asking to run, why the manager could not close a review — and a height
+     cap with hidden overflow silently drops the end of exactly the long ones
+     that needed reading. A tall row costs a scroll; a truncated one costs a
+     wrong yes. */
+  .deskrow .detail {
+    font-size:12px; color:var(--dim); margin-top:3px;
+    white-space:pre-wrap; overflow-wrap:anywhere;
+  }
+  .deskrow .acts { flex:none; display:flex; gap:6px; }
+  /* Same 44px touch minimum as a proposal button, and for the same reason:
+     a mis-tap here queues work or drops a check. */
+  .deskrow .acts button {
+    min-width:44px; min-height:38px; border-radius:9px;
+    border:1px solid var(--line); background:none; font:inherit; font-size:13px;
+    color:var(--fg);
+  }
+  .deskrow .acts .yes { color:var(--ok); }
+  .deskrow .acts .no { color:var(--warn); }
+  .deskrow .acts .go { font-size:12px; }
 
   .palette {
     position:fixed; left:0; right:0; bottom:0; z-index:5;
@@ -1391,6 +1429,8 @@ pub const HTML: &str = r##"<!doctype html>
 
 <div class="scrim" id="managersScrim" onclick="toggleManagers()"></div>
 <section class="managers" id="managersSheet">
+  <h2>waiting on you</h2>
+  <div id="deskList"></div>
   <h2>managers</h2>
   <div id="managersList"></div>
 </section>
@@ -2112,7 +2152,7 @@ function toggleManagers() {
   managersOpen = !managersOpen;
   document.getElementById("managersSheet").classList.toggle("open", managersOpen);
   document.getElementById("managersScrim").classList.toggle("open", managersOpen);
-  if (managersOpen) renderManagers();
+  if (managersOpen) { renderDesk(); renderManagers(); }
 }
 
 /* Every manager across every project, each with what its project is working
@@ -2129,6 +2169,74 @@ function toggleManagers() {
 function decide(id, approve) {
   post("/api/proposal", { agent: id, text: approve ? "approve" : "decline" });
   managersSig = "";                       // repaint from the next snapshot
+  deskSig = "";
+}
+
+/* The desk's other two decisions, each reaching the same desktop helper the
+   TUI's keys do. A check belongs to its objective, so that is what is named;
+   re-arming names the proposal whose review the manager punted. */
+function decideCheck(id, approve) {
+  post("/api/check", { agent: id, text: approve ? "approve" : "drop" });
+  deskSig = "";
+}
+function rearm(id) {
+  post("/api/rearm", { agent: id, text: "rearm" });
+  deskSig = "";
+}
+
+/* Everything waiting on you, most urgent first, across every project.
+
+   The order is not decided here: the desktop sends `desk` already sorted by
+   `app::desk_view`, so the phone cannot drift from what the desk shows. This
+   only draws it, and picks the buttons each kind carries.
+
+   Rebuilt only when the content changes, for the same reason as the log and
+   the manager list: replacing the DOM under a finger swallows the tap it was
+   aiming at. */
+let deskSig = "";
+function renderDesk() {
+  const rows = data?.desk || [];
+  const el = document.getElementById("deskList");
+  // Length-prefixed so the signature is never the empty string: an empty
+  // desk would otherwise match the initial sentinel and the "nothing waiting"
+  // line would never paint on first open.
+  const sig = rows.length + "|" +
+    rows.map(r => [r.kind, r.id, r.title, r.detail || ""].join(":")).join("|");
+  if (sig === deskSig) return;
+  deskSig = sig;
+  if (!rows.length) {
+    el.innerHTML = '<div class="empty">Nothing waiting on you.</div>';
+    return;
+  }
+  const label = { blocked: "needs you", needs_user: "needs you",
+                  pending: "approve", check: "check" };
+  el.innerHTML = rows.map(r => {
+    // Blocked opens the agent, because the decision is a conversation and
+    // the chat is already the place for it. The rest decide in place.
+    const acts =
+      r.kind === "blocked"
+        ? `<button class="go" onclick="toggleManagers(); pick('${esc(r.id)}')">open</button>`
+      : r.kind === "check"
+        ? `<button class="yes" onclick="decideCheck('${esc(r.id)}', true)" aria-label="approve check">✓</button>
+           <button class="no" onclick="decideCheck('${esc(r.id)}', false)" aria-label="drop check">✕</button>`
+      : r.kind === "needs_user"
+        ? `<button class="yes" onclick="rearm('${esc(r.id)}')" aria-label="re-arm">↻</button>
+           <button class="no" onclick="decide('${esc(r.id)}', false)" aria-label="decline">✕</button>`
+        : `<button class="yes" onclick="decide('${esc(r.id)}', true)" aria-label="approve">✓</button>
+           <button class="no" onclick="decide('${esc(r.id)}', false)" aria-label="decline">✕</button>`;
+    return `
+      <div class="deskrow ${esc(r.kind)}">
+        <div class="body">
+          <div class="head">
+            <span class="kind">${esc(label[r.kind] || r.kind)}</span>
+            <span class="proj">${esc(r.project)}${r.agent ? " · " + esc(r.agent) : ""}</span>
+          </div>
+          <div class="title">${esc(r.title)}</div>
+          ${r.detail ? '<div class="detail">' + esc(r.detail) + "</div>" : ""}
+        </div>
+        <div class="acts">${acts}</div>
+      </div>`;
+  }).join("");
 }
 
 let managersSig = "";
@@ -2153,19 +2261,25 @@ function renderManagers() {
         <span class="st">${esc(o.state)}</span> ${esc(o.text)}
         ${o.done_when ? '<span class="st"> ✓ ' + esc(o.done_when) + "</span>" : ""}
       </div>`).join("");
+    /* History and status only — deliberately not actionable. These rows used
+       to carry their own approve and decline buttons, which meant a pending
+       proposal could be decided from here as well as from the desk: two
+       places, one of them without the urgency order and without the
+       reasoning the desk shows. Anything that still wants a decision says so
+       and points at the one list that takes it. */
     const proposals = (p.proposals || []).filter(x => x.state !== "declined").map(x => `
       <div class="proposal">
         <span class="text">
           ${x.phase === "resolved" ? '<span class="verdict-verified">resolved</span> · '
             : x.phase === "needs_user" ? '<span class="verdict-rejected">needs you</span> · '
+            : x.phase === "closed" ? "closed · "
             : x.phase === "in_review" ? "in review · "
             : x.phase === "rework" ? "rework · "
             : x.verdict ? '<span class="verdict-' + esc(x.verdict) + '">' + esc(x.verdict) + "</span> · "
             : esc(x.state) + " · "}${esc(x.instruction)}
         </span>
-        ${x.state === "pending" ? `
-          <button class="yes" onclick="decide('${x.id}', true)" aria-label="approve">✓</button>
-          <button class="no" onclick="decide('${x.id}', false)" aria-label="decline">✕</button>` : ""}
+        ${x.state === "pending" || x.phase === "needs_user"
+          ? '<span class="waiting">on the desk ↑</span>' : ""}
       </div>`).join("");
     const doing = m.status === "blocked" ? "needs you"
       : m.running || (m.queued.length ? m.queued.length + " queued" : m.status);
@@ -2313,13 +2427,18 @@ function render() {
   badge.textContent = waiting;
   badge.hidden = !waiting;
 
-  // The managers badge counts suggestions waiting on you — the one number
-  // there that asks for a decision rather than reporting one.
-  const pending = (data.projects || [])
-    .flatMap(p => p.proposals || []).filter(x => x.state === "pending").length;
+  // The badge counts every decision on the desk, not just the suggestions.
+  // It used to count pending proposals alone, which meant a blocked agent, a
+  // review the manager punted and an unapproved check were all invisible
+  // until you opened the sheet on a hunch — the badge said nothing was
+  // waiting while three things were.
+  const waitingOnYou = (data.desk || []).length;
   const mbadge = document.getElementById("mbadge");
-  mbadge.textContent = pending;
-  mbadge.hidden = !pending;
+  mbadge.textContent = waitingOnYou;
+  mbadge.hidden = !waitingOnYou;
+  // Keep the open sheet honest: a decision made at the desk should leave the
+  // phone rather than sit there offering a button that does nothing.
+  if (managersOpen) renderDesk();
   if (managersOpen) renderManagers();
 
   // Nothing chosen yet: open whoever needs you, else the first agent.
@@ -2604,5 +2723,106 @@ mod tests {
 
         assert!(scrim.contains("z-index:5"));
         assert!(drawer.contains("z-index:6"));
+    }
+
+    /// The body of a top-level `function name() { … }` in the page source.
+    ///
+    /// Brace-counted rather than sliced at the next function, so reordering
+    /// the file cannot quietly widen or narrow what is being asserted on.
+    fn function_body<'a>(source: &'a str, name: &str) -> &'a str {
+        let head = format!("function {name}(");
+        let start = source
+            .find(&head)
+            .unwrap_or_else(|| panic!("the page has no {name}"));
+        let open = start
+            + source[start..]
+                .find('{')
+                .expect("a function has a body");
+        let mut depth = 0usize;
+        for (offset, ch) in source[open..].char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return &source[open..open + offset + 1];
+                    }
+                }
+                _ => {}
+            }
+        }
+        panic!("unbalanced braces reading {name}")
+    }
+
+    /// Every decision the phone can make is made from the desk, and only from
+    /// there.
+    ///
+    /// The manager sheet used to carry its own approve and decline buttons on
+    /// every pending proposal, sitting directly under the desk that already
+    /// listed the same decision. Two places to say yes, one of them without
+    /// the urgency order and without the reasoning the desk shows — and the
+    /// two would have drifted the moment either grew a new row kind.
+    ///
+    /// Counted across the whole page rather than checked inside one function,
+    /// so a third surface growing its own buttons fails this too.
+    #[test]
+    fn phone_desk_is_the_only_place_the_phone_decides() {
+        let desk = function_body(HTML, "renderDesk");
+        let managers = function_body(HTML, "renderManagers");
+
+        // Truncated extraction would pass every assertion below by accident.
+        assert!(desk.contains("deskrow"), "renderDesk body looks truncated");
+        assert!(
+            managers.contains("${objectives}${proposals}"),
+            "renderManagers body looks truncated"
+        );
+
+        for handler in ["onclick=\"decide(", "onclick=\"decideCheck(", "onclick=\"rearm("] {
+            let everywhere = HTML.matches(handler).count();
+            let on_the_desk = desk.matches(handler).count();
+            assert!(on_the_desk > 0, "the desk has to offer {handler}");
+            assert_eq!(
+                everywhere, on_the_desk,
+                "{handler} is wired up somewhere other than the desk"
+            );
+        }
+
+        // The roster button stays — tapping a manager opens its conversation,
+        // which is not a decision. What must not come back is a yes or a no.
+        for button in ["class=\"yes\"", "class=\"no\""] {
+            assert!(
+                !managers.contains(button),
+                "the manager list is history and status, not a second place to decide"
+            );
+        }
+        assert!(
+            managers.contains("class=\"mgr\""),
+            "the roster itself is worth keeping"
+        );
+        // What it may still do is point at the one list that decides.
+        assert!(managers.contains("on the desk"));
+    }
+
+    /// The context a decision needs must not be clipped: this text is the
+    /// command an agent wants to run, or why a manager could not close a
+    /// review, and a height cap silently drops the end of exactly the long
+    /// ones worth reading.
+    #[test]
+    fn phone_desk_detail_is_never_clipped() {
+        let rule = HTML
+            .split_once(".deskrow .detail {")
+            .and_then(|(_, rest)| rest.split_once('}'))
+            .map(|(rule, _)| rule)
+            .expect("the desk row detail has a rule");
+        assert!(!rule.contains("max-height"), "{rule}");
+        assert!(!rule.contains("overflow:hidden"), "{rule}");
+        assert!(!rule.contains("line-clamp"), "{rule}");
+        // And the sheet it sits in scrolls, so a tall row stays reachable.
+        let sheet = HTML
+            .split_once(".managers {")
+            .and_then(|(_, rest)| rest.split_once('}'))
+            .map(|(rule, _)| rule)
+            .expect("the sheet has a rule");
+        assert!(sheet.contains("overflow-y:auto"), "{sheet}");
     }
 }

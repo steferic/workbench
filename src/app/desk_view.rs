@@ -165,6 +165,49 @@ mod tests {
         assert!(matches!(rows[3], DeskRow::ProposedCheck { .. }));
     }
 
+    /// The guard that keeps the two surfaces honest.
+    ///
+    /// The phone shows the same list, and the ordering is the contract: if
+    /// `phone_desk_rows` ever stopped projecting `rows` and started deriving
+    /// its own, a fifth row kind — or a reordering of these four — would
+    /// reach one surface and not the other, and nobody would notice until a
+    /// decision went missing on the device that was not at the desk.
+    #[test]
+    fn phone_desk_projects_the_desktop_list_in_order() {
+        let mut state = world();
+        let mut other = Workspace::new("beta".into(), std::path::PathBuf::from("/tmp/b"));
+        let mut objective = Objective::new("keep beta green");
+        objective.done_when = Some(Verification::proposed("cargo check"));
+        other.objectives.push(objective);
+        other.proposals.push(Proposal::new("m2", "over here too"));
+        state.data.workspaces.push(other);
+
+        let desktop = rows(&state);
+        let phone = crate::remote::phone_desk_rows(&state);
+        assert_eq!(
+            desktop.len(),
+            phone.len(),
+            "every desk row has to reach the phone"
+        );
+
+        let kind_of = |row: &DeskRow| match row {
+            DeskRow::BlockedAgent { .. } => "blocked",
+            DeskRow::NeedsUser { .. } => "needs_user",
+            DeskRow::PendingProposal { .. } => "pending",
+            DeskRow::ProposedCheck { .. } => "check",
+        };
+        let project_of = |row: &DeskRow| match row {
+            DeskRow::BlockedAgent { project, .. }
+            | DeskRow::NeedsUser { project, .. }
+            | DeskRow::PendingProposal { project, .. }
+            | DeskRow::ProposedCheck { project, .. } => project.clone(),
+        };
+        for (at, (desk, view)) in desktop.iter().zip(phone.iter()).enumerate() {
+            assert_eq!(kind_of(desk), view.kind, "row {at} is a different kind");
+            assert_eq!(project_of(desk), view.project, "row {at} names another project");
+        }
+    }
+
     /// The desk reaches into every project — a decision does not become less
     /// yours for living in an unselected workspace.
     #[test]

@@ -57,6 +57,17 @@ pub enum RemoteCommand {
     /// The user deciding a proposal from the phone: the same act as `a`/`x`
     /// at the desk. `proposal` is the full id; approving queues the work.
     Decide { proposal: String, approve: bool },
+    /// The user deciding a manager's proposed done-when check: the same act
+    /// as `a`/`x` on that row of the desk. Approving makes the command real,
+    /// declining drops it. `objective` is the full objective id, because a
+    /// check has no id of its own — it belongs to the objective it proves.
+    DecideCheck { objective: String, approve: bool },
+    /// Re-arming a review the manager punted to the user. The user's approval
+    /// buys what the manager's could not, so the work goes back to the agent
+    /// with a fresh set of rounds and the findings attached. Declining one
+    /// instead is an ordinary `Decide { approve: false }` — there is no
+    /// second way to say no.
+    RearmReview { proposal: String },
     /// A manager answering its review turn. The one write a manager is
     /// allowed that reaches an agent — and only because approving the
     /// original job authorized exactly this loop.
@@ -268,6 +279,17 @@ fn handle(
                 proposal,
                 approve: decision == "approve",
             })
+        }),
+        // The desk's other two decisions. Same two-field shape as every
+        // other write endpoint, so the page posts them the same way.
+        ("POST", "/api/check") => command_from(request, commands, |objective, decision| {
+            Some(RemoteCommand::DecideCheck {
+                objective,
+                approve: decision == "approve",
+            })
+        }),
+        ("POST", "/api/rearm") => command_from(request, commands, |proposal, _| {
+            Some(RemoteCommand::RearmReview { proposal })
         }),
         ("POST", "/api/new-agent") => command_from(request, commands, |project, provider| {
             Some(RemoteCommand::NewAgent { project, provider })

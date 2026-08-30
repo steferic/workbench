@@ -402,7 +402,7 @@ fn manager_activity(
 /// rather than a colour alone, because "held" and "met" are decisions worth
 /// spelling out.
 fn render_objectives_tab(frame: &mut Frame, area: Rect, state: &mut AppState, is_focused: bool) {
-    use crate::models::{ObjectiveState, ProposalState, Verdict};
+    use crate::models::ObjectiveState;
 
     let t = crate::theme::current();
     let Some(workspace) = state.selected_workspace() else {
@@ -563,20 +563,13 @@ fn render_objectives_tab(frame: &mut Frame, area: Rect, state: &mut AppState, is
                 // The lifecycle outranks the check's verdict once review has
                 // spoken: "resolved" and "needs you" are decisions, a verdict
                 // is evidence. Mid-flight, the verdict is the best headline.
-                use crate::models::ReviewPhase;
-                let (verb, verb_color) = match (proposal.review, &proposal.verdict, proposal.state)
-                {
-                    (Some(ReviewPhase::Resolved), _, _) => ("resolved ", t.success),
-                    (Some(ReviewPhase::NeedsUser), _, _) => ("needs you ", t.warning),
-                    (Some(ReviewPhase::AwaitingReview), _, _) => ("in review ", t.info),
-                    (Some(ReviewPhase::Working), _, _) if proposal.review_rounds > 0 => {
-                        ("rework ", t.info)
-                    }
-                    (_, Some(Verdict::Verified), _) => ("verified ", t.success),
-                    (_, Some(Verdict::Rejected { .. }), _) => ("rejected ", t.error),
-                    (_, Some(Verdict::Inconclusive { .. }), _) => ("unclear ", t.warning),
-                    (_, None, ProposalState::Approved) => ("queued ", t.info),
-                    _ => ("proposes ", t.info),
+                let verb = proposal_verb(proposal);
+                let verb_color = match verb {
+                    "resolved " | "verified " => t.success,
+                    "needs you " | "unclear " => t.warning,
+                    "rejected " => t.error,
+                    "closed " => t.fg_dim,
+                    _ => t.info,
                 };
                 let body_style = if selected {
                     Style::default().fg(t.fg)
@@ -728,6 +721,33 @@ fn render_action_bar(frame: &mut Frame, area: Rect, state: &AppState, is_focused
         })
         .collect();
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+/// The one word that heads a proposal row in the objectives list.
+///
+/// Pulled out of the render so it can be asserted on. It has to be read in
+/// order: the lifecycle outranks the check's verdict once review has spoken,
+/// because "resolved", "needs you" and "closed" are decisions while a verdict
+/// is only evidence. Mid-flight, the verdict is the best headline there is.
+///
+/// The last two arms are the trap. A closed job stays `Approved` so the
+/// ledger keeps the turns it burned, so without an explicit arm above them it
+/// falls through to its check's verdict or to "queued" — and a job the user
+/// stopped goes on advertising itself as running.
+pub(crate) fn proposal_verb(proposal: &crate::models::Proposal) -> &'static str {
+    use crate::models::{ProposalState, ReviewPhase, Verdict};
+    match (proposal.review, &proposal.verdict, proposal.state) {
+        (Some(ReviewPhase::Resolved), _, _) => "resolved ",
+        (Some(ReviewPhase::NeedsUser), _, _) => "needs you ",
+        (Some(ReviewPhase::Closed), _, _) => "closed ",
+        (Some(ReviewPhase::AwaitingReview), _, _) => "in review ",
+        (Some(ReviewPhase::Working), _, _) if proposal.review_rounds > 0 => "rework ",
+        (_, Some(Verdict::Verified), _) => "verified ",
+        (_, Some(Verdict::Rejected { .. }), _) => "rejected ",
+        (_, Some(Verdict::Inconclusive { .. }), _) => "unclear ",
+        (_, None, ProposalState::Approved) => "queued ",
+        _ => "proposes ",
+    }
 }
 
 #[cfg(test)]
@@ -895,6 +915,7 @@ pub fn render_detail(frame: &mut Frame, state: &AppState) {
             let phase = match (proposal.review, &proposal.verdict) {
                 (Some(ReviewPhase::Resolved), _) => "resolved".to_string(),
                 (Some(ReviewPhase::NeedsUser), _) => "needs you".to_string(),
+                (Some(ReviewPhase::Closed), _) => "closed — you declined it".to_string(),
                 (Some(ReviewPhase::AwaitingReview), _) => "in review".to_string(),
                 (Some(ReviewPhase::Working), _) if proposal.review_rounds > 0 => {
                     format!("rework, round {}", proposal.review_rounds)

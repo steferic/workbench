@@ -58,6 +58,10 @@ pub struct Snapshot {
     /// publishing my conversation", and an open phone kept polling forever
     /// while its thread silently stopped growing.
     pub open: Option<String>,
+    /// Everything waiting on the user, most urgent first, across every
+    /// project. The phone's decision list and the number on its badge.
+    #[serde(default)]
+    pub desk: Vec<DeskRowView>,
     /// Seconds since the epoch, so the page can show staleness if the desktop
     /// goes away mid-session.
     pub at: i64,
@@ -96,6 +100,36 @@ pub struct ProposalView {
     /// The last few lines the check printed, when it failed. What a manager
     /// needs to propose something better next time.
     pub tail: Option<String>,
+}
+
+/// One decision waiting on the user, as the phone shows it.
+///
+/// Projected from `desk_view::rows` rather than rebuilt here. The ordering —
+/// blocked agents, then reviews the manager punted, then ordinary approvals,
+/// then proposed checks — is the contract, and two implementations of "what
+/// needs me, most urgent first" would drift the moment either grew a fifth
+/// kind. So the phone reads the desk's own list and only dresses it.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct DeskRowView {
+    /// "blocked" | "needs_user" | "pending" | "check". What the row is, and
+    /// therefore which buttons it carries and what `id` addresses.
+    pub kind: String,
+    /// Which project it lives in. A decision does not become less yours for
+    /// living in another workspace, but on a phone it does need saying —
+    /// there is no selected project here to infer it from.
+    pub project: String,
+    /// What the phone posts back: an agent's short id for `blocked`, a
+    /// proposal id for `pending` and `needs_user`, an objective id for
+    /// `check`.
+    pub id: String,
+    /// The decision, in one line.
+    pub title: String,
+    /// The context that decision needs, which is the whole reason the row
+    /// exists rather than a count: the manager's reasoning, the findings it
+    /// punted on, the question on screen.
+    pub detail: Option<String>,
+    /// Who it concerns, when that is not already the title.
+    pub agent: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -350,6 +384,7 @@ fn conversation(state: &mut AppState, session_id: Uuid) -> Option<(Vec<Message>,
 }
 
 fn publish_with(state: &AppState, shared: &Shared, open: Option<(Vec<Message>, usize, String)>) {
+    let desk = phone_desk_rows(state);
     let mut agents = Vec::new();
     let servers = dev_servers(state);
     let projects: Vec<ProjectView> = state
@@ -392,6 +427,7 @@ fn publish_with(state: &AppState, shared: &Shared, open: Option<(Vec<Message>, u
                             crate::models::ReviewPhase::AwaitingReview => "in_review",
                             crate::models::ReviewPhase::Resolved => "resolved",
                             crate::models::ReviewPhase::NeedsUser => "needs_user",
+                            crate::models::ReviewPhase::Closed => "closed",
                         }
                         .to_string()
                     }),
@@ -523,6 +559,7 @@ fn publish_with(state: &AppState, shared: &Shared, open: Option<(Vec<Message>, u
     if let Ok(mut snapshot) = shared.lock() {
         snapshot.projects = projects;
         snapshot.agents = agents;
+        snapshot.desk = desk;
         // Through get_session, not straight off the uuid: a focus left
         // pointing at a deleted session publishes as "none", so the page
         // knows to claim it afresh rather than trusting a ghost.
@@ -554,6 +591,114 @@ pub fn session_for(state: &AppState, short_id: &str) -> Option<Uuid> {
 /// thing that made the old buttons feel broken.
 pub fn prompt_on_screen(state: &AppState, session_id: Uuid) -> Option<Prompt> {
     screen_prompt(state, session_id)
+}
+
+/// Everything waiting on the user, dressed for the phone.
+///
+/// The list and its order come from `desk_view::rows`, which is what keeps
+/// the phone and the desk from disagreeing about what is most urgent; all
+/// this adds is the context a row needs to be decided without walking to the
+/// desktop. Rows whose subject has vanished between the desk building the
+/// list and this reading it are dropped rather than rendered blank.
+pub fn phone_desk_rows(state: &AppState) -> Vec<DeskRowView> {
+    use crate::app::desk_view::DeskRow;
+
+    let proposal = |workspace_id: Uuid, proposal_id: Uuid| {
+        state
+            .data
+            .workspaces
+            .iter()
+            .find(|ws| ws.id == workspace_id)
+            .and_then(|ws| ws.proposals.iter().find(|p| p.id == proposal_id))
+    };
+
+    crate::app::desk_view::rows(state)
+        .into_iter()
+        .filter_map(|row| match row {
+            DeskRow::BlockedAgent {
+                session_id,
+                project,
+            } => {
+                let session = state.get_session(session_id)?;
+                let who = session
+                    .alias
+                    .clone()
+                    .unwrap_or_else(|| session.agent_type.display_name().to_string());
+                // The question itself is the decision context, and it is on
+                // screen; the hook's one-liner is the fallback for an agent
+                // whose prompt we could not parse.
+                let detail = prompt_on_screen(state, session_id)
+                    .map(|prompt| prompt.lines.join("\n"))
+                    .filter(|lines| !lines.trim().is_empty())
+                    .or_else(|| state.activity_reason(session_id).map(str::to_string));
+                Some(DeskRowView {
+                    kind: "blocked".into(),
+                    project,
+                    id: session.short_id(),
+                    title: format!("{who} is waiting on you"),
+                    detail,
+                    agent: Some(session.short_id()),
+                })
+            }
+            DeskRow::NeedsUser {
+                workspace_id,
+                proposal_id,
+                project,
+            } => {
+                let found = proposal(workspace_id, proposal_id)?;
+                Some(DeskRowView {
+                    kind: "needs_user".into(),
+                    project,
+                    id: proposal_id.to_string(),
+                    title: found.instruction.clone(),
+                    // Why the manager could not close it. Without this the
+                    // row is a yes/no with nothing to decide on.
+                    detail: found.findings.clone(),
+                    agent: found.agent.clone(),
+                })
+            }
+            DeskRow::PendingProposal {
+                workspace_id,
+                proposal_id,
+                project,
+            } => {
+                let found = proposal(workspace_id, proposal_id)?;
+                Some(DeskRowView {
+                    kind: "pending".into(),
+                    project,
+                    id: proposal_id.to_string(),
+                    title: found.instruction.clone(),
+                    detail: (!found.rationale.trim().is_empty())
+                        .then(|| found.rationale.clone()),
+                    agent: found.agent.clone(),
+                })
+            }
+            DeskRow::ProposedCheck {
+                workspace_id,
+                objective_id,
+                project,
+            } => {
+                let objective = state
+                    .data
+                    .workspaces
+                    .iter()
+                    .find(|ws| ws.id == workspace_id)
+                    .and_then(|ws| ws.objectives.iter().find(|o| o.id == objective_id))?;
+                let check = objective.done_when.as_ref().filter(|v| v.proposed)?;
+                Some(DeskRowView {
+                    kind: "check".into(),
+                    project,
+                    id: objective_id.to_string(),
+                    title: check.command.clone(),
+                    // Which objective it would be the proof of. Approving a
+                    // command without knowing what it decides is not a
+                    // decision.
+                    detail: Some(objective.text.clone()),
+                    agent: None,
+                })
+            }
+        })
+        .collect()
 }
 
 /// The one word an agent's state reduces to, plus the question that decided
@@ -608,6 +753,158 @@ mod tests {
     use super::*;
     use crate::agent_status::{AgentStatus, Attention};
     use crate::models::{AgentType, Session, Workspace};
+
+    /// A world holding one of every kind of decision, in two projects.
+    fn world_with_every_decision() -> AppState {
+        use crate::models::{Objective, Proposal, ProposalState, Verification};
+
+        let mut state = AppState::default();
+        let mut alpha = Workspace::new("alpha".into(), std::path::PathBuf::from("/tmp/a"));
+        let alpha_id = alpha.id;
+
+        let mut objective = Objective::new("keep it green");
+        objective.done_when = Some(Verification::proposed("cargo test"));
+        alpha.objectives.push(objective);
+
+        let mut pending = Proposal::new("m1", "small fix");
+        pending.rationale = "because the log is noisy".into();
+        pending.agent = Some("aaaa1111".into());
+        let mut parked = Proposal::new("m1", "risky change");
+        parked.state = ProposalState::Approved;
+        parked.needs_user("could not tell if the migration ran".into());
+        alpha.proposals.push(pending);
+        alpha.proposals.push(parked);
+
+        let mut agent = Session::new(alpha_id, AgentType::Claude, false);
+        agent.status = SessionStatus::Running;
+        agent.alias = Some("backend".into());
+        let agent_id = agent.id;
+        state.data.workspaces.push(alpha);
+        state.data.sessions.insert(alpha_id, vec![agent]);
+        state.system.agent_status.insert(
+            agent_id,
+            AgentStatus {
+                activity: Activity::NeedsAttention(Attention::Permission),
+                reason: "wants to run rm -rf build".into(),
+                at: chrono::Utc::now(),
+                event: "Notification".into(),
+                transcript: None,
+                model: None,
+            },
+        );
+
+        let mut beta = Workspace::new("beta".into(), std::path::PathBuf::from("/tmp/b"));
+        beta.proposals.push(Proposal::new("m2", "over here too"));
+        state.data.workspaces.push(beta);
+        state
+    }
+
+    /// Every kind reaches the phone, in the desk's order, carrying the
+    /// context the decision needs — a row that is only a title is a yes/no
+    /// with nothing to decide on.
+    #[test]
+    fn phone_desk_carries_all_four_kinds_with_their_context() {
+        let state = world_with_every_decision();
+        let rows = phone_desk_rows(&state);
+
+        let kinds: Vec<&str> = rows.iter().map(|r| r.kind.as_str()).collect();
+        assert_eq!(kinds, ["blocked", "needs_user", "pending", "pending", "check"]);
+
+        let blocked = &rows[0];
+        assert_eq!(blocked.project, "alpha");
+        assert!(blocked.title.contains("backend"), "{}", blocked.title);
+        assert_eq!(
+            blocked.detail.as_deref(),
+            Some("wants to run rm -rf build"),
+            "the question is the whole reason to look"
+        );
+
+        let needs_user = &rows[1];
+        assert_eq!(needs_user.title, "risky change");
+        assert_eq!(
+            needs_user.detail.as_deref(),
+            Some("could not tell if the migration ran"),
+            "why the manager punted is what you are deciding on"
+        );
+
+        let pending = &rows[2];
+        assert_eq!(pending.title, "small fix");
+        assert_eq!(pending.detail.as_deref(), Some("because the log is noisy"));
+        assert_eq!(pending.agent.as_deref(), Some("aaaa1111"));
+
+        // Every row names its project — on a phone there is no selected
+        // project to infer it from.
+        assert_eq!(rows[3].project, "beta");
+
+        let check = &rows[4];
+        assert_eq!(check.title, "cargo test", "the command is the decision");
+        assert_eq!(
+            check.detail.as_deref(),
+            Some("keep it green"),
+            "and the objective is what it would prove"
+        );
+    }
+
+    /// The badge counts what `desk` holds, and that is every kind. It used to
+    /// count pending proposals alone, so a blocked agent, a punted review and
+    /// an unapproved check all read as "nothing waiting".
+    #[test]
+    fn phone_desk_badge_counts_every_decision_not_just_proposals() {
+        let state = world_with_every_decision();
+        let rows = phone_desk_rows(&state);
+        assert_eq!(rows.len(), 5);
+
+        let pending_only = rows.iter().filter(|r| r.kind == "pending").count();
+        assert_eq!(pending_only, 2);
+        assert!(
+            rows.len() > pending_only,
+            "the old badge input would have hidden {} decisions",
+            rows.len() - pending_only
+        );
+
+        // Nothing waiting is an honest zero, not a stale count.
+        assert!(phone_desk_rows(&AppState::default()).is_empty());
+    }
+
+    /// The page reads `data.desk` and switches on `kind`. Renaming either
+    /// end is a silent break — the sheet renders empty and the badge reads
+    /// zero while four things wait — so the wire shape is pinned here.
+    #[test]
+    fn phone_desk_serializes_under_the_names_the_page_reads() {
+        let state = world_with_every_decision();
+        let snapshot = Snapshot {
+            desk: phone_desk_rows(&state),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&snapshot).unwrap();
+        let rows = json["desk"].as_array().expect("`desk` is what the page reads");
+        assert_eq!(rows.len(), 5);
+        for row in rows {
+            for field in ["kind", "project", "id", "title"] {
+                assert!(row[field].is_string(), "every row needs {field}: {row}");
+            }
+        }
+        let kinds: Vec<&str> = rows.iter().map(|r| r["kind"].as_str().unwrap()).collect();
+        assert_eq!(kinds, ["blocked", "needs_user", "pending", "pending", "check"]);
+        // Optional fields travel as null rather than being absent, so the
+        // page's `r.detail ? … : ""` reads the same either way.
+        assert!(rows[4]["agent"].is_null(), "a check concerns no agent");
+        assert_eq!(rows[0]["agent"].as_str().map(str::len), Some(8));
+    }
+
+    /// A row whose subject vanished between the desk listing it and the
+    /// phone dressing it is dropped, not rendered as a blank decision.
+    #[test]
+    fn phone_desk_drops_a_row_whose_check_was_just_approved() {
+        let mut state = world_with_every_decision();
+        assert_eq!(phone_desk_rows(&state).len(), 5);
+        if let Some(check) = state.data.workspaces[0].objectives[0].done_when.as_mut() {
+            check.proposed = false;
+        }
+        let rows = phone_desk_rows(&state);
+        assert_eq!(rows.len(), 4);
+        assert!(rows.iter().all(|r| r.kind != "check"));
+    }
 
     fn state_with_agents() -> (AppState, Uuid, Uuid) {
         let mut state = AppState::default();

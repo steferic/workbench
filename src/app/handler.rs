@@ -1294,6 +1294,23 @@ fn apply_remote(
             crate::logger::warn(format!("phone decided an unknown proposal {proposal}"));
             return;
         };
+        // A proposal parked on the user is not pending, so `decide_proposal`
+        // would answer "Already decided" and leave the row on the desk. The
+        // decision this phase actually takes lives in `decide_needs_user`,
+        // the same one the desk's own no reaches.
+        if crate::app::handlers::tasks::is_parked_on_user(state, workspace_id, proposal_id) {
+            match crate::app::handlers::tasks::decide_needs_user(
+                state,
+                workspace_id,
+                proposal_id,
+                *approve,
+                action_tx,
+            ) {
+                Ok(outcome) => crate::logger::info(format!("phone decided a review: {outcome}")),
+                Err(err) => crate::logger::warn(format!("phone's review decision failed: {err}")),
+            }
+            return;
+        }
         // The phone has no picker, so an unassigned approval takes the best
         // default instead of failing: an idle directable agent already in
         // that project. If there is none at all, it stays pending with a log
@@ -1356,6 +1373,53 @@ fn apply_remote(
         ) {
             Ok(outcome) => crate::logger::info(format!("phone decided a proposal: {outcome}")),
             Err(err) => crate::logger::warn(format!("phone's decision failed: {err}")),
+        }
+        return;
+    }
+
+    // A check belongs to the objective it would prove, not to an agent.
+    // Routed to the same helper the desk's `a`/`x` reaches, so approving from
+    // the phone and approving at the desk are one act with one code path.
+    if let RemoteCommand::DecideCheck { objective, approve } = &command {
+        let found = state.data.workspaces.iter().find_map(|ws| {
+            ws.objectives
+                .iter()
+                .find(|o| o.id.to_string() == *objective)
+                .map(|o| (ws.id, o.id))
+        });
+        let Some((workspace_id, objective_id)) = found else {
+            crate::logger::warn(format!("phone decided an unknown check on {objective}"));
+            return;
+        };
+        crate::app::handlers::tasks::decide_check(state, workspace_id, objective_id, *approve);
+        crate::logger::info(format!(
+            "phone {} a proposed check",
+            if *approve { "approved" } else { "dropped" }
+        ));
+        return;
+    }
+
+    // Re-arming names a proposal. Same helper as the desk's yes on a
+    // "needs you" row: a fresh set of rounds, the findings carried across.
+    if let RemoteCommand::RearmReview { proposal } = &command {
+        let found = state.data.workspaces.iter().find_map(|ws| {
+            ws.proposals
+                .iter()
+                .find(|p| p.id.to_string() == *proposal)
+                .map(|p| (ws.id, p.id))
+        });
+        let Some((workspace_id, proposal_id)) = found else {
+            crate::logger::warn(format!("phone re-armed an unknown proposal {proposal}"));
+            return;
+        };
+        match crate::app::handlers::tasks::rearm_review(
+            state,
+            workspace_id,
+            proposal_id,
+            action_tx,
+        ) {
+            Ok(outcome) => crate::logger::info(format!("phone re-armed a review: {outcome}")),
+            Err(err) => crate::logger::warn(format!("phone's re-arm was refused: {err}")),
         }
         return;
     }
@@ -1429,10 +1493,13 @@ fn apply_remote(
         | RemoteCommand::Focus { agent } => agent.clone(),
         // Handled above.
         RemoteCommand::NewAgent { .. } | RemoteCommand::Subscribe { .. } => return,
-        // Applied above; they name a project or a proposal, not an agent.
+        // Applied above; they name a project, a proposal or an objective,
+        // not an agent.
         RemoteCommand::Propose { .. }
         | RemoteCommand::ProposeCheck { .. }
         | RemoteCommand::Decide { .. }
+        | RemoteCommand::DecideCheck { .. }
+        | RemoteCommand::RearmReview { .. }
         | RemoteCommand::Review { .. } => return,
     };
     let Some(session_id) = crate::remote::session_for(state, &agent) else {
@@ -1445,6 +1512,8 @@ fn apply_remote(
         RemoteCommand::Propose { .. }
         | RemoteCommand::ProposeCheck { .. }
         | RemoteCommand::Decide { .. }
+        | RemoteCommand::DecideCheck { .. }
+        | RemoteCommand::RearmReview { .. }
         | RemoteCommand::Review { .. } => {}
         RemoteCommand::Todo { text, .. } => {
             if let Some(session) = state.get_session_mut(session_id) {
@@ -2388,5 +2457,219 @@ mod tests {
         let after = the_proposal(&state, proposal_id);
         assert_eq!(after.review, Some(crate::models::ReviewPhase::NeedsUser));
         assert!(after.findings.unwrap().contains("still broken"));
+    }
+
+    // ---- the phone's desk -------------------------------------------------
+    //
+    // The two decisions the phone could not make before. Both go through the
+    // helper the TUI's keys reach, so what is asserted here is the wiring:
+    // that a tap lands on the same code an `a` at the desk would.
+
+    /// Approving keeps the command and makes it real; dropping removes the
+    /// check outright. Same helper as `a`/`x` on a desk check row.
+    #[test]
+    fn phone_desk_decides_a_proposed_check() {
+        use crate::models::{Objective, Verification};
+        use crate::remote::RemoteCommand;
+
+        let world = || {
+            let mut state = AppState::default();
+            let mut ws = Workspace::new("zeta".into(), std::path::PathBuf::from("/tmp/z"));
+            let mut objective = Objective::new("keep it green");
+            objective.done_when = Some(Verification::proposed("cargo test"));
+            let objective_id = objective.id;
+            ws.objectives.push(objective);
+            state.data.workspaces.push(ws);
+            (state, objective_id)
+        };
+        let check = |state: &AppState| {
+            state.data.workspaces[0].objectives[0].done_when.clone()
+        };
+
+        let (mut state, objective_id) = world();
+        let (tx, _rx) = super::mpsc::unbounded_channel();
+        apply_remote(
+            &mut state,
+            RemoteCommand::DecideCheck {
+                objective: objective_id.to_string(),
+                approve: true,
+            },
+            &tx,
+        );
+        let approved = check(&state).expect("approving keeps the command");
+        assert!(!approved.proposed, "approved means no longer merely proposed");
+        assert_eq!(approved.command, "cargo test");
+
+        let (mut state, objective_id) = world();
+        apply_remote(
+            &mut state,
+            RemoteCommand::DecideCheck {
+                objective: objective_id.to_string(),
+                approve: false,
+            },
+            &tx,
+        );
+        assert!(check(&state).is_none(), "dropping removes the check");
+
+        // An id that names nothing is a log line, not a panic: the desk may
+        // have decided it while the tap was in flight.
+        let (mut state, _) = world();
+        apply_remote(
+            &mut state,
+            RemoteCommand::DecideCheck {
+                objective: uuid::Uuid::new_v4().to_string(),
+                approve: true,
+            },
+            &tx,
+        );
+        assert!(check(&state).is_some_and(|v| v.proposed), "untouched");
+    }
+
+    /// The phone's decline on a "needs you" row. It posted to `/api/proposal`
+    /// like any other decline, which reached `decide_proposal` — and that
+    /// refuses anything not pending, so the tap did nothing at all and the
+    /// row came back with the next snapshot.
+    #[test]
+    fn phone_desk_declines_a_needs_user_review() {
+        use crate::models::{Proposal, ProposalState};
+        use crate::remote::RemoteCommand;
+
+        let mut state = AppState::default();
+        let workspace = Workspace::new("zeta".into(), std::path::PathBuf::from("/tmp/z"));
+        let workspace_id = workspace.id;
+        state.data.workspaces.push(workspace);
+        let agent = add_agent(&mut state, workspace_id, SessionStatus::Running, Some(30));
+
+        let mut parked = Proposal::new("m1", "tidy the parser");
+        parked.state = ProposalState::Approved;
+        parked.agent = Some(crate::models::Session::short_id_of(agent));
+        parked.needs_user("could not tell if the migration ran".into());
+        let proposal_id = parked.id;
+        state.data.workspaces[0].proposals.push(parked);
+        assert_eq!(crate::remote::phone_desk_rows(&state).len(), 1);
+
+        let (tx, _rx) = super::mpsc::unbounded_channel();
+        apply_remote(
+            &mut state,
+            RemoteCommand::Decide {
+                proposal: proposal_id.to_string(),
+                approve: false,
+            },
+            &tx,
+        );
+
+        assert!(
+            crate::remote::phone_desk_rows(&state).is_empty(),
+            "the declined row has to leave the phone's desk too"
+        );
+        assert!(
+            state.get_session(agent).unwrap().todo_queue.items.is_empty(),
+            "declining queues nothing"
+        );
+
+        // The phone must not go on calling it approved either. `phase` used
+        // to come out absent, which the page renders as the bare state —
+        // "approved · tidy the parser", for a job just stopped.
+        let closed = &state.data.workspaces[0].proposals[0];
+        assert_eq!(closed.review, Some(crate::models::ReviewPhase::Closed));
+        let shared: crate::remote::Shared = Default::default();
+        crate::remote::publish(&mut state, &shared);
+        let json = serde_json::to_value(&*shared.lock().unwrap()).unwrap();
+        let published = &json["projects"][0]["proposals"][0];
+        assert_eq!(published["phase"], "closed");
+        assert_ne!(published["phase"], "working");
+    }
+
+    /// A phone that retries a post it never saw answered used to queue the
+    /// job a second time: nothing checked the proposal was still parked.
+    #[test]
+    fn phone_desk_rearming_twice_queues_the_work_once() {
+        use crate::models::{Proposal, ProposalState};
+        use crate::remote::RemoteCommand;
+
+        let mut state = AppState::default();
+        let workspace = Workspace::new("zeta".into(), std::path::PathBuf::from("/tmp/z"));
+        let workspace_id = workspace.id;
+        state.data.workspaces.push(workspace);
+        let agent = add_agent(&mut state, workspace_id, SessionStatus::Running, Some(30));
+
+        let mut parked = Proposal::new("m1", "tidy the parser");
+        parked.state = ProposalState::Approved;
+        parked.agent = Some(crate::models::Session::short_id_of(agent));
+        parked.needs_user("could not tell if the migration ran".into());
+        let proposal_id = parked.id;
+        state.data.workspaces[0].proposals.push(parked);
+
+        let (tx, _rx) = super::mpsc::unbounded_channel();
+        let rearm = || RemoteCommand::RearmReview {
+            proposal: proposal_id.to_string(),
+        };
+        apply_remote(&mut state, rearm(), &tx);
+        assert_eq!(state.get_session(agent).unwrap().todo_queue.items.len(), 1);
+
+        apply_remote(&mut state, rearm(), &tx);
+        assert_eq!(
+            state.get_session(agent).unwrap().todo_queue.items.len(),
+            1,
+            "a repeated post must not hand the agent the same job twice"
+        );
+    }
+
+    /// Re-arming a review the manager punted: the work goes back to the agent
+    /// it named, with a fresh set of rounds and the findings carried across,
+    /// exactly as the desk's yes on a "needs you" row does it.
+    #[test]
+    fn phone_desk_rearms_a_needs_user_proposal() {
+        use crate::models::{Proposal, ProposalState};
+        use crate::remote::RemoteCommand;
+
+        let mut state = AppState::default();
+        let workspace = Workspace::new("zeta".into(), std::path::PathBuf::from("/tmp/z"));
+        let workspace_id = workspace.id;
+        state.data.workspaces.push(workspace);
+        let agent = add_agent(&mut state, workspace_id, SessionStatus::Running, Some(30));
+        let short = crate::models::Session::short_id_of(agent);
+
+        let mut parked = Proposal::new("m1", "tidy the parser");
+        parked.state = ProposalState::Approved;
+        parked.agent = Some(short.clone());
+        parked.review_rounds = 3;
+        parked.needs_user("could not tell if the migration ran".into());
+        let proposal_id = parked.id;
+        state.data.workspaces[0].proposals.push(parked);
+
+        let (tx, _rx) = super::mpsc::unbounded_channel();
+        apply_remote(
+            &mut state,
+            RemoteCommand::RearmReview {
+                proposal: proposal_id.to_string(),
+            },
+            &tx,
+        );
+
+        let after = state.data.workspaces[0].proposals[0].clone();
+        assert_eq!(
+            after.review,
+            Some(crate::models::ReviewPhase::Working),
+            "re-armed work is working again, not still parked on the user"
+        );
+        assert_eq!(after.review_rounds, 0, "the user's approval buys fresh rounds");
+        let todo_id = after.todo_id.expect("re-arming queues the work");
+
+        let queued = state
+            .get_session(agent)
+            .unwrap()
+            .todo_queue
+            .items
+            .iter()
+            .find(|item| item.id == todo_id)
+            .expect("the queued item reached the agent it named")
+            .text
+            .clone();
+        assert!(
+            queued.contains("could not tell if the migration ran"),
+            "the findings travel with it, or the agent redoes the same thing: {queued}"
+        );
+        assert!(queued.contains("tidy the parser"), "{queued}");
     }
 }

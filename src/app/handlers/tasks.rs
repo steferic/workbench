@@ -143,14 +143,11 @@ pub fn handle_task_action(
                 }) => {
                     // Yes re-arms the loop with a fresh set of rounds — the
                     // user's approval buys what the manager's could not. No
-                    // declines it for good.
-                    if yes {
-                        rearm_review(state, workspace_id, proposal_id, action_tx);
-                    } else {
-                        match decide_proposal(state, workspace_id, proposal_id, false, action_tx)
-                        {
-                            Ok(message) | Err(message) => state.ui.set_task_status(message),
-                        }
+                    // closes the review for good. Which is which lives in
+                    // `decide_needs_user`, shared with the overlay and the
+                    // phone.
+                    match decide_needs_user(state, workspace_id, proposal_id, yes, action_tx) {
+                        Ok(message) | Err(message) => state.ui.set_task_status(message),
                     }
                 }
                 Some(crate::app::desk_view::DeskRow::BlockedAgent { .. }) => {
@@ -210,11 +207,8 @@ pub fn handle_task_action(
                         Ok(message) | Err(message) => state.ui.set_task_status(message),
                     }
                 }
-                Some((false, Some(crate::models::ReviewPhase::NeedsUser))) if yes => {
-                    rearm_review(state, workspace_id, proposal_id, action_tx);
-                }
                 Some((false, Some(crate::models::ReviewPhase::NeedsUser))) => {
-                    match decide_proposal(state, workspace_id, proposal_id, false, action_tx) {
+                    match decide_needs_user(state, workspace_id, proposal_id, yes, action_tx) {
                         Ok(message) | Err(message) => state.ui.set_task_status(message),
                     }
                 }
@@ -772,7 +766,7 @@ After round {}/{} the loop stops and the user takes over.",
 /// Until this happens the command is a suggestion: shown, not trusted, and
 /// not enough to let anything run against that objective unattended.
 /// Approve or drop a proposed check, wherever its objective lives.
-fn decide_check(
+pub(crate) fn decide_check(
     state: &mut AppState,
     workspace_id: uuid::Uuid,
     objective_id: uuid::Uuid,
@@ -803,15 +797,36 @@ fn decide_check(
     }
 }
 
+/// Whether a proposal is still parked on the user.
+///
+/// Both decisions a "needs you" row offers are guarded on this, and for the
+/// same reason: the row can be acted on twice. The desk and the phone show it
+/// at once, a tap can be in flight while a key lands, and a phone that
+/// retries a post has no idea the first one arrived.
+pub(crate) fn is_parked_on_user(state: &AppState, workspace_id: uuid::Uuid, proposal_id: uuid::Uuid) -> bool {
+    state
+        .data
+        .workspaces
+        .iter()
+        .find(|ws| ws.id == workspace_id)
+        .and_then(|ws| ws.proposals.iter().find(|p| p.id == proposal_id))
+        .is_some_and(|p| p.review == Some(crate::models::ReviewPhase::NeedsUser))
+}
+
 /// The user overriding an exhausted or punted review loop: the last findings
 /// go back to the agent as a fresh job, and the round counter starts over —
 /// the user's approval buys what the manager's could not.
-fn rearm_review(
+///
+/// Guarded on the proposal still being parked. Without that, a second arrival
+/// — a double tap, a phone retrying a post it never saw answered, a key at
+/// the desk racing a tap — re-armed work that was already working and queued
+/// the same job twice.
+pub(crate) fn rearm_review(
     state: &mut AppState,
     workspace_id: uuid::Uuid,
     proposal_id: uuid::Uuid,
     _action_tx: &mpsc::UnboundedSender<Action>,
-) {
+) -> Result<String, String> {
     let Some(snapshot) = state
         .data
         .workspaces
@@ -820,16 +835,17 @@ fn rearm_review(
         .and_then(|ws| ws.proposals.iter().find(|p| p.id == proposal_id))
         .cloned()
     else {
-        return;
+        return Err("No such proposal".to_string());
     };
-    let Some(agent) = snapshot.agent.clone() else {
-        state.ui.set_task_status("No agent named on that proposal");
-        return;
-    };
-    let Some(session_id) = crate::remote::session_for(state, &agent) else {
-        state.ui.set_task_status(format!("No agent {agent} here any more"));
-        return;
-    };
+    if snapshot.review != Some(crate::models::ReviewPhase::NeedsUser) {
+        return Err("That review is not waiting on you".to_string());
+    }
+    let agent = snapshot
+        .agent
+        .clone()
+        .ok_or_else(|| "No agent named on that proposal".to_string())?;
+    let session_id = crate::remote::session_for(state, &agent)
+        .ok_or_else(|| format!("No agent {agent} here any more"))?;
     let text = match &snapshot.findings {
         Some(findings) => format!(
             "The user re-approved this after review stalled. Address exactly:\n{findings}\n\n\
@@ -839,7 +855,7 @@ Original job: {}",
         None => snapshot.instruction.clone(),
     };
     let Some(session) = state.get_session_mut(session_id) else {
-        return;
+        return Err(format!("No agent {agent} here any more"));
     };
     let todo = session.todo_queue.add(text);
     if let Some(stored) = state
@@ -853,8 +869,70 @@ Original job: {}",
         stored.todo_id = Some(todo);
         stored.review = Some(crate::models::ReviewPhase::Working);
     }
-    state.ui.set_task_status(format!("Re-armed and queued for {agent}"));
     super::save_state(state, "failed to save the re-arm");
+    Ok(format!("Re-armed and queued for {agent}"))
+}
+
+/// The other half of a "needs you" decision: the user ending a review the
+/// manager punted, rather than buying it another lap.
+///
+/// Not `decide_proposal`. That one guards on `is_pending`, and a punted
+/// review is not pending — it was approved, handed to an agent and worked on
+/// before it came back. Routing a decline through there answered "Already
+/// decided" and left the row sitting on the desk, which is the one thing a
+/// decline must not do.
+///
+/// Ends the review and queues nothing, recording an outcome of its own:
+/// `ReviewPhase::Closed`, which is terminal and which every surface labels as
+/// closed rather than inferring something cheerier.
+///
+/// It stays `Approved` on purpose — the work was approved and it did happen,
+/// and the objective's ledger counts an approved proposal's turns and its
+/// manager's review turn. Clearing `review` instead would have been the
+/// cheaper change and a dishonest one: `None` on an approved proposal is what
+/// a record from before the field existed looks like, and it rendered as
+/// "queued" in the objectives tab and as plain "approved" on the phone —
+/// a job the user had just stopped, still advertising itself as running.
+pub(crate) fn decline_needs_user(
+    state: &mut AppState,
+    workspace_id: uuid::Uuid,
+    proposal_id: uuid::Uuid,
+) -> Result<String, String> {
+    if !is_parked_on_user(state, workspace_id, proposal_id) {
+        return Err("That review is not waiting on you".to_string());
+    }
+    let Some(stored) = state
+        .data
+        .workspaces
+        .iter_mut()
+        .find(|ws| ws.id == workspace_id)
+        .and_then(|ws| ws.proposals.iter_mut().find(|p| p.id == proposal_id))
+    else {
+        return Err("No such proposal".to_string());
+    };
+    stored.review = Some(crate::models::ReviewPhase::Closed);
+    super::save_state(state, "failed to save the decision");
+    Ok("Review closed".to_string())
+}
+
+/// Which decision a "needs you" row actually takes, in one place.
+///
+/// Three callers offer this row — the desk, its detail overlay, and the
+/// phone — and each used to spell out the yes and the no itself. They did not
+/// agree for long: all three sent the no to a helper that refuses anything
+/// already approved.
+pub(crate) fn decide_needs_user(
+    state: &mut AppState,
+    workspace_id: uuid::Uuid,
+    proposal_id: uuid::Uuid,
+    yes: bool,
+    action_tx: &mpsc::UnboundedSender<Action>,
+) -> Result<String, String> {
+    if yes {
+        rearm_review(state, workspace_id, proposal_id, action_tx)
+    } else {
+        decline_needs_user(state, workspace_id, proposal_id)
+    }
 }
 
 /// Jump to whatever a desk row is about: the agent's terminal, or the
@@ -1161,6 +1239,148 @@ mod tests {
 
     fn queue(state: &AppState, id: Uuid) -> &crate::models::TodoQueue {
         &state.get_session(id).unwrap().todo_queue
+    }
+
+    /// A world with one proposal parked on the user, worked on by `id`.
+    fn state_with_parked_review() -> (AppState, Uuid, Uuid) {
+        use crate::models::{Proposal, ProposalState};
+
+        let (mut state, session_id) = state_with_agent();
+        let mut parked = Proposal::new("m1", "tidy the parser");
+        parked.state = ProposalState::Approved;
+        parked.agent = Some(crate::models::Session::short_id_of(session_id));
+        parked.review_rounds = 3;
+        parked.needs_user("could not tell if the migration ran".into());
+        let proposal_id = parked.id;
+        state.data.workspaces[0].proposals.push(parked);
+        (state, session_id, proposal_id)
+    }
+
+    fn desk_kinds(state: &AppState) -> Vec<&'static str> {
+        crate::app::desk_view::rows(state)
+            .iter()
+            .map(|row| match row {
+                crate::app::desk_view::DeskRow::BlockedAgent { .. } => "blocked",
+                crate::app::desk_view::DeskRow::NeedsUser { .. } => "needs_user",
+                crate::app::desk_view::DeskRow::PendingProposal { .. } => "pending",
+                crate::app::desk_view::DeskRow::ProposedCheck { .. } => "check",
+            })
+            .collect()
+    }
+
+    /// The bug this fixes: a "needs you" row's no went to `decide_proposal`,
+    /// which refuses anything not pending. A punted review is approved, so
+    /// every decline answered "Already decided" and the row stayed on the
+    /// desk — the one thing a decline must not do.
+    #[test]
+    fn declining_a_parked_review_takes_it_off_the_desk() {
+        let (mut state, session_id, proposal_id) = state_with_parked_review();
+        let workspace_id = state.data.workspaces[0].id;
+        let (tx, _rx) = mpsc::unbounded_channel();
+        assert_eq!(desk_kinds(&state), ["needs_user"]);
+
+        let outcome = decide_needs_user(&mut state, workspace_id, proposal_id, false, &tx);
+        assert!(outcome.is_ok(), "{outcome:?}");
+        assert!(
+            desk_kinds(&state).is_empty(),
+            "a declined review must leave the desk"
+        );
+        assert!(
+            queue(&state, session_id).items.is_empty(),
+            "declining queues nothing"
+        );
+
+        // The outcome is terminal and says what it is, rather than being
+        // inferred from an absent phase.
+        let after = state.data.workspaces[0].proposals[0].clone();
+        assert_eq!(after.review, Some(crate::models::ReviewPhase::Closed));
+
+        // And every surface says so. The objectives tab used to read "queued"
+        // here, because a closed job is still approved and nothing above the
+        // state arm claimed it.
+        assert_eq!(
+            crate::tui::components::tasks_pane::proposal_verb(&after),
+            "closed ",
+            "a job the user stopped must not advertise itself as running"
+        );
+
+        // What happened is kept: the work did happen, and the ledger goes on
+        // counting the turns it cost.
+        assert_eq!(after.state, crate::models::ProposalState::Approved);
+        assert_eq!(after.review_rounds, 3);
+        assert!(after.findings.is_some());
+
+        // And a second no is refused rather than doing it again.
+        assert!(decide_needs_user(&mut state, workspace_id, proposal_id, false, &tx).is_err());
+    }
+
+    /// Closing a review must not un-spend what it already burned: the agent's
+    /// turns and the manager's punt are history, not a live commitment.
+    #[test]
+    fn a_closed_review_keeps_its_burn_in_the_objective_ledger() {
+        use crate::models::{objective_ledger, Objective};
+
+        let (mut state, session_id, proposal_id) = state_with_parked_review();
+        let workspace_id = state.data.workspaces[0].id;
+        let objective = Objective::new("keep it green");
+        let objective_id = objective.id;
+        state.data.workspaces[0].objectives.push(objective);
+        state.data.workspaces[0].proposals[0].objective_id = Some(objective_id);
+        let _ = session_id;
+
+        let before = objective_ledger(&state.data.workspaces[0].proposals, objective_id);
+        assert_eq!(before.needs_user, 1);
+        assert_eq!(before.agent_turns, 4, "one job plus three rework rounds");
+        assert_eq!(before.reviews, 4, "three rounds plus the punt");
+
+        let (tx, _rx) = mpsc::unbounded_channel();
+        decide_needs_user(&mut state, workspace_id, proposal_id, false, &tx).unwrap();
+
+        let after = objective_ledger(&state.data.workspaces[0].proposals, objective_id);
+        assert_eq!(after.needs_user, 0, "nothing is waiting on you any more");
+        assert_eq!(after.in_flight, 0, "and nothing is running");
+        assert_eq!(after.resolved_this_week, 0, "nobody accepted it");
+        assert_eq!(after.agent_turns, before.agent_turns, "the burn is history");
+        assert_eq!(after.reviews, before.reviews);
+    }
+
+    /// Re-arming twice queued the job twice: nothing checked that the first
+    /// call had already moved the proposal out of "needs you". A stale tap or
+    /// a retried post is enough to hit it.
+    #[test]
+    fn re_arming_twice_queues_the_work_once() {
+        let (mut state, session_id, proposal_id) = state_with_parked_review();
+        let workspace_id = state.data.workspaces[0].id;
+        let (tx, _rx) = mpsc::unbounded_channel();
+
+        assert!(decide_needs_user(&mut state, workspace_id, proposal_id, true, &tx).is_ok());
+        assert_eq!(queue(&state, session_id).items.len(), 1);
+        let first = state.data.workspaces[0].proposals[0].todo_id;
+
+        let again = decide_needs_user(&mut state, workspace_id, proposal_id, true, &tx);
+        assert!(again.is_err(), "a second re-arm is refused: {again:?}");
+        assert_eq!(
+            queue(&state, session_id).items.len(),
+            1,
+            "the agent must not be handed the same job twice"
+        );
+        assert_eq!(
+            state.data.workspaces[0].proposals[0].todo_id, first,
+            "and the proposal still points at the item it really became"
+        );
+    }
+
+    /// Once re-armed the row is working, not parked, so it leaves the desk on
+    /// its own — and the decline that no longer applies is refused.
+    #[test]
+    fn a_re_armed_review_leaves_the_desk() {
+        let (mut state, _session_id, proposal_id) = state_with_parked_review();
+        let workspace_id = state.data.workspaces[0].id;
+        let (tx, _rx) = mpsc::unbounded_channel();
+
+        assert!(decide_needs_user(&mut state, workspace_id, proposal_id, true, &tx).is_ok());
+        assert!(desk_kinds(&state).is_empty());
+        assert!(decide_needs_user(&mut state, workspace_id, proposal_id, false, &tx).is_err());
     }
 
     #[test]
