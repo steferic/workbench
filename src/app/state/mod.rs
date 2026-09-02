@@ -329,26 +329,79 @@ impl AppState {
         }
     }
 
-    /// Returns session indices in visual order (Agents first, then Terminals)
+    pub fn sessions_tab(&self) -> SessionsTab {
+        self.ws_ui().map(|u| u.sessions_tab).unwrap_or_default()
+    }
+
+    /// Switch tab and put the cursor on something the new tab actually shows.
+    ///
+    /// The cursor is an index into the workspace's whole session list, so
+    /// leaving it where it was would point at a session the pane is no longer
+    /// drawing — the highlight vanishes and the next `j` jumps somewhere
+    /// unrelated.
+    pub fn set_sessions_tab(&mut self, tab: SessionsTab) {
+        if let Some(u) = self.ws_ui_mut() {
+            u.sessions_tab = tab;
+        }
+        let order = self.session_visual_order();
+        if !order.contains(&self.selected_session_idx()) {
+            if let Some(&first) = order.first() {
+                self.set_selected_session_idx(first);
+            }
+        }
+    }
+
+    /// The indices this tab lists, in the order it draws them.
+    ///
+    /// Everything that walks the pane goes through here — the cursor, the
+    /// renderer, and the Alt+Up/Down cycler — so none of them can offer a
+    /// session the pane is not showing.
     pub fn session_visual_order(&self) -> Vec<usize> {
         let sessions = self.sessions_for_selected_workspace();
+        if self.sessions_tab() == SessionsTab::Terminals {
+            return sessions
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| s.agent_type.is_terminal())
+                .map(|(i, _)| i)
+                .collect();
+        }
 
-        let mut agents: Vec<usize> = sessions
+        // Parallel attempts sort to the end, under their own header. The
+        // order has to be the one the pane draws, or `j` walks a sequence the
+        // eye cannot follow — which it did: the renderer grouped them and
+        // this did not.
+        let parallel = self.parallel_session_ids();
+        let (mut agents, attempts): (Vec<usize>, Vec<usize>) = sessions
             .iter()
             .enumerate()
             .filter(|(_, s)| !s.agent_type.is_terminal())
             .map(|(i, _)| i)
-            .collect();
-
-        let terminals: Vec<usize> = sessions
-            .iter()
-            .enumerate()
-            .filter(|(_, s)| s.agent_type.is_terminal())
-            .map(|(i, _)| i)
-            .collect();
-
-        agents.extend(terminals);
+            .partition(|&i| !parallel.contains(&sessions[i].id));
+        agents.extend(attempts);
         agents
+    }
+
+    /// Sessions belonging to a parallel task in the selected workspace.
+    pub fn parallel_session_ids(&self) -> Vec<Uuid> {
+        self.selected_workspace()
+            .map(|ws| {
+                ws.parallel_tasks
+                    .iter()
+                    .flat_map(|t| t.attempts.iter().map(|a| a.session_id))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// How many sessions each tab holds, for the tab labels.
+    pub fn sessions_tab_counts(&self) -> (usize, usize) {
+        let sessions = self.sessions_for_selected_workspace();
+        let terminals = sessions
+            .iter()
+            .filter(|s| s.agent_type.is_terminal())
+            .count();
+        (sessions.len() - terminals, terminals)
     }
 
     /// Navigate to previous session in visual order

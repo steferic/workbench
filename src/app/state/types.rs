@@ -126,6 +126,31 @@ pub enum TasksTab {
     Objectives,
 }
 
+/// Which kind of session the Sessions pane is listing.
+///
+/// Agents and terminals are both sessions and were listed together under two
+/// headers, which made the pane long — a project with a handful of shells pushed
+/// the agents you actually direct off the bottom. Tabs keep each kind whole,
+/// and keep the cursor, the cycler and the list agreeing about what is on
+/// screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SessionsTab {
+    /// What you direct. Opens first: this is the pane's usual business.
+    #[default]
+    Agents,
+    /// Plain shells, including any parallel-task attempts' terminals.
+    Terminals,
+}
+
+impl SessionsTab {
+    pub fn toggle(&self) -> Self {
+        match self {
+            SessionsTab::Agents => SessionsTab::Terminals,
+            SessionsTab::Terminals => SessionsTab::Agents,
+        }
+    }
+}
+
 impl TasksTab {
     pub fn toggle(&self) -> Self {
         match self {

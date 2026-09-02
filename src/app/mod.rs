@@ -45,6 +45,6 @@ pub use runtime::run_tui;
 pub use state::{
     AppState, ConfigTab, Divider, FocusPanel, InputMode, PendingDelete,
     PendingSessionStart, RawOutputBuffer, ReplayCache, SystemState, TextSelection,
-    TaskEdit, ThreadCache, TasksTab, Toast, ToastLevel, TranscriptBuffer, TranscriptLine, TranscriptSpan,
+    SessionsTab, TaskEdit, ThreadCache, TasksTab, Toast, ToastLevel, TranscriptBuffer, TranscriptLine, TranscriptSpan,
     UtilityItem, UtilitySection, WorkspaceAction,
 };

@@ -110,6 +110,8 @@ impl EventHandler {
             KeyCode::Char('j') | KeyCode::Down => Action::MoveDown,
             KeyCode::Char('k') | KeyCode::Up => Action::MoveUp,
             KeyCode::Char('l') => Action::FocusRight,
+            // Same key as the MANAGER pane's tabs, for the same gesture.
+            KeyCode::Tab => Action::ToggleSessionsTab,
             KeyCode::Char('n') => Action::EnterCreateSessionMode,
             KeyCode::Enter => {
                 if let Some(session) = state.selected_session() {

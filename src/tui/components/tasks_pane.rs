@@ -219,8 +219,8 @@ fn render_tab_bar(frame: &mut Frame, area: Rect, state: &AppState, is_focused: b
 
 /// The widest tab bar that fits, in three steps: with counts, without them,
 /// then without the padding too.
-fn tab_spans<'a>(
-    names: &'a [(&'a str, Style, String); 3],
+pub(crate) fn tab_spans<'a>(
+    names: &'a [(&'a str, Style, String)],
     dim: Style,
     width: usize,
 ) -> Vec<Span<'a>> {

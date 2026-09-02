@@ -361,7 +361,7 @@ pub fn process_action(
                 Action::MoveUp | Action::MoveDown | Action::FocusLeft | Action::FocusRight |
                 Action::NextPinnedPane | Action::PrevPinnedPane | Action::ScrollOutputUp |
                 Action::ScrollOutputDown | Action::MouseScrollUp(_, _) |
-                Action::MouseScrollDown(_, _) | Action::CycleNextWorkspace | Action::CyclePrevWorkspace | Action::CycleNextSession | Action::CyclePrevSession |
+                Action::MouseScrollDown(_, _) | Action::CycleNextWorkspace | Action::CyclePrevWorkspace | Action::CycleNextSession | Action::CyclePrevSession | Action::ToggleSessionsTab |
                 Action::MouseClick(_, _) |
                 Action::MouseDrag(_, _) | Action::MouseUp(_, _) | Action::CopySelection |
                 Action::Paste(_) | Action::ClearSelection | Action::SelectNextUtility |

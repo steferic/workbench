@@ -193,6 +193,10 @@ pub fn handle_navigation_action(
         Action::CyclePrevWorkspace => {
             cycle_prev_workspace(state);
         }
+        Action::ToggleSessionsTab => {
+            let next = state.sessions_tab().toggle();
+            state.set_sessions_tab(next);
+        }
         Action::CycleNextSession => cycle_session(state, true),
         Action::CyclePrevSession => cycle_session(state, false),
         Action::MouseClick(x, y) => handle_mouse_click(state, x, y, pty_manager, pty_tx),
@@ -340,40 +344,18 @@ pub fn handle_navigation_action(
     Ok(())
 }
 
-/// Cycle the active session through the visual order (agents first, then parallel
-/// attempts; terminals skipped). `forward` selects next vs previous.
+/// Cycle the active session through the Sessions pane's current tab.
+///
+/// It used to walk agents only and skip terminals outright, which left a
+/// terminal reachable by nothing but a cursor move and Enter — Alt+Up/Down,
+/// the shortcut that works from anywhere including inside an agent, could not
+/// reach one at all. It now follows whichever tab the pane is showing, so
+/// cycling on Agents behaves exactly as before and cycling on Terminals walks
+/// the shells.
 fn cycle_session(state: &mut AppState, forward: bool) {
-    let parallel_session_ids: Vec<Uuid> = state
-        .selected_workspace()
-        .map(|ws| {
-            ws.parallel_tasks
-                .iter()
-                .flat_map(|t| t.attempts.iter().map(|a| a.session_id))
-                .collect()
-        })
-        .unwrap_or_default();
-
     let session_info: Option<(usize, Uuid)> = {
         let sessions = state.sessions_for_selected_workspace();
-
-        // Agents: non-terminal, non-parallel
-        let agent_indices: Vec<usize> = sessions
-            .iter()
-            .enumerate()
-            .filter(|(_, s)| !s.agent_type.is_terminal() && !parallel_session_ids.contains(&s.id))
-            .map(|(i, _)| i)
-            .collect();
-
-        // Parallel sessions (these are also agents)
-        let parallel_indices: Vec<usize> = sessions
-            .iter()
-            .enumerate()
-            .filter(|(_, s)| parallel_session_ids.contains(&s.id))
-            .map(|(i, _)| i)
-            .collect();
-
-        // Combined visual order (agents only, no terminals)
-        let visual_order: Vec<usize> = agent_indices.into_iter().chain(parallel_indices).collect();
+        let visual_order = state.session_visual_order();
 
         if visual_order.is_empty() {
             None
@@ -901,6 +883,94 @@ mod tests {
 
     fn workspace(name: &str) -> Workspace {
         Workspace::new(name.to_string(), PathBuf::from(format!("/tmp/{name}")))
+    }
+
+    /// One agent and two terminals in a workspace, cursor and active session
+    /// on the agent.
+    fn agents_and_terminals() -> (AppState, Vec<uuid::Uuid>) {
+        use crate::models::{AgentType, Session};
+
+        let mut state = AppState::default();
+        let ws = workspace("alpha");
+        let ws_id = ws.id;
+        state.data.workspaces.push(ws);
+        let sessions: Vec<Session> = vec![
+            Session::new(ws_id, AgentType::Claude, false),
+            Session::new(ws_id, AgentType::Terminal("1".into()), false),
+            Session::new(ws_id, AgentType::Terminal("2".into()), false),
+        ];
+        let ids: Vec<uuid::Uuid> = sessions.iter().map(|s| s.id).collect();
+        state.data.sessions.insert(ws_id, sessions);
+        state.set_selected_session_idx(0);
+        state.set_active_session_id(Some(ids[0]));
+        (state, ids)
+    }
+
+    fn cycle(state: &mut AppState) {
+        let pty_manager = PtyManager::new();
+        let (pty_tx, _) = mpsc::channel(1);
+        handle_navigation_action(state, Action::CycleNextSession, &pty_manager, &pty_tx).unwrap();
+    }
+
+    fn toggle_tab(state: &mut AppState) {
+        let pty_manager = PtyManager::new();
+        let (pty_tx, _) = mpsc::channel(1);
+        handle_navigation_action(state, Action::ToggleSessionsTab, &pty_manager, &pty_tx).unwrap();
+    }
+
+    /// The pane opens on the agents, which is its usual business.
+    #[test]
+    fn the_sessions_pane_opens_on_agents() {
+        let (state, ids) = agents_and_terminals();
+        assert_eq!(state.sessions_tab(), crate::app::SessionsTab::Agents);
+        assert_eq!(state.session_visual_order(), vec![0]);
+        assert_eq!(state.sessions_tab_counts(), (1, 2));
+        assert_eq!(state.active_session_id(), Some(ids[0]));
+    }
+
+    /// Switching tab has to move the cursor with it. It indexes the whole
+    /// session list, so left where it was it would point at a row the pane is
+    /// no longer drawing.
+    #[test]
+    fn switching_tab_moves_the_cursor_onto_something_shown() {
+        let (mut state, _ids) = agents_and_terminals();
+        toggle_tab(&mut state);
+
+        assert_eq!(state.sessions_tab(), crate::app::SessionsTab::Terminals);
+        assert_eq!(state.session_visual_order(), vec![1, 2]);
+        assert!(
+            state.session_visual_order().contains(&state.selected_session_idx()),
+            "the cursor must land on a row this tab lists"
+        );
+
+        toggle_tab(&mut state);
+        assert_eq!(state.sessions_tab(), crate::app::SessionsTab::Agents);
+        assert_eq!(state.selected_session_idx(), 0);
+    }
+
+    /// What regressed: the cycler walked agents only, so Alt+Up/Down — the
+    /// shortcut that works from anywhere, including inside an agent — could
+    /// not bring a terminal to the centre pane at all.
+    #[test]
+    fn cycling_on_the_terminals_tab_reaches_a_terminal() {
+        let (mut state, ids) = agents_and_terminals();
+        toggle_tab(&mut state);
+
+        cycle(&mut state);
+        assert_eq!(state.active_session_id(), Some(ids[2]));
+        cycle(&mut state);
+        assert_eq!(state.active_session_id(), Some(ids[1]), "and wraps within the tab");
+    }
+
+    /// And cycling on the agents tab still never offers one, which is what
+    /// keeps agent-hopping short in a project full of shells.
+    #[test]
+    fn cycling_on_the_agents_tab_never_offers_a_terminal() {
+        let (mut state, ids) = agents_and_terminals();
+        for _ in 0..5 {
+            cycle(&mut state);
+            assert_eq!(state.active_session_id(), Some(ids[0]));
+        }
     }
 
     #[test]

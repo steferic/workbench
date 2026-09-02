@@ -28,43 +28,33 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     let inner_area = block.inner(area);
     frame.render_widget(block, area);
 
-    // Split inner area: list + action bar (1 row)
+    // Split inner area: tab bar + list + action bar (1 row each)
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
         .split(inner_area);
 
-    let list_area = chunks[0];
-    let action_area = chunks[1];
+    let tab_area = chunks[0];
+    let list_area = chunks[1];
+    let action_area = chunks[2];
+
+    render_tab_bar(frame, tab_area, state, is_focused);
 
     let sessions = state.sessions_for_selected_workspace();
     let pinned_ids = state.pinned_terminal_ids();
+    let parallel_session_ids = state.parallel_session_ids();
 
-    // Get parallel task info for this workspace
-    let parallel_session_ids: Vec<Uuid> = state
-        .selected_workspace()
-        .map(|ws| {
-            ws.parallel_tasks
-                .iter()
-                .flat_map(|t| t.attempts.iter().map(|a| a.session_id))
-                .collect()
-        })
-        .unwrap_or_default();
-
-    // Categorize sessions in a single pass
-    let mut agent_indices: Vec<usize> = Vec::new();
-    let mut parallel_indices: Vec<usize> = Vec::new();
-    let mut terminal_indices: Vec<usize> = Vec::new();
-
-    for (i, s) in sessions.iter().enumerate() {
-        if s.agent_type.is_terminal() {
-            terminal_indices.push(i);
-        } else if parallel_session_ids.contains(&s.id) {
-            parallel_indices.push(i);
-        } else {
-            agent_indices.push(i);
-        }
-    }
+    // The pane draws exactly what the cursor walks, and in the same order —
+    // the one list both read from. Which kind is on screen is the tab's job.
+    let visual_order = state.session_visual_order();
+    let (parallel_indices, agent_indices): (Vec<usize>, Vec<usize>) = visual_order
+        .iter()
+        .copied()
+        .partition(|&i| parallel_session_ids.contains(&sessions[i].id));
 
     let mut items: Vec<ListItem> = Vec::new();
     let mut selected_visual_idx: Option<usize> = None;
@@ -149,17 +139,8 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         current_visual_idx += 1;
     }
 
-    // Agents section header
-    if !agent_indices.is_empty() {
-        let header_style = Style::default().fg(t.special).add_modifier(Modifier::BOLD);
-        items.push(ListItem::new(Line::from(vec![Span::styled(
-            "── Agents ──",
-            header_style,
-        )])));
-        current_visual_idx += 1;
-    }
-
-    // Agent sessions
+    // No "── Agents ──" header any more: the tab above says which kind this
+    // is, and repeating it cost a row in a pane that is short to begin with.
     for &session_idx in &agent_indices {
         let session = &sessions[session_idx];
         let item = create_session_item(state, session_idx, session, is_focused, pinned_ids, false);
@@ -170,9 +151,9 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         current_visual_idx += 1;
     }
 
-    // Parallel task section
+    // Parallel attempts keep their header: they belong to one task, and which
+    // task that is only reads from its prompt.
     if !parallel_indices.is_empty() {
-        // Get task prompt preview
         let task_preview = state
             .selected_workspace()
             .and_then(|ws| ws.active_parallel_task())
@@ -193,7 +174,6 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         )])));
         current_visual_idx += 1;
 
-        // Parallel sessions
         for &session_idx in &parallel_indices {
             let session = &sessions[session_idx];
             let item =
@@ -206,25 +186,17 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         }
     }
 
-    // Terminals section header
-    if !terminal_indices.is_empty() {
-        let header_style = Style::default().fg(t.success).add_modifier(Modifier::BOLD);
+    // An empty tab says so rather than looking like a pane that failed to
+    // draw — and says what makes one, since that is the next thing you want.
+    if agent_indices.is_empty() && parallel_indices.is_empty() {
+        let hint = match state.sessions_tab() {
+            crate::app::SessionsTab::Agents => "no agents — press 1-4 to start one",
+            crate::app::SessionsTab::Terminals => "no terminals — press t for one",
+        };
         items.push(ListItem::new(Line::from(vec![Span::styled(
-            "── Terminals ──",
-            header_style,
+            format!("  {hint}"),
+            Style::default().fg(t.fg_faint),
         )])));
-        current_visual_idx += 1;
-    }
-
-    // Terminal sessions
-    for &session_idx in &terminal_indices {
-        let session = &sessions[session_idx];
-        let item = create_session_item(state, session_idx, session, is_focused, pinned_ids, false);
-        items.push(item);
-        if session_idx == state.selected_session_idx() {
-            selected_visual_idx = Some(current_visual_idx);
-        }
-        current_visual_idx += 1;
     }
 
     // Highlight style with full row background when focused
@@ -256,11 +228,38 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     };
 
     let action_bar = Paragraph::new(Line::from(vec![
+        Span::styled("Tab", key_style),
+        Span::styled(":agents/terminals  ", action_style),
         Span::styled("h", key_style),
         Span::styled(":help", action_style),
     ]));
 
     frame.render_widget(action_bar, action_area);
+}
+
+/// Agents and terminals, and which one the pane is showing.
+fn render_tab_bar(frame: &mut Frame, area: Rect, state: &AppState, is_focused: bool) {
+    let t = crate::theme::current();
+    let active = if is_focused {
+        Style::default().fg(t.accent).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(t.fg_dim).add_modifier(Modifier::BOLD)
+    };
+    let dim = Style::default().fg(t.fg_faint);
+
+    let (agents, terminals) = state.sessions_tab_counts();
+    let (agents_style, terminals_style) = match state.sessions_tab() {
+        crate::app::SessionsTab::Agents => (active, dim),
+        crate::app::SessionsTab::Terminals => (dim, active),
+    };
+    let names = [
+        ("Agents", agents_style, format!("({agents})")),
+        ("Terminals", terminals_style, format!("({terminals})")),
+    ];
+    // The same bar the MANAGER pane draws, so both step down the same way
+    // when the column is too narrow for the counts.
+    let spans = super::tasks_pane::tab_spans(&names, dim, area.width as usize);
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 fn create_session_item<'a>(

@@ -28,6 +28,10 @@ pub struct PinnedPaneState {
 #[derive(Default, Debug)]
 pub struct WorkspaceUiState {
     pub selected_session_idx: usize,
+    /// Which kind of session the pane is listing. Per-workspace, because the
+    /// cursor is: a tab that changed under you when you switched project
+    /// would leave the two disagreeing about which sessions exist.
+    pub sessions_tab: super::types::SessionsTab,
     pub active_session_id: Option<Uuid>,
     pub focused_pinned_pane: usize,
     pub output_scroll_offset: u16,

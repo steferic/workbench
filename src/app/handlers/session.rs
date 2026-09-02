@@ -379,9 +379,18 @@ fn finish_session_spawn(
     match spawn_result {
         Ok(handle) => {
             state.system.pty_handles.insert(session_id, handle);
+            let is_terminal = session.agent_type.is_terminal();
             state.add_session(session);
             state.set_active_session_id(Some(session_id));
             state.ui.focus = FocusPanel::SessionList;
+            // Show the tab the new session is on. Making a terminal while the
+            // pane lists agents otherwise puts it in the centre and nowhere
+            // in the list, with the cursor pointing at a row not drawn.
+            state.set_sessions_tab(if is_terminal {
+                crate::app::SessionsTab::Terminals
+            } else {
+                crate::app::SessionsTab::Agents
+            });
             let session_count = state.sessions_for_selected_workspace().len();
             if session_count > 0 {
                 state.set_selected_session_idx(session_count - 1);

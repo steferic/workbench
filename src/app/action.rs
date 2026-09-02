@@ -74,6 +74,8 @@ pub enum Action {
     /// from the cursor (the phone).
     CreateSessionIn(Uuid, AgentType, bool, bool),
     ActivateSession(Uuid),
+    /// Swap the Sessions pane between agents and terminals.
+    ToggleSessionsTab,
     RestartSession(Uuid),
     StopSession(Uuid),
     KillSession(Uuid),
