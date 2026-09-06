@@ -42,9 +42,8 @@ pub fn sync_selection(state: &mut AppState) {
         state.ui.tasks_agent = agent;
         state.ui.selected_task_row = 0;
     }
-    // Deleting a manager, or switching project, can strand this cursor past
-    // the end of a list nobody pressed Tab on.
-    crate::app::managers_view::clamp(state);
+    // A decision made elsewhere (the phone, a manager closing its own
+    // review) can strand the desk cursor past the end of the list.
     crate::app::desk_view::clamp(state);
 }
 
@@ -54,24 +53,7 @@ pub fn handle_task_action(
     action_tx: &mpsc::UnboundedSender<Action>,
 ) -> Result<()> {
     match action {
-        // j/k mean "down/up the list in front of me", so they follow the tab
-        // rather than each list owning its own pair of keys.
         Action::SelectNextTask => {
-            if state.ui.selected_tasks_tab == crate::app::TasksTab::Desk {
-                let count = crate::app::desk_view::rows(state).len();
-                if count > 0 {
-                    state.ui.selected_desk_row =
-                        (state.ui.selected_desk_row + 1).min(count - 1);
-                }
-                return Ok(());
-            }
-            if state.ui.selected_tasks_tab == crate::app::TasksTab::Managers {
-                let count = crate::app::managers_view::rows(state).len();
-                if count > 0 {
-                    state.ui.selected_manager = (state.ui.selected_manager + 1).min(count - 1);
-                }
-                return Ok(());
-            }
             // A row taller than the pane is read through before it is left:
             // j walks the hidden lines into view first, like a pager, and
             // only then moves to the next row.
@@ -89,14 +71,6 @@ pub fn handle_task_action(
             }
         }
         Action::SelectPrevTask => {
-            if state.ui.selected_tasks_tab == crate::app::TasksTab::Desk {
-                state.ui.selected_desk_row = state.ui.selected_desk_row.saturating_sub(1);
-                return Ok(());
-            }
-            if state.ui.selected_tasks_tab == crate::app::TasksTab::Managers {
-                state.ui.selected_manager = state.ui.selected_manager.saturating_sub(1);
-                return Ok(());
-            }
             if state.ui.objective_scroll > 0 {
                 state.ui.objective_scroll -= 1;
                 return Ok(());
@@ -107,11 +81,26 @@ pub fn handle_task_action(
                 state.ui.objective_scroll = 0;
             }
         }
-        Action::ToggleTasksTab => {
-            state.ui.selected_tasks_tab = state.ui.selected_tasks_tab.toggle();
-            state.ui.selected_task_row = 0;
-            state.ui.objective_scroll = 0;
-            clamp_objective_cursor(state);
+        // The desk takes the right-hand panel, where the terminal was, and
+        // hands focus back where it came from on close.
+        Action::ToggleDesk => {
+            if state.ui.desk_open {
+                close_desk(state);
+            } else {
+                state.ui.desk_return_focus = Some(state.ui.focus);
+                state.ui.desk_open = true;
+                state.ui.focus = crate::app::FocusPanel::OutputPane;
+                crate::app::desk_view::clamp(state);
+            }
+        }
+        Action::DeskSelectNext => {
+            let count = crate::app::desk_view::rows(state).len();
+            if count > 0 {
+                state.ui.selected_desk_row = (state.ui.selected_desk_row + 1).min(count - 1);
+            }
+        }
+        Action::DeskSelectPrev => {
+            state.ui.selected_desk_row = state.ui.selected_desk_row.saturating_sub(1);
         }
         // The desk acts wherever the row lives — the whole point is not
         // having to travel to a decision before making it.
@@ -221,15 +210,6 @@ pub fn handle_task_action(
             }
         }
         Action::FocusSelectedTaskAgent => {
-            // Enter means "open what is under the cursor", and which list that
-            // is depends on the tab.
-            if state.ui.selected_tasks_tab == crate::app::TasksTab::Managers {
-                if let Some(row) = crate::app::managers_view::selected(state) {
-                    state.set_active_session_id(Some(row.session_id));
-                    state.ui.focus = crate::app::FocusPanel::OutputPane;
-                }
-                return Ok(());
-            }
             if let Some(row) = tasks_view::selected_row(state) {
                 state.set_active_session_id(Some(row.session_id()));
                 state.ui.focus = crate::app::FocusPanel::OutputPane;
@@ -260,7 +240,7 @@ pub fn handle_task_action(
         }
         Action::SendTaskMessage(text) => {
             // An objective in progress owns the buffer: it was opened from the
-            // Objectives tab and has nothing to do with any session's queue.
+            // Objectives pane and has nothing to do with any session's queue.
             if let Some((workspace_id, editing)) = state.ui.objective_edit.take() {
                 state.ui.input_mode = InputMode::Normal;
                 state.ui.input_buffer.clear();
@@ -891,7 +871,7 @@ Original job: {}",
 /// manager's review turn. Clearing `review` instead would have been the
 /// cheaper change and a dishonest one: `None` on an approved proposal is what
 /// a record from before the field existed looks like, and it rendered as
-/// "queued" in the objectives tab and as plain "approved" on the phone —
+/// "queued" in the objectives pane and as plain "approved" on the phone —
 /// a job the user had just stopped, still advertising itself as running.
 pub(crate) fn decline_needs_user(
     state: &mut AppState,
@@ -935,10 +915,21 @@ pub(crate) fn decide_needs_user(
     }
 }
 
+/// Close the desk and put focus back where it was when it opened.
+fn close_desk(state: &mut AppState) {
+    state.ui.desk_open = false;
+    if let Some(focus) = state.ui.desk_return_focus.take() {
+        state.ui.focus = focus;
+    }
+}
+
 /// Jump to whatever a desk row is about: the agent's terminal, or the
-/// objectives tab of the project it lives in, cursor on the item.
+/// objectives pane of the project it lives in, cursor on the item. The desk
+/// closes on the way — you asked to go somewhere, and it was in the way.
 fn open_desk_row(state: &mut AppState, row: crate::app::desk_view::DeskRow) {
     use crate::app::desk_view::DeskRow;
+    state.ui.desk_open = false;
+    state.ui.desk_return_focus = None;
     match row {
         DeskRow::BlockedAgent { session_id, .. } => {
             if let Some(idx) = state
@@ -952,14 +943,13 @@ fn open_desk_row(state: &mut AppState, row: crate::app::desk_view::DeskRow) {
             state.set_active_session_id(Some(session_id));
             state.ui.focus = crate::app::FocusPanel::OutputPane;
         }
-        // A proposal's Enter is the decision context, not a journey: the
-        // detail overlay carries everything the manager saw.
         DeskRow::NeedsUser { workspace_id, proposal_id, .. }
         | DeskRow::PendingProposal { workspace_id, proposal_id, .. } => {
-            state.ui.detail = Some(crate::app::DetailTarget::Proposal {
-                workspace_id,
-                proposal_id,
-            });
+            focus_objectives(state, workspace_id);
+            let rows = objectives_view::rows(state);
+            if let Some(at) = rows.iter().position(|r| r.proposal_id() == Some(proposal_id)) {
+                state.ui.selected_objective = at;
+            }
         }
         DeskRow::ProposedCheck { workspace_id, objective_id, .. } => {
             focus_objectives(state, workspace_id);
@@ -980,7 +970,7 @@ fn focus_objectives(state: &mut AppState, workspace_id: uuid::Uuid) {
     {
         state.ui.selected_workspace_idx = idx;
     }
-    state.ui.selected_tasks_tab = crate::app::TasksTab::Objectives;
+    state.ui.focus = crate::app::FocusPanel::TasksPane;
     state.ui.objective_scroll = 0;
 }
 
@@ -1324,7 +1314,7 @@ mod tests {
         let after = state.data.workspaces[0].proposals[0].clone();
         assert_eq!(after.review, Some(crate::models::ReviewPhase::Closed));
 
-        // And every surface says so. The objectives tab used to read "queued"
+        // And every surface says so. The objectives pane used to read "queued"
         // here, because a closed job is still approved and nothing above the
         // state arm claimed it.
         assert_eq!(

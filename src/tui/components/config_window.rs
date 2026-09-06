@@ -474,6 +474,7 @@ fn format_action_name(action: &str) -> &str {
         "ToggleDebugOverlay" => "Debug Overlay",
         "EnterConfigWindow" => "Help & Settings",
         "ForceRedraw" => "Force Redraw",
+        "ToggleDesk" => "Open the Desk",
         _ => action,
     }
 }

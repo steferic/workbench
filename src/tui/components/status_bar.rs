@@ -348,13 +348,26 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
                         Span::raw(" Add  "),
                         Span::styled("[e]", Style::default().fg(t.accent)),
                         Span::raw(" Edit  "),
-                        Span::styled("[d]", Style::default().fg(t.accent)),
-                        Span::raw(" Drop  "),
-                        Span::styled("[Enter]", Style::default().fg(t.accent)),
-                        Span::raw(" Open"),
+                        Span::styled("[Space]", Style::default().fg(t.accent)),
+                        Span::raw(" State  "),
+                        Span::styled("[a/x]", Style::default().fg(t.accent)),
+                        Span::raw(" Decide  "),
+                        Span::styled("[D]", Style::default().fg(t.accent)),
+                        Span::raw(" Desk"),
                     ],
                     FocusPanel::OutputPane => {
-                        if state.active_session_id().is_some() {
+                        if state.ui.desk_open {
+                            vec![
+                                Span::styled("[a]", Style::default().fg(t.accent)),
+                                Span::raw(" Yes  "),
+                                Span::styled("[x]", Style::default().fg(t.accent)),
+                                Span::raw(" No  "),
+                                Span::styled("[Enter]", Style::default().fg(t.accent)),
+                                Span::raw(" Go to  "),
+                                Span::styled("[Esc]", Style::default().fg(t.accent)),
+                                Span::raw(" Close desk"),
+                            ]
+                        } else if state.active_session_id().is_some() {
                             vec![
                                 Span::styled("[Esc]", Style::default().fg(t.accent)),
                                 Span::raw(" Back  "),

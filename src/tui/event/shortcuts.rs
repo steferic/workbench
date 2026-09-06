@@ -25,6 +25,7 @@ pub(super) fn check_global_keys(
                     "EnterConfigWindow" => Some(Action::EnterConfigWindow),
                     "TestToast" => Some(Action::TestToast),
                     "ForceRedraw" => Some(Action::ForceRedraw),
+                    "ToggleDesk" => Some(Action::ToggleDesk),
                     _ => None,
                 };
             }

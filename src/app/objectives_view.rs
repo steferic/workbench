@@ -1,4 +1,4 @@
-//! The Objectives tab as a flat list of rows.
+//! The Objectives pane as a flat list of rows.
 //!
 //! Objectives and the proposals made against them are drawn together, so the
 //! cursor has to move through both. Flattening them here rather than in the
@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use super::AppState;
 
-/// One line in the Objectives tab.
+/// One line in the Objectives pane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ObjectiveRow {
     /// A standing priority. `index` is its position, which is its rank.

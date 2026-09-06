@@ -56,6 +56,11 @@ fn palette_entries() -> Vec<PaletteEntry> {
             keybinding: "g",
         },
         PaletteEntry {
+            name: "Open Desk",
+            action: Action::ToggleDesk,
+            keybinding: "F3",
+        },
+        PaletteEntry {
             name: "Toggle Split View",
             action: Action::ToggleSplitView,
             keybinding: "\\",

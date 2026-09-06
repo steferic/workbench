@@ -17,7 +17,6 @@ pub enum DetailTarget {
     },
 }
 
-pub mod managers_view;
 pub mod objectives_view;
 pub mod handlers;
 mod pty_ops;
@@ -45,6 +44,6 @@ pub use runtime::run_tui;
 pub use state::{
     AppState, ConfigTab, Divider, FocusPanel, InputMode, PendingDelete,
     PendingSessionStart, RawOutputBuffer, ReplayCache, SystemState, TextSelection,
-    SessionsTab, TaskEdit, ThreadCache, TasksTab, Toast, ToastLevel, TranscriptBuffer, TranscriptLine, TranscriptSpan,
+    SessionsTab, TaskEdit, ThreadCache, Toast, ToastLevel, TranscriptBuffer, TranscriptLine, TranscriptSpan,
     UtilityItem, UtilitySection, WorkspaceAction,
 };

@@ -5,7 +5,7 @@ use uuid::Uuid;
 use std::collections::VecDeque;
 
 use super::types::{
-    ConfigTab, Divider, FocusPanel, InputMode, PendingDelete, TaskEdit, TasksTab,
+    ConfigTab, Divider, FocusPanel, InputMode, PendingDelete, TaskEdit,
     TextSelection, Toast, UtilityItem, UtilitySection, WorkspaceAction,
 };
 
@@ -226,7 +226,6 @@ pub struct UIState {
     // Tasks pane: selection is an index into the flattened row list built by
     // `app::tasks_view::rows` (agent headers, prompts and tasks interleaved).
     pub selected_task_row: usize,
-    pub selected_tasks_tab: TasksTab,
     /// Agent whose tasks are currently on screen. When the Sessions pane
     /// cursor moves to a different agent the row selection is stale, so it
     /// resets (see `handlers::tasks::sync_selection`).
@@ -249,12 +248,19 @@ pub struct UIState {
     /// `task_edit` because an objective belongs to the project rather than to
     /// a session; `Some((workspace, None))` is a new one.
     pub objective_edit: Option<(Uuid, Option<Uuid>)>,
-    /// Cursor within the Objectives tab.
+    /// Cursor within the Objectives pane.
     pub selected_objective: usize,
-    /// Cursor in the Managers tab.
-    pub selected_manager: usize,
-    /// Cursor on the Desk tab.
+    /// Cursor on the desk.
     pub selected_desk_row: usize,
+    /// Whether the desk is taking the right-hand panel. It replaces the
+    /// terminal there rather than sharing a slot with it: a decision needs
+    /// the room.
+    pub desk_open: bool,
+    /// Where focus was when the desk opened, so closing it puts you back.
+    pub desk_return_focus: Option<FocusPanel>,
+    /// How far the desk panel is scrolled. Written by the renderer, which
+    /// moves it only as far as keeping the selected card on screen needs.
+    pub desk_scroll: u16,
     /// A proposal or objective opened for reading in full — the context a
     /// decision deserves, without traveling to it.
     pub detail: Option<crate::app::DetailTarget>,
@@ -317,7 +323,6 @@ impl UIState {
             merging_session_id: None,
             merging_parallel_attempt_id: None,
             selected_task_row: 0,
-            selected_tasks_tab: TasksTab::default(),
             tasks_agent: None,
             task_edit: None,
             task_status: None,
@@ -326,8 +331,10 @@ impl UIState {
             parallel_task: ParallelTaskModalState::default(),
             objective_edit: None,
             selected_objective: 0,
-            selected_manager: 0,
             selected_desk_row: 0,
+            desk_open: false,
+            desk_return_focus: None,
+            desk_scroll: 0,
             detail: None,
             assign: None,
             objective_scroll: 0,

@@ -10,7 +10,7 @@ use std::path::PathBuf;
 // Ctrl+arrows, which switch Spaces), and they deliberately leave Option+←/→
 // alone — macOS terminals encode those as the readline word-motions ESC b /
 // ESC f, which agents need for word-jump inside their composers.
-const GLOBAL_HOTKEY_DEFAULTS: [(&str, &str); 9] = [
+const GLOBAL_HOTKEY_DEFAULTS: [(&str, &str); 10] = [
     ("CyclePrevWorkspace", "Alt-Shift-Up"),
     ("CycleNextWorkspace", "Alt-Shift-Down"),
     ("CyclePrevSession", "Alt-Up"),
@@ -20,6 +20,7 @@ const GLOBAL_HOTKEY_DEFAULTS: [(&str, &str); 9] = [
     ("ToggleDebugOverlay", "F11"),
     ("EnterConfigWindow", "F1"),
     ("ForceRedraw", "F5"),
+    ("ToggleDesk", "F3"),
 ];
 
 /// Older defaults, moved forward so a saved config keeps working. Each entry
@@ -168,6 +169,7 @@ pub fn global_hotkey_actions() -> &'static [&'static str] {
         "ToggleDebugOverlay",
         "EnterConfigWindow",
         "ForceRedraw",
+        "ToggleDesk",
     ]
 }
 

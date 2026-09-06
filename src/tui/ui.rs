@@ -1,7 +1,7 @@
 use crate::app::{AppState, InputMode};
 use crate::tui::components::{
     banner, command_palette, config_window, create_session_dialog, create_workspace_dialog,
-    debug_overlay, merge_confirm_modal, output_pane, parallel_merge_confirm_modal,
+    debug_overlay, desk_pane, merge_confirm_modal, output_pane, parallel_merge_confirm_modal,
     parallel_task_modal, pinned_terminal_pane, session_list, status_bar, tasks_pane,
     utilities_pane, workspace_action_dialog, workspace_list, workspace_name_dialog,
 };
@@ -121,8 +121,23 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
     tasks_pane::render(frame, tasks_area, state);
     utilities_pane::render(frame, utilities_area, state);
 
-    // Render right panel - split if pinned terminals exist and split view is enabled
-    if state.should_show_split() {
+    // Render right panel: the desk when it is open, otherwise the active
+    // session (split with pinned terminals when there are any).
+    if state.ui.desk_open {
+        // The terminal keeps its rect so PTYs are not resized under a view
+        // that will be back in a moment; the pinned rects go so a click on
+        // the desk cannot land in a terminal that is not drawn.
+        state.ui.output_pane_area = Some((
+            right_panel.x,
+            right_panel.y,
+            right_panel.width,
+            right_panel.height,
+        ));
+        for area in state.ui.pinned_pane_areas.iter_mut() {
+            *area = None;
+        }
+        desk_pane::render(frame, right_panel, state);
+    } else if state.should_show_split() {
         // Split right panel: active session | pinned terminals (using dynamic ratio)
         let output_pct = (state.ui.layout.output_split_ratio * 100.0) as u16;
         let right_split = Layout::default()

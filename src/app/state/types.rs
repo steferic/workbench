@@ -113,19 +113,6 @@ pub enum TaskEdit {
     Rewrite,
 }
 
-/// Tab selection for the manager pane.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum TasksTab {
-    /// Everything waiting on the user, across every project. Opens first:
-    /// "what needs me?" is the question this pane exists to answer.
-    #[default]
-    Desk,
-    /// This project's managers.
-    Managers,
-    /// What they are working toward (see `models::objective`).
-    Objectives,
-}
-
 /// Which kind of session the Sessions pane is listing.
 ///
 /// Agents and terminals are both sessions and were listed together under two
@@ -147,16 +134,6 @@ impl SessionsTab {
         match self {
             SessionsTab::Agents => SessionsTab::Terminals,
             SessionsTab::Terminals => SessionsTab::Agents,
-        }
-    }
-}
-
-impl TasksTab {
-    pub fn toggle(&self) -> Self {
-        match self {
-            TasksTab::Desk => TasksTab::Managers,
-            TasksTab::Managers => TasksTab::Objectives,
-            TasksTab::Objectives => TasksTab::Desk,
         }
     }
 }

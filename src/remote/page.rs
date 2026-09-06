@@ -2251,7 +2251,7 @@ function renderManagers() {
   managersSig = sig;
   if (!managers.length) {
     el.innerHTML = '<div class="empty">No managers. Start one from the ' +
-                   'desktop: MANAGER pane, press a provider number.</div>';
+                   'desktop: Sessions pane, press n then m.</div>';
     return;
   }
   el.innerHTML = managers.map(m => {

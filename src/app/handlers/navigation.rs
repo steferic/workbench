@@ -71,6 +71,19 @@ fn handle_mouse_scroll(
     if let Some(area) = state.ui.output_pane_area {
         if is_in_area(x, y, area) {
             state.ui.focus = FocusPanel::OutputPane;
+            if state.ui.desk_open {
+                // The wheel walks the desk the way j/k do.
+                if up {
+                    state.ui.selected_desk_row = state.ui.selected_desk_row.saturating_sub(1);
+                } else {
+                    let count = crate::app::desk_view::rows(state).len();
+                    if count > 0 {
+                        state.ui.selected_desk_row =
+                            (state.ui.selected_desk_row + 1).min(count - 1);
+                    }
+                }
+                return;
+            }
             state.set_output_scroll_offset(scroll(state.output_scroll_offset()));
         }
     }
@@ -544,6 +557,10 @@ fn handle_mouse_click(
     if let Some(area) = state.ui.output_pane_area {
         if is_in_area(x, y, area) {
             state.ui.focus = FocusPanel::OutputPane;
+            // Text selection is the terminal's; the desk has none.
+            if state.ui.desk_open {
+                return;
+            }
             if state.active_output().is_some() {
                 if let Some((row, col)) = pane_text_position(
                     area,

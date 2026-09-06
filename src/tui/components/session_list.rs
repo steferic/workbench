@@ -256,10 +256,33 @@ fn render_tab_bar(frame: &mut Frame, area: Rect, state: &AppState, is_focused: b
         ("Agents", agents_style, format!("({agents})")),
         ("Terminals", terminals_style, format!("({terminals})")),
     ];
-    // The same bar the MANAGER pane draws, so both step down the same way
-    // when the column is too narrow for the counts.
-    let spans = super::tasks_pane::tab_spans(&names, dim, area.width as usize);
+    let spans = tab_spans(&names, dim, area.width as usize);
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+/// The widest tab bar that fits, in three steps: with counts, without them,
+/// then without the padding too. Every tab name survives to the last step —
+/// a bar cut mid-word hides that the later tabs exist at all.
+fn tab_spans<'a>(names: &'a [(&'a str, Style, String)], dim: Style, width: usize) -> Vec<Span<'a>> {
+    for step in 0..3 {
+        let mut spans: Vec<Span> = Vec::new();
+        for (i, (name, style, count)) in names.iter().enumerate() {
+            if i > 0 {
+                spans.push(Span::styled("│", dim));
+            }
+            match step {
+                0 if count.is_empty() => spans.push(Span::styled(format!(" {name} "), *style)),
+                0 => spans.push(Span::styled(format!(" {name}{count} "), *style)),
+                1 => spans.push(Span::styled(format!(" {name} "), *style)),
+                _ => spans.push(Span::styled(*name, *style)),
+            }
+        }
+        let used: usize = spans.iter().map(|span| span.content.chars().count()).sum();
+        if used <= width || step == 2 {
+            return spans;
+        }
+    }
+    unreachable!("the loop returns on its last step")
 }
 
 fn create_session_item<'a>(

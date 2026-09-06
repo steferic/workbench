@@ -175,7 +175,6 @@ pub enum Action {
     // Tasks pane: a live mirror of each agent's own task list
     SelectNextTask,
     SelectPrevTask,
-    ToggleTasksTab,         // Switch between Tasks and Reports
     FocusSelectedTaskAgent, // Jump to the selected agent's terminal
     /// Start composing a queued item (new, or a rewrite of the selected one).
     EnterTaskEditMode(TaskEdit),
@@ -217,6 +216,12 @@ pub enum Action {
     /// A push service answered 404/410 for this endpoint: the device
     /// unsubscribed or was wiped, and the subscription can never work again.
     PushEndpointGone(String),
+    /// Open the desk in the right-hand panel, or close it and go back to
+    /// whatever had focus.
+    ToggleDesk,
+    /// Move the desk cursor down or up.
+    DeskSelectNext,
+    DeskSelectPrev,
     /// Yes/no on whatever desk row is under the cursor, wherever it lives.
     DeskDecide(bool),
     /// Jump to the thing the desk row is about.

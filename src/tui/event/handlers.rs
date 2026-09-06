@@ -1,4 +1,4 @@
-use crate::app::{Action, AppState, FocusPanel, PendingDelete, TasksTab};
+use crate::app::{Action, AppState, FocusPanel, PendingDelete};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::key_modes::handle_input_mode_key;
@@ -89,6 +89,7 @@ impl EventHandler {
                     Action::Tick
                 }
             }
+            KeyCode::Char('D') => Action::ToggleDesk,
             KeyCode::Char('h') => Action::EnterConfigWindow,
             KeyCode::Char('?') => Action::EnterConfigWindow,
             _ => Action::Tick,
@@ -110,7 +111,7 @@ impl EventHandler {
             KeyCode::Char('j') | KeyCode::Down => Action::MoveDown,
             KeyCode::Char('k') | KeyCode::Up => Action::MoveUp,
             KeyCode::Char('l') => Action::FocusRight,
-            // Same key as the MANAGER pane's tabs, for the same gesture.
+            // Tab walks the pane's own tabs: agents, then terminals.
             KeyCode::Tab => Action::ToggleSessionsTab,
             KeyCode::Char('n') => Action::EnterCreateSessionMode,
             KeyCode::Enter => {
@@ -248,6 +249,7 @@ impl EventHandler {
                     Action::Tick
                 }
             }
+            KeyCode::Char('D') => Action::ToggleDesk,
             KeyCode::Char('h') => Action::EnterConfigWindow,
             KeyCode::Char('?') => Action::EnterConfigWindow,
             _ => Action::Tick,
@@ -269,45 +271,13 @@ impl EventHandler {
             };
         }
 
-        let managers = state.ui.selected_tasks_tab == TasksTab::Managers;
-        let desk = state.ui.selected_tasks_tab == TasksTab::Desk;
-
-        // A manager is started exactly the way an agent is: the provider
-        // number, with the same Shift and Alt meanings. One key, no dialog —
-        // the only difference from Sessions is what the session is for.
-        if managers {
-            if let Some((agent_type, skip_permissions, with_worktree)) =
-                agent_shortcut(&key, &state.system.user_config.agents)
-            {
-                return Action::CreateSession(
-                    agent_type.as_manager(),
-                    skip_permissions,
-                    with_worktree,
-                );
-            }
-        }
-
         match key.code {
             KeyCode::Char('j') | KeyCode::Down => Action::SelectNextTask,
             KeyCode::Char('k') | KeyCode::Up => Action::SelectPrevTask,
             KeyCode::Char('l') => Action::FocusRight,
-            KeyCode::Tab => Action::ToggleTasksTab,
+            KeyCode::Char('D') => Action::ToggleDesk,
 
-            // -- Desk (everything waiting on you) --
-            KeyCode::Char('a') if desk => Action::DeskDecide(true),
-            KeyCode::Char('x') if desk => Action::DeskDecide(false),
-            KeyCode::Enter if desk => Action::DeskOpen,
-
-            // -- Managers tab --
-            KeyCode::Enter if managers => Action::FocusSelectedTaskAgent,
-            KeyCode::Char('d') if managers => {
-                match crate::app::managers_view::selected(state) {
-                    Some(row) => Action::InitiateDeleteSession(row.session_id, row.name),
-                    None => Action::Tick,
-                }
-            }
-
-            // -- Objectives tab (the project's standing priorities) --
+            // The project's standing priorities.
             KeyCode::Enter => Action::OpenDetail,
             KeyCode::Char('n') => Action::EditObjective(false),
             KeyCode::Char('e') => Action::EditObjective(true),
@@ -369,6 +339,23 @@ impl EventHandler {
     fn handle_output_pane_keys(&self, key: KeyEvent, state: &AppState) -> Action {
         if let Some(action) = check_global_keys(&key, &state.system.user_config) {
             return action;
+        }
+
+        // The desk sits where the terminal was, so the keys that would have
+        // gone to the terminal go to it instead — nothing reaches the PTY
+        // while it is up.
+        if state.ui.desk_open {
+            return match key.code {
+                KeyCode::Char('j') | KeyCode::Down => Action::DeskSelectNext,
+                KeyCode::Char('k') | KeyCode::Up => Action::DeskSelectPrev,
+                KeyCode::Char('a') => Action::DeskDecide(true),
+                KeyCode::Char('x') => Action::DeskDecide(false),
+                KeyCode::Enter => Action::DeskOpen,
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('D') => Action::ToggleDesk,
+                KeyCode::Char('h') | KeyCode::Left => Action::FocusLeft,
+                KeyCode::Char('?') => Action::EnterConfigWindow,
+                _ => Action::Tick,
+            };
         }
 
         if state.text_selection().start.is_some() {

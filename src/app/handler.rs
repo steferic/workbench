@@ -341,7 +341,7 @@ pub fn process_action(
                 }
 
                 // Tasks pane actions
-                Action::SelectNextTask | Action::SelectPrevTask | Action::ToggleTasksTab |
+                Action::SelectNextTask | Action::SelectPrevTask |
                 Action::FocusSelectedTaskAgent |
                 Action::EnterTaskEditMode(_) | Action::SendTaskMessage(_) |
                 Action::DeleteSelectedTodo | Action::MoveSelectedTodo(_) |
@@ -349,6 +349,7 @@ pub fn process_action(
                 Action::EditObjective(_) | Action::DeleteObjective |
                 Action::CycleObjectiveState | Action::MoveObjective(_) |
                 Action::ApproveProposal | Action::DeclineProposal |
+                Action::ToggleDesk | Action::DeskSelectNext | Action::DeskSelectPrev |
                 Action::DeskDecide(_) | Action::DeskOpen |
                 Action::OpenDetail | Action::CloseDetail | Action::DeskDecideDetail(_) |
                 Action::VerificationFinished { .. } |
