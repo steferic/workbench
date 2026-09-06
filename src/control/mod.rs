@@ -683,6 +683,8 @@ mod tests {
     fn snapshot_with(agents: Vec<AgentView>) -> Shared {
         Arc::new(Mutex::new(Snapshot {
             projects: vec![ProjectView {
+                global: false,
+                path: String::new(),
                 id: "p1".into(),
                 name: "workbench".into(),
                 objectives: Vec::new(),

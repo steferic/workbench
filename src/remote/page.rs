@@ -2382,10 +2382,10 @@ function renderTree() {
   const projects = (data?.projects || []).map(p => ({
     ...p, agents: (data.agents || []).filter(a => a.project_id === p.id),
   }));
-  // Projects with someone waiting on you float up.
-  projects.sort((a, b) =>
-    (b.agents.some(x => x.status === "blocked") ? 1 : 0) -
-    (a.agents.some(x => x.status === "blocked") ? 1 : 0));
+  // The global workspace stays first; below it, projects with someone
+  // waiting on you float up.
+  const rank = p => p.global ? 2 : (p.agents.some(x => x.status === "blocked") ? 1 : 0);
+  projects.sort((a, b) => rank(b) - rank(a));
 
   document.getElementById("tree").innerHTML = projects.map(p => {
     const blocked = p.agents.filter(a => a.status === "blocked").length;
@@ -2413,7 +2413,7 @@ function renderTree() {
     return `
       <button class="proj" onclick="toggleProject('${p.id}')">
         <span class="caret">${open ? "▼" : "▶"}</span>
-        <span class="name">${esc(p.name)}</span>
+        <span class="name">${p.global ? "◎ " : ""}${esc(p.name)}</span>
         ${blocked ? '<span class="pill">' + blocked + "</span>" : ""}
         <span class="n">${p.agents.length}</span>
       </button>${rows}${servers}${add}`;

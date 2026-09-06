@@ -35,6 +35,10 @@ pub struct Workspace {
     /// Last active session ID for this workspace (restored when switching back)
     #[serde(default)]
     pub last_active_session_id: Option<Uuid>,
+    /// The one workspace that is not a project: a standing place for agents
+    /// that see every project at once (see `Workspace::global`).
+    #[serde(default)]
+    pub global: bool,
 }
 
 impl Workspace {
@@ -52,6 +56,48 @@ impl Workspace {
             proposals: Vec::new(),
             active_worktree_session_id: None,
             last_active_session_id: None,
+            global: false,
+        }
+    }
+
+    /// Where the global workspace lives: a directory of workbench's own,
+    /// not a repository. An agent started there has no project to be inside
+    /// of, which is the point — reads reach every repo, and a write would
+    /// land outside any project's branch and worktree bookkeeping, so the
+    /// brief tells it to hand writes to a project's agent instead.
+    pub fn global_root() -> Option<PathBuf> {
+        Some(dirs::config_dir()?.join("workbench").join("global"))
+    }
+
+    /// The global workspace, rooted at `global_root`.
+    pub fn global(path: PathBuf) -> Self {
+        let mut workspace = Self::new("Global".into(), path);
+        workspace.global = true;
+        workspace
+    }
+
+    /// Make sure the list holds exactly one global workspace, first. Added on
+    /// the first run after this existed (older saved state has none), and
+    /// moved to the front if something reordered it — pinned first is how
+    /// it stays findable, on the desktop and on the phone alike.
+    pub fn ensure_global(workspaces: &mut Vec<Workspace>) {
+        let Some(root) = Self::global_root() else {
+            return;
+        };
+        let _ = std::fs::create_dir_all(&root);
+        Self::ensure_global_at(workspaces, root);
+    }
+
+    /// `ensure_global` with the root given, for callers (and tests) that
+    /// should not touch the real config directory.
+    pub fn ensure_global_at(workspaces: &mut Vec<Workspace>, root: PathBuf) {
+        match workspaces.iter().position(|w| w.global) {
+            Some(0) => {}
+            Some(at) => {
+                let global = workspaces.remove(at);
+                workspaces.insert(0, global);
+            }
+            None => workspaces.insert(0, Self::global(root)),
         }
     }
 
@@ -445,5 +491,41 @@ mod tests {
             .find(|attempt| attempt.session_id == session_id)
             .unwrap();
         assert!(attempt.prompt_sent);
+    }
+}
+
+#[cfg(test)]
+mod global_tests {
+    use super::Workspace;
+    use std::path::PathBuf;
+
+    fn project(name: &str) -> Workspace {
+        Workspace::new(name.into(), PathBuf::from(format!("/tmp/{name}")))
+    }
+
+    /// Saved state from before the global workspace existed gets one, first.
+    #[test]
+    fn a_missing_global_workspace_is_added_first() {
+        let mut workspaces = vec![project("alpha"), project("beta")];
+        Workspace::ensure_global_at(&mut workspaces, PathBuf::from("/tmp/global"));
+        assert_eq!(workspaces.len(), 3);
+        assert!(workspaces[0].global);
+        assert_eq!(workspaces[0].name, "Global");
+        assert_eq!(workspaces[1].name, "alpha");
+    }
+
+    /// One that drifted down the list is moved back to the front, and a
+    /// second is never added.
+    #[test]
+    fn an_existing_global_workspace_is_kept_and_pinned_first() {
+        let global = Workspace::global(PathBuf::from("/tmp/global"));
+        let id = global.id;
+        let mut workspaces = vec![project("alpha"), global, project("beta")];
+        Workspace::ensure_global_at(&mut workspaces, PathBuf::from("/tmp/elsewhere"));
+        assert_eq!(workspaces.len(), 3);
+        assert_eq!(workspaces[0].id, id, "the same one, not a replacement");
+        assert_eq!(workspaces[0].path, PathBuf::from("/tmp/global"));
+        Workspace::ensure_global_at(&mut workspaces, PathBuf::from("/tmp/global"));
+        assert_eq!(workspaces.len(), 3, "idempotent");
     }
 }

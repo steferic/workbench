@@ -136,6 +136,10 @@ pub struct DeskRowView {
 pub struct ProjectView {
     pub id: String,
     pub name: String,
+    /// The standing, non-project workspace whose agents see every project.
+    pub global: bool,
+    /// Where the repository is, for an agent reading it from elsewhere.
+    pub path: String,
     /// Standing priorities, in priority order. What a manager works toward.
     pub objectives: Vec<ObjectiveView>,
     /// What has been suggested here, and how each turned out.
@@ -394,6 +398,8 @@ fn publish_with(state: &AppState, shared: &Shared, open: Option<(Vec<Message>, u
         .map(|workspace| ProjectView {
             id: workspace.id.to_string(),
             name: workspace.name.clone(),
+            global: workspace.global,
+            path: workspace.path.display().to_string(),
             objectives: workspace
                 .objectives
                 .iter()

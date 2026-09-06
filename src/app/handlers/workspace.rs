@@ -17,7 +17,10 @@ pub fn handle_workspace_action(
 ) -> Result<()> {
     match action {
         Action::InitiateDeleteWorkspace(id, name) => {
-            state.ui.pending_delete = Some(PendingDelete::Workspace(id, name));
+            let global = state.data.workspaces.iter().any(|w| w.id == id && w.global);
+            if !global {
+                state.ui.pending_delete = Some(PendingDelete::Workspace(id, name));
+            }
         }
         Action::ConfirmDeleteWorkspace => {
             if let Some(PendingDelete::Workspace(id, _)) = state.ui.pending_delete.take() {

@@ -151,10 +151,23 @@ fn create_workspace_item<'a>(
         Span::raw("  ")
     };
 
+    // The global workspace is the one row that is not a project, and it
+    // reads differently so it is never mistaken for one.
+    let name_style = if ws.global && !(is_selected && is_focused) {
+        Style::default().fg(t.special)
+    } else {
+        style
+    };
+    let name = if ws.global {
+        format!("◎ {name}")
+    } else {
+        name
+    };
+
     ListItem::new(Line::from(vec![
         Span::styled(prefix.to_string(), style),
         working_indicator,
-        Span::styled(name, style),
+        Span::styled(name, name_style),
         Span::styled(time_info, time_style),
     ]))
 }
@@ -197,5 +210,22 @@ mod tests {
         assert!(out.contains("beta"), "{out}");
         assert!(!out.contains("Working"), "{out}");
         assert!(!out.contains("Paused"), "{out}");
+    }
+
+    /// The global workspace sits first and is marked as the one row that is
+    /// not a project.
+    #[test]
+    fn the_global_workspace_is_first_and_marked() {
+        let mut state = AppState::default();
+        state.data.workspaces = vec![Workspace::new("alpha".into(), "/tmp/alpha".into())];
+        state
+            .data
+            .workspaces
+            .insert(0, Workspace::global("/tmp/global".into()));
+
+        let out = screen(&state, 40, 7);
+        let global_line = out.lines().position(|l| l.contains("◎ Global")).unwrap();
+        let alpha_line = out.lines().position(|l| l.contains("alpha")).unwrap();
+        assert!(global_line < alpha_line, "{out}");
     }
 }

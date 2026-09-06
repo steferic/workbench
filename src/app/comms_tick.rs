@@ -252,14 +252,14 @@ fn refresh_rosters(state: &mut AppState) {
     state.system.comms.last_roster_refresh = Instant::now();
     retire_closed_workspaces(state);
 
-    let workspaces: Vec<(Uuid, String, std::path::PathBuf)> = state
+    let workspaces: Vec<(Uuid, String, std::path::PathBuf, bool)> = state
         .data
         .workspaces
         .iter()
-        .map(|w| (w.id, w.name.clone(), w.path.clone()))
+        .map(|w| (w.id, w.name.clone(), w.path.clone(), w.global))
         .collect();
 
-    for (ws_id, ws_name, ws_path) in workspaces {
+    for (ws_id, ws_name, ws_path, global) in workspaces {
         let roster = build_roster(state, ws_id, &ws_name, &ws_path);
         // Compare everything except the timestamp so unchanged rosters skip IO.
         let fingerprint = serde_json::to_string(&roster.agents).unwrap_or_default();
@@ -286,7 +286,7 @@ fn refresh_rosters(state: &mut AppState) {
                 Err(err) => crate::logger::warn(format!("failed to create comms dirs: {err}")),
             }
             if ensure_instructions {
-                if let Err(err) = comms::ensure_workspace_instructions(&ws_path) {
+                if let Err(err) = comms::ensure_workspace_instructions(&ws_path, global) {
                     crate::logger::warn(format!("failed to write workspace instructions: {err}"));
                 }
             }

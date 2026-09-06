@@ -74,6 +74,7 @@ pub async fn run_tui(initial_workspace: Option<PathBuf>, use_alternate_screen: b
         Ok(persisted) => {
             state.data.workspaces = persisted.workspaces;
             state.data.sessions = persisted.sessions;
+            crate::models::Workspace::ensure_global(&mut state.data.workspaces);
 
             // Load notepad content into TextArea widgets
             for (ws_id, content) in persisted.notepad_content {
@@ -89,11 +90,20 @@ pub async fn run_tui(initial_workspace: Option<PathBuf>, use_alternate_screen: b
             state.ws_ui_mut();
         }
         Err(_e) => {
+            crate::models::Workspace::ensure_global(&mut state.data.workspaces);
             state.ui.toasts.push_back(Toast::new(
                 "Failed to load saved state — starting fresh".to_string(),
                 ToastLevel::Warning,
                 std::time::Duration::from_secs(4),
             ));
+        }
+    }
+    // The global workspace's brief is written now rather than on the roster
+    // tick that serves projects: its first agent has to boot with the brief
+    // already on disk, since the brief is the whole reason it exists.
+    if let Some(global) = state.data.workspaces.iter().find(|w| w.global) {
+        if let Err(err) = crate::comms::ensure_workspace_instructions(&global.path, true) {
+            crate::logger::warn(format!("failed to write the global brief: {err}"));
         }
     }
 

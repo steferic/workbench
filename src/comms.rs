@@ -389,7 +389,10 @@ pub fn tail_lines(text: &str, n: usize) -> String {
 const BLOCK_BEGIN: &str = "<!-- workbench:begin -->";
 const BLOCK_END: &str = "<!-- workbench:end -->";
 
-pub fn instructions_block() -> String {
+/// The block every agent gets, with the global workspace's own section
+/// appended inside the same fence when `global`.
+pub fn instructions_block_for(global: bool) -> String {
+    let global_section = if global { GLOBAL_SECTION } else { "" };
     format!(
         r#"{BLOCK_BEGIN}
 ## Workbench multi-agent workspace
@@ -472,9 +475,47 @@ keep the states honest: exactly one task in progress, completed the moment
 it is done. An empty pane reads as "this agent is doing nothing". Do not
 manufacture tasks for genuinely single-step work — a one-line answer or a
 one-file edit needs no list.
-{BLOCK_END}"#
+{global_section}{BLOCK_END}"#
     )
 }
+
+/// What an agent in the global workspace is told, over and above the block
+/// every agent gets. Second person, short, and mostly about the one rule
+/// that makes the vantage point safe: read anywhere, write nowhere.
+const GLOBAL_SECTION: &str = r#"
+## You are in the global workspace
+
+This is not a project. It exists so an agent can see all of the user's work
+at once: every project workbench knows about, every agent running in them,
+and what each is doing. You are that agent. The user talks to you here, and
+from the phone, about the whole picture rather than one repo.
+
+What you can see:
+- `workbench agents --all` — every agent on this machine, with its project,
+  provider, branch and state. Address any of them by full id or alias.
+- `workbench transcript <id> --lines 200` — any agent's recent conversation.
+  `workbench handoff <id> --wait` asks a live one for a structured summary.
+- The control socket at `$WORKBENCH_CONTROL_SOCK` (one JSON object per
+  line; start with `{"id":1,"method":"api.schema"}`) answers `state.get`
+  with every project, its path, its objectives, its agents, and what is
+  waiting on the user. `projects.list` is the short form.
+- Every project's repository, read-only, at the path `state.get` gives.
+
+Reads are yours; writes are not. Do not edit files in any project from
+here. You are outside that project's branch and worktree bookkeeping, so a
+change made from here cannot be reviewed, verified or merged the way the
+project's own agents' work is, and would collide with theirs. When
+something should change in a project, hand it to an agent there:
+- `workbench ask <id> "..." --wait` for a question or a small request;
+- `agent.todo` on the control socket (`{"agent":"<id>","text":"..."}`) to
+  put a full instruction on an agent's queue, delivered when its turn ends;
+- `agent.new` (`{"project":"<id>","provider":"claude"}`) when the project
+  has no agent to give it to.
+Say which agent you handed it to and why that one.
+
+Nothing wakes you on a timer. You work when the user asks, and you answer
+with what you found and what you did, not with a plan for someone else.
+"#;
 
 /// Insert or refresh the fenced workbench block in `path`. Creates the file
 /// if missing and returns true if it was newly created.
@@ -540,8 +581,8 @@ fn is_git_tracked(workspace_path: &Path, name: &str) -> bool {
 ///  - the file is untracked (or absent): create/refresh the fenced section in
 ///    place. Files we create are added to `.git/info/exclude` so they never
 ///    show up as untracked noise.
-pub fn ensure_workspace_instructions(workspace_path: &Path) -> Result<()> {
-    let block = instructions_block();
+pub fn ensure_workspace_instructions(workspace_path: &Path, global: bool) -> Result<()> {
+    let block = instructions_block_for(global);
     for name in ["CLAUDE.local.md", "AGENTS.md"] {
         let mut target = name.to_string();
         if is_git_tracked(workspace_path, name) {
@@ -642,6 +683,26 @@ mod tests {
         assert_eq!(local_sidecar_name("CLAUDE.local.md"), "CLAUDE.local.md");
     }
 
+    /// The global workspace's brief rides in the same fenced block, so one
+    /// upsert keeps both current and a project never gets the global rule.
+    #[test]
+    fn the_global_brief_is_inside_the_fence_and_only_for_the_global_workspace() {
+        let global = instructions_block_for(true);
+        let project = instructions_block_for(false);
+        assert!(global.starts_with(BLOCK_BEGIN) && global.trim_end().ends_with(BLOCK_END));
+        assert!(global.contains("You are in the global workspace"), "{global}");
+        assert!(global.contains("Reads are yours; writes are not."), "{global}");
+        assert!(global.contains("workbench agents --all"), "{global}");
+        assert!(!project.contains("global workspace"), "{project}");
+
+        let dir = tempfile::tempdir().unwrap();
+        ensure_workspace_instructions(dir.path(), true).unwrap();
+        let written = fs::read_to_string(dir.path().join("CLAUDE.local.md")).unwrap();
+        assert!(written.contains("You are in the global workspace"));
+        let agents = fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
+        assert!(agents.contains("You are in the global workspace"), "codex reads AGENTS.md");
+    }
+
     /// A project-owned, committed AGENTS.md must never be rewritten: the
     /// block is local-environment guidance, and editing a tracked file
     /// invites `git add -A` to commit it into the shared repo.
@@ -653,7 +714,7 @@ mod tests {
         let original = "# AGENTS\n\nProject-owned guidance.\n";
         git_commit_file(root, "AGENTS.md", original);
 
-        ensure_workspace_instructions(root).unwrap();
+        ensure_workspace_instructions(root, false).unwrap();
 
         assert_eq!(
             fs::read_to_string(root.join("AGENTS.md")).unwrap(),
@@ -682,7 +743,7 @@ mod tests {
         let root = dir.path();
         git_init(root);
 
-        ensure_workspace_instructions(root).unwrap();
+        ensure_workspace_instructions(root, false).unwrap();
 
         let agents = fs::read_to_string(root.join("AGENTS.md")).unwrap();
         assert!(agents.contains(BLOCK_BEGIN));
@@ -704,7 +765,7 @@ mod tests {
         )
         .unwrap();
 
-        upsert_instructions_file(&path, &instructions_block()).unwrap();
+        upsert_instructions_file(&path, &instructions_block_for(false)).unwrap();
 
         let out = fs::read_to_string(&path).unwrap();
         assert!(out.starts_with("before"), "content before the fence is kept");
@@ -828,17 +889,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("CLAUDE.local.md");
 
-        let created = upsert_instructions_file(&path, &instructions_block()).unwrap();
+        let created = upsert_instructions_file(&path, &instructions_block_for(false)).unwrap();
         assert!(created);
         let first = std::fs::read_to_string(&path).unwrap();
         assert!(first.contains("workbench agents"));
 
         // Idempotent: unchanged block writes nothing new.
-        let created = upsert_instructions_file(&path, &instructions_block()).unwrap();
+        let created = upsert_instructions_file(&path, &instructions_block_for(false)).unwrap();
         assert!(!created);
 
         // User content around the block survives a block update.
-        std::fs::write(&path, format!("# mine\n\n{}\ntrailing\n", instructions_block())).unwrap();
+        std::fs::write(&path, format!("# mine\n\n{}\ntrailing\n", instructions_block_for(false))).unwrap();
         upsert_instructions_file(&path, "<!-- workbench:begin -->\nnew\n<!-- workbench:end -->")
             .unwrap();
         let updated = std::fs::read_to_string(&path).unwrap();

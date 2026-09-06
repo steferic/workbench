@@ -82,13 +82,15 @@ impl EventHandler {
             KeyCode::Char('n') => Action::EnterWorkspaceActionMode,
             KeyCode::Char('g') => Action::OpenRepositoryMap,
             KeyCode::Enter => Action::FocusRight,
-            KeyCode::Char('d') => {
-                if let Some(workspace) = state.selected_workspace() {
+            KeyCode::Char('d') => match state.selected_workspace() {
+                // The global workspace is standing: it comes back on the
+                // next start anyway, so offering to delete it would only
+                // lose the sessions in it.
+                Some(workspace) if !workspace.global => {
                     Action::InitiateDeleteWorkspace(workspace.id, workspace.name.clone())
-                } else {
-                    Action::Tick
                 }
-            }
+                _ => Action::Tick,
+            },
             KeyCode::Char('D') => Action::ToggleDesk,
             KeyCode::Char('h') => Action::EnterConfigWindow,
             KeyCode::Char('?') => Action::EnterConfigWindow,
