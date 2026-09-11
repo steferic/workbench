@@ -19,7 +19,7 @@ use ratatui::{
     Frame,
 };
 
-use super::tasks_pane::wrapped;
+use super::decision_detail::wrapped;
 
 /// The leading column: a cursor marker, then the kind of decision.
 const TAG_WIDTH: usize = 11;

@@ -30,6 +30,9 @@ const RAIN_WAV: &str = concat!(
 /// banner marquee, working/loading spinners, and drag auto-scroll (which
 /// keeps scrolling while the mouse holds still at a pane edge).
 fn has_ambient_animation(state: &AppState) -> bool {
+    if state.ui.media_preview.as_ref().is_some_and(|p| p.loading()) {
+        return true;
+    }
     if state.ui.banner_visible {
         return true;
     }
@@ -68,6 +71,9 @@ pub async fn run_tui(initial_workspace: Option<PathBuf>, use_alternate_screen: b
     // Create app state and load persisted data
     let mut state = AppState::new();
     state.system.use_alternate_screen = use_alternate_screen;
+
+    state.system.media_picker = ratatui_image::picker::Picker::from_query_stdio()
+        .unwrap_or_else(|_| ratatui_image::picker::Picker::halfblocks());
 
     // Load persisted state
     match persistence::load() {
@@ -114,8 +120,7 @@ pub async fn run_tui(initial_workspace: Option<PathBuf>, use_alternate_screen: b
             // Apply persisted pane ratios
             state.ui.layout.left_panel_ratio = config.left_panel_ratio;
             state.ui.layout.workspace_ratio = config.workspace_ratio;
-            state.ui.layout.sessions_ratio = config.sessions_ratio;
-            state.ui.layout.tasks_ratio = config.tasks_ratio;
+            state.ui.layout.sessions_ratio = config.sessions_share();
             state.ui.layout.output_split_ratio = config.output_split_ratio;
             state.ui.theme_mode = config.theme_mode;
             state.ui.selected_theme = config.theme_mode;
@@ -168,12 +173,23 @@ pub async fn run_tui(initial_workspace: Option<PathBuf>, use_alternate_screen: b
         &mut state,
         &mut events,
         &pty_manager,
-        action_tx,
+        action_tx.clone(),
         pty_tx,
     )
     .await;
 
+    super::cleanup::shutdown(&mut state);
+    super::comms_tick::retire_all(&mut state);
+    if let Some(save) = state.system.state_save.take() {
+        if let Err(err) = save.await {
+            crate::logger::warn(format!("state save failed: {err}"));
+        }
+    }
+    state.system.state_dirty = true;
+    super::handlers::flush_dirty_state(&mut state, &action_tx, true);
+
     // Restore terminal
+    crate::media::flush_cleanup(&mut state);
     tui::restore(use_alternate_screen)?;
 
     // This is the one deliberate way out; everything else is what the boot
@@ -249,6 +265,7 @@ async fn run_main_loop(
             // Start frame timing
             state.system.perf.frame_start();
 
+            crate::media::flush_cleanup(state);
             if let Err(err) = terminal.draw(|frame| tui::ui::draw(frame, state)) {
                 crate::logger::warn(format!("giving up: the terminal could not be drawn: {err}"));
                 return Err(err.into());
@@ -343,7 +360,7 @@ async fn run_main_loop(
         }
 
         // Process startup queue (staggered session startup - one per frame)
-        if !state.system.startup_queue.is_empty() {
+        if !state.system.should_quit && !state.system.startup_queue.is_empty() {
             process_startup_queue(state, pty_manager, &pty_tx, &action_tx);
         }
 
@@ -402,8 +419,6 @@ async fn run_main_loop(
         }
 
         if state.system.should_quit {
-            // Final synchronous save so pending changes survive shutdown.
-            super::handlers::flush_dirty_state(state, &action_tx, true);
             if let Some(child) = radio_process.take() {
                 stop_radio_process(child);
             }

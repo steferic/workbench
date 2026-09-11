@@ -6,8 +6,8 @@ mod ui;
 
 pub use data::DataState;
 pub use system::{
-    PendingSessionStart, RawOutputBuffer, ReplayCache, SystemState, ThreadCache,
-    TranscriptBuffer, TranscriptLine, TranscriptSpan,
+    PendingSessionStart, RawOutputBuffer, ReplayCache, SystemState, ThreadCache, TranscriptBuffer,
+    TranscriptLine, TranscriptSpan,
 };
 pub use types::*;
 pub use ui::{PinnedPaneState, UIState, WorkspaceUiState};
@@ -42,7 +42,7 @@ impl AppState {
     /// Uses actual rendered area if available, otherwise calculates from ratios
     pub fn output_pane_cols(&self) -> u16 {
         // Use actual rendered area if available (more accurate due to Layout rounding)
-        if let Some((_, _, width, _)) = self.ui.output_pane_area {
+        if let Some((_, _, width, _)) = self.ui.terminal_output_area.or(self.ui.output_pane_area) {
             return width.saturating_sub(2); // Subtract borders
         }
 
@@ -52,7 +52,8 @@ impl AppState {
 
         if self.should_show_split() {
             // Split between output and pinned - output gets the left portion
-            let output_width = (right_panel_width as f32 * self.ui.layout.output_split_ratio) as u16;
+            let output_width =
+                (right_panel_width as f32 * self.ui.layout.output_split_ratio) as u16;
             output_width.saturating_sub(2) // Account for borders
         } else {
             right_panel_width.saturating_sub(2)
@@ -77,7 +78,7 @@ impl AppState {
     /// Uses actual rendered area if available, otherwise calculates from ratios
     pub fn pane_rows(&self) -> u16 {
         // Use actual rendered area if available (more accurate due to Layout rounding)
-        if let Some((_, _, _, height)) = self.ui.output_pane_area {
+        if let Some((_, _, _, height)) = self.ui.terminal_output_area.or(self.ui.output_pane_area) {
             return height.saturating_sub(2); // Subtract borders
         }
 
@@ -615,6 +616,18 @@ impl AppState {
         // Remove activity tracking
         self.data.last_activity.remove(&session_id);
         self.data.last_send_input.remove(&session_id);
+        self.data.idle_queue.retain(|id| *id != session_id);
+        self.system
+            .startup_queue
+            .retain(|pending| pending.session_id != session_id);
+        for workspace in &mut self.data.workspaces {
+            if workspace.active_worktree_session_id == Some(session_id) {
+                workspace.active_worktree_session_id = None;
+            }
+            if workspace.last_active_session_id == Some(session_id) {
+                workspace.last_active_session_id = None;
+            }
+        }
     }
 
     /// Check if a session is actively working (received output within last 2 seconds)
@@ -751,7 +764,10 @@ impl AppState {
             })
             .collect();
         waiting.sort_by(|a, b| b.2.cmp(&a.2));
-        waiting.into_iter().map(|(id, kind, _)| (id, kind)).collect()
+        waiting
+            .into_iter()
+            .map(|(id, kind, _)| (id, kind))
+            .collect()
     }
 
     /// Check if a workspace has sessions waiting to start in the startup queue
@@ -898,7 +914,7 @@ impl Default for AppState {
 #[cfg(test)]
 mod model_tests {
     use super::*;
-    use crate::agent_status::{AgentStatus, Activity};
+    use crate::agent_status::{Activity, AgentStatus};
     use crate::agent_tasks::{Provider, Source, TaskSource, TaskTracker};
     use crate::models::AgentType;
     use std::io::Write;
@@ -1074,7 +1090,12 @@ mod activity_tests {
         assert!(state.activity(id).is_free());
 
         // It cannot read a consult until a human unblocks it.
-        report(&mut state, id, Activity::NeedsAttention(Attention::Input), 0);
+        report(
+            &mut state,
+            id,
+            Activity::NeedsAttention(Attention::Input),
+            0,
+        );
         assert!(!state.activity(id).is_free());
         assert!(state.update_idle_queue().is_empty());
         assert!(!state.data.idle_queue.contains(&id));
@@ -1131,7 +1152,10 @@ mod activity_tests {
 
         assert_eq!(
             state.sessions_needing_attention(),
-            vec![(second_id, Attention::Question), (first, Attention::Permission)]
+            vec![
+                (second_id, Attention::Question),
+                (first, Attention::Permission)
+            ]
         );
     }
 }

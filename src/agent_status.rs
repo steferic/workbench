@@ -191,7 +191,9 @@ pub fn load_all(workspace_id: &str) -> Vec<(String, AgentStatus)> {
         .collect()
 }
 
-/// Drop a session's state file (session deleted, or its agent replaced).
+/// Remove a fixture's hook report. Production deletion is owned by the
+/// shared cleanup job, after every process that could write it has exited.
+#[cfg(test)]
 pub fn forget(workspace_id: &str, session_short_id: &str) {
     if let Ok(path) = status_path(workspace_id, session_short_id) {
         let _ = fs::remove_file(path);
@@ -285,7 +287,10 @@ pub fn interpret(event: &str, payload: Option<&serde_json::Value>) -> Option<Age
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false);
             if re_entered {
-                (Activity::Working, "continuing after a stop hook".to_string())
+                (
+                    Activity::Working,
+                    "continuing after a stop hook".to_string(),
+                )
             } else {
                 (Activity::Idle, "finished its turn".to_string())
             }
@@ -616,7 +621,9 @@ mod tests {
             args[1],
             r#"hooks.SessionStart=[{hooks=[{type="command",command="/cfg/workbench/hooks/codex-hook.sh",timeout=30}]}]"#
         );
-        assert!(args.iter().any(|a| a.starts_with("hooks.PermissionRequest=")));
+        assert!(args
+            .iter()
+            .any(|a| a.starts_with("hooks.PermissionRequest=")));
         assert!(!args.iter().any(|a| a.contains("SessionEnd")));
     }
 

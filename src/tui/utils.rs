@@ -202,10 +202,18 @@ pub fn convert_vt100_to_lines_visible(
 
         for col in 0..cols {
             if let Some(cell) = screen.cell(row, col) {
+                // The preceding glyph already occupies this column. Emitting
+                // a space here would shift every later character to the right.
+                if cell.is_wide_continuation() {
+                    continue;
+                }
                 let char_str = cell.contents();
                 let mut cell_style = convert_vt100_cell_style(cell);
                 if let Some(bounds) = selection {
-                    if cell_is_selected(row as usize, col as usize, bounds) {
+                    if cell_is_selected(row as usize, col as usize, bounds)
+                        || (cell.is_wide()
+                            && cell_is_selected(row as usize, col as usize + 1, bounds))
+                    {
                         cell_style = cell_style.add_modifier(Modifier::REVERSED);
                     }
                 }
@@ -280,7 +288,7 @@ pub fn convert_vt100_cell_style(cell: &vt100::Cell) -> Style {
     if cell.italic() {
         style = style.add_modifier(Modifier::ITALIC);
     }
-    if cell.underline() {
+    if cell.underline() || cell.hyperlink().is_some() {
         style = style.add_modifier(Modifier::UNDERLINED);
     }
     // Inverse video - used by many CLI apps to draw their visual cursor
@@ -296,5 +304,53 @@ pub fn convert_vt100_color(color: vt100::Color) -> Color {
         vt100::Color::Default => Color::Reset,
         vt100::Color::Idx(i) => Color::Indexed(i),
         vt100::Color::Rgb(r, g, b) => Color::Rgb(r, g, b),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::{
+        buffer::Buffer,
+        widgets::{Paragraph, Widget},
+    };
+
+    #[test]
+    fn wide_glyphs_preserve_columns_and_the_right_edge() {
+        let mut parser = vt100::Parser::new(2, 10, 0);
+        parser.process("界AB\x1b[1;7H🙂XY".as_bytes());
+        let lines = convert_vt100_to_lines(parser.screen(), None, 0);
+        assert_eq!(lines[0].to_string(), "界AB  🙂XY");
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 10, 2));
+        Paragraph::new(lines).render(buffer.area, &mut buffer);
+        assert_eq!(buffer[(2, 0)].symbol(), "A");
+        assert_eq!(buffer[(6, 0)].symbol(), "🙂");
+        assert_eq!(buffer[(9, 0)].symbol(), "Y");
+    }
+
+    #[test]
+    fn selection_on_either_half_of_a_wide_glyph_highlights_the_whole_glyph() {
+        let mut parser = vt100::Parser::new(1, 10, 0);
+        parser.process("\x1b[31m界\x1b[0mAB".as_bytes());
+        for col in [0, 1] {
+            let bounds = SelectionBounds {
+                start_row: 0,
+                end_row: 0,
+                start_col: col,
+                end_col: col,
+            };
+            let lines = convert_vt100_to_lines(parser.screen(), Some(bounds), 0);
+            assert_eq!(lines[0].spans[0].content, "界");
+            assert_eq!(lines[0].spans[0].style.fg, Some(Color::Indexed(1)));
+            assert!(lines[0].spans[0]
+                .style
+                .add_modifier
+                .contains(Modifier::REVERSED));
+            assert!(lines[0].spans[1].content.starts_with("AB"));
+            assert!(!lines[0].spans[1]
+                .style
+                .add_modifier
+                .contains(Modifier::REVERSED));
+        }
     }
 }

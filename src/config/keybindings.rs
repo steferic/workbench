@@ -183,8 +183,6 @@ pub struct PanelBindings {
     #[serde(default)]
     pub session_list: HashMap<String, String>,
     #[serde(default)]
-    pub tasks_pane: HashMap<String, String>,
-    #[serde(default)]
     pub utilities_pane: HashMap<String, String>,
     #[serde(default)]
     pub output_pane: HashMap<String, String>,
@@ -213,7 +211,6 @@ pub struct KeybindingConfig {
     /// Panel-specific bindings (when in Normal mode)
     pub panel_workspace_list: HashMap<KeyCombo, ActionName>,
     pub panel_session_list: HashMap<KeyCombo, ActionName>,
-    pub panel_tasks_pane: HashMap<KeyCombo, ActionName>,
     pub panel_utilities_pane: HashMap<KeyCombo, ActionName>,
     pub panel_output_pane: HashMap<KeyCombo, ActionName>,
     pub panel_pinned_terminal: HashMap<KeyCombo, ActionName>,
@@ -253,7 +250,6 @@ pub fn load_keybindings() -> KeybindingConfig {
 
         panel_workspace_list: KeybindingConfig::parse_bindings(&raw.panel.workspace_list),
         panel_session_list: KeybindingConfig::parse_bindings(&raw.panel.session_list),
-        panel_tasks_pane: KeybindingConfig::parse_bindings(&raw.panel.tasks_pane),
         panel_utilities_pane: KeybindingConfig::parse_bindings(&raw.panel.utilities_pane),
         panel_output_pane: KeybindingConfig::parse_bindings(&raw.panel.output_pane),
         panel_pinned_terminal: KeybindingConfig::parse_bindings(&raw.panel.pinned_terminal),

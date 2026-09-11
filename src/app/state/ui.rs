@@ -5,8 +5,8 @@ use uuid::Uuid;
 use std::collections::VecDeque;
 
 use super::types::{
-    ConfigTab, Divider, FocusPanel, InputMode, PendingDelete, TaskEdit,
-    TextSelection, Toast, UtilityItem, UtilitySection, WorkspaceAction,
+    ConfigTab, Divider, FocusPanel, InputMode, PendingDelete, TaskEdit, TextSelection, Toast,
+    UtilityItem, UtilitySection, WorkspaceAction,
 };
 
 /// Per-pinned-pane runtime UI state. Lives inside `WorkspaceUiState` and is
@@ -144,7 +144,6 @@ pub struct LayoutState {
     pub output_split_ratio: f32,
     pub workspace_ratio: f32,
     pub sessions_ratio: f32,
-    pub tasks_ratio: f32,
     pub dragging_divider: Option<Divider>,
     pub drag_start_pos: Option<(u16, u16)>,
     pub drag_start_ratio: f32,
@@ -158,8 +157,7 @@ impl Default for LayoutState {
             left_panel_ratio: 0.30,
             output_split_ratio: 0.50,
             workspace_ratio: 0.40,
-            sessions_ratio: 0.40,
-            tasks_ratio: 0.50,
+            sessions_ratio: 0.70,
             dragging_divider: None,
             drag_start_pos: None,
             drag_start_ratio: 0.0,
@@ -168,6 +166,9 @@ impl Default for LayoutState {
 }
 
 pub struct UIState {
+    pub link_hits: Vec<crate::links::Hit>,
+    pub pressed_link: Option<(u16, u16, String)>,
+    pub media_preview: Option<crate::media::Preview>,
     pub focus: FocusPanel,
     pub input_mode: InputMode,
     pub selected_workspace_idx: usize,
@@ -188,10 +189,11 @@ pub struct UIState {
 
     // Rendered pane rectangles (layout, identical for every workspace)
     pub output_pane_area: Option<(u16, u16, u16, u16)>,
+    /// Agent geometry underneath the Desk, whose mouse area spans the full panel.
+    pub terminal_output_area: Option<(u16, u16, u16, u16)>,
     pub pinned_pane_areas: [Option<(u16, u16, u16, u16)>; MAX_PINNED_TERMINALS],
     pub workspace_area: Option<(u16, u16, u16, u16)>,
     pub session_area: Option<(u16, u16, u16, u16)>,
-    pub tasks_area: Option<(u16, u16, u16, u16)>,
     pub utilities_area: Option<(u16, u16, u16, u16)>,
 
     // Pane layout
@@ -201,7 +203,7 @@ pub struct UIState {
     pub utility_section: UtilitySection,
     pub selected_utility: UtilityItem, // For Utilities section (tools)
     pub selected_theme: crate::theme::ThemeMode,
-    pub selected_sound: UtilityItem,   // For Sounds section
+    pub selected_sound: UtilityItem, // For Sounds section
     pub utility_content: Vec<String>,
     pub utility_scroll_offset: usize,
     pub pie_chart_data: Vec<(String, f64, ratatui::style::Color)>,
@@ -292,6 +294,9 @@ impl UIState {
     pub fn new() -> Self {
         Self {
             focus: FocusPanel::WorkspaceList,
+            link_hits: Vec::new(),
+            pressed_link: None,
+            media_preview: None,
             input_mode: InputMode::Normal,
             selected_workspace_idx: 0,
             input_buffer: String::new(),
@@ -299,10 +304,10 @@ impl UIState {
             pending_quit: false,
             file_browser: FileBrowserState::default(),
             output_pane_area: None,
+            terminal_output_area: None,
             pinned_pane_areas: [None; MAX_PINNED_TERMINALS],
             workspace_area: None,
             session_area: None,
-            tasks_area: None,
             utilities_area: None,
             layout: LayoutState::default(),
             utility_section: UtilitySection::default(),

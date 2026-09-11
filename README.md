@@ -85,6 +85,41 @@ workbench prompts                         # analyze submitted prompts
 workbench prompts --json                  # export recent prompts with metadata
 ```
 
+## Images, video, and links
+
+Agents can present files directly:
+
+```sh
+workbench preview ./screenshot.png
+workbench preview ./demo.mp4
+# From an ordinary shell, name the agent that owns the preview:
+workbench preview ./screenshot.png --agent <id-or-alias>
+```
+
+The focused agent's preview opens in a dismissible overlay. **Esc** closes it;
+**B** or **Enter** opens the original in a browser, where videos have playback,
+seeking, and download controls. **Ctrl+P → Preview latest media** reopens the
+focused agent's latest file. Background agents' previews stay available on the
+phone and through the URL printed by the command.
+
+Images use the terminal's graphics support (including Ghostty and Kitty), with a
+colored text fallback on other terminals. PNG, JPEG, GIF, and WebP are supported;
+animated images play in the browser, while the terminal shows a still frame.
+MP4/MOV and WebM play in browsers that support the file's codec. Installing
+`ffmpeg` enables video thumbnails; playback does not require it.
+
+The phone conversation includes the same previews. Desktop browser previews work
+over a private loopback server even without Tailscale. Only explicitly presented
+copies are served; originals are never changed. Previews expire when their agent
+is deleted or Workbench closes, and older previews are evicted at 16 per agent,
+64 overall, or 512 MiB of media. Images are limited to 25 MiB / 32 megapixels;
+videos to 256 MiB.
+
+Embedded terminal links are clickable, including links whose visible label hides
+the URL. Links survive scrolling and log-derived history. Ordinary HTTP(S) URLs
+are clickable too. Dragging still selects text; a click opens the link with the
+system browser or the local file's associated application.
+
 ## Agent-to-agent communication
 
 Agents running inside workbench can discover and talk to each other through

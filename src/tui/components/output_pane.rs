@@ -227,6 +227,10 @@ fn render_session_output(
     state.set_output_on_replay(view.on_replay);
     state.set_text_selection(view.selection);
 
+    state
+        .ui
+        .link_hits
+        .extend(crate::links::hits(&view.links, inner_area));
     // Show scroll indicator in title if scrolled
     let session = state.active_session();
     let display_name = session

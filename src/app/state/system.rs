@@ -302,12 +302,14 @@ struct SynchronizedOutputBuffer {
 /// visible screen snapshots.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TranscriptSpan {
+    pub link: Option<String>,
     pub text: String,
     pub style: Style,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TranscriptLine {
+    pub links: Vec<crate::links::Link>,
     text: String,
     spans: Vec<TranscriptSpan>,
 }
@@ -316,10 +318,12 @@ impl TranscriptLine {
     #[cfg(test)]
     fn raw(text: String) -> Self {
         Self {
+            links: crate::links::plain(&text, 0),
             spans: if text.is_empty() {
                 Vec::new()
             } else {
                 vec![TranscriptSpan {
+                    link: None,
                     text: text.clone(),
                     style: Style::default(),
                 }]
@@ -335,8 +339,30 @@ impl TranscriptLine {
     }
 
     fn from_spans(spans: Vec<TranscriptSpan>) -> Self {
-        let text = spans.iter().map(|span| span.text.as_str()).collect();
-        Self { text, spans }
+        let text: String = spans.iter().map(|span| span.text.as_str()).collect();
+        let mut links = Vec::new();
+        let mut col = 0;
+        for span in &spans {
+            let width = unicode_width::UnicodeWidthStr::width(span.text.as_str());
+            if let Some(target) = span.link.as_ref() {
+                links.push(crate::links::Link {
+                    row: 0,
+                    start: col,
+                    end: col + width,
+                    target: target.clone(),
+                });
+            }
+            col += width;
+        }
+        for link in crate::links::plain(&text, 0) {
+            if !links
+                .iter()
+                .any(|l| l.start < link.end && link.start < l.end)
+            {
+                links.push(link);
+            }
+        }
+        Self { text, spans, links }
     }
 
     pub fn text(&self) -> &str {
@@ -350,7 +376,6 @@ impl TranscriptLine {
     fn is_empty(&self) -> bool {
         self.text.is_empty()
     }
-
 }
 
 /// Append-only history reconstructed from a redraw-style agent (Claude, Codex).
@@ -529,7 +554,11 @@ impl TranscriptBuffer {
         }
 
         let mut visible = frame.clone();
-        while visible.last().map(TranscriptLine::is_empty).unwrap_or(false) {
+        while visible
+            .last()
+            .map(TranscriptLine::is_empty)
+            .unwrap_or(false)
+        {
             visible.pop();
         }
         if visible != self.visible {
@@ -568,9 +597,13 @@ fn snapshot_line_from_screen(screen: &vt100::Screen, row: u16, cols: u16) -> Tra
         let Some(cell) = screen.cell(row, col) else {
             continue;
         };
+        if cell.is_wide_continuation() {
+            continue;
+        }
         let cell_style = convert_vt100_cell_style(cell);
         if cell_style != current_style && !current_text.is_empty() {
             spans.push(TranscriptSpan {
+                link: None,
                 text: std::mem::take(&mut current_text),
                 style: current_style,
             });
@@ -587,13 +620,16 @@ fn snapshot_line_from_screen(screen: &vt100::Screen, row: u16, cols: u16) -> Tra
 
     if !current_text.is_empty() {
         spans.push(TranscriptSpan {
+            link: None,
             text: current_text,
             style: current_style,
         });
     }
 
     trim_trailing_span_spaces(&mut spans);
-    TranscriptLine::from_spans(spans)
+    let mut line = TranscriptLine::from_spans(spans);
+    line.links = crate::links::screen(screen, row as usize, 1);
+    line
 }
 
 fn trim_trailing_span_spaces(spans: &mut Vec<TranscriptSpan>) {
@@ -672,6 +708,7 @@ fn align_shift(prev: &[TranscriptLine], cur: &[TranscriptLine]) -> Option<isize>
 }
 
 pub struct SystemState {
+    pub cleanup_jobs: crate::app::cleanup::CleanupJobs,
     /// PTY handles (not serializable)
     pub pty_handles: HashMap<Uuid, PtyHandle>,
     /// Output buffers (virtual terminal state)
@@ -743,6 +780,7 @@ pub struct SystemState {
     pub use_alternate_screen: bool,
     /// State has unsaved changes; flushed to disk (debounced) by the main loop
     pub state_dirty: bool,
+    pub state_save: Option<tokio::task::JoinHandle<()>>,
     /// Last time a state flush was started (for debouncing)
     pub last_state_save: Instant,
     /// PTY sizes need syncing to pane sizes. Handled by the main loop AFTER
@@ -755,16 +793,22 @@ pub struct SystemState {
     /// Snapshot the tailnet page reads, republished each tick, and the
     /// server keeping it alive (see `crate::remote`).
     pub remote_state: crate::remote::Shared,
+    pub media_picker: ratatui_image::picker::Picker,
+    pub media_delete_ids: Vec<u32>,
     pub remote: Option<crate::remote::Remote>,
     /// Loopback-only repository map, started the first time the user opens it.
     pub canvas: Option<crate::canvas::CanvasServer>,
     /// Commands from the phone, applied on the tick by the event loop.
-    pub remote_commands: Option<tokio::sync::mpsc::UnboundedReceiver<crate::remote::RemoteCommand>>,
+    pub remote_commands:
+        Option<tokio::sync::mpsc::UnboundedReceiver<crate::remote::commands::Request>>,
+    pub remote_receipts: crate::remote::commands::Receipts,
+    pub remote_prompts: HashMap<Uuid, crate::remote::PromptTicket>,
     /// The control socket, and the commands arriving on it. A separate channel
     /// from the phone's on purpose: the phone needs a tailnet and may never
     /// start, and a script on this machine should not depend on that.
     pub control: Option<crate::control::ControlServer>,
-    pub control_commands: Option<tokio::sync::mpsc::UnboundedReceiver<crate::remote::RemoteCommand>>,
+    pub control_commands:
+        Option<tokio::sync::mpsc::UnboundedReceiver<crate::remote::RemoteCommand>>,
     pub control_tried: bool,
     /// When the last health line was written (see `handler::health_tick`).
     pub last_health_log: Option<Instant>,
@@ -805,7 +849,7 @@ pub struct SystemState {
     /// That conversation as last read off disk. Agent journals reach tens of
     /// megabytes; re-parsing one every tick to find nothing new is the kind of
     /// waste that shows up as a warm laptop.
-    pub remote_thread: Option<ThreadCache>,
+    pub remote_threads: HashMap<Uuid, ThreadCache>,
 }
 
 /// One session's conversation, and how far into its journal we have read.
@@ -830,6 +874,7 @@ pub struct ThreadCache {
 impl SystemState {
     pub fn new() -> Self {
         Self {
+            cleanup_jobs: Default::default(),
             pty_handles: HashMap::new(),
             output_buffers: HashMap::new(),
             terminal_size: (80, 24),
@@ -862,10 +907,13 @@ impl SystemState {
             user_config: crate::config::user_config::load_user_config(),
             use_alternate_screen: true,
             state_dirty: false,
+            state_save: None,
             last_state_save: Instant::now(),
             pty_resize_pending: false,
             comms: crate::app::comms_tick::CommsState::new(),
             remote_state: Default::default(),
+            media_picker: ratatui_image::picker::Picker::halfblocks(),
+            media_delete_ids: Vec::new(),
             remote: None,
             canvas: None,
             remote_commands: None,
@@ -876,7 +924,9 @@ impl SystemState {
             control_events: Default::default(),
             remote_tried: false,
             remote_focus: None,
-            remote_thread: None,
+            remote_threads: HashMap::new(),
+            remote_receipts: Default::default(),
+            remote_prompts: HashMap::new(),
             push: Default::default(),
             dev_servers: Vec::new(),
             forwarded: Default::default(),
@@ -902,7 +952,11 @@ impl SystemState {
         } else {
             PARSER_BUFFER_ROWS
         };
-        let parser = vt100::Parser::new(parser_rows, cols, self.user_config.live_scrollback_rows);
+        let parser = vt100::Parser::new(
+            parser_rows,
+            cols.max(1),
+            self.user_config.live_scrollback_rows,
+        );
         self.output_buffers.insert(session_id, parser);
         // Called once per spawn, so this is where a restart starts over: the
         // agent may be writing to a different conversation now (codex forks a
@@ -923,6 +977,8 @@ impl SystemState {
 
     /// Remove parser + raw output buffer + replay cache for a session
     pub fn remove_session_buffers(&mut self, session_id: &Uuid) {
+        self.scrollback_state.remove(session_id);
+        self.manager_wakes.remove(session_id);
         self.agent_tasks.remove(session_id);
         self.prompt_capture.reset(*session_id);
         self.agent_status.remove(session_id);
@@ -1140,7 +1196,9 @@ mod tests {
         // scrollback).
         let mut transcript = TranscriptBuffer::new(50);
         let frame = |spinner: &str| {
-            snapshot(&["line a", "line b", "line c", "", spinner, "", "> ", "footer"])
+            snapshot(&[
+                "line a", "line b", "line c", "", spinner, "", "> ", "footer",
+            ])
         };
         transcript.ingest_aligned_frame(frame("thinking 1s"));
         let len1 = transcript.len();
@@ -1161,10 +1219,24 @@ mod tests {
         // that left the top exactly once.
         let mut transcript = TranscriptBuffer::new(50);
         transcript.ingest_aligned_frame(snapshot(&[
-            "1", "2", "3", "4", "5", "", "thinking 1s", "> ",
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "",
+            "thinking 1s",
+            "> ",
         ]));
         transcript.ingest_aligned_frame(snapshot(&[
-            "2", "3", "4", "5", "6", "", "thinking 2s", "> ",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "",
+            "thinking 2s",
+            "> ",
         ]));
 
         assert_eq!(transcript.line(0), Some("1"));
@@ -1184,7 +1256,11 @@ mod tests {
         transcript.ingest_aligned_frame(snapshot(&["1", "2", "3", "4", "5", "6", "", "> "]));
         transcript.ingest_aligned_frame(snapshot(&["20", "21", "22", "23", "24", "25", "", "> "]));
 
-        assert_eq!(transcript.lines.len(), 0, "an unprovable jump commits nothing");
+        assert_eq!(
+            transcript.lines.len(),
+            0,
+            "an unprovable jump commits nothing"
+        );
         // The replacement screen is still shown live.
         assert!((0..transcript.len()).any(|i| transcript.line(i) == Some("20")));
     }
@@ -1282,7 +1358,11 @@ mod tests {
         let mut transcript = TranscriptBuffer::new(50);
         transcript.ingest_aligned_frame(snapshot(&["a", "b", "c", "> "]));
         transcript.ingest_aligned_frame(snapshot(&["b", "c", "d", "> "]));
-        assert_eq!(transcript.lines.len(), 1, "differ proved one row scrolled off");
+        assert_eq!(
+            transcript.lines.len(),
+            1,
+            "differ proved one row scrolled off"
+        );
 
         transcript.set_log_history(Some(vec![
             TranscriptLine::raw("logged 1".into()),
@@ -1356,8 +1436,7 @@ mod tests {
                 .collect::<Vec<_>>()
         );
 
-        let mut counts: std::collections::HashMap<&str, usize> =
-            std::collections::HashMap::new();
+        let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
         for line in committed
             .iter()
             .filter(|l| l.starts_with("STREAM") || l.starts_with("STATIC"))
@@ -1365,7 +1444,10 @@ mod tests {
             *counts.entry(line).or_default() += 1;
         }
         let dupes: Vec<_> = counts.iter().filter(|(_, &n)| n > 1).collect();
-        assert!(dupes.is_empty(), "content committed more than once: {dupes:?}");
+        assert!(
+            dupes.is_empty(),
+            "content committed more than once: {dupes:?}"
+        );
     }
 
     /// Content pushed *down* (an input box growing as the user types a
@@ -1433,8 +1515,21 @@ mod tests {
         // is deliberately no fill-ratio judgement call any more.
         let mut transcript = TranscriptBuffer::new(50);
         transcript.ingest_aligned_frame(snapshot(&[
-            "para one", "", "para two", "", "para three", "", "para four", "", "para five", "",
-            "", "", "", "", "> ",
+            "para one",
+            "",
+            "para two",
+            "",
+            "para three",
+            "",
+            "para four",
+            "",
+            "para five",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "> ",
         ]));
         transcript.ingest_aligned_frame(snapshot(&[
             "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13",
@@ -1448,7 +1543,21 @@ mod tests {
     fn frame_align_still_drops_spinner_phase_on_burst_jump() {
         let mut transcript = TranscriptBuffer::new(50);
         transcript.ingest_aligned_frame(snapshot(&[
-            "· thinking…", "", "", "", "", "", "", "", "", "", "", "", "", "", "> ",
+            "· thinking…",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "> ",
         ]));
         transcript.ingest_aligned_frame(snapshot(&[
             "y1", "y2", "y3", "y4", "y5", "y6", "y7", "y8", "y9", "y10", "y11", "y12", "y13",
@@ -1468,12 +1577,8 @@ mod tests {
         // Codex-style frames: content lines at the top, then a pinned bottom
         // ("", input box, footer) that never moves. Between frames the content
         // shifts up by one and a new line appears at the bottom of the content.
-        let frame_a = snapshot(&[
-            "1", "2", "3", "4", "5", "6", "7", "", "> prompt", "footer",
-        ]);
-        let frame_b = snapshot(&[
-            "2", "3", "4", "5", "6", "7", "8", "", "> prompt", "footer",
-        ]);
+        let frame_a = snapshot(&["1", "2", "3", "4", "5", "6", "7", "", "> prompt", "footer"]);
+        let frame_b = snapshot(&["2", "3", "4", "5", "6", "7", "8", "", "> prompt", "footer"]);
 
         transcript.ingest_aligned_frame(frame_a);
         transcript.ingest_aligned_frame(frame_b);
@@ -1516,5 +1621,29 @@ mod tests {
         assert_eq!(frame[0].text(), "red plain");
         assert_ne!(frame[0].spans()[0].style, Style::default());
         assert_eq!(frame[0].spans()[0].text, "red");
+    }
+
+    #[test]
+    fn transcript_preserves_wide_glyph_spacing_and_styles() {
+        let mut parser = vt100::Parser::new(2, 12, 0);
+        parser.process("\x1b[31m界\x1b[0mAB  🙂XY".as_bytes());
+        let frame = TranscriptBuffer::frame_from_screen(parser.screen());
+        assert_eq!(frame[0].text(), "界AB  🙂XY");
+        assert_eq!(frame[0].spans()[0].text, "界");
+        assert_eq!(frame[0].spans()[1].text, "AB  🙂XY");
+    }
+}
+
+#[cfg(test)]
+mod hyperlink_snapshot_tests {
+    use super::*;
+    #[test]
+    fn transcript_snapshots_retain_link_destinations_and_cell_columns() {
+        let mut p = vt100::Parser::new(2, 40, 0);
+        p.process("界 \x1b]8;;https://example.com\x07reference\x1b]8;;\x07".as_bytes());
+        let line = snapshot_line_from_screen(p.screen(), 0, 40);
+        assert_eq!(line.links[0].start, 3);
+        assert_eq!(line.links[0].end, 12);
+        assert_eq!(line.links[0].target, "https://example.com/");
     }
 }

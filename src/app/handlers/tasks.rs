@@ -4,11 +4,9 @@
 //! can simply be edited. Dispatch is not done here — `app::todo_dispatch`
 //! decides when an item may go out.
 
-use crate::app::utilities::load_utility_content;
 use crate::app::objectives_view;
-use crate::app::{
-    tasks_view, Action, AppState, InputMode, TaskEdit, UtilityItem, UtilitySection,
-};
+use crate::app::utilities::load_utility_content;
+use crate::app::{tasks_view, Action, AppState, InputMode, TaskEdit, UtilityItem, UtilitySection};
 use anyhow::Result;
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -21,7 +19,7 @@ fn global_config(state: &AppState) -> crate::persistence::GlobalConfig {
         left_panel_ratio: state.ui.layout.left_panel_ratio,
         workspace_ratio: state.ui.layout.workspace_ratio,
         sessions_ratio: state.ui.layout.sessions_ratio,
-        tasks_ratio: state.ui.layout.tasks_ratio,
+        legacy_tasks_ratio: None,
         output_split_ratio: state.ui.layout.output_split_ratio,
         theme_mode: state.ui.theme_mode,
     }
@@ -171,6 +169,15 @@ pub fn handle_task_action(
             state.ui.detail = None;
         }
         Action::DeskDecideDetail(yes) => {
+            if let Some(crate::app::DetailTarget::Objective {
+                workspace_id,
+                objective_id,
+            }) = state.ui.detail
+            {
+                decide_check(state, workspace_id, objective_id, yes);
+                state.ui.detail = None;
+                return Ok(());
+            }
             let Some(crate::app::DetailTarget::Proposal {
                 workspace_id,
                 proposal_id,
@@ -267,7 +274,9 @@ pub fn handle_task_action(
                         ws.objectives.push(objective);
                         let n = ws.objectives.len();
                         focus_objective_row(state, id);
-                        state.ui.set_task_status(format!("Objective added — {n} total"));
+                        state
+                            .ui
+                            .set_task_status(format!("Objective added — {n} total"));
                     }
                 }
                 super::save_state(state, "failed to save objectives");
@@ -316,7 +325,9 @@ pub fn handle_task_action(
                 return Ok(());
             }
             state.ui.input_buffer = if rewrite {
-                selected_objective(state).map(|o| o.text.clone()).unwrap_or_default()
+                selected_objective(state)
+                    .map(|o| o.text.clone())
+                    .unwrap_or_default()
             } else {
                 String::new()
             };
@@ -364,7 +375,10 @@ pub fn handle_task_action(
             // `a` means "yes, this" for whichever row the cursor is on: a
             // proposal becomes work, a proposed check becomes the thing work
             // will be held to.
-            if objectives_view::selected(state).and_then(|r| r.objective_id()).is_some() {
+            if objectives_view::selected(state)
+                .and_then(|r| r.objective_id())
+                .is_some()
+            {
                 approve_selected_check(state);
             } else {
                 approve_selected_proposal(state, action_tx);
@@ -397,7 +411,9 @@ pub fn handle_task_action(
                 return Ok(());
             };
             let (session_id, Some(todo)) = (row.session_id(), row.todo_id()) else {
-                state.ui.set_task_status("That row is the agent's, not yours");
+                state
+                    .ui
+                    .set_task_status("That row is the agent's, not yours");
                 return Ok(());
             };
             if let Some(session) = state.get_session_mut(session_id) {
@@ -437,9 +453,11 @@ pub fn handle_task_action(
                 }
                 None => return Ok(()),
             };
-            state
-                .ui
-                .set_task_status(if paused { "Queue paused" } else { "Queue running" });
+            state.ui.set_task_status(if paused {
+                "Queue paused"
+            } else {
+                "Queue running"
+            });
             super::save_state(state, "failed to save the todo queue");
         }
         Action::ClearCompletedTodos => {
@@ -686,7 +704,11 @@ pub(crate) fn queue_review_turn(
 
     let repo_moved = match (proposal.after.as_ref(), proposal.before.as_ref()) {
         (Some(after), Some(before)) => {
-            if after.changed_from(before) { "the repository moved" } else { "NOTHING CHANGED in the repository" }
+            if after.changed_from(before) {
+                "the repository moved"
+            } else {
+                "NOTHING CHANGED in the repository"
+            }
         }
         _ => "no before/after comparison was possible",
     };
@@ -766,7 +788,9 @@ pub(crate) fn decide_check(
             if yes {
                 check.proposed = false;
                 let command = check.command.clone();
-                state.ui.set_task_status(format!("Check approved: {command}"));
+                state
+                    .ui
+                    .set_task_status(format!("Check approved: {command}"));
             } else {
                 objective.done_when = None;
                 state.ui.set_task_status("Check dropped");
@@ -783,7 +807,11 @@ pub(crate) fn decide_check(
 /// same reason: the row can be acted on twice. The desk and the phone show it
 /// at once, a tap can be in flight while a key lands, and a phone that
 /// retries a post has no idea the first one arrived.
-pub(crate) fn is_parked_on_user(state: &AppState, workspace_id: uuid::Uuid, proposal_id: uuid::Uuid) -> bool {
+pub(crate) fn is_parked_on_user(
+    state: &AppState,
+    workspace_id: uuid::Uuid,
+    proposal_id: uuid::Uuid,
+) -> bool {
     state
         .data
         .workspaces
@@ -917,21 +945,24 @@ pub(crate) fn decide_needs_user(
 
 /// Close the desk and put focus back where it was when it opened.
 fn close_desk(state: &mut AppState) {
+    state.ui.detail = None;
     state.ui.desk_open = false;
+    // Pinned terminals may have been hidden through a window resize.
+    crate::app::pty_ops::request_pty_resize(state);
     if let Some(focus) = state.ui.desk_return_focus.take() {
         state.ui.focus = focus;
     }
 }
 
-/// Jump to whatever a desk row is about: the agent's terminal, or the
-/// objectives pane of the project it lives in, cursor on the item. The desk
-/// closes on the way — you asked to go somewhere, and it was in the way.
+/// Open the agent, or inspect a proposal/check without leaving the Desk.
 fn open_desk_row(state: &mut AppState, row: crate::app::desk_view::DeskRow) {
-    use crate::app::desk_view::DeskRow;
-    state.ui.desk_open = false;
-    state.ui.desk_return_focus = None;
+    use crate::app::{desk_view::DeskRow, DetailTarget, FocusPanel};
+    state.ui.focus = FocusPanel::OutputPane;
     match row {
         DeskRow::BlockedAgent { session_id, .. } => {
+            state.ui.desk_open = false;
+            state.ui.desk_return_focus = None;
+            crate::app::pty_ops::request_pty_resize(state);
             if let Some(idx) = state
                 .data
                 .workspaces
@@ -941,37 +972,33 @@ fn open_desk_row(state: &mut AppState, row: crate::app::desk_view::DeskRow) {
                 state.ui.selected_workspace_idx = idx;
             }
             state.set_active_session_id(Some(session_id));
-            state.ui.focus = crate::app::FocusPanel::OutputPane;
         }
-        DeskRow::NeedsUser { workspace_id, proposal_id, .. }
-        | DeskRow::PendingProposal { workspace_id, proposal_id, .. } => {
-            focus_objectives(state, workspace_id);
-            let rows = objectives_view::rows(state);
-            if let Some(at) = rows.iter().position(|r| r.proposal_id() == Some(proposal_id)) {
-                state.ui.selected_objective = at;
-            }
+        DeskRow::NeedsUser {
+            workspace_id,
+            proposal_id,
+            ..
         }
-        DeskRow::ProposedCheck { workspace_id, objective_id, .. } => {
-            focus_objectives(state, workspace_id);
-            let rows = objectives_view::rows(state);
-            if let Some(at) = rows.iter().position(|r| r.objective_id() == Some(objective_id)) {
-                state.ui.selected_objective = at;
-            }
+        | DeskRow::PendingProposal {
+            workspace_id,
+            proposal_id,
+            ..
+        } => {
+            state.ui.detail = Some(DetailTarget::Proposal {
+                workspace_id,
+                proposal_id,
+            });
+        }
+        DeskRow::ProposedCheck {
+            workspace_id,
+            objective_id,
+            ..
+        } => {
+            state.ui.detail = Some(DetailTarget::Objective {
+                workspace_id,
+                objective_id,
+            });
         }
     }
-}
-
-fn focus_objectives(state: &mut AppState, workspace_id: uuid::Uuid) {
-    if let Some(idx) = state
-        .data
-        .workspaces
-        .iter()
-        .position(|ws| ws.id == workspace_id)
-    {
-        state.ui.selected_workspace_idx = idx;
-    }
-    state.ui.focus = crate::app::FocusPanel::TasksPane;
-    state.ui.objective_scroll = 0;
 }
 
 fn approve_selected_check(state: &mut AppState) {
@@ -993,7 +1020,9 @@ fn approve_selected_check(state: &mut AppState) {
     }
     match approved {
         Some(command) => {
-            state.ui.set_task_status(format!("Check approved: {command}"));
+            state
+                .ui
+                .set_task_status(format!("Check approved: {command}"));
             super::save_state(state, "failed to approve a check");
         }
         None => state
@@ -1314,15 +1343,6 @@ mod tests {
         let after = state.data.workspaces[0].proposals[0].clone();
         assert_eq!(after.review, Some(crate::models::ReviewPhase::Closed));
 
-        // And every surface says so. The objectives pane used to read "queued"
-        // here, because a closed job is still approved and nothing above the
-        // state arm claimed it.
-        assert_eq!(
-            crate::tui::components::tasks_pane::proposal_verb(&after),
-            "closed ",
-            "a job the user stopped must not advertise itself as running"
-        );
-
         // What happened is kept: the work did happen, and the ledger goes on
         // counting the turns it cost.
         assert_eq!(after.state, crate::models::ProposalState::Approved);
@@ -1417,7 +1437,11 @@ mod tests {
             .collect();
         assert_eq!(
             texts,
-            vec!["fix the redirect", "write the migration", "update the README"]
+            vec![
+                "fix the redirect",
+                "write the migration",
+                "update the README"
+            ]
         );
         assert_eq!(queue(&state, id).pending_count(), 3);
     }
@@ -1457,8 +1481,16 @@ mod tests {
         add(&mut state, "done one");
         add(&mut state, "still queued");
         let first = queue(&state, id).items[0].id;
-        state.get_session_mut(id).unwrap().todo_queue.mark_running(first);
-        state.get_session_mut(id).unwrap().todo_queue.finish_running();
+        state
+            .get_session_mut(id)
+            .unwrap()
+            .todo_queue
+            .mark_running(first);
+        state
+            .get_session_mut(id)
+            .unwrap()
+            .todo_queue
+            .finish_running();
 
         act(&mut state, Action::ClearCompletedTodos);
 
@@ -1521,6 +1553,9 @@ mod tests {
             1,
             "a row that belongs to the agent must not delete your queued item"
         );
-        assert_eq!(state.ui.task_status(), Some("That row is the agent's, not yours"));
+        assert_eq!(
+            state.ui.task_status(),
+            Some("That row is the agent's, not yours")
+        );
     }
 }

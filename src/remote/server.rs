@@ -5,10 +5,14 @@
 //! the token is the second one, for the case of another device on your own
 //! tailnet. Nothing here is ever exposed with `tailscale funnel`.
 
+use super::commands::Request as CommandRequest;
+use super::http::Request;
 use anyhow::{anyhow, Result};
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, SocketAddr, TcpListener};
 use std::process::Command;
-use tiny_http::{Header, Response, Server};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tiny_http::{Header, Response};
 use tokio::sync::mpsc;
 
 use super::{page, Shared};
@@ -39,35 +43,63 @@ pub struct Remote {
 /// applies it, so a request cannot race the UI.
 #[derive(Debug, Clone)]
 pub enum RemoteCommand {
+    ShowMedia {
+        id: String,
+    },
     /// Queue work for an agent.
-    Todo { agent: String, text: String },
+    Todo {
+        agent: String,
+        text: String,
+    },
     /// Type a reply and submit it.
-    Reply { agent: String, text: String },
+    Reply {
+        agent: String,
+        text: String,
+    },
     /// Pick one of the choices the agent is offering. `key` is the option's
     /// own key as it appears on screen ("1", "2", …) or "esc" to back out.
-    Answer { agent: String, key: String },
+    Answer {
+        agent: String,
+        key: String,
+        prompt: String,
+    },
     /// The conversation the phone currently has open. Only this agent's full
     /// history is published, so the snapshot stays small.
-    Focus { agent: String },
+    Focus {
+        agent: String,
+    },
     /// Start a new agent in a project. `agent` carries the project id and
     /// `text` the provider, since every write endpoint speaks that shape.
-    NewAgent { project: String, provider: String },
+    NewAgent {
+        project: String,
+        provider: String,
+    },
     /// A device asking to be told when an agent needs you.
-    Subscribe { endpoint: String },
+    Subscribe {
+        endpoint: String,
+    },
     /// The user deciding a proposal from the phone: the same act as `a`/`x`
     /// at the desk. `proposal` is the full id; approving queues the work.
-    Decide { proposal: String, approve: bool },
+    Decide {
+        proposal: String,
+        approve: bool,
+    },
     /// The user deciding a manager's proposed done-when check: the same act
     /// as `a`/`x` on that row of the desk. Approving makes the command real,
     /// declining drops it. `objective` is the full objective id, because a
     /// check has no id of its own — it belongs to the objective it proves.
-    DecideCheck { objective: String, approve: bool },
+    DecideCheck {
+        objective: String,
+        approve: bool,
+    },
     /// Re-arming a review the manager punted to the user. The user's approval
     /// buys what the manager's could not, so the work goes back to the agent
     /// with a fresh set of rounds and the findings attached. Declining one
     /// instead is an ordinary `Decide { approve: false }` — there is no
     /// second way to say no.
-    RearmReview { proposal: String },
+    RearmReview {
+        proposal: String,
+    },
     /// A manager answering its review turn. The one write a manager is
     /// allowed that reaches an agent — and only because approving the
     /// original job authorized exactly this loop.
@@ -103,7 +135,11 @@ pub enum RemoteCommand {
 /// from your own devices and from nothing else, with no firewall rule to get
 /// wrong.
 pub fn tailscale_addr() -> Option<IpAddr> {
-    let output = Command::new("tailscale").arg("ip").arg("-4").output().ok()?;
+    let output = Command::new("tailscale")
+        .arg("ip")
+        .arg("-4")
+        .output()
+        .ok()?;
     String::from_utf8_lossy(&output.stdout)
         .lines()
         .next()?
@@ -135,7 +171,7 @@ impl Remote {
         token: String,
         push_key: String,
         shared: Shared,
-        commands: mpsc::UnboundedSender<RemoteCommand>,
+        commands: mpsc::UnboundedSender<CommandRequest>,
         _actions: mpsc::UnboundedSender<Action>,
     ) -> Result<Remote> {
         let ip = tailscale_addr()
@@ -164,20 +200,53 @@ fn serve_on(
     token: &str,
     push_key: &str,
     shared: &Shared,
-    commands: &mpsc::UnboundedSender<RemoteCommand>,
+    commands: &mpsc::UnboundedSender<CommandRequest>,
 ) -> Result<()> {
-    let server = Server::http(addr).map_err(|err| anyhow!("{err}"))?;
-    let (token, shared, commands) = (token.to_string(), shared.clone(), commands.clone());
-    let push_key = push_key.to_string();
-    std::thread::spawn(move || {
-        for mut request in server.incoming_requests() {
-            let response = handle(&mut request, &token, &push_key, &shared, &commands);
-            if let Err(err) = request.respond(response) {
-                crate::logger::warn(format!("remote response failed: {err}"));
-            }
-        }
-    });
+    start_workers(TcpListener::bind(addr)?, token, push_key, shared, commands);
     Ok(())
+}
+
+fn start_workers(
+    listener: TcpListener,
+    token: &str,
+    push_key: &str,
+    shared: &Shared,
+    commands: &mpsc::UnboundedSender<CommandRequest>,
+) {
+    let listener = Arc::new(listener);
+    for _ in 0..8 {
+        let listener = listener.clone();
+        let (token, shared, commands) = (token.to_string(), shared.clone(), commands.clone());
+        let push_key = push_key.to_string();
+        std::thread::spawn(move || {
+            for connection in listener.incoming() {
+                let Ok(mut stream) = connection else {
+                    continue;
+                };
+                let mut head = false;
+                let response = match Request::read(&mut stream) {
+                    Ok(mut request) => {
+                        head = request.method().as_str() == "HEAD";
+                        if request.url().starts_with("/media/") {
+                            let library = shared
+                                .lock()
+                                .map(|s| s.media_library.clone())
+                                .unwrap_or_default();
+                            library.response(request.url(), &request, &token)
+                        } else {
+                            handle(&mut request, &token, &push_key, &shared, &commands).boxed()
+                        }
+                    }
+                    Err(err) => status(400, &format!("Could not read request: {err}")).boxed(),
+                }
+                .with_header(header("Connection", "close"));
+                let _ =
+                    response.raw_print(&mut stream, tiny_http::HTTPVersion(1, 1), &[], head, None);
+                let _ = std::io::Write::flush(&mut stream);
+                let _ = stream.shutdown(std::net::Shutdown::Both);
+            }
+        });
+    }
 }
 
 /// IBM Plex Mono, compiled in rather than fetched from Google.
@@ -205,7 +274,10 @@ fn font_for(path: &str) -> Option<&'static [u8]> {
 fn bytes(body: &'static [u8], content_type: &str) -> Response<std::io::Cursor<Vec<u8>>> {
     Response::from_data(body)
         .with_header(header("Content-Type", content_type))
-        .with_header(header("Cache-Control", "public, max-age=31536000, immutable"))
+        .with_header(header(
+            "Cache-Control",
+            "public, max-age=31536000, immutable",
+        ))
 }
 
 fn json(body: String) -> Response<std::io::Cursor<Vec<u8>>> {
@@ -227,21 +299,15 @@ fn status(code: u16, message: &str) -> Response<std::io::Cursor<Vec<u8>>> {
 }
 
 fn handle(
-    request: &mut tiny_http::Request,
+    request: &mut Request,
     token: &str,
     push_key: &str,
     shared: &Shared,
-    commands: &mpsc::UnboundedSender<RemoteCommand>,
+    commands: &mpsc::UnboundedSender<CommandRequest>,
 ) -> Response<std::io::Cursor<Vec<u8>>> {
     let url = request.url().to_string();
     let (path, query) = url.split_once('?').unwrap_or((url.as_str(), ""));
 
-    // The manifest is fetched by the browser on its own account — iOS reads it
-    // when you add the page to the home screen, without the page's token to
-    // hand. It names the app and nothing else.
-    if path == "/manifest.webmanifest" {
-        return with_type(page::MANIFEST, "application/manifest+json");
-    }
     // Fonts likewise: a `src:` in a stylesheet is fetched without the query
     // string that carries the token, and a typeface is not a secret.
     if let Some(font) = font_for(path) {
@@ -251,8 +317,33 @@ fn handle(
         return status(401, "unauthorized");
     }
 
+    if request.method().as_str() == "POST" && path != "/api/upload" {
+        let Some(instance) = request
+            .headers()
+            .iter()
+            .find(|h| h.field.equiv("X-Workbench-Instance"))
+        else {
+            return status(409, "Reload the page before sending this request.");
+        };
+        if shared
+            .lock()
+            .ok()
+            .is_none_or(|snapshot| snapshot.instance != instance.value.as_str())
+        {
+            return status(
+                409,
+                "Workbench restarted. Check the conversation before sending this again.",
+            );
+        }
+    }
     match (request.method().as_str(), path) {
         ("GET", "/") => html(page::HTML),
+        ("GET", "/manifest.webmanifest") => {
+            let mut manifest: serde_json::Value =
+                serde_json::from_str(page::MANIFEST).expect("valid embedded manifest");
+            manifest["start_url"] = serde_json::json!(format!("./?t={token}"));
+            with_type(&manifest.to_string(), "application/manifest+json")
+        }
         // Registered as `/sw.js?t=…` so the worker inherits the token and can
         // read state when a notification arrives.
         ("GET", "/sw.js") => with_type(page::SERVICE_WORKER, "text/javascript; charset=utf-8"),
@@ -260,7 +351,21 @@ fn handle(
         ("POST", "/api/subscribe") => command_from(request, commands, |_, endpoint| {
             (!endpoint.is_empty()).then_some(RemoteCommand::Subscribe { endpoint })
         }),
-        ("POST", "/api/upload") => upload(request, &query_params(query)),
+        ("POST", "/api/upload") => {
+            let params = query_params(query);
+            let agent = params
+                .iter()
+                .find(|(key, _)| key == "agent")
+                .map(|(_, value)| value.as_str());
+            if !shared
+                .lock()
+                .ok()
+                .is_some_and(|state| state.agents.iter().any(|a| Some(a.id.as_str()) == agent))
+            {
+                return status(404, "This agent no longer exists.");
+            }
+            upload(request, &params)
+        }
         ("GET", "/api/state") => state_body(request, &query_params(query), shared),
         ("POST", "/api/todo") => command_from(request, commands, |agent, text| {
             (!text.is_empty()).then_some(RemoteCommand::Todo { agent, text })
@@ -268,12 +373,24 @@ fn handle(
         ("POST", "/api/reply") => command_from(request, commands, |agent, text| {
             (!text.is_empty()).then_some(RemoteCommand::Reply { agent, text })
         }),
-        ("POST", "/api/answer") => command_from(request, commands, |agent, key| {
-            (!key.is_empty()).then_some(RemoteCommand::Answer { agent, key })
-        }),
-        ("POST", "/api/focus") => {
-            command_from(request, commands, |agent, _| Some(RemoteCommand::Focus { agent }))
+        ("POST", "/api/answer") => {
+            let prompt = request
+                .headers()
+                .iter()
+                .find(|h| h.field.equiv("X-Prompt-Id"))
+                .map(|h| h.value.as_str().to_string())
+                .unwrap_or_default();
+            command_from(request, commands, |agent, key| {
+                (!key.is_empty() && !prompt.is_empty()).then_some(RemoteCommand::Answer {
+                    agent,
+                    key,
+                    prompt,
+                })
+            })
         }
+        ("POST", "/api/focus") => command_from(request, commands, |agent, _| {
+            Some(RemoteCommand::Focus { agent })
+        }),
         ("POST", "/api/proposal") => command_from(request, commands, |proposal, decision| {
             Some(RemoteCommand::Decide {
                 proposal,
@@ -304,7 +421,7 @@ fn handle(
 /// both are worth having: `?have=` drops the messages it already holds, and an
 /// ETag turns a tick where nothing at all moved into a 304 with no body.
 fn state_body(
-    request: &tiny_http::Request,
+    request: &Request,
     params: &[(String, String)],
     shared: &Shared,
 ) -> Response<std::io::Cursor<Vec<u8>>> {
@@ -317,18 +434,44 @@ fn state_body(
         .find(|(key, _)| key == "epoch")
         .map(|(_, value)| value.as_str());
 
-    let body = {
-        let Ok(snapshot) = shared.lock() else {
+    let mut snapshot = {
+        let Ok(mut snapshot) = shared.lock() else {
             return status(500, "state unavailable");
         };
-        match have {
-            Some(have) => serde_json::to_string(&super::since(&snapshot, have, epoch)),
-            None => serde_json::to_string(&*snapshot),
+        let wanted = params
+            .iter()
+            .find(|(key, _)| key == "agent")
+            .map(|(_, value)| value.clone())
+            .or_else(|| snapshot.open.clone());
+        if let Some(id) = &wanted {
+            if snapshot.agents.iter().any(|agent| &agent.id == id) {
+                snapshot.watching.insert(id.clone(), Instant::now());
+            }
         }
-        .unwrap_or_default()
+        let mut selected = snapshot.clone();
+        selected.open = wanted;
+        for agent in &mut selected.agents {
+            if Some(&agent.id) != selected.open.as_ref() {
+                agent.messages.clear();
+                agent.tail.clear();
+                agent.msg_total = 0;
+                agent.msg_epoch.clear();
+            }
+        }
+        selected
     };
-
-    let tag = etag(&body);
+    snapshot = match have {
+        Some(have) => super::since(&snapshot, have, epoch),
+        None => snapshot,
+    };
+    let body = serde_json::to_string(&snapshot).unwrap_or_default();
+    // Heartbeat and elapsed seconds are metadata, not new content. An agent
+    // entering/leaving the recent-finish window still changes the ETag.
+    snapshot.at = 0;
+    for agent in &mut snapshot.agents {
+        agent.finished_ago = agent.finished_ago.map(|_| 0);
+    }
+    let tag = etag(&serde_json::to_string(&snapshot).unwrap_or_default());
     let known = request
         .headers()
         .iter()
@@ -355,7 +498,7 @@ fn header(field: &str, value: &str) -> Header {
 
 /// The token may travel in the bookmark's query string or a header. Both are
 /// fine over the tailnet; the query form is what makes a home-screen icon work.
-fn authorized(request: &tiny_http::Request, params: &[(String, String)], token: &str) -> bool {
+fn authorized(request: &Request, params: &[(String, String)], token: &str) -> bool {
     if params
         .iter()
         .any(|(key, value)| key == "t" && value == token)
@@ -410,7 +553,7 @@ const MAX_UPLOAD: usize = 25 * 1024 * 1024;
 /// multipart: the name and owner ride in the query, and a photo is large
 /// enough that a third more of it is worth avoiding.
 fn upload(
-    request: &mut tiny_http::Request,
+    request: &mut Request,
     params: &[(String, String)],
 ) -> Response<std::io::Cursor<Vec<u8>>> {
     let value = |key: &str| {
@@ -428,11 +571,10 @@ fn upload(
         return status(413, "that file is too large to send this way");
     }
 
-    let mut bytes = Vec::new();
-    let mut capped = std::io::Read::take(request.as_reader(), MAX_UPLOAD as u64);
-    if std::io::Read::read_to_end(&mut capped, &mut bytes).is_err() {
-        return status(400, "could not read the file");
-    }
+    let bytes = match read_limited(request.as_reader(), MAX_UPLOAD) {
+        Ok(bytes) => bytes,
+        Err((code, reason)) => return status(code, reason),
+    };
     if bytes.is_empty() {
         return status(400, "empty file");
     }
@@ -472,10 +614,16 @@ fn store_upload(agent: &str, name: &str, bytes: &[u8]) -> Result<std::path::Path
         .filter(|e| !e.is_empty())
         .unwrap_or_else(|| "bin".to_string());
 
-    // Stamped, so two photos taken a second apart do not become one file.
-    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let stamp = uuid::Uuid::new_v4();
     let path = dir.join(format!("{stamp}-{stem}.{extension}"));
-    std::fs::write(&path, bytes)?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)?;
+    if let Err(err) = std::io::Write::write_all(&mut file, bytes) {
+        let _ = std::fs::remove_file(&path);
+        return Err(err.into());
+    }
     Ok(path)
 }
 
@@ -493,25 +641,91 @@ fn safe_part(raw: &str) -> String {
 }
 
 fn command_from(
-    request: &mut tiny_http::Request,
-    commands: &mpsc::UnboundedSender<RemoteCommand>,
-    build: impl Fn(String, String) -> Option<RemoteCommand>,
+    request: &mut Request,
+    commands: &mpsc::UnboundedSender<CommandRequest>,
+    build: impl FnOnce(String, String) -> Option<RemoteCommand>,
 ) -> Response<std::io::Cursor<Vec<u8>>> {
-    let mut body = String::new();
-    if std::io::Read::read_to_string(request.as_reader(), &mut body).is_err() {
+    let bytes = match read_limited(request.as_reader(), 256 * 1024) {
+        Ok(bytes) => bytes,
+        Err((code, reason)) => return status(code, reason),
+    };
+    let Ok(body) = String::from_utf8(bytes) else {
         return status(400, "unreadable body");
+    };
+    let value = |name: &'static str| {
+        request
+            .headers()
+            .iter()
+            .find(|h| h.field.equiv(name))
+            .map(|h| h.value.as_str().to_string())
+    };
+    let id = value("X-Command-Id").unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    if uuid::Uuid::parse_str(&id).is_err() {
+        return status(400, "invalid command ID");
     }
+    let issued = match value("X-Command-Time") {
+        Some(value) => match value.parse::<i64>() {
+            Ok(value) => value,
+            Err(_) => return status(400, "invalid command time"),
+        },
+        None => chrono::Utc::now().timestamp(),
+    };
     let Some((agent, text)) = parse_command_body(&body) else {
         return status(400, "expected {\"agent\": \"…\"}");
     };
     match build(agent, text) {
         Some(command) => {
-            if commands.send(command).is_err() {
+            let fingerprint = etag(&format!("{command:?}"));
+            let (reply, receipt) = std::sync::mpsc::sync_channel(1);
+            if commands
+                .send(CommandRequest {
+                    id,
+                    issued,
+                    fingerprint,
+                    command,
+                    reply,
+                })
+                .is_err()
+            {
                 return status(503, "workbench is shutting down");
             }
-            json("{\"ok\":true}".to_string())
+            match receipt.recv_timeout(Duration::from_secs(8)) {
+                Ok(Ok(())) => json("{\"ok\":true,\"state\":\"accepted\"}".to_string()),
+                Ok(Err(reason)) => status(409, &reason),
+                Err(_) => status(
+                    504,
+                    "Delivery is unconfirmed. Retry to check the same request.",
+                ),
+            }
         }
         None => status(400, "nothing to do"),
+    }
+}
+
+/// Detect oversize chunked bodies as well as declared lengths. A socket idle
+/// timeout complements this total deadline, including clients that trickle bytes.
+fn read_limited(
+    reader: &mut dyn std::io::Read,
+    limit: usize,
+) -> Result<Vec<u8>, (u16, &'static str)> {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let mut bytes = Vec::new();
+    let mut chunk = [0u8; 8192];
+    loop {
+        if Instant::now() >= deadline {
+            return Err((408, "request timed out"));
+        }
+        let size = chunk.len().min(limit + 1 - bytes.len());
+        let read = reader
+            .read(&mut chunk[..size])
+            .map_err(|_| (408, "could not finish reading the request"))?;
+        if read == 0 {
+            return Ok(bytes);
+        }
+        bytes.extend_from_slice(&chunk[..read]);
+        if bytes.len() > limit {
+            return Err((413, "that request is too large"));
+        }
     }
 }
 
@@ -519,7 +733,7 @@ fn command_from(
 fn parse_command_body(body: &str) -> Option<(String, String)> {
     let value: serde_json::Value = serde_json::from_str(body).ok()?;
     let agent = value.get("agent")?.as_str()?.trim().to_string();
-    if agent.is_empty() {
+    if agent.is_empty() || agent.len() > 128 {
         return None;
     }
     let text = value
@@ -534,6 +748,120 @@ fn parse_command_body(body: &str) -> Option<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn slow_uploads_do_not_block_state_reads_on_another_connection() {
+        use std::io::{Read, Write};
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let shared: Shared = Default::default();
+        shared.lock().unwrap().agents.push(super::super::AgentView {
+            id: "a".into(),
+            ..Default::default()
+        });
+        let (tx, _rx) = mpsc::unbounded_channel();
+        start_workers(listener, "test", "", &shared, &tx);
+        let mut upload = std::net::TcpStream::connect(addr).unwrap();
+        upload.write_all(b"POST /api/upload?t=test&agent=a&name=slow.jpg HTTP/1.1\r\nHost: localhost\r\nContent-Length: 65536\r\n\r\nx").unwrap();
+        let mut read = std::net::TcpStream::connect(addr).unwrap();
+        read.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        read.write_all(b"GET /api/state?t=test&agent=a HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .unwrap();
+        let mut reply = String::new();
+        read.read_to_string(&mut reply).unwrap();
+        assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+        let _ = upload.shutdown(std::net::Shutdown::Both);
+    }
+
+    #[test]
+    fn upload_names_are_unique_even_in_the_same_second() {
+        let a = store_upload("audit-unique", "photo.jpg", b"one").unwrap();
+        let b = store_upload("audit-unique", "photo.jpg", b"two").unwrap();
+        assert_ne!(a, b);
+        assert_eq!(std::fs::read(&a).unwrap(), b"one");
+        assert_eq!(std::fs::read(&b).unwrap(), b"two");
+        std::fs::remove_file(a).unwrap();
+        std::fs::remove_file(b).unwrap();
+    }
+
+    #[test]
+    fn oversize_bodies_are_rejected_instead_of_saved_as_prefixes() {
+        assert_eq!(read_limited(&mut &b"1234"[..], 4).unwrap(), b"1234");
+        assert_eq!(read_limited(&mut &b"12345"[..], 4).unwrap_err().0, 413);
+    }
+
+    fn read_state(
+        shared: &Shared,
+        agent: &str,
+        tag: Option<&str>,
+    ) -> Response<std::io::Cursor<Vec<u8>>> {
+        let mut request = tiny_http::TestRequest::new();
+        if let Some(tag) = tag {
+            request = request.with_header(header("If-None-Match", tag));
+        }
+        state_body(&request.into(), &[("agent".into(), agent.into())], shared)
+    }
+
+    #[test]
+    fn reads_select_independent_conversations_and_ignore_the_heartbeat_for_caching() {
+        let agents = ["a", "b"]
+            .into_iter()
+            .map(|id| super::super::AgentView {
+                id: id.into(),
+                tail: vec![format!("output {id}")],
+                ..Default::default()
+            })
+            .collect();
+        let shared: Shared = Arc::new(std::sync::Mutex::new(super::super::Snapshot {
+            agents,
+            ..Default::default()
+        }));
+        let a = read_state(&shared, "a", None);
+        let tag = a
+            .headers()
+            .iter()
+            .find(|h| h.field.equiv("ETag"))
+            .unwrap()
+            .value
+            .as_str()
+            .to_string();
+        let body: serde_json::Value = serde_json::from_slice(a.into_reader().get_ref()).unwrap();
+        assert_eq!(body["agents"][0]["tail"][0], "output a");
+        assert_eq!(body["agents"][1]["tail"], serde_json::json!([]));
+        let b = read_state(&shared, "b", None);
+        let body: serde_json::Value = serde_json::from_slice(b.into_reader().get_ref()).unwrap();
+        assert_eq!(body["agents"][1]["tail"][0], "output b");
+        assert_eq!(body["agents"][0]["tail"], serde_json::json!([]));
+        shared.lock().unwrap().at += 1;
+        assert_eq!(read_state(&shared, "a", Some(&tag)).status_code().0, 304);
+        let watching = &shared.lock().unwrap().watching;
+        assert!(watching.contains_key("a") && watching.contains_key("b"));
+    }
+
+    #[test]
+    fn command_responses_wait_for_the_app_and_return_rejections() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let worker = std::thread::spawn(move || {
+            let mut request = tiny_http::TestRequest::new()
+                .with_body(r#"{"agent":"gone","text":"hello"}"#)
+                .into();
+            command_from(&mut request, &tx, |agent, text| {
+                Some(RemoteCommand::Reply { agent, text })
+            })
+        });
+        let request = rx.blocking_recv().unwrap();
+        assert!(!worker.is_finished(), "an enqueue is not an acknowledgment");
+        request
+            .reply
+            .send(Err("This agent no longer exists".into()))
+            .unwrap();
+        let response = worker.join().unwrap();
+        assert_eq!(response.status_code().0, 409);
+        assert_eq!(
+            response.into_reader().get_ref(),
+            b"This agent no longer exists"
+        );
+    }
 
     #[test]
     fn a_command_body_needs_an_agent() {
@@ -570,7 +898,13 @@ mod tests {
         // Anything that could steer a path does not. Asserted as properties
         // rather than exact output — the guarantee is "no separator and no
         // parent", not one particular arrangement of dashes.
-        for hostile in ["../../etc/passwd", "..", "/etc/passwd", "x/../..", "\\\\server\\share"] {
+        for hostile in [
+            "../../etc/passwd",
+            "..",
+            "/etc/passwd",
+            "x/../..",
+            "\\\\server\\share",
+        ] {
             let safe = safe_part(hostile);
             assert!(!safe.contains('/'), "{hostile} -> {safe}");
             assert!(!safe.contains('\\'), "{hostile} -> {safe}");
@@ -606,4 +940,13 @@ mod tests {
         // No look-alike characters: this gets read off a screen sometimes.
         assert!(!a.contains('l') && !a.contains('1') && !a.contains('0'));
     }
+}
+
+#[cfg(test)]
+pub(super) fn visual_fixture(shared: Shared) -> String {
+    let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (tx, _rx) = mpsc::unbounded_channel();
+    start_workers(listener, "fixture", "", &shared, &tx);
+    format!("http://127.0.0.1:{port}/?t=fixture")
 }

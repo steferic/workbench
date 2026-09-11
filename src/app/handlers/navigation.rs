@@ -125,8 +125,7 @@ pub fn handle_navigation_action(
                     }
                 }
                 FocusPanel::SessionList => FocusPanel::WorkspaceList,
-                FocusPanel::TasksPane => FocusPanel::SessionList,
-                FocusPanel::UtilitiesPane => FocusPanel::TasksPane,
+                FocusPanel::UtilitiesPane => FocusPanel::SessionList,
                 FocusPanel::OutputPane => FocusPanel::UtilitiesPane,
                 FocusPanel::PinnedTerminalPane(idx) => {
                     if idx == 0 {
@@ -142,8 +141,7 @@ pub fn handle_navigation_action(
             let prev_focus = state.ui.focus;
             state.ui.focus = match state.ui.focus {
                 FocusPanel::WorkspaceList => FocusPanel::SessionList,
-                FocusPanel::SessionList => FocusPanel::TasksPane,
-                FocusPanel::TasksPane => FocusPanel::UtilitiesPane,
+                FocusPanel::SessionList => FocusPanel::UtilitiesPane,
                 FocusPanel::UtilitiesPane => FocusPanel::OutputPane,
                 FocusPanel::OutputPane => {
                     if state.should_show_split() && pinned_count > 0 {
@@ -184,14 +182,20 @@ pub fn handle_navigation_action(
         }
         Action::ScrollOutputUp => {
             if let FocusPanel::PinnedTerminalPane(idx) = state.ui.focus {
-                state.set_pinned_scroll_offset(idx, state.pinned_scroll_offset(idx).saturating_add(3));
+                state.set_pinned_scroll_offset(
+                    idx,
+                    state.pinned_scroll_offset(idx).saturating_add(3),
+                );
             } else {
                 state.set_output_scroll_offset(state.output_scroll_offset().saturating_add(3));
             }
         }
         Action::ScrollOutputDown => {
             if let FocusPanel::PinnedTerminalPane(idx) = state.ui.focus {
-                state.set_pinned_scroll_offset(idx, state.pinned_scroll_offset(idx).saturating_sub(3));
+                state.set_pinned_scroll_offset(
+                    idx,
+                    state.pinned_scroll_offset(idx).saturating_sub(3),
+                );
             } else {
                 state.set_output_scroll_offset(state.output_scroll_offset().saturating_sub(3));
             }
@@ -264,76 +268,72 @@ pub fn handle_navigation_action(
             state.set_text_selection(TextSelection::default());
             clear_all_pinned_selections(state);
         }
-        Action::SelectNextUtility => {
-            match state.ui.utility_section {
-                UtilitySection::Utilities => {
-                    let tools = UtilityItem::tools();
-                    let current_idx = tools
-                        .iter()
-                        .position(|u| *u == state.ui.selected_utility)
-                        .unwrap_or(0);
-                    if current_idx < tools.len() - 1 {
-                        state.ui.selected_utility = tools[current_idx + 1];
-                    }
+        Action::SelectNextUtility => match state.ui.utility_section {
+            UtilitySection::Utilities => {
+                let tools = UtilityItem::tools();
+                let current_idx = tools
+                    .iter()
+                    .position(|u| *u == state.ui.selected_utility)
+                    .unwrap_or(0);
+                if current_idx < tools.len() - 1 {
+                    state.ui.selected_utility = tools[current_idx + 1];
                 }
-                UtilitySection::Themes => {
-                    let themes = crate::theme::ThemeMode::ALL;
-                    let current_idx = themes
-                        .iter()
-                        .position(|theme| *theme == state.ui.selected_theme)
-                        .unwrap_or(0);
-                    if current_idx < themes.len() - 1 {
-                        state.ui.selected_theme = themes[current_idx + 1];
-                    }
-                }
-                UtilitySection::Sounds => {
-                    let sounds = UtilityItem::sounds();
-                    let current_idx = sounds
-                        .iter()
-                        .position(|u| *u == state.ui.selected_sound)
-                        .unwrap_or(0);
-                    if current_idx < sounds.len() - 1 {
-                        state.ui.selected_sound = sounds[current_idx + 1];
-                    }
-                }
-                UtilitySection::Notepad => {}
             }
-        }
-        Action::SelectPrevUtility => {
-            match state.ui.utility_section {
-                UtilitySection::Utilities => {
-                    let tools = UtilityItem::tools();
-                    let current_idx = tools
-                        .iter()
-                        .position(|u| *u == state.ui.selected_utility)
-                        .unwrap_or(0);
-                    if current_idx > 0 {
-                        state.ui.selected_utility = tools[current_idx - 1];
-                    }
+            UtilitySection::Themes => {
+                let themes = crate::theme::ThemeMode::ALL;
+                let current_idx = themes
+                    .iter()
+                    .position(|theme| *theme == state.ui.selected_theme)
+                    .unwrap_or(0);
+                if current_idx < themes.len() - 1 {
+                    state.ui.selected_theme = themes[current_idx + 1];
                 }
-                UtilitySection::Themes => {
-                    let themes = crate::theme::ThemeMode::ALL;
-                    let current_idx = themes
-                        .iter()
-                        .position(|theme| *theme == state.ui.selected_theme)
-                        .unwrap_or(0);
-                    if current_idx > 0 {
-                        state.ui.selected_theme = themes[current_idx - 1];
-                    }
-                }
-                UtilitySection::Sounds => {
-                    let sounds = UtilityItem::sounds();
-                    let current_idx = sounds
-                        .iter()
-                        .position(|u| *u == state.ui.selected_sound)
-                        .unwrap_or(0);
-                    if current_idx > 0 {
-                        state.ui.selected_sound = sounds[current_idx - 1];
-                    }
-                }
-                UtilitySection::Notepad => {}
             }
-        }
+            UtilitySection::Sounds => {
+                let sounds = UtilityItem::sounds();
+                let current_idx = sounds
+                    .iter()
+                    .position(|u| *u == state.ui.selected_sound)
+                    .unwrap_or(0);
+                if current_idx < sounds.len() - 1 {
+                    state.ui.selected_sound = sounds[current_idx + 1];
+                }
+            }
+            UtilitySection::Notepad => {}
+        },
+        Action::SelectPrevUtility => match state.ui.utility_section {
+            UtilitySection::Utilities => {
+                let tools = UtilityItem::tools();
+                let current_idx = tools
+                    .iter()
+                    .position(|u| *u == state.ui.selected_utility)
+                    .unwrap_or(0);
+                if current_idx > 0 {
+                    state.ui.selected_utility = tools[current_idx - 1];
+                }
+            }
+            UtilitySection::Themes => {
+                let themes = crate::theme::ThemeMode::ALL;
+                let current_idx = themes
+                    .iter()
+                    .position(|theme| *theme == state.ui.selected_theme)
+                    .unwrap_or(0);
+                if current_idx > 0 {
+                    state.ui.selected_theme = themes[current_idx - 1];
+                }
+            }
+            UtilitySection::Sounds => {
+                let sounds = UtilityItem::sounds();
+                let current_idx = sounds
+                    .iter()
+                    .position(|u| *u == state.ui.selected_sound)
+                    .unwrap_or(0);
+                if current_idx > 0 {
+                    state.ui.selected_sound = sounds[current_idx - 1];
+                }
+            }
+            UtilitySection::Notepad => {}
+        },
         Action::ToggleUtilitySection => {
             state.ui.utility_section = state.ui.utility_section.toggle();
         }
@@ -408,82 +408,79 @@ fn handle_mouse_click(
     pty_manager: &PtyManager,
     pty_tx: &mpsc::Sender<Action>,
 ) {
-    // The left column's dividers are found from the rects the renderer
-    // stored, never from parallel arithmetic. The old float math disagreed
-    // with ratatui's integer percentages by a column or two — more when the
-    // banner shifted everything down a row — and a divider you cannot hit is
-    // a pane you cannot resize.
-    let (_, h) = state.system.terminal_size;
-    let main_height = h.saturating_sub(1);
-    let divider_tolerance = 1u16;
+    if state.ui.pressed_link.is_none() {
+        // The left column's dividers are found from the rects the renderer
+        // stored, never from parallel arithmetic. The old float math disagreed
+        // with ratatui's integer percentages by a column or two — more when the
+        // banner shifted everything down a row — and a divider you cannot hit is
+        // a pane you cannot resize.
+        let (_, h) = state.system.terminal_size;
+        let main_height = h.saturating_sub(1);
+        let divider_tolerance = 1u16;
 
-    if let (Some(workspace), Some(sessions), Some(tasks), Some(utilities)) = (
-        state.ui.workspace_area,
-        state.ui.session_area,
-        state.ui.tasks_area,
-        state.ui.utilities_area,
-    ) {
-        // A boundary sits between two panes' border rows; a press on either
-        // border char, or one cell of grace outside them, counts.
-        let near = |a: u16, boundary: u16| a + 2 >= boundary && a <= boundary + 1;
-        let left_edge = workspace.0 + workspace.2;
-        let top = workspace.1;
-        let bottom = utilities.1 + utilities.3;
+        if let (Some(workspace), Some(sessions), Some(utilities)) = (
+            state.ui.workspace_area,
+            state.ui.session_area,
+            state.ui.utilities_area,
+        ) {
+            // A boundary sits between two panes' border rows; a press on either
+            // border char, or one cell of grace outside them, counts.
+            let near = |a: u16, boundary: u16| a + 2 >= boundary && a <= boundary + 1;
+            let left_edge = workspace.0 + workspace.2;
+            let top = workspace.1;
+            let bottom = utilities.1 + utilities.3;
 
-        if near(x, left_edge) && y >= top && y < bottom {
-            state.ui.layout.dragging_divider = Some(Divider::LeftRight);
-            state.ui.layout.drag_start_pos = Some((x, y));
-            state.ui.layout.drag_start_ratio = state.ui.layout.left_panel_ratio;
-            return;
-        }
-        if x < left_edge && near(y, sessions.1) {
-            state.ui.layout.dragging_divider = Some(Divider::WorkspaceSession);
-            state.ui.layout.drag_start_pos = Some((x, y));
-            state.ui.layout.drag_start_ratio = state.ui.layout.workspace_ratio;
-            return;
-        }
-        if x < left_edge && near(y, tasks.1) {
-            state.ui.layout.dragging_divider = Some(Divider::SessionsTasks);
-            state.ui.layout.drag_start_pos = Some((x, y));
-            state.ui.layout.drag_start_ratio = state.ui.layout.sessions_ratio;
-            return;
-        }
-        if x < left_edge && near(y, utilities.1) {
-            state.ui.layout.dragging_divider = Some(Divider::TasksUtilities);
-            state.ui.layout.drag_start_pos = Some((x, y));
-            state.ui.layout.drag_start_ratio = state.ui.layout.tasks_ratio;
-            return;
-        }
-    }
-
-    if state.should_show_split() {
-        if let Some((ox, _, ow, _)) = state.ui.output_pane_area {
-            let divider_x = ox + ow;
-            if x >= divider_x.saturating_sub(divider_tolerance)
-                && x <= divider_x + divider_tolerance
-                && y < main_height
-            {
-                state.ui.layout.dragging_divider = Some(Divider::OutputPinned);
+            if near(x, left_edge) && y >= top && y < bottom {
+                state.ui.layout.dragging_divider = Some(Divider::LeftRight);
                 state.ui.layout.drag_start_pos = Some((x, y));
-                state.ui.layout.drag_start_ratio = state.ui.layout.output_split_ratio;
+                state.ui.layout.drag_start_ratio = state.ui.layout.left_panel_ratio;
+                return;
+            }
+            if x < left_edge && near(y, sessions.1) {
+                state.ui.layout.dragging_divider = Some(Divider::WorkspaceSession);
+                state.ui.layout.drag_start_pos = Some((x, y));
+                state.ui.layout.drag_start_ratio = state.ui.layout.workspace_ratio;
+                return;
+            }
+            if x < left_edge && near(y, utilities.1) {
+                state.ui.layout.dragging_divider = Some(Divider::SessionsUtilities);
+                state.ui.layout.drag_start_pos = Some((x, y));
+                state.ui.layout.drag_start_ratio = state.ui.layout.sessions_ratio;
                 return;
             }
         }
 
-        let pinned_count = state.pinned_count();
-        if pinned_count > 1 {
-            for pane_idx in 0..(pinned_count - 1) {
-                if let Some((_, py, _, ph)) = state.ui.pinned_pane_areas[pane_idx] {
-                    let divider_y = py + ph;
-                    if y >= divider_y.saturating_sub(divider_tolerance)
-                        && y <= divider_y + divider_tolerance
-                    {
-                        if let Some((px, _, pw, _)) = state.ui.pinned_pane_areas[0] {
-                            if x >= px && x < px + pw {
-                                state.ui.layout.dragging_divider = Some(Divider::PinnedPanes(pane_idx));
-                                state.ui.layout.drag_start_pos = Some((x, y));
-                                state.ui.layout.drag_start_ratio = state.ui.layout.pinned_pane_ratios[pane_idx];
-                                return;
+        if state.should_show_split() {
+            if let Some((ox, _, ow, _)) = state.ui.output_pane_area {
+                let divider_x = ox + ow;
+                if x >= divider_x.saturating_sub(divider_tolerance)
+                    && x <= divider_x + divider_tolerance
+                    && y < main_height
+                {
+                    state.ui.layout.dragging_divider = Some(Divider::OutputPinned);
+                    state.ui.layout.drag_start_pos = Some((x, y));
+                    state.ui.layout.drag_start_ratio = state.ui.layout.output_split_ratio;
+                    return;
+                }
+            }
+
+            let pinned_count = state.pinned_count();
+            if pinned_count > 1 {
+                for pane_idx in 0..(pinned_count - 1) {
+                    if let Some((_, py, _, ph)) = state.ui.pinned_pane_areas[pane_idx] {
+                        let divider_y = py + ph;
+                        if y >= divider_y.saturating_sub(divider_tolerance)
+                            && y <= divider_y + divider_tolerance
+                        {
+                            if let Some((px, _, pw, _)) = state.ui.pinned_pane_areas[0] {
+                                if x >= px && x < px + pw {
+                                    state.ui.layout.dragging_divider =
+                                        Some(Divider::PinnedPanes(pane_idx));
+                                    state.ui.layout.drag_start_pos = Some((x, y));
+                                    state.ui.layout.drag_start_ratio =
+                                        state.ui.layout.pinned_pane_ratios[pane_idx];
+                                    return;
+                                }
                             }
                         }
                     }
@@ -491,7 +488,6 @@ fn handle_mouse_click(
             }
         }
     }
-
     state.set_text_selection(TextSelection::default());
     clear_all_pinned_selections(state);
 
@@ -508,13 +504,6 @@ fn handle_mouse_click(
     if let Some(area) = state.ui.session_area {
         if is_in_area(x, y, area) {
             state.ui.focus = FocusPanel::SessionList;
-            return;
-        }
-    }
-
-    if let Some(area) = state.ui.tasks_area {
-        if is_in_area(x, y, area) {
-            state.ui.focus = FocusPanel::TasksPane;
             return;
         }
     }
@@ -602,29 +591,16 @@ fn handle_mouse_drag(state: &mut AppState, x: u16, y: u16) {
                 };
                 let top = ws.1;
                 let span = (ut.1 + ut.3).saturating_sub(top).max(1) as f32;
-                let new_ratio =
-                    (y.saturating_sub(top) as f32 / span).clamp(0.20, 0.80);
+                let new_ratio = (y.saturating_sub(top) as f32 / span).clamp(0.20, 0.80);
                 state.ui.layout.workspace_ratio = new_ratio;
             }
-            Divider::SessionsTasks => {
-                let (Some(se), Some(ut)) = (state.ui.session_area, state.ui.utilities_area)
-                else {
+            Divider::SessionsUtilities => {
+                let (Some(se), Some(ut)) = (state.ui.session_area, state.ui.utilities_area) else {
                     return;
                 };
                 let span = (ut.1 + ut.3).saturating_sub(se.1).max(1) as f32;
-                let new_ratio =
-                    (y.saturating_sub(se.1) as f32 / span).clamp(0.15, 0.70);
+                let new_ratio = (y.saturating_sub(se.1) as f32 / span).clamp(0.15, 0.85);
                 state.ui.layout.sessions_ratio = new_ratio;
-            }
-            Divider::TasksUtilities => {
-                let (Some(ta), Some(ut)) = (state.ui.tasks_area, state.ui.utilities_area)
-                else {
-                    return;
-                };
-                let span = (ut.1 + ut.3).saturating_sub(ta.1).max(1) as f32;
-                let new_ratio =
-                    (y.saturating_sub(ta.1) as f32 / span).clamp(0.20, 0.80);
-                state.ui.layout.tasks_ratio = new_ratio;
             }
             Divider::OutputPinned => {
                 let left_width = (w as f32 * state.ui.layout.left_panel_ratio) as u16;
@@ -654,8 +630,8 @@ fn handle_mouse_drag(state: &mut AppState, x: u16, y: u16) {
                         let combined_ratio = ratios[pane_idx] + ratios[pane_idx + 1];
                         let ratio_above: f32 = ratios.iter().take(pane_idx).sum();
 
-                        let new_upper_ratio =
-                            ((new_split - ratio_above / sum) * sum).clamp(0.1, combined_ratio - 0.1);
+                        let new_upper_ratio = ((new_split - ratio_above / sum) * sum)
+                            .clamp(0.1, combined_ratio - 0.1);
                         ratios[pane_idx] = new_upper_ratio;
                         ratios[pane_idx + 1] = combined_ratio - new_upper_ratio;
 
@@ -719,7 +695,7 @@ fn handle_mouse_up(state: &mut AppState, x: u16, y: u16) {
             left_panel_ratio: state.ui.layout.left_panel_ratio,
             workspace_ratio: state.ui.layout.workspace_ratio,
             sessions_ratio: state.ui.layout.sessions_ratio,
-            tasks_ratio: state.ui.layout.tasks_ratio,
+            legacy_tasks_ratio: None,
             output_split_ratio: state.ui.layout.output_split_ratio,
             theme_mode: state.ui.theme_mode,
         };
@@ -898,6 +874,32 @@ mod tests {
     use std::path::PathBuf;
     use tokio::sync::mpsc;
 
+    #[test]
+    fn focus_walks_only_the_remaining_panes_in_both_directions() {
+        let mut state = AppState::default();
+        let manager = PtyManager::new();
+        let (tx, _) = mpsc::channel(1);
+        state.ui.focus = FocusPanel::WorkspaceList;
+        for expected in [
+            FocusPanel::SessionList,
+            FocusPanel::UtilitiesPane,
+            FocusPanel::OutputPane,
+            FocusPanel::WorkspaceList,
+        ] {
+            handle_navigation_action(&mut state, Action::FocusRight, &manager, &tx).unwrap();
+            assert_eq!(state.ui.focus, expected);
+        }
+        for expected in [
+            FocusPanel::OutputPane,
+            FocusPanel::UtilitiesPane,
+            FocusPanel::SessionList,
+            FocusPanel::WorkspaceList,
+        ] {
+            handle_navigation_action(&mut state, Action::FocusLeft, &manager, &tx).unwrap();
+            assert_eq!(state.ui.focus, expected);
+        }
+    }
+
     fn workspace(name: &str) -> Workspace {
         Workspace::new(name.to_string(), PathBuf::from(format!("/tmp/{name}")))
     }
@@ -956,7 +958,9 @@ mod tests {
         assert_eq!(state.sessions_tab(), crate::app::SessionsTab::Terminals);
         assert_eq!(state.session_visual_order(), vec![1, 2]);
         assert!(
-            state.session_visual_order().contains(&state.selected_session_idx()),
+            state
+                .session_visual_order()
+                .contains(&state.selected_session_idx()),
             "the cursor must land on a row this tab lists"
         );
 
@@ -976,7 +980,11 @@ mod tests {
         cycle(&mut state);
         assert_eq!(state.active_session_id(), Some(ids[2]));
         cycle(&mut state);
-        assert_eq!(state.active_session_id(), Some(ids[1]), "and wraps within the tab");
+        assert_eq!(
+            state.active_session_id(),
+            Some(ids[1]),
+            "and wraps within the tab"
+        );
     }
 
     /// And cycling on the agents tab still never offers one, which is what
@@ -1037,24 +1045,14 @@ mod tests {
         let pty_manager = PtyManager::new();
         let (pty_tx, _) = mpsc::channel(1);
 
-        handle_navigation_action(
-            &mut state,
-            Action::SelectNextUtility,
-            &pty_manager,
-            &pty_tx,
-        )
-        .unwrap();
+        handle_navigation_action(&mut state, Action::SelectNextUtility, &pty_manager, &pty_tx)
+            .unwrap();
 
         assert_eq!(state.ui.selected_theme, ThemeMode::Light);
         assert_eq!(state.ui.theme_mode, ThemeMode::Dark);
 
-        handle_navigation_action(
-            &mut state,
-            Action::SelectPrevUtility,
-            &pty_manager,
-            &pty_tx,
-        )
-        .unwrap();
+        handle_navigation_action(&mut state, Action::SelectPrevUtility, &pty_manager, &pty_tx)
+            .unwrap();
         assert_eq!(state.ui.selected_theme, ThemeMode::Dark);
     }
 

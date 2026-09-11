@@ -51,12 +51,19 @@ tokio = { version = "1.35", features = ["full"] }
 # TUI framework
 ratatui = { version = "0.30", features = ["unstable-widget-ref"] }
 crossterm = "0.29"
+ratatui-image = { version = "11.0.8", default-features = false, features = ["crossterm"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+unicode-width = "0.2"
+url = "2"
+tempfile = "3.9"
 
 # PTY support (cross-platform)
 portable-pty = "0.8"
 
 # Terminal parsing for ANSI color support
 vt100 = "0.15"
+# Use the same streaming escape parser as vt100 for terminal queries.
+vte = "0.11"
 
 # Terminal widget for ratatui (proper terminal rendering)
 tui-term = "0.3"
@@ -100,9 +107,12 @@ arboard = "3.4"
 # This is from 0xferrous/tui-textarea update-ratatui branch with ratatui 0.30 support
 tui-textarea = { git = "https://github.com/0xferrous/tui-textarea", rev = "a5086767ee0831e319aec9432aaef495d8f280c4" }
 tiny_http = "0.12.0"
+httparse = "1.9.5"
+chunked_transfer = "1.5.0"
 p256 = { version = "0.13", features = ["ecdsa"] }
 base64 = "0.22"
 qrcode = { version = "0.14.1", default-features = false }
 
-[dev-dependencies]
-tempfile = "3.9"
+[patch.crates-io]
+# Preserve OSC 8 destinations in terminal cells for clickable agent links.
+vt100 = { path = "vendor/vt100" }

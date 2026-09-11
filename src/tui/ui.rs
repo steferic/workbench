@@ -1,16 +1,46 @@
 use crate::app::{AppState, InputMode};
 use crate::tui::components::{
     banner, command_palette, config_window, create_session_dialog, create_workspace_dialog,
-    debug_overlay, desk_pane, merge_confirm_modal, output_pane, parallel_merge_confirm_modal,
-    parallel_task_modal, pinned_terminal_pane, session_list, status_bar, tasks_pane,
-    utilities_pane, workspace_action_dialog, workspace_list, workspace_name_dialog,
+    debug_overlay, decision_detail, desk_pane, merge_confirm_modal, output_pane,
+    parallel_merge_confirm_modal, parallel_task_modal, pinned_terminal_pane, session_list,
+    status_bar, utilities_pane, workspace_action_dialog, workspace_list, workspace_name_dialog,
 };
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     Frame,
 };
 
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+    use ratatui::{backend::TestBackend, Terminal};
+
+    #[test]
+    fn the_left_column_has_no_objectives_pane_or_empty_gap() {
+        for (width, height) in [(120, 40), (80, 24)] {
+            let mut state = AppState::default();
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal.draw(|frame| draw(frame, &mut state)).unwrap();
+            let workspace = state.ui.workspace_area.unwrap();
+            let sessions = state.ui.session_area.unwrap();
+            let utilities = state.ui.utilities_area.unwrap();
+            assert_eq!(workspace.1 + workspace.3, sessions.1);
+            assert_eq!(sessions.1 + sessions.3, utilities.1);
+            assert_eq!(utilities.1 + utilities.3, height - 1);
+            let text: String = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect();
+            assert!(!text.contains("OBJECTIVES"));
+        }
+    }
+}
+
 pub fn draw(frame: &mut Frame, state: &mut AppState) {
+    state.ui.link_hits.clear();
     // Activate the chosen theme for this frame and fill the background so light
     // mode doesn't show through to the terminal's (dark) default.
     crate::theme::set_current(state.ui.theme_mode);
@@ -68,26 +98,17 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
     let workspace_area = left_chunks[0];
     let lower_left = left_chunks[1];
 
-    // Split lower left into: sessions | tasks | utilities (using dynamic ratios)
-    // sessions_ratio controls how much of lower_left goes to sessions
-    // tasks_ratio controls how the remainder is split between tasks and utilities
+    // Sessions receive the space formerly occupied by Objectives.
     let sessions_pct = (state.ui.layout.sessions_ratio * 100.0) as u16;
-    let remaining_pct = 100 - sessions_pct;
-    let tasks_pct = ((state.ui.layout.tasks_ratio * remaining_pct as f32) / 100.0 * 100.0) as u16;
-    let utilities_pct = remaining_pct - tasks_pct;
-
     let lower_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Percentage(sessions_pct),
-            Constraint::Percentage(tasks_pct),
-            Constraint::Percentage(utilities_pct),
+            Constraint::Percentage(100 - sessions_pct),
         ])
         .split(lower_left);
-
     let session_area = lower_chunks[0];
-    let tasks_area = lower_chunks[1];
-    let utilities_area = lower_chunks[2];
+    let utilities_area = lower_chunks[1];
 
     // Store areas in state for mouse interaction
     state.ui.workspace_area = Some((
@@ -102,12 +123,6 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
         session_area.width,
         session_area.height,
     ));
-    state.ui.tasks_area = Some((
-        tasks_area.x,
-        tasks_area.y,
-        tasks_area.width,
-        tasks_area.height,
-    ));
     state.ui.utilities_area = Some((
         utilities_area.x,
         utilities_area.y,
@@ -118,15 +133,32 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
     // Render left components
     workspace_list::render(frame, workspace_area, state);
     session_list::render(frame, session_area, state);
-    tasks_pane::render(frame, tasks_area, state);
     utilities_pane::render(frame, utilities_area, state);
 
     // Render right panel: the desk when it is open, otherwise the active
     // session (split with pinned terminals when there are any).
+    // Compute the terminal's layout even under the Desk: newly started agents
+    // and window resizes must use the geometry they will actually be shown in.
+    let right_split = state.should_show_split().then(|| {
+        let output_pct = (state.ui.layout.output_split_ratio * 100.0) as u16;
+        Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(output_pct),
+                Constraint::Percentage(100 - output_pct),
+            ])
+            .split(right_panel)
+    });
+    let output_area = right_split.as_ref().map_or(right_panel, |split| split[0]);
+    state.ui.terminal_output_area = Some((
+        output_area.x,
+        output_area.y,
+        output_area.width,
+        output_area.height,
+    ));
     if state.ui.desk_open {
-        // The terminal keeps its rect so PTYs are not resized under a view
-        // that will be back in a moment; the pinned rects go so a click on
-        // the desk cannot land in a terminal that is not drawn.
+        // Mouse interaction belongs to the whole Desk. Terminal sizing uses
+        // terminal_output_area above; hidden pinned terminals retain their size.
         state.ui.output_pane_area = Some((
             right_panel.x,
             right_panel.y,
@@ -137,18 +169,7 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
             *area = None;
         }
         desk_pane::render(frame, right_panel, state);
-    } else if state.should_show_split() {
-        // Split right panel: active session | pinned terminals (using dynamic ratio)
-        let output_pct = (state.ui.layout.output_split_ratio * 100.0) as u16;
-        let right_split = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(output_pct),
-                Constraint::Percentage(100 - output_pct),
-            ])
-            .split(right_panel);
-
-        let output_area = right_split[0];
+    } else if let Some(right_split) = right_split {
         state.ui.output_pane_area = Some((
             output_area.x,
             output_area.y,
@@ -201,7 +222,7 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
             workspace_name_dialog::render(frame, state);
         }
         _ if state.ui.detail.is_some() => {
-            tasks_pane::render_detail(frame, state);
+            decision_detail::render_detail(frame, state);
         }
         InputMode::CreateSession | InputMode::CreateManager | InputMode::AssignAgent => {
             create_session_dialog::render(frame, state);
@@ -229,6 +250,22 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
             config_window::render(frame, state);
         }
         InputMode::Normal => {}
+    }
+
+    if state.ui.input_mode == InputMode::Normal
+        && state.ui.detail.is_none()
+        && !state.ui.pending_quit
+        && state.ui.pending_delete.is_none()
+    {
+        crate::media::render(frame, state);
+    }
+    if state.ui.media_preview.is_some()
+        || state.ui.input_mode != InputMode::Normal
+        || state.ui.detail.is_some()
+        || state.ui.pending_quit
+        || state.ui.pending_delete.is_some()
+    {
+        state.ui.link_hits.clear();
     }
 
     // Toast notifications are intentionally suppressed — the in-app toast
@@ -262,4 +299,46 @@ fn split_pinned_area(area: Rect, state: &AppState) -> Vec<Rect> {
         .constraints(constraints)
         .split(area)
         .to_vec()
+}
+
+#[cfg(test)]
+mod hyperlink_layout_tests {
+    use super::*;
+    use crate::models::{AgentType, Session, Workspace};
+    use ratatui::{backend::TestBackend, Terminal};
+    #[test]
+    fn link_hits_follow_rendered_cells_and_clear_on_session_or_modal_changes() {
+        let mut state = AppState::default();
+        state.ui.banner_visible = false;
+        let workspace = Workspace::new("test".into(), "/tmp".into());
+        let a = Session::new(workspace.id, AgentType::Claude, false);
+        let b = Session::new(workspace.id, AgentType::Claude, false);
+        let (a_id, b_id) = (a.id, b.id);
+        state.add_workspace(workspace);
+        state.add_session(a);
+        state.add_session(b);
+        let mut parser = vt100::Parser::new(20, 80, 0);
+        parser.process(b"\x1b]8;;https://example.com\x07reference\x1b]8;;\x07");
+        state.system.output_buffers.insert(a_id, parser);
+        state
+            .system
+            .output_buffers
+            .insert(b_id, vt100::Parser::new(20, 80, 0));
+        state.set_active_session_id(Some(a_id));
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal.draw(|f| draw(f, &mut state)).unwrap();
+        let hit = state.ui.link_hits.first().unwrap();
+        assert_eq!(hit.target, "https://example.com/");
+        assert_eq!(
+            terminal.backend().buffer()[(hit.area.x, hit.area.y)].symbol(),
+            "r"
+        );
+        state.set_active_session_id(Some(b_id));
+        terminal.draw(|f| draw(f, &mut state)).unwrap();
+        assert!(state.ui.link_hits.is_empty());
+        state.set_active_session_id(Some(a_id));
+        state.ui.input_mode = InputMode::CommandPalette;
+        terminal.draw(|f| draw(f, &mut state)).unwrap();
+        assert!(state.ui.link_hits.is_empty());
+    }
 }

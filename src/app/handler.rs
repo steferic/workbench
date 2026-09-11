@@ -26,23 +26,40 @@ pub fn process_action(
     action_tx: &mpsc::UnboundedSender<Action>,
     pty_tx: &mpsc::Sender<Action>,
 ) -> Result<()> {
+    if state.ui.input_mode == crate::app::InputMode::Normal
+        && state.ui.media_preview.is_none()
+        && state.ui.detail.is_none()
+        && !state.ui.pending_quit
+        && state.ui.pending_delete.is_none()
+    {
+        if let Some(target) =
+            crate::links::mouse(&mut state.ui.pressed_link, &state.ui.link_hits, &action)
+        {
+            let _ = crate::links::open(&target);
+        }
+    } else {
+        state.ui.pressed_link = None;
+    }
+    if state.ui.media_preview.is_some()
+        && matches!(
+            action,
+            Action::MouseClick(..)
+                | Action::MouseDrag(..)
+                | Action::MouseUp(..)
+                | Action::MouseScrollUp(..)
+                | Action::MouseScrollDown(..)
+                | Action::Paste(_)
+        )
+    {
+        return Ok(());
+    }
     match action {
+        Action::PreviewLatestMedia => crate::media::latest(state),
+        Action::CloseMedia => crate::media::close(state),
+        Action::BrowseMedia => crate::media::browse(state),
         Action::Quit | Action::ConfirmQuit => {
-            // Kill all active sessions before quitting
-            let handles: Vec<_> = state.system.pty_handles.drain().collect();
-            for (session_id, handle) in handles {
-                // Check if this is a terminal session
-                let is_terminal = state
-                    .data
-                    .sessions
-                    .values()
-                    .flat_map(|sessions| sessions.iter())
-                    .find(|s| s.id == session_id)
-                    .map(|s| s.agent_type.is_terminal())
-                    .unwrap_or(false);
-
-                session::terminate_session_handle(handle, is_terminal);
-            }
+            // All exits converge on runtime shutdown, including signals and
+            // terminal errors. Do not detach cleanup from that owner.
             state.system.should_quit = true;
         }
         Action::Tick => {
@@ -215,6 +232,7 @@ pub fn process_action(
         Action::OpenRepositoryMap => open_repository_map(state),
         Action::Resize(w, h) => {
             state.system.terminal_size = (w, h);
+            crate::media::resized(state);
             request_pty_resize(state);
         }
         // Dispatch to specialized handlers
@@ -331,7 +349,7 @@ pub fn process_action(
                 Action::ConfirmDeleteSession | Action::CancelPendingDelete | Action::EnterCreateSessionMode | Action::EnterCreateManagerMode |
                 Action::EnterSetStartCommandMode | Action::SetStartCommand(_, _) | Action::PinSession(_) |
                 Action::UnpinSession(_) | Action::UnpinFocusedSession | Action::ToggleSplitView |
-                Action::SessionExited(_, _) | Action::PtyOutput(_, _) | Action::SendInput(_, _) |
+                Action::SessionExited(_, _, _) | Action::PtyOutput(_, _) | Action::SendInput(_, _) |
                 Action::MergeSessionWorktree(_) | Action::SwitchToWorktree(_) |
                 Action::ConfirmMergeWithCommit | Action::CancelMerge |
                 Action::SessionWorktreeMergeChecked { .. } |
@@ -463,6 +481,7 @@ pub fn process_action(
                 }
 
                 // Global already handled
+                Action::PreviewLatestMedia | Action::CloseMedia | Action::BrowseMedia |
                 Action::Quit | Action::ConfirmQuit | Action::Tick | Action::Resize(_, _) |
                 Action::ForceRedraw | Action::OpenRepositoryMap |
                 Action::UtilityContentLoaded(_) | Action::DiffStatsUpdated(_) |
@@ -531,7 +550,10 @@ fn dispatch_canvas_command(state: &mut AppState, command: crate::canvas::CanvasC
         .map(|workspace| workspace.path.clone());
     let Some(workspace_path) = workspace_path else {
         if let Some(canvas) = state.system.canvas.as_ref() {
-            canvas.fail(&command.request_id, "This workspace is no longer available.");
+            canvas.fail(
+                &command.request_id,
+                "This workspace is no longer available.",
+            );
         }
         return;
     };
@@ -693,25 +715,46 @@ fn remote_tick(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) 
         }
     }
 
+    crate::media::tick(state);
     crate::remote::publish(state, &state.system.remote_state.clone());
     notify_phone(state, action_tx);
     control_tick(state);
 
-    let mut pending = Vec::new();
+    let mut requests = Vec::new();
     if let Some(rx) = state.system.remote_commands.as_mut() {
-        while let Ok(command) = rx.try_recv() {
-            pending.push(command);
+        while let Ok(request) = rx.try_recv() {
+            requests.push(request);
         }
     }
-    // The control socket speaks the same command vocabulary, so it lands in
-    // the same place and takes the same path as a tap on the phone.
+    for request in requests {
+        let outcome = match state
+            .system
+            .remote_receipts
+            .lookup(&request, chrono::Utc::now().timestamp())
+        {
+            Ok(Some(outcome)) => outcome,
+            Ok(None) => {
+                let outcome = apply_remote(state, request.command.clone(), action_tx);
+                state
+                    .system
+                    .remote_receipts
+                    .record(&request, outcome.clone());
+                outcome
+            }
+            Err(reason) => Err(reason),
+        };
+        let _ = request.reply.send(outcome);
+    }
+    let mut pending = Vec::new();
     if let Some(rx) = state.system.control_commands.as_mut() {
         while let Ok(command) = rx.try_recv() {
             pending.push(command);
         }
     }
     for command in pending {
-        apply_remote(state, command, action_tx);
+        if let Err(err) = apply_remote(state, command, action_tx) {
+            crate::logger::warn(format!("remote command rejected: {err}"));
+        }
     }
 }
 
@@ -1280,8 +1323,12 @@ fn apply_remote(
     state: &mut AppState,
     command: crate::remote::RemoteCommand,
     action_tx: &mpsc::UnboundedSender<Action>,
-) {
+) -> Result<(), String> {
     use crate::remote::RemoteCommand;
+    if let RemoteCommand::ShowMedia { id } = &command {
+        crate::media::present_if_visible(state, id);
+        return Ok(());
+    }
 
     // A manager answering its review turn. Validated hard: only the manager
     // that proposed the job may close its review, and corrections can only
@@ -1294,7 +1341,7 @@ fn apply_remote(
     } = &command
     {
         apply_review(state, manager, proposal, outcome, findings, action_tx);
-        return;
+        return Ok(());
     }
 
     // A decision names a proposal, not a session. Routed to the same core
@@ -1307,8 +1354,7 @@ fn apply_remote(
                 .map(|p| (ws.id, p.id))
         });
         let Some((workspace_id, proposal_id)) = found else {
-            crate::logger::warn(format!("phone decided an unknown proposal {proposal}"));
-            return;
+            return Err(format!("Unknown proposal {proposal}"));
         };
         // A proposal parked on the user is not pending, so `decide_proposal`
         // would answer "Already decided" and leave the row on the desk. The
@@ -1323,9 +1369,9 @@ fn apply_remote(
                 action_tx,
             ) {
                 Ok(outcome) => crate::logger::info(format!("phone decided a review: {outcome}")),
-                Err(err) => crate::logger::warn(format!("phone's review decision failed: {err}")),
+                Err(err) => return Err(err.to_string()),
             }
-            return;
+            return Ok(());
         }
         // The phone has no picker, so an unassigned approval takes the best
         // default instead of failing: an idle directable agent already in
@@ -1364,18 +1410,15 @@ fn apply_remote(
                             .workspaces
                             .iter_mut()
                             .find(|ws| ws.id == workspace_id)
-                            .and_then(|ws| {
-                                ws.proposals.iter_mut().find(|p| p.id == proposal_id)
-                            })
+                            .and_then(|ws| ws.proposals.iter_mut().find(|p| p.id == proposal_id))
                         {
                             stored.agent = Some(short);
                         }
                     }
                     None => {
-                        crate::logger::warn(
-                            "phone approved an unassigned proposal in a project with no                              agents; left pending — assign one from the desk",
+                        return Err(
+                            "Start an agent in this project before approving this proposal.".into(),
                         );
-                        return;
                     }
                 }
             }
@@ -1388,9 +1431,9 @@ fn apply_remote(
             action_tx,
         ) {
             Ok(outcome) => crate::logger::info(format!("phone decided a proposal: {outcome}")),
-            Err(err) => crate::logger::warn(format!("phone's decision failed: {err}")),
+            Err(err) => return Err(err.to_string()),
         }
-        return;
+        return Ok(());
     }
 
     // A check belongs to the objective it would prove, not to an agent.
@@ -1404,15 +1447,14 @@ fn apply_remote(
                 .map(|o| (ws.id, o.id))
         });
         let Some((workspace_id, objective_id)) = found else {
-            crate::logger::warn(format!("phone decided an unknown check on {objective}"));
-            return;
+            return Err(format!("Unknown check on {objective}"));
         };
         crate::app::handlers::tasks::decide_check(state, workspace_id, objective_id, *approve);
         crate::logger::info(format!(
             "phone {} a proposed check",
             if *approve { "approved" } else { "dropped" }
         ));
-        return;
+        return Ok(());
     }
 
     // Re-arming names a proposal. Same helper as the desk's yes on a
@@ -1425,50 +1467,43 @@ fn apply_remote(
                 .map(|p| (ws.id, p.id))
         });
         let Some((workspace_id, proposal_id)) = found else {
-            crate::logger::warn(format!("phone re-armed an unknown proposal {proposal}"));
-            return;
+            return Err(format!("Unknown proposal {proposal}"));
         };
-        match crate::app::handlers::tasks::rearm_review(
-            state,
-            workspace_id,
-            proposal_id,
-            action_tx,
-        ) {
+        match crate::app::handlers::tasks::rearm_review(state, workspace_id, proposal_id, action_tx)
+        {
             Ok(outcome) => crate::logger::info(format!("phone re-armed a review: {outcome}")),
-            Err(err) => crate::logger::warn(format!("phone's re-arm was refused: {err}")),
+            Err(err) => return Err(err.to_string()),
         }
-        return;
+        return Ok(());
     }
 
     // A subscription names a device, not a session.
     if let RemoteCommand::Subscribe { endpoint } = &command {
         if state.system.push.subscribe(endpoint.clone()) {
             crate::logger::info("a device asked to be told when an agent needs you".to_string());
-            if let Err(err) = state.system.push.save() {
-                crate::logger::warn(format!("could not store the subscription: {err}"));
-            }
         }
-        return;
+        state
+            .system
+            .push
+            .save()
+            .map_err(|err| format!("Could not save notification registration: {err}"))?;
+        return Ok(());
     }
 
     // Creating an agent names a project, not a session.
     if let RemoteCommand::NewAgent { project, provider } = &command {
-        let Ok(workspace_id) = project.parse::<uuid::Uuid>() else {
-            return;
-        };
+        let workspace_id = project
+            .parse::<uuid::Uuid>()
+            .map_err(|_| "Invalid project ID")?;
         let agent_type = match provider.as_str() {
             "codex" => crate::models::AgentType::Codex,
             "claude" => crate::models::AgentType::Claude,
             other => {
-                crate::logger::warn(format!("phone asked for an unknown agent: {other}"));
-                return;
+                return Err(format!("Unknown provider: {other}"));
             }
         };
         if state.get_workspace(workspace_id).is_none() {
-            crate::logger::warn(format!(
-                "phone asked for an agent in unknown project {project}"
-            ));
-            return;
+            return Err(format!("This project no longer exists: {project}"));
         }
         crate::logger::info(format!("phone started a {provider} in {project}"));
         // Permissions stay on: a prompt is answerable from the phone now, so
@@ -1477,7 +1512,7 @@ fn apply_remote(
             action_tx,
             Action::CreateSessionIn(workspace_id, agent_type, false, false),
         );
-        return;
+        return Ok(());
     }
 
     if let RemoteCommand::ProposeCheck {
@@ -1487,7 +1522,7 @@ fn apply_remote(
     } = &command
     {
         apply_proposed_check(state, manager, objective, command);
-        return;
+        return Ok(());
     }
 
     if let RemoteCommand::Propose {
@@ -1499,7 +1534,7 @@ fn apply_remote(
     } = command
     {
         apply_proposal(state, manager, objective, agent, instruction, rationale);
-        return;
+        return Ok(());
     }
 
     let agent = match &command {
@@ -1508,7 +1543,9 @@ fn apply_remote(
         | RemoteCommand::Answer { agent, .. }
         | RemoteCommand::Focus { agent } => agent.clone(),
         // Handled above.
-        RemoteCommand::NewAgent { .. } | RemoteCommand::Subscribe { .. } => return,
+        RemoteCommand::NewAgent { .. }
+        | RemoteCommand::Subscribe { .. }
+        | RemoteCommand::ShowMedia { .. } => return Ok(()),
         // Applied above; they name a project, a proposal or an objective,
         // not an agent.
         RemoteCommand::Propose { .. }
@@ -1516,11 +1553,10 @@ fn apply_remote(
         | RemoteCommand::Decide { .. }
         | RemoteCommand::DecideCheck { .. }
         | RemoteCommand::RearmReview { .. }
-        | RemoteCommand::Review { .. } => return,
+        | RemoteCommand::Review { .. } => return Ok(()),
     };
     let Some(session_id) = crate::remote::session_for(state, &agent) else {
-        crate::logger::warn(format!("phone asked for unknown agent {agent}"));
-        return;
+        return Err(format!("This agent no longer exists: {agent}"));
     };
 
     match command {
@@ -1562,35 +1598,19 @@ fn apply_remote(
         // driving each in a pty until it blocked, then answering. That beats
         // the Enter this used to send, which took whichever option happened to
         // be highlighted.
-        RemoteCommand::Answer { key, .. } => {
-            let offered = crate::remote::prompt_on_screen(state, session_id);
-            let bytes = match (key.as_str(), &offered) {
-                ("esc", _) => Some(vec![0x1b]),
-                (key, Some(prompt)) if prompt.options.iter().any(|o| o.key == key) => {
-                    Some(key.as_bytes().to_vec())
-                }
-                // The prompt was answered at the desk while the tap was in
-                // flight. Typing the digit now would put it in the composer.
-                _ => None,
-            };
-            match bytes {
-                Some(bytes) => {
-                    crate::logger::info(format!("phone answered {agent} with {key}"));
-                    dispatch_action(action_tx, Action::SendInput(session_id, bytes));
-                }
-                None => crate::logger::info(format!(
-                    "phone answered {agent} with {key}, but that choice is no longer on screen"
-                )),
-            }
+        RemoteCommand::Answer { key, prompt, .. } => {
+            crate::remote::answer_prompt(state, session_id, &prompt, &key)?;
         }
         RemoteCommand::Focus { .. } => {
             state.system.remote_focus = Some(session_id);
-            // A different conversation means the cached one is of no use.
-            state.system.remote_thread = None;
+            // Legacy CLI focus; browser reads select an agent independently.
         }
         // Handled before the session lookup, which they do not need.
-        RemoteCommand::NewAgent { .. } | RemoteCommand::Subscribe { .. } => {}
+        RemoteCommand::NewAgent { .. }
+        | RemoteCommand::Subscribe { .. }
+        | RemoteCommand::ShowMedia { .. } => {}
     }
+    Ok(())
 }
 
 /// Which sessions a refresh pass reads, and in what order.
@@ -2087,7 +2107,7 @@ mod tests {
         let short = state.get_session(id).unwrap().short_id();
         let (tx, mut rx) = mpsc::unbounded_channel();
 
-        apply_remote(
+        let _ = apply_remote(
             &mut state,
             crate::remote::RemoteCommand::Reply {
                 agent: short,
@@ -2112,7 +2132,7 @@ mod tests {
         let (mut state, workspace_id) = state_with_workspace();
         let (tx, mut rx) = mpsc::unbounded_channel();
 
-        apply_remote(
+        let _ = apply_remote(
             &mut state,
             crate::remote::RemoteCommand::NewAgent {
                 project: workspace_id.to_string(),
@@ -2153,7 +2173,7 @@ mod tests {
                 provider: "claude".into(),
             },
         ] {
-            apply_remote(&mut state, command, &tx);
+            let _ = apply_remote(&mut state, command, &tx);
         }
         assert!(rx.try_recv().is_err(), "nothing should have been started");
     }
@@ -2166,7 +2186,7 @@ mod tests {
         let short = state.get_session(id).unwrap().short_id();
         let (tx, mut rx) = mpsc::unbounded_channel();
 
-        apply_remote(
+        let _ = apply_remote(
             &mut state,
             crate::remote::RemoteCommand::Reply {
                 agent: short,
@@ -2434,7 +2454,11 @@ mod tests {
             "{}",
             correction.text
         );
-        assert_eq!(after.todo_id, Some(correction.id), "the loop tracks the new item");
+        assert_eq!(
+            after.todo_id,
+            Some(correction.id),
+            "the loop tracks the new item"
+        );
 
         // Round two ends in acceptance.
         crate::app::handlers::tasks::finish_into_review(&mut state, ws, proposal_id, &tx);
@@ -2498,13 +2522,11 @@ mod tests {
             state.data.workspaces.push(ws);
             (state, objective_id)
         };
-        let check = |state: &AppState| {
-            state.data.workspaces[0].objectives[0].done_when.clone()
-        };
+        let check = |state: &AppState| state.data.workspaces[0].objectives[0].done_when.clone();
 
         let (mut state, objective_id) = world();
         let (tx, _rx) = super::mpsc::unbounded_channel();
-        apply_remote(
+        let _ = apply_remote(
             &mut state,
             RemoteCommand::DecideCheck {
                 objective: objective_id.to_string(),
@@ -2513,11 +2535,14 @@ mod tests {
             &tx,
         );
         let approved = check(&state).expect("approving keeps the command");
-        assert!(!approved.proposed, "approved means no longer merely proposed");
+        assert!(
+            !approved.proposed,
+            "approved means no longer merely proposed"
+        );
         assert_eq!(approved.command, "cargo test");
 
         let (mut state, objective_id) = world();
-        apply_remote(
+        let _ = apply_remote(
             &mut state,
             RemoteCommand::DecideCheck {
                 objective: objective_id.to_string(),
@@ -2530,7 +2555,7 @@ mod tests {
         // An id that names nothing is a log line, not a panic: the desk may
         // have decided it while the tap was in flight.
         let (mut state, _) = world();
-        apply_remote(
+        let _ = apply_remote(
             &mut state,
             RemoteCommand::DecideCheck {
                 objective: uuid::Uuid::new_v4().to_string(),
@@ -2565,7 +2590,7 @@ mod tests {
         assert_eq!(crate::remote::phone_desk_rows(&state).len(), 1);
 
         let (tx, _rx) = super::mpsc::unbounded_channel();
-        apply_remote(
+        let _ = apply_remote(
             &mut state,
             RemoteCommand::Decide {
                 proposal: proposal_id.to_string(),
@@ -2579,7 +2604,12 @@ mod tests {
             "the declined row has to leave the phone's desk too"
         );
         assert!(
-            state.get_session(agent).unwrap().todo_queue.items.is_empty(),
+            state
+                .get_session(agent)
+                .unwrap()
+                .todo_queue
+                .items
+                .is_empty(),
             "declining queues nothing"
         );
 
@@ -2620,10 +2650,10 @@ mod tests {
         let rearm = || RemoteCommand::RearmReview {
             proposal: proposal_id.to_string(),
         };
-        apply_remote(&mut state, rearm(), &tx);
+        let _ = apply_remote(&mut state, rearm(), &tx);
         assert_eq!(state.get_session(agent).unwrap().todo_queue.items.len(), 1);
 
-        apply_remote(&mut state, rearm(), &tx);
+        let _ = apply_remote(&mut state, rearm(), &tx);
         assert_eq!(
             state.get_session(agent).unwrap().todo_queue.items.len(),
             1,
@@ -2655,7 +2685,7 @@ mod tests {
         state.data.workspaces[0].proposals.push(parked);
 
         let (tx, _rx) = super::mpsc::unbounded_channel();
-        apply_remote(
+        let _ = apply_remote(
             &mut state,
             RemoteCommand::RearmReview {
                 proposal: proposal_id.to_string(),
@@ -2669,7 +2699,10 @@ mod tests {
             Some(crate::models::ReviewPhase::Working),
             "re-armed work is working again, not still parked on the user"
         );
-        assert_eq!(after.review_rounds, 0, "the user's approval buys fresh rounds");
+        assert_eq!(
+            after.review_rounds, 0,
+            "the user's approval buys fresh rounds"
+        );
         let todo_id = after.todo_id.expect("re-arming queues the work");
 
         let queued = state

@@ -16,6 +16,11 @@ pub struct PaletteEntry {
 fn palette_entries() -> Vec<PaletteEntry> {
     vec![
         PaletteEntry {
+            name: "Preview latest media",
+            action: Action::PreviewLatestMedia,
+            keybinding: "",
+        },
+        PaletteEntry {
             name: "Create Claude Session",
             action: Action::CreateSession(crate::models::AgentType::Claude, false, false),
             keybinding: "1",

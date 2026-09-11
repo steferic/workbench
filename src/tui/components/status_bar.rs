@@ -343,18 +343,6 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
                         Span::styled("[s]", Style::default().fg(t.accent)),
                         Span::raw("Stop"),
                     ],
-                    FocusPanel::TasksPane => vec![
-                        Span::styled("[n]", Style::default().fg(t.accent)),
-                        Span::raw(" Add  "),
-                        Span::styled("[e]", Style::default().fg(t.accent)),
-                        Span::raw(" Edit  "),
-                        Span::styled("[Space]", Style::default().fg(t.accent)),
-                        Span::raw(" State  "),
-                        Span::styled("[a/x]", Style::default().fg(t.accent)),
-                        Span::raw(" Decide  "),
-                        Span::styled("[D]", Style::default().fg(t.accent)),
-                        Span::raw(" Desk"),
-                    ],
                     FocusPanel::OutputPane => {
                         if state.ui.desk_open {
                             vec![
@@ -550,7 +538,9 @@ mod tests {
             .draw(|frame| render(frame, frame.area(), &state))
             .unwrap();
         let buffer = terminal.backend().buffer().clone();
-        let line: String = (0..120).map(|x| buffer[(x, 0)].symbol().to_string()).collect();
+        let line: String = (0..120)
+            .map(|x| buffer[(x, 0)].symbol().to_string())
+            .collect();
         assert!(line.contains("swap "), "{line}");
         assert!(line.contains('%'), "{line}");
     }

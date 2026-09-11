@@ -7,6 +7,23 @@ use super::EventHandler;
 
 impl EventHandler {
     pub(super) fn handle_key_event(&self, key: KeyEvent, state: &AppState) -> Action {
+        if state.ui.media_preview.is_some()
+            && state.ui.input_mode == crate::app::InputMode::Normal
+            && state.ui.detail.is_none()
+            && !state.ui.pending_quit
+            && state.ui.pending_delete.is_none()
+        {
+            return match (key.code, key.modifiers) {
+                (KeyCode::Char('q'), mods) if mods.contains(KeyModifiers::CONTROL) => {
+                    Action::InitiateQuit
+                }
+                (KeyCode::Esc, _) => Action::CloseMedia,
+                (KeyCode::Enter, KeyModifiers::NONE) | (KeyCode::Char('b'), KeyModifiers::NONE) => {
+                    Action::BrowseMedia
+                }
+                _ => Action::Tick,
+            };
+        }
         // Handle input mode first
         if let Some(action) = handle_input_mode_key(&key, state) {
             return action;
@@ -43,6 +60,19 @@ impl EventHandler {
             };
         }
 
+        // A decision overlay owns ordinary keys even if the mouse moved
+        // focus to a different pane underneath it.
+        if state.ui.detail.is_some() {
+            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('q') {
+                return Action::InitiateQuit;
+            }
+            return match (key.code, key.modifiers) {
+                (KeyCode::Char('a'), KeyModifiers::NONE) => Action::DeskDecideDetail(true),
+                (KeyCode::Char('x'), KeyModifiers::NONE) => Action::DeskDecideDetail(false),
+                _ => Action::CloseDetail,
+            };
+        }
+
         // Global Ctrl+P - command palette
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('p') {
             return Action::EnterCommandPalette;
@@ -61,7 +91,6 @@ impl EventHandler {
         match state.ui.focus {
             FocusPanel::WorkspaceList => self.handle_workspace_list_keys(key, state),
             FocusPanel::SessionList => self.handle_session_list_keys(key, state),
-            FocusPanel::TasksPane => self.handle_tasks_pane_keys(key, state),
             FocusPanel::UtilitiesPane => self.handle_utilities_pane_keys(key, state),
             FocusPanel::OutputPane => self.handle_output_pane_keys(key, state),
             FocusPanel::PinnedTerminalPane(idx) => {
@@ -258,46 +287,6 @@ impl EventHandler {
         }
     }
 
-    fn handle_tasks_pane_keys(&self, key: KeyEvent, state: &AppState) -> Action {
-        if let Some(action) = check_global_keys(&key, &state.system.user_config) {
-            return action;
-        }
-
-        // The detail overlay swallows the pane's keys while open: the row it
-        // shows is the row a/x act on, and everything else just closes it.
-        if state.ui.detail.is_some() {
-            return match key.code {
-                KeyCode::Char('a') => Action::DeskDecideDetail(true),
-                KeyCode::Char('x') => Action::DeskDecideDetail(false),
-                _ => Action::CloseDetail,
-            };
-        }
-
-        match key.code {
-            KeyCode::Char('j') | KeyCode::Down => Action::SelectNextTask,
-            KeyCode::Char('k') | KeyCode::Up => Action::SelectPrevTask,
-            KeyCode::Char('l') => Action::FocusRight,
-            KeyCode::Char('D') => Action::ToggleDesk,
-
-            // The project's standing priorities.
-            KeyCode::Enter => Action::OpenDetail,
-            KeyCode::Char('n') => Action::EditObjective(false),
-            KeyCode::Char('e') => Action::EditObjective(true),
-            KeyCode::Char('d') => Action::DeleteObjective,
-            KeyCode::Char(' ') => Action::CycleObjectiveState,
-            KeyCode::Char('K') => Action::MoveObjective(-1),
-            KeyCode::Char('J') => Action::MoveObjective(1),
-            // On a proposal row: turn it into work, or say no. Approving is
-            // the only way a manager's suggestion reaches an agent.
-            KeyCode::Char('a') => Action::ApproveProposal,
-            KeyCode::Char('x') => Action::DeclineProposal,
-
-            KeyCode::Char('h') => Action::EnterConfigWindow,
-            KeyCode::Char('?') => Action::EnterConfigWindow,
-            _ => Action::Tick,
-        }
-    }
-
     fn handle_utilities_pane_keys(&self, key: KeyEvent, state: &AppState) -> Action {
         use crate::app::{UtilityItem, UtilitySection};
 
@@ -484,7 +473,7 @@ impl EventHandler {
             match key.code {
                 KeyCode::Char('h') | KeyCode::Esc => Action::FocusLeft,
                 KeyCode::Char('?') => Action::EnterConfigWindow,
-                    _ => Action::Tick,
+                _ => Action::Tick,
             }
         }
     }
@@ -650,6 +639,29 @@ mod quit_tests {
         events.handle_key_event(KeyEvent::new(code, mods), state)
     }
 
+    #[test]
+    fn a_desk_detail_consumes_keys_after_focus_moves_underneath_it() {
+        let events = EventHandler::new();
+        let mut state = state();
+        state.ui.detail = Some(crate::app::DetailTarget::Proposal {
+            workspace_id: uuid::Uuid::nil(),
+            proposal_id: uuid::Uuid::nil(),
+        });
+        state.ui.focus = FocusPanel::SessionList;
+        assert!(matches!(
+            press(&events, &state, KeyCode::Char('d'), KeyModifiers::NONE),
+            Action::CloseDetail
+        ));
+        assert!(matches!(
+            press(&events, &state, KeyCode::Char('a'), KeyModifiers::NONE),
+            Action::DeskDecideDetail(true)
+        ));
+        assert!(matches!(
+            press(&events, &state, KeyCode::Char('a'), KeyModifiers::CONTROL),
+            Action::CloseDetail
+        ));
+    }
+
     /// Quitting kills every agent on the machine, so it takes the one chord
     /// nobody presses by accident.
     #[test]
@@ -659,7 +671,6 @@ mod quit_tests {
         for panel in [
             FocusPanel::WorkspaceList,
             FocusPanel::SessionList,
-            FocusPanel::TasksPane,
             FocusPanel::UtilitiesPane,
             FocusPanel::OutputPane,
         ] {
@@ -684,7 +695,6 @@ mod quit_tests {
         for panel in [
             FocusPanel::WorkspaceList,
             FocusPanel::SessionList,
-            FocusPanel::TasksPane,
             FocusPanel::UtilitiesPane,
             FocusPanel::OutputPane,
         ] {
@@ -692,7 +702,10 @@ mod quit_tests {
             for code in [KeyCode::Char('q'), KeyCode::Esc] {
                 let action = press(&events, &state, code, KeyModifiers::NONE);
                 assert!(
-                    !matches!(action, Action::Quit | Action::InitiateQuit | Action::ConfirmQuit),
+                    !matches!(
+                        action,
+                        Action::Quit | Action::InitiateQuit | Action::ConfirmQuit
+                    ),
                     "{code:?} must not quit from {panel:?}, got {action:?}"
                 );
             }

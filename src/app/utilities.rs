@@ -39,7 +39,11 @@ pub fn load_utility_content(state: &mut AppState, action_tx: &mpsc::UnboundedSen
             "  Press Enter to toggle the banner bar.".to_string(),
             format!(
                 "  Status: {}",
-                if state.ui.banner_visible { "Visible" } else { "Hidden" }
+                if state.ui.banner_visible {
+                    "Visible"
+                } else {
+                    "Hidden"
+                }
             ),
         ];
         return;
@@ -310,15 +314,6 @@ fn load_keybindings_info(state: &mut AppState) {
     let mut sess_bindings: Vec<_> = kb.panel_session_list.iter().collect();
     sess_bindings.sort_by_key(|(k, _)| k.display());
     for (combo, action) in sess_bindings {
-        content.push(format!("  {:12}  {}", combo.display(), action));
-    }
-
-    content.push("".to_string());
-    content.push("  Tasks Pane".to_string());
-    content.push("  ----------".to_string());
-    let mut task_bindings: Vec<_> = kb.panel_tasks_pane.iter().collect();
-    task_bindings.sort_by_key(|(k, _)| k.display());
-    for (combo, action) in task_bindings {
         content.push(format!("  {:12}  {}", combo.display(), action));
     }
 

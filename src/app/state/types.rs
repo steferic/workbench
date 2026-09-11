@@ -2,7 +2,6 @@
 pub enum FocusPanel {
     WorkspaceList,
     SessionList,
-    TasksPane,
     UtilitiesPane,
     OutputPane,
     PinnedTerminalPane(usize), // Index of focused pinned pane (0-3)
@@ -268,8 +267,7 @@ impl Toast {
 pub enum Divider {
     LeftRight,          // Between left panel and right panel
     WorkspaceSession,   // Between workspace list and session list (horizontal)
-    SessionsTasks,      // Between sessions and tasks in lower-left (horizontal)
-    TasksUtilities,     // Between tasks and utilities in lower-left (horizontal)
+    SessionsUtilities,  // Between sessions and utilities (horizontal)
     OutputPinned,       // Between output pane and pinned terminal
     PinnedPanes(usize), // Between pinned panes (index is the pane above the divider)
 }

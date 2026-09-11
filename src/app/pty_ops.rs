@@ -124,7 +124,10 @@ mod tests {
         let pinned_id = pinned.id;
         workspace.pinned_terminal_ids.push(pinned_id);
         state.data.workspaces.push(workspace);
-        state.data.sessions.insert(workspace_id, vec![agent, pinned]);
+        state
+            .data
+            .sessions
+            .insert(workspace_id, vec![agent, pinned]);
         state
             .system
             .create_session_buffers(agent_id, 24, 80, &AgentType::Claude);
@@ -183,5 +186,76 @@ mod tests {
             state.system.output_buffers[&pinned_id].screen().size(),
             size_before
         );
+    }
+
+    #[test]
+    fn desk_and_window_resizes_keep_agents_sized_for_their_actual_panes() {
+        use ratatui::{backend::TestBackend, Terminal};
+        let (mut state, agent_id, pinned_id) = state_with_pinned_terminal();
+        state.ui.layout.left_panel_ratio = 0.27;
+        state.ui.layout.output_split_ratio = 0.63;
+        state.set_active_session_id(Some(agent_id));
+        let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+
+        for (width, height) in [(121, 39), (81, 25), (203, 61)] {
+            state.ui.desk_open = false;
+            state.system.terminal_size = (width, height);
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal
+                .draw(|frame| crate::tui::ui::draw(frame, &mut state))
+                .unwrap();
+            let expected = state.ui.output_pane_area.unwrap();
+            let size = (expected.3 - 2, expected.2 - 2);
+            resize_ptys_to_panes(&mut state);
+            assert_eq!(state.system.output_buffers[&agent_id].screen().size(), size);
+
+            state.ui.desk_open = true;
+            terminal
+                .draw(|frame| crate::tui::ui::draw(frame, &mut state))
+                .unwrap();
+            assert!(state.ui.output_pane_area.unwrap().2 > expected.2);
+            assert_eq!((state.pane_rows(), state.output_pane_cols()), size);
+            // This is the spawn path's size source while the Desk is open.
+            let new_agent = Uuid::new_v4();
+            state.system.create_session_buffers(
+                new_agent,
+                state.pane_rows(),
+                state.output_pane_cols(),
+                &AgentType::Claude,
+            );
+            assert_eq!(
+                state.system.output_buffers[&new_agent].screen().size(),
+                size
+            );
+            state.system.remove_session_buffers(&new_agent);
+
+            terminal.backend_mut().resize(width + 7, height + 3);
+            state.system.terminal_size = (width + 7, height + 3);
+            terminal
+                .draw(|frame| crate::tui::ui::draw(frame, &mut state))
+                .unwrap();
+            resize_ptys_to_panes(&mut state);
+            let hidden_agent_size = state.system.output_buffers[&agent_id].screen().size();
+
+            state.system.pty_resize_pending = false;
+            crate::app::handlers::tasks::handle_task_action(
+                &mut state,
+                crate::app::Action::ToggleDesk,
+                &tx,
+            )
+            .unwrap();
+            assert!(state.system.pty_resize_pending);
+            terminal
+                .draw(|frame| crate::tui::ui::draw(frame, &mut state))
+                .unwrap();
+            resize_ptys_to_panes(&mut state);
+            let shown = state.ui.output_pane_area.unwrap();
+            assert_eq!(hidden_agent_size, (shown.3 - 2, shown.2 - 2));
+            let pinned = state.ui.pinned_pane_areas[0].unwrap();
+            assert_eq!(
+                state.system.output_buffers[&pinned_id].screen().size().1,
+                pinned.2 - 2
+            );
+        }
     }
 }

@@ -17,6 +17,8 @@
 //! publishes, and asks for changes by sending actions. So there is no lock
 //! held across a request, and nothing here can corrupt app state.
 
+pub mod commands;
+pub(crate) mod http;
 mod page;
 mod prompt;
 mod push;
@@ -47,6 +49,14 @@ const FALLBACK_TAIL: usize = 200;
 /// What the phone sees. Rebuilt on the tick, small enough to send whole.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Snapshot {
+    #[serde(skip)]
+    pub media_library: crate::media::Library,
+    pub media: Vec<crate::media::View>,
+    /// Changes on every desktop process start; retries cannot cross it.
+    pub instance: String,
+    /// Conversations recently requested by independent browser clients.
+    #[serde(skip)]
+    pub watching: std::collections::HashMap<String, std::time::Instant>,
     /// Every project, including ones with no agents yet — you can start one
     /// there from the phone.
     pub projects: Vec<ProjectView>,
@@ -158,7 +168,7 @@ pub struct ServerView {
     pub url: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct AgentView {
     /// Short session id — the address for every write endpoint.
     pub id: String,
@@ -242,8 +252,45 @@ pub type Shared = Arc<Mutex<Snapshot>>;
 /// The open conversation is read first, because that is the one step that can
 /// touch the disk — everything after it is a read of state already in memory.
 pub fn publish(state: &mut AppState, shared: &Shared) {
-    let open = state.system.remote_focus.and_then(|id| conversation(state, id));
-    publish_with(state, shared, open);
+    let mut wanted: Vec<Uuid> = shared
+        .lock()
+        .ok()
+        .map(|mut snapshot| {
+            snapshot
+                .watching
+                .retain(|_, at| at.elapsed().as_secs() < 60);
+            snapshot
+                .watching
+                .keys()
+                .filter_map(|id| session_for(state, id))
+                .collect()
+        })
+        .unwrap_or_default();
+    if let Some(id) = state.system.remote_focus {
+        wanted.push(id);
+    }
+    wanted.sort_unstable();
+    wanted.dedup();
+    state
+        .system
+        .remote_threads
+        .retain(|id, _| wanted.contains(id));
+    let conversations = wanted
+        .into_iter()
+        .map(|id| (id, conversation(state, id)))
+        .collect();
+    let ids: Vec<_> = state
+        .data
+        .sessions
+        .values()
+        .flatten()
+        .map(|s| s.id)
+        .collect();
+    state.system.remote_prompts.retain(|id, _| ids.contains(id));
+    for id in ids {
+        sync_prompt(state, id);
+    }
+    publish_with(state, shared, conversations);
 }
 
 /// The snapshot as it should go to a client that already has `have` messages
@@ -256,6 +303,11 @@ pub fn since(snapshot: &Snapshot, have: usize, epoch: Option<&str>) -> Snapshot 
     let mut trimmed = snapshot.clone();
     for agent in &mut trimmed.agents {
         if agent.messages.is_empty() {
+            if snapshot.open.as_deref() == Some(agent.id.as_str())
+                && epoch != Some(agent.msg_epoch.as_str())
+            {
+                agent.msg_reset = true;
+            }
             continue;
         }
         // A `have` counted in another life is not a position in this one.
@@ -350,7 +402,7 @@ fn conversation(state: &mut AppState, session_id: Uuid) -> Option<(Vec<Message>,
     let (provider, path) = journal(state, session_id)?;
 
     // A cache for another session, or another of its journals, is of no use.
-    let mut cache = match state.system.remote_thread.take() {
+    let mut cache = match state.system.remote_threads.remove(&session_id) {
         Some(cache) if cache.session == session_id && cache.path == path => cache,
         _ => crate::app::ThreadCache {
             session: session_id,
@@ -364,8 +416,9 @@ fn conversation(state: &mut AppState, session_id: Uuid) -> Option<(Vec<Message>,
         },
     };
     let before = cache.messages.len();
+    let replaced = std::fs::metadata(&path).is_ok_and(|m| m.len() < cache.cursor.0);
     cache.cursor = thread::read_more(&path, provider, cache.cursor, &mut cache.messages);
-    if cache.messages.len() < before {
+    if replaced || cache.messages.len() < before {
         // Fewer messages than we already had means the file shrank underneath
         // the cursor and `read_more` started over from the tail. What it read
         // is a different conversation's worth of history, so the count
@@ -383,11 +436,15 @@ fn conversation(state: &mut AppState, session_id: Uuid) -> Option<(Vec<Message>,
     }
 
     let read = (cache.messages.clone(), cache.total, cache.epoch.clone());
-    state.system.remote_thread = Some(cache);
+    state.system.remote_threads.insert(session_id, cache);
     Some(read)
 }
 
-fn publish_with(state: &AppState, shared: &Shared, open: Option<(Vec<Message>, usize, String)>) {
+fn publish_with(
+    state: &AppState,
+    shared: &Shared,
+    conversations: std::collections::HashMap<Uuid, Option<(Vec<Message>, usize, String)>>,
+) {
     let desk = phone_desk_rows(state);
     let mut agents = Vec::new();
     let servers = dev_servers(state);
@@ -426,9 +483,7 @@ fn publish_with(state: &AppState, shared: &Shared, open: Option<(Vec<Message>, u
                     id: proposal.id.to_string(),
                     phase: proposal.review.map(|phase| {
                         match phase {
-                            crate::models::ReviewPhase::Working
-                                if proposal.open_on_board() =>
-                            {
+                            crate::models::ReviewPhase::Working if proposal.open_on_board() => {
                                 "open"
                             }
                             crate::models::ReviewPhase::Working if proposal.review_rounds > 0 => {
@@ -472,7 +527,19 @@ fn publish_with(state: &AppState, shared: &Shared, open: Option<(Vec<Message>, u
             if !session.agent_type.is_agent() || session.worktree_viewer_for.is_some() {
                 continue;
             }
-            let (status, question) = agent_state(state, session);
+            let (status, mut question) = agent_state(state, session);
+            if let Some(prompt) = &mut question {
+                if let Some(ticket) = state.system.remote_prompts.get(&session.id) {
+                    if !ticket.consumed {
+                        prompt.id = ticket.id.clone();
+                    } else {
+                        question = None;
+                    }
+                }
+            }
+            let open = conversations
+                .get(&session.id)
+                .and_then(|value| value.as_ref());
 
             let queue = &session.todo_queue;
             let running = queue.running().map(|item| item.text.clone());
@@ -525,16 +592,16 @@ fn publish_with(state: &AppState, shared: &Shared, open: Option<(Vec<Message>, u
                 prompt: question,
                 // Only the conversation you have open travels, so the snapshot
                 // stays phone-sized however many agents are running.
-                messages: match state.system.remote_focus == Some(session.id) {
-                    true => open.clone().map(|(msgs, _, _)| msgs).unwrap_or_default(),
+                messages: match conversations.contains_key(&session.id) {
+                    true => open.map(|(msgs, _, _)| msgs.clone()).unwrap_or_default(),
                     false => Vec::new(),
                 },
-                msg_total: match state.system.remote_focus == Some(session.id) {
+                msg_total: match conversations.contains_key(&session.id) {
                     true => open.as_ref().map(|(_, total, _)| *total).unwrap_or(0),
                     false => 0,
                 },
                 msg_reset: false,
-                msg_epoch: match state.system.remote_focus == Some(session.id) {
+                msg_epoch: match conversations.contains_key(&session.id) {
                     true => open
                         .as_ref()
                         .map(|(_, _, epoch)| epoch.clone())
@@ -544,8 +611,11 @@ fn publish_with(state: &AppState, shared: &Shared, open: Option<(Vec<Message>, u
                 // Also the fallback for a session whose journal exists but has
                 // nothing in it yet: an agent still booting has said nothing,
                 // and an empty screen would look like a broken page.
-                tail: match state.system.remote_focus == Some(session.id)
-                    && open.as_ref().map(|(msgs, _, _)| msgs.is_empty()).unwrap_or(true)
+                tail: match conversations.contains_key(&session.id)
+                    && open
+                        .as_ref()
+                        .map(|(msgs, _, _)| msgs.is_empty())
+                        .unwrap_or(true)
                 {
                     true => output_tail(state, session.id, FALLBACK_TAIL),
                     false => Vec::new(),
@@ -554,7 +624,8 @@ fn publish_with(state: &AppState, shared: &Shared, open: Option<(Vec<Message>, u
                     .system
                     .remote_finished
                     .get(&session.short_id())
-                    .map(|at| (chrono::Utc::now() - *at).num_seconds()),
+                    .map(|at| (chrono::Utc::now() - *at).num_seconds())
+                    .filter(|age| *age < 180),
             });
         }
     }
@@ -568,6 +639,10 @@ fn publish_with(state: &AppState, shared: &Shared, open: Option<(Vec<Message>, u
     });
 
     if let Ok(mut snapshot) = shared.lock() {
+        if snapshot.instance.is_empty() {
+            snapshot.instance = Uuid::new_v4().to_string();
+        }
+        snapshot.media = snapshot.media_library.views();
         snapshot.projects = projects;
         snapshot.agents = agents;
         snapshot.desk = desk;
@@ -581,6 +656,103 @@ fn publish_with(state: &AppState, shared: &Shared, open: Option<(Vec<Message>, u
             .map(|session| session.short_id());
         snapshot.at = chrono::Utc::now().timestamp();
     }
+}
+
+#[derive(Debug)]
+pub struct PromptTicket {
+    pub id: String,
+    signature: String,
+    pub consumed: bool,
+}
+
+pub fn sync_prompt(state: &mut AppState, session_id: Uuid) {
+    let Some(mut prompt) = screen_prompt(state, session_id) else {
+        state.system.remote_prompts.remove(&session_id);
+        return;
+    };
+    for option in &mut prompt.options {
+        option.selected = false;
+    }
+    let generation = state
+        .system
+        .pty_handles
+        .get(&session_id)
+        .map(|h| h.generation);
+    let signature = format!(
+        "{:?}:{}",
+        generation,
+        serde_json::to_string(&prompt).unwrap_or_default()
+    );
+    if !state
+        .system
+        .remote_prompts
+        .get(&session_id)
+        .is_some_and(|p| p.signature == signature)
+    {
+        state.system.remote_prompts.insert(
+            session_id,
+            PromptTicket {
+                id: Uuid::new_v4().to_string(),
+                signature,
+                consumed: false,
+            },
+        );
+    }
+}
+
+pub fn answer_prompt(
+    state: &mut AppState,
+    session_id: Uuid,
+    id: &str,
+    key: &str,
+) -> Result<(), String> {
+    sync_prompt(state, session_id);
+    let offered = screen_prompt(state, session_id);
+    let ticket = state
+        .system
+        .remote_prompts
+        .get_mut(&session_id)
+        .filter(|p| p.id == id && !p.consumed)
+        .ok_or("That question has changed or was already answered. Refresh and review it again.")?;
+    let prompt = offered.ok_or("That question is no longer on screen.")?;
+    if key != "esc" && !prompt.options.iter().any(|o| o.key == key) {
+        return Err("That choice is no longer available.".into());
+    }
+    let bytes = if key == "esc" {
+        &[0x1b][..]
+    } else {
+        key.as_bytes()
+    };
+    let handle = state
+        .system
+        .pty_handles
+        .get_mut(&session_id)
+        .ok_or("This agent is no longer running.")?;
+    let mut expected = prompt;
+    for option in &mut expected.options {
+        option.selected = false;
+    }
+    // A write/flush error can occur after the key reached the child. Retire
+    // this ticket before attempting IO so a retry cannot answer twice.
+    ticket.consumed = true;
+    let written = handle
+        .send_input_if_screen_matches(bytes, |screen| {
+            prompt::parse(screen).is_some_and(|mut current| {
+                for option in &mut current.options {
+                    option.selected = false;
+                }
+                current == expected
+            })
+        })
+        .map_err(|err| format!("Could not answer: {err}"))?;
+    if !written {
+        return Err("That question changed before your answer arrived. Review it again.".into());
+    }
+    state
+        .data
+        .last_send_input
+        .insert(session_id, std::time::Instant::now());
+    Ok(())
 }
 
 /// Resolve a short id from the phone back to a session.
@@ -679,8 +851,7 @@ pub fn phone_desk_rows(state: &AppState) -> Vec<DeskRowView> {
                     project,
                     id: proposal_id.to_string(),
                     title: found.instruction.clone(),
-                    detail: (!found.rationale.trim().is_empty())
-                        .then(|| found.rationale.clone()),
+                    detail: (!found.rationale.trim().is_empty()).then(|| found.rationale.clone()),
                     agent: found.agent.clone(),
                 })
             }
@@ -737,6 +908,9 @@ pub fn agent_state(state: &AppState, session: &Session) -> (&'static str, Option
 }
 
 fn screen_prompt(state: &AppState, session_id: Uuid) -> Option<Prompt> {
+    if let Some(handle) = state.system.pty_handles.get(&session_id) {
+        return prompt::parse(&handle.screen_contents());
+    }
     let parser = state.system.output_buffers.get(&session_id)?;
     prompt::parse(&parser.screen().contents())
 }
@@ -814,12 +988,39 @@ mod tests {
     /// context the decision needs — a row that is only a title is a yes/no
     /// with nothing to decide on.
     #[test]
+    fn an_old_prompt_id_cannot_answer_a_new_question_with_the_same_options() {
+        let (mut state, busy, _) = state_with_agents();
+        let show = |state: &mut AppState, command: &str| {
+            let parser = state
+                .system
+                .output_buffers
+                .entry(busy)
+                .or_insert_with(|| vt100::Parser::new(24, 100, 0));
+            parser.process(format!("\x1b[2J\x1b[H Bash command\r\n\r\n {command}\r\n\r\n Do you want to proceed?\r\n ❯ 1. Yes\r\n   2. No\r\n").as_bytes());
+            sync_prompt(state, busy);
+        };
+        show(&mut state, "echo one");
+        let old = state.system.remote_prompts.get(&busy).unwrap().id.clone();
+        sync_prompt(&mut state, busy);
+        assert_eq!(state.system.remote_prompts.get(&busy).unwrap().id, old);
+        show(&mut state, "echo two");
+        assert_ne!(state.system.remote_prompts.get(&busy).unwrap().id, old);
+        assert!(answer_prompt(&mut state, busy, &old, "1")
+            .unwrap_err()
+            .contains("changed"));
+        assert!(answer_prompt(&mut state, busy, &old, "esc").is_err());
+    }
+
+    #[test]
     fn phone_desk_carries_all_four_kinds_with_their_context() {
         let state = world_with_every_decision();
         let rows = phone_desk_rows(&state);
 
         let kinds: Vec<&str> = rows.iter().map(|r| r.kind.as_str()).collect();
-        assert_eq!(kinds, ["blocked", "needs_user", "pending", "pending", "check"]);
+        assert_eq!(
+            kinds,
+            ["blocked", "needs_user", "pending", "pending", "check"]
+        );
 
         let blocked = &rows[0];
         assert_eq!(blocked.project, "alpha");
@@ -888,7 +1089,9 @@ mod tests {
             ..Default::default()
         };
         let json = serde_json::to_value(&snapshot).unwrap();
-        let rows = json["desk"].as_array().expect("`desk` is what the page reads");
+        let rows = json["desk"]
+            .as_array()
+            .expect("`desk` is what the page reads");
         assert_eq!(rows.len(), 5);
         for row in rows {
             for field in ["kind", "project", "id", "title"] {
@@ -896,7 +1099,10 @@ mod tests {
             }
         }
         let kinds: Vec<&str> = rows.iter().map(|r| r["kind"].as_str().unwrap()).collect();
-        assert_eq!(kinds, ["blocked", "needs_user", "pending", "pending", "check"]);
+        assert_eq!(
+            kinds,
+            ["blocked", "needs_user", "pending", "pending", "check"]
+        );
         // Optional fields travel as null rather than being absent, so the
         // page's `r.detail ? … : ""` reads the same either way.
         assert!(rows[4]["agent"].is_null(), "a check concerns no agent");
@@ -1108,7 +1314,11 @@ mod tests {
         let stopped = snapshot.agents.iter().find(|a| a.id == short).unwrap();
         assert_eq!(stopped.status, "stopped");
         assert_eq!(
-            stopped.messages.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(),
+            stopped
+                .messages
+                .iter()
+                .map(|m| m.text.as_str())
+                .collect::<Vec<_>>(),
             vec!["ship the migration"],
             "the journal outlives the process, so the conversation should too"
         );
@@ -1157,7 +1367,11 @@ mod tests {
         // Two behind: the last two, to be appended.
         let behind = since(&snapshot, 1, Some("life-1"));
         assert_eq!(
-            behind.agents[0].messages.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(),
+            behind.agents[0]
+                .messages
+                .iter()
+                .map(|m| m.text.as_str())
+                .collect::<Vec<_>>(),
             vec!["two", "three"]
         );
         assert!(!behind.agents[0].msg_reset);
@@ -1312,7 +1526,10 @@ mod tests {
 
         assert_eq!(agent.messages.len(), MAX_MESSAGES, "the window is capped");
         assert_eq!(agent.msg_total, MAX_MESSAGES + 5, "the count is not");
-        assert_eq!(agent.messages.last().unwrap().text, format!("m{}", MAX_MESSAGES + 4));
+        assert_eq!(
+            agent.messages.last().unwrap().text,
+            format!("m{}", MAX_MESSAGES + 4)
+        );
 
         // A phone holding all of them is owed nothing, even though the five
         // it holds from the start are no longer in the window. It quotes the
@@ -1395,4 +1612,9 @@ mod tests {
         assert_eq!(session_for(&state, &short.to_uppercase()), Some(busy));
         assert_eq!(session_for(&state, "nosuchid"), None);
     }
+}
+
+#[cfg(test)]
+pub(crate) fn visual_fixture(shared: Shared) -> String {
+    server::visual_fixture(shared)
 }

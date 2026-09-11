@@ -26,7 +26,7 @@ pub fn handle_parallel_action(
             start_parallel_task(state, action_tx)?;
         }
         Action::CancelParallelTask(task_id) => {
-            cancel_parallel_task(state, task_id, pty_manager)?;
+            cancel_parallel_task(state, task_id, action_tx)?;
         }
         Action::SelectNextReport | Action::SelectPrevReport => {
             handle_report_navigation(state, &action);
@@ -87,7 +87,7 @@ pub fn handle_parallel_action(
             }
         }
         Action::ParallelMergeFinished { plan, error } => {
-            handle_parallel_merge_finished(state, plan, error)?;
+            handle_parallel_merge_finished(state, plan, error, action_tx)?;
         }
         _ => {}
     }
@@ -101,7 +101,8 @@ fn start_parallel_task(
     // Get selected agents
     let selected_agents: Vec<_> = state
         .ui
-        .parallel_task.agents
+        .parallel_task
+        .agents
         .iter()
         .filter(|(_, selected)| *selected)
         .map(|(agent_type, _)| agent_type.clone())
@@ -316,7 +317,8 @@ fn handle_parallel_worktrees_ready(
 
         match pty_manager.spawn_session(SessionSpawnConfig {
             session_id,
-            workspace_id,            agent_type: spec.agent_type.clone(),
+            workspace_id,
+            agent_type: spec.agent_type.clone(),
             working_dir: &spec.worktree_path,
             rows: pty_rows,
             cols,
@@ -363,72 +365,17 @@ fn handle_parallel_worktrees_ready(
     Ok(())
 }
 
-/// Kill the PTY handles for the given sessions and drop their buffers.
-/// `context` is used as the log message when a kill fails.
-fn kill_sessions(state: &mut AppState, session_ids: &[Uuid], context: &str) {
-    for session_id in session_ids {
-        if let Some(mut handle) = state.system.pty_handles.remove(session_id) {
-            if let Err(err) = handle.kill() {
-                report_runtime_error(state, context, err, "Failed to stop session");
-            }
-        }
-        state.system.remove_session_buffers(session_id);
-    }
-}
-
 fn cancel_parallel_task(
     state: &mut AppState,
     task_id: Uuid,
-    _pty_manager: &PtyManager,
+    action_tx: &mpsc::UnboundedSender<Action>,
 ) -> Result<()> {
-    let workspace_path = state.selected_workspace().map(|w| w.path.clone());
-
-    // First, collect all the info we need from the task
-    let (workspace_id, session_ids, worktree_paths): (
-        Option<Uuid>,
-        Vec<Uuid>,
-        Vec<std::path::PathBuf>,
-    ) = {
-        let ws = state.data.workspaces.get(state.ui.selected_workspace_idx);
-        if let Some(ws) = ws {
-            if let Some(task) = ws.get_parallel_task(task_id) {
-                let ids: Vec<Uuid> = task.attempts.iter().map(|a| a.session_id).collect();
-                let paths: Vec<std::path::PathBuf> = task
-                    .attempts
-                    .iter()
-                    .map(|a| a.worktree_path.clone())
-                    .collect();
-                (Some(ws.id), ids, paths)
-            } else {
-                (None, vec![], vec![])
-            }
-        } else {
-            (None, vec![], vec![])
-        }
-    };
-
-    // Kill all sessions and cleanup worktrees
-    kill_sessions(state, &session_ids, "failed to kill parallel session");
-
-    // Remove worktrees
-    if let Some(ref ws_path) = workspace_path {
-        for worktree_path in &worktree_paths {
-            let ws_path = ws_path.clone();
-            let worktree_path = worktree_path.clone();
-            task::spawn_blocking(move || {
-                if let Err(err) = git::remove_worktree(&ws_path, &worktree_path, true) {
-                    report_background_error("failed to remove cancelled parallel worktree", err);
-                }
-            });
-        }
-    }
-
-    // Remove sessions from state
-    if let Some(ws_id) = workspace_id {
-        if let Some(sessions) = state.data.sessions.get_mut(&ws_id) {
-            sessions.retain(|s| !session_ids.contains(&s.id));
-        }
-    }
+    let session_ids: Vec<_> = state
+        .selected_workspace()
+        .and_then(|ws| ws.get_parallel_task(task_id))
+        .map(|task| task.attempts.iter().map(|a| a.session_id).collect())
+        .unwrap_or_default();
+    crate::app::cleanup::remove_sessions(state, &session_ids, action_tx);
 
     // Mark task as cancelled and remove it
     if let Some(ws) = state
@@ -526,6 +473,7 @@ fn handle_parallel_merge_finished(
     state: &mut AppState,
     plan: ParallelMergePlan,
     error: Option<String>,
+    action_tx: &mpsc::UnboundedSender<Action>,
 ) -> Result<()> {
     if let Some(err) = error {
         let msg = format!("Parallel merge failed: {}", err);
@@ -540,28 +488,7 @@ fn handle_parallel_merge_finished(
         return Ok(());
     }
 
-    // Kill only the merged attempt's session
-    kill_sessions(
-        state,
-        &plan.session_ids,
-        "failed to kill merged parallel session",
-    );
-
-    // Remove the merged attempt's worktree
-    {
-        let workspace_path = plan.workspace_path.clone();
-        let worktree_path = plan.winner_worktree_path.clone();
-        task::spawn_blocking(move || {
-            if let Err(err) = git::remove_worktree(&workspace_path, &worktree_path, true) {
-                report_background_error("failed to remove merged parallel worktree", err);
-            }
-        });
-    }
-
-    // Remove the merged session from state
-    if let Some(sessions) = state.data.sessions.get_mut(&plan.workspace_id) {
-        sessions.retain(|s| !plan.session_ids.contains(&s.id));
-    }
+    crate::app::cleanup::remove_sessions(state, &plan.session_ids, action_tx);
 
     // Remove only the merged attempt from the task
     if let Some(ws) = state
@@ -646,7 +573,8 @@ fn handle_report_navigation(state: &mut AppState, action: &Action) {
 
     match action {
         Action::SelectNextReport => {
-            state.ui.parallel_task.selected_report_idx = (state.ui.parallel_task.selected_report_idx + 1).min(report_count - 1);
+            state.ui.parallel_task.selected_report_idx =
+                (state.ui.parallel_task.selected_report_idx + 1).min(report_count - 1);
         }
         Action::SelectPrevReport => {
             if state.ui.parallel_task.selected_report_idx > 0 {
@@ -767,13 +695,16 @@ mod tests {
             .map(|t| t.attempts.len())
             .unwrap_or(0);
 
-        state.ui.parallel_task.selected_report_idx = (state.ui.parallel_task.selected_report_idx + 1).min(report_count - 1);
+        state.ui.parallel_task.selected_report_idx =
+            (state.ui.parallel_task.selected_report_idx + 1).min(report_count - 1);
         assert_eq!(state.ui.parallel_task.selected_report_idx, 1);
 
-        state.ui.parallel_task.selected_report_idx = (state.ui.parallel_task.selected_report_idx + 1).min(report_count - 1);
+        state.ui.parallel_task.selected_report_idx =
+            (state.ui.parallel_task.selected_report_idx + 1).min(report_count - 1);
         assert_eq!(state.ui.parallel_task.selected_report_idx, 2);
 
-        state.ui.parallel_task.selected_report_idx = (state.ui.parallel_task.selected_report_idx + 1).min(report_count - 1);
+        state.ui.parallel_task.selected_report_idx =
+            (state.ui.parallel_task.selected_report_idx + 1).min(report_count - 1);
         assert_eq!(state.ui.parallel_task.selected_report_idx, 2);
     }
 
@@ -1122,7 +1053,8 @@ mod tests {
         state.ui.parallel_task.prompt = "Fix the bug".to_string();
         state
             .ui
-            .parallel_task.agents
+            .parallel_task
+            .agents
             .push((AgentType::Claude, true));
 
         state.ui.input_mode = InputMode::Normal;

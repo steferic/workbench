@@ -1,7 +1,5 @@
 use crate::app::pty_ops::request_pty_resize;
-use crate::app::{
-    Action, AppState, FocusPanel, InputMode, PendingDelete, Toast, ToastLevel,
-};
+use crate::app::{Action, AppState, FocusPanel, InputMode, PendingDelete, Toast, ToastLevel};
 use crate::git;
 use crate::models::{AgentType, AttemptStatus, Session};
 use crate::pty::{PtyHandle, PtyManager, Resume, SessionSpawnConfig};
@@ -30,19 +28,6 @@ fn show_toast(state: &mut AppState, msg: impl Into<String>, level: ToastLevel) {
     }
 }
 
-const SHELL_KILL_TIMEOUT: Duration = Duration::from_millis(500);
-pub(crate) fn terminate_session_handle(mut handle: PtyHandle, is_terminal: bool) {
-    if is_terminal {
-        std::thread::spawn(move || {
-            if let Err(err) = handle.interrupt_then_kill(SHELL_KILL_TIMEOUT) {
-                report_background_error("failed to terminate terminal session", err);
-            }
-        });
-    } else if let Err(err) = handle.kill() {
-        report_background_error("failed to kill session", err);
-    }
-}
-
 pub fn handle_session_action(
     state: &mut AppState,
     action: Action,
@@ -62,7 +47,12 @@ pub fn handle_session_action(
                 pty_tx,
             );
         }
-        Action::CreateSessionIn(workspace_id, agent_type, dangerously_skip_permissions, with_worktree) => {
+        Action::CreateSessionIn(
+            workspace_id,
+            agent_type,
+            dangerously_skip_permissions,
+            with_worktree,
+        ) => {
             create_session_in(
                 state,
                 workspace_id,
@@ -109,18 +99,7 @@ pub fn handle_session_action(
             }
         }
         Action::KillSession(session_id) => {
-            let is_terminal = state
-                .data
-                .sessions
-                .values()
-                .flatten()
-                .find(|s| s.id == session_id)
-                .map(|s| s.agent_type.is_terminal())
-                .unwrap_or(false);
-
-            if let Some(handle) = state.system.pty_handles.remove(&session_id) {
-                terminate_session_handle(handle, is_terminal);
-            }
+            crate::app::cleanup::stop_session(state, session_id);
 
             if let Some(session) = state.get_session_mut(session_id) {
                 session.mark_stopped();
@@ -250,10 +229,18 @@ pub fn handle_session_action(
             state.ui.layout.split_view_enabled = !state.ui.layout.split_view_enabled;
             request_pty_resize(state);
         }
-        Action::SessionExited(session_id, exit_code) => {
-            if let Some(mut handle) = state.system.pty_handles.remove(&session_id) {
-                handle.mark_exited();
+        Action::SessionExited(session_id, generation, exit_code) => {
+            // A restarted session has the same UUID but a new process. A late
+            // exit from the previous launch must not discard the new handle.
+            if !state
+                .system
+                .pty_handles
+                .get(&session_id)
+                .is_some_and(|handle| handle.generation == generation)
+            {
+                return Ok(());
             }
+            state.system.pty_handles.remove(&session_id);
             if let Some(session) = state.get_session_mut(session_id) {
                 if exit_code == 0 {
                     session.mark_stopped();
@@ -345,7 +332,8 @@ pub fn handle_session_action(
                 );
             }
             if let Some(prompt) = completed_prompt {
-                if let Err(err) = crate::prompt_log::record_for_session(state, session_id, &prompt) {
+                if let Err(err) = crate::prompt_log::record_for_session(state, session_id, &prompt)
+                {
                     crate::logger::warn(format!("failed to record submitted prompt: {err}"));
                 }
             }
@@ -489,7 +477,11 @@ pub(crate) fn create_session_in(
     }
 
     // Default: run in workspace directly (no worktree isolation)
-    let session = Session::new(workspace_id, agent_type.clone(), dangerously_skip_permissions);
+    let session = Session::new(
+        workspace_id,
+        agent_type.clone(),
+        dangerously_skip_permissions,
+    );
     let session_id = session.id;
 
     let pty_rows = state.pane_rows();
@@ -565,7 +557,11 @@ fn finish_worktree_session_spawn(
             (session, worktree_path)
         }
         None => (
-            Session::new(workspace_id, agent_type.clone(), dangerously_skip_permissions),
+            Session::new(
+                workspace_id,
+                agent_type.clone(),
+                dangerously_skip_permissions,
+            ),
             workspace_path,
         ),
     };
@@ -828,99 +824,23 @@ fn restart_session(
     }
 }
 
-/// Remove a worktree on a blocking thread (git can stall for seconds on big
-/// repos); failures surface as a toast via the action channel.
-fn remove_worktree_in_background(
-    action_tx: &mpsc::UnboundedSender<Action>,
-    workspace_path: std::path::PathBuf,
-    worktree_path: std::path::PathBuf,
-    context: &'static str,
-) {
-    let tx = action_tx.clone();
-    tokio::task::spawn_blocking(move || {
-        if let Err(err) = git::remove_worktree(&workspace_path, &worktree_path, true) {
-            report_background_error(context, err);
-            let _ = tx.send(Action::ShowToast(
-                "Failed to remove worktree".to_string(),
-                ToastLevel::Error,
-            ));
-        }
-    });
-}
-
 fn confirm_delete_session(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) {
     let Some(PendingDelete::Session(session_id, _)) = state.ui.pending_delete.take() else {
         return;
     };
 
-    // Get session info before deleting
-    let session_info: Option<(bool, Option<std::path::PathBuf>, Option<uuid::Uuid>)> = state
-        .data
-        .sessions
-        .values()
-        .flatten()
-        .find(|s| s.id == session_id)
-        .map(|s| {
-            (
-                s.agent_type.is_terminal(),
-                s.worktree_path.clone(),
-                s.parallel_attempt_id,
-            )
-        });
-
-    let (is_terminal, session_worktree_path, parallel_attempt_id) =
-        session_info.unwrap_or((false, None, None));
-
-    // Check if this session is part of a parallel task and get cleanup info
-    let parallel_cleanup_info: Option<(std::path::PathBuf, std::path::PathBuf, uuid::Uuid)> = {
-        let workspace = state.selected_workspace();
-        if let Some(ws) = workspace {
-            if let Some(attempt_id) = parallel_attempt_id {
-                // Find the parallel task and attempt
-                ws.parallel_tasks.iter().find_map(|task| {
-                    task.attempts
-                        .iter()
-                        .find(|a| a.id == attempt_id)
-                        .map(|attempt| (ws.path.clone(), attempt.worktree_path.clone(), task.id))
-                })
-            } else {
-                None
-            }
-        } else {
-            None
-        }
+    let Some(session) = state.get_session(session_id).cloned() else {
+        return;
     };
-
-    // Get workspace path for regular session worktree cleanup
-    let workspace_path = state.selected_workspace().map(|ws| ws.path.clone());
-
-    // Kill PTY handle
-    if let Some(handle) = state.system.pty_handles.remove(&session_id) {
-        terminate_session_handle(handle, is_terminal);
-    }
-    // The agent's last hook report outlives the process it described, so drop
-    // it with the session rather than leaving a file a future session with the
-    // same short id could inherit.
-    if let Some(workspace_id) = state.workspace_id_for_session(session_id) {
-        crate::agent_status::forget(
-            &workspace_id.to_string(),
-            &crate::models::Session::short_id_of(session_id),
-        );
-    }
-    state.system.remove_session_buffers(&session_id);
-
-    // Clean up worktree - either from parallel task or regular session
-    if let Some((workspace_path, worktree_path, task_id)) = parallel_cleanup_info {
-        // Remove the parallel task worktree
-        remove_worktree_in_background(
-            action_tx,
-            workspace_path,
-            worktree_path,
-            "failed to remove parallel session worktree",
-        );
-
+    let task_id = state.get_workspace(session.workspace_id).and_then(|ws| {
+        ws.parallel_tasks
+            .iter()
+            .find(|task| task.attempts.iter().any(|a| a.session_id == session_id))
+            .map(|task| task.id)
+    });
+    if let Some(task_id) = task_id {
         // Mark the attempt as failed and potentially clean up the task
-        if let Some(ws) = state.selected_workspace_mut() {
+        if let Some(ws) = state.get_workspace_mut(session.workspace_id) {
             if let Some(task) = ws.get_parallel_task_mut(task_id) {
                 // Find and mark the attempt as failed
                 if let Some(attempt) = task
@@ -946,20 +866,8 @@ fn confirm_delete_session(state: &mut AppState, action_tx: &mpsc::UnboundedSende
                 }
             }
         }
-    } else if let (Some(worktree_path), Some(workspace_path)) =
-        (session_worktree_path, workspace_path)
-    {
-        // Clean up regular session worktree
-        remove_worktree_in_background(
-            action_tx,
-            workspace_path,
-            worktree_path,
-            "failed to remove session worktree",
-        );
     }
-
-    // delete_session clears active_session_id in every workspace's ws_ui.
-    state.delete_session(session_id);
+    crate::app::cleanup::remove_sessions(state, &[session_id], action_tx);
     let session_count = state.sessions_for_selected_workspace().len();
     if state.selected_session_idx() >= session_count && session_count > 0 {
         state.set_selected_session_idx(session_count - 1);

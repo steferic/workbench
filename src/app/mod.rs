@@ -1,8 +1,9 @@
 mod action;
 pub mod agent_input;
+pub mod cleanup;
 pub mod comms_tick;
-mod handler;
 pub mod desk_view;
+mod handler;
 
 /// What the detail overlay is showing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,8 +18,8 @@ pub enum DetailTarget {
     },
 }
 
-pub mod objectives_view;
 pub mod handlers;
+pub mod objectives_view;
 mod pty_ops;
 mod runtime;
 mod selection;
@@ -26,8 +27,8 @@ mod session_start;
 mod state;
 pub mod tasks_view;
 pub mod todo_dispatch;
-pub mod verify;
 mod utilities;
+pub mod verify;
 mod workspace_nav;
 
 // Terminal buffer configuration
@@ -42,8 +43,11 @@ pub use action::{
 };
 pub use runtime::run_tui;
 pub use state::{
-    AppState, ConfigTab, Divider, FocusPanel, InputMode, PendingDelete,
-    PendingSessionStart, RawOutputBuffer, ReplayCache, SystemState, TextSelection,
-    SessionsTab, TaskEdit, ThreadCache, Toast, ToastLevel, TranscriptBuffer, TranscriptLine, TranscriptSpan,
-    UtilityItem, UtilitySection, WorkspaceAction,
+    AppState, ConfigTab, Divider, FocusPanel, InputMode, PendingDelete, PendingSessionStart,
+    RawOutputBuffer, ReplayCache, SessionsTab, SystemState, TaskEdit, TextSelection, ThreadCache,
+    Toast, ToastLevel, TranscriptBuffer, TranscriptLine, TranscriptSpan, UtilityItem,
+    UtilitySection, WorkspaceAction,
 };
+
+#[cfg(test)]
+pub(crate) use handler::process_action;

@@ -66,7 +66,14 @@ pub(crate) fn flush_dirty_state(
     if !state.system.state_dirty {
         return;
     }
-    if !force && state.system.last_state_save.elapsed() < STATE_SAVE_DEBOUNCE {
+    if !force
+        && (state.system.last_state_save.elapsed() < STATE_SAVE_DEBOUNCE
+            || state
+                .system
+                .state_save
+                .as_ref()
+                .is_some_and(|job| !job.is_finished()))
+    {
         return;
     }
 
@@ -94,7 +101,7 @@ pub(crate) fn flush_dirty_state(
         }
     } else {
         let tx = action_tx.clone();
-        tokio::task::spawn_blocking(move || {
+        state.system.state_save = Some(tokio::task::spawn_blocking(move || {
             if let Err(err) = persistence::write_state_file(&json) {
                 report_background_error("failed to save state", err);
                 let _ = tx.send(crate::app::Action::ShowToast(
@@ -102,7 +109,7 @@ pub(crate) fn flush_dirty_state(
                     ToastLevel::Error,
                 ));
             }
-        });
+        }));
     }
 }
 

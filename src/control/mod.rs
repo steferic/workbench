@@ -24,15 +24,15 @@
 //! Unix-only: the socket is a Unix domain socket, and workbench's PTY layer is
 //! already POSIX. The module compiles to nothing elsewhere.
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 #[cfg(unix)]
 use std::io::{BufRead, BufReader, Read, Write};
 #[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -169,7 +169,10 @@ pub fn publish_events(hub: &EventHub, previous: &mut EventState, snapshot: &Snap
         }
         for (id, mark) in &previous.agents {
             if !current.iter().any(|(known, _)| known == id) {
-                hub.emit("agent.removed", json!({"agent": id, "project": mark.project}));
+                hub.emit(
+                    "agent.removed",
+                    json!({"agent": id, "project": mark.project}),
+                );
             }
         }
     }
@@ -246,18 +249,12 @@ pub fn socket_path() -> Result<PathBuf> {
 /// nothing here has been run against them, and a stub that claims to work is
 /// worse than one that says it does not.
 #[cfg(not(unix))]
-pub fn start(
-    _shared: Shared,
-    _commands: UnboundedSender<RemoteCommand>,
-) -> Result<ControlServer> {
+pub fn start(_shared: Shared, _commands: UnboundedSender<RemoteCommand>) -> Result<ControlServer> {
     Err(anyhow!("the control socket needs a Unix socket"))
 }
 
 #[cfg(unix)]
-pub fn start(
-    shared: Shared,
-    commands: UnboundedSender<RemoteCommand>,
-) -> Result<ControlServer> {
+pub fn start(shared: Shared, commands: UnboundedSender<RemoteCommand>) -> Result<ControlServer> {
     let path = socket_path()?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -270,10 +267,7 @@ pub fn start(
     // owns this machine's socket and we leave it alone.
     if path.exists() {
         if UnixStream::connect(&path).is_ok() {
-            return Err(anyhow!(
-                "another workbench already owns {}",
-                path.display()
-            ));
+            return Err(anyhow!("another workbench already owns {}", path.display()));
         }
         std::fs::remove_file(&path)?;
     }
@@ -420,12 +414,52 @@ fn dispatch(
     commands: &UnboundedSender<RemoteCommand>,
 ) -> Answer {
     match method {
+        "media.present" => {
+            let wanted = text_param(params, "agent")?;
+            let path = std::path::PathBuf::from(text_param(params, "path")?);
+            if !path.is_absolute() {
+                return Err(("bad_params", "Use an absolute media path".into()));
+            }
+            let (owner, library) = with_snapshot(shared, |snapshot| {
+                snapshot
+                    .agents
+                    .iter()
+                    .find(|a| a.id.eq_ignore_ascii_case(&wanted))
+                    .map(|a| (a.id.clone(), snapshot.media_library.clone()))
+                    .ok_or_else(|| ("no_such_agent", format!("no agent {wanted}")))
+            })?;
+            // File IO, decoding and poster extraction never hold the snapshot lock.
+            let artifact = library
+                .present(owner.clone(), &path)
+                .map_err(|e| ("bad_media", e.to_string()))?;
+            let still_exists =
+                with_snapshot(shared, |s| Ok(s.agents.iter().any(|a| a.id == owner)))?;
+            if !still_exists {
+                library.remove(&artifact.view.id);
+                return Err((
+                    "no_such_agent",
+                    "Agent was deleted while preparing the preview".into(),
+                ));
+            }
+            let url = library
+                .local_url(&artifact.view.id)
+                .map_err(|e| ("media_unavailable", e.to_string()))?;
+            queue(
+                commands,
+                RemoteCommand::ShowMedia {
+                    id: artifact.view.id.clone(),
+                },
+            )?;
+            Ok(json!({"id":artifact.view.id,"name":artifact.view.name,"url":url,"accepted":true}))
+        }
         "api.schema" => Ok(schema()),
         "state.get" => with_snapshot(shared, |snapshot| Ok(to_value(snapshot))),
         "agents.list" => with_snapshot(shared, |snapshot| {
-            Ok(json!(
-                snapshot.agents.iter().map(summarize).collect::<Vec<_>>()
-            ))
+            Ok(json!(snapshot
+                .agents
+                .iter()
+                .map(summarize)
+                .collect::<Vec<_>>()))
         }),
         "agent.get" => {
             let wanted = text_param(params, "agent")?;
@@ -471,6 +505,7 @@ fn dispatch(
             RemoteCommand::Answer {
                 agent: text_param(params, "agent")?,
                 key: text_param(params, "key")?,
+                prompt: text_param(params, "prompt")?,
             },
         ),
         "agent.focus" => queue(
@@ -582,7 +617,10 @@ fn is_manager(params: &Value, shared: &Shared) -> bool {
         .unwrap_or(false)
 }
 
-fn with_snapshot(shared: &Shared, read: impl FnOnce(&Snapshot) -> Answer) -> Answer {
+fn with_snapshot<T>(
+    shared: &Shared,
+    read: impl FnOnce(&Snapshot) -> std::result::Result<T, (&'static str, String)>,
+) -> std::result::Result<T, (&'static str, String)> {
     match shared.lock() {
         Ok(snapshot) => read(&snapshot),
         Err(_) => Err(("unavailable", "state is momentarily unreadable".into())),
@@ -608,7 +646,10 @@ fn opt_param(params: &Value, key: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-fn text_param(params: &Value, key: &'static str) -> std::result::Result<String, (&'static str, String)> {
+fn text_param(
+    params: &Value,
+    key: &'static str,
+) -> std::result::Result<String, (&'static str, String)> {
     params
         .get(key)
         .and_then(Value::as_str)
@@ -652,7 +693,8 @@ fn schema() -> Value {
             {"name": "projects.list", "params": [], "kind": "read"},
             {"name": "agent.prompt", "params": ["agent", "text"], "kind": "write"},
             {"name": "agent.todo", "params": ["agent", "text"], "kind": "write"},
-            {"name": "agent.answer", "params": ["agent", "key"], "kind": "write"},
+            {"name":"media.present", "params":["agent", "path"], "kind":"write"},
+            {"name": "agent.answer", "params": ["agent", "key", "prompt"], "kind": "write"},
             {"name": "agent.focus", "params": ["agent"], "kind": "write"},
             {"name": "agent.new", "params": ["project", "provider"], "kind": "write"},
             {"name": "events.subscribe", "params": [], "kind": "stream"},
@@ -695,6 +737,7 @@ mod tests {
             desk: Vec::new(),
             open: None,
             at: 0,
+            ..Default::default()
         }))
     }
 
@@ -776,7 +819,9 @@ mod tests {
         let (tx, _rx) = channel_pair();
 
         assert_eq!(
-            dispatch("agent.prompt", &json!({"text": "hi"}), &shared, &tx).unwrap_err().0,
+            dispatch("agent.prompt", &json!({"text": "hi"}), &shared, &tx)
+                .unwrap_err()
+                .0,
             "bad_params"
         );
         assert_eq!(

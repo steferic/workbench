@@ -175,7 +175,7 @@ pub fn remove_worktree(repo_path: &Path, worktree_path: &Path, delete_branch: bo
 
     // Delete branch if requested
     if let Some(branch) = branch_name {
-        let _ = delete_branch_force(repo_path, &branch);
+        delete_branch_force(repo_path, &branch)?;
     }
 
     Ok(())

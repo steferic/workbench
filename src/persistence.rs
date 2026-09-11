@@ -38,10 +38,14 @@ pub struct GlobalConfig {
     pub workspace_ratio: f32,
     #[serde(default = "default_sessions_ratio")]
     pub sessions_ratio: f32,
-    // Named `todos_ratio` before the pane became the tasks pane; the alias
-    // keeps existing configs loading.
-    #[serde(default = "default_tasks_ratio", alias = "todos_ratio")]
-    pub tasks_ratio: f32,
+    /// Read-only migration input; removed panes are never written back.
+    #[serde(
+        default,
+        rename = "tasks_ratio",
+        alias = "todos_ratio",
+        skip_serializing
+    )]
+    pub legacy_tasks_ratio: Option<f32>,
     #[serde(default = "default_output_split_ratio")]
     pub output_split_ratio: f32,
 
@@ -77,15 +81,18 @@ fn default_workspace_ratio() -> f32 {
 }
 
 fn default_sessions_ratio() -> f32 {
-    0.40
-}
-
-fn default_tasks_ratio() -> f32 {
-    0.50
+    0.70
 }
 
 fn default_output_split_ratio() -> f32 {
     0.50
+}
+
+impl GlobalConfig {
+    pub fn sessions_share(&self) -> f32 {
+        (self.sessions_ratio + (1.0 - self.sessions_ratio) * self.legacy_tasks_ratio.unwrap_or(0.0))
+            .clamp(0.15, 0.85)
+    }
 }
 
 impl Default for GlobalConfig {
@@ -95,7 +102,7 @@ impl Default for GlobalConfig {
             left_panel_ratio: default_left_panel_ratio(),
             workspace_ratio: default_workspace_ratio(),
             sessions_ratio: default_sessions_ratio(),
-            tasks_ratio: default_tasks_ratio(),
+            legacy_tasks_ratio: None,
             output_split_ratio: default_output_split_ratio(),
             theme_mode: crate::theme::ThemeMode::default(),
         }
@@ -270,7 +277,9 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     // Serialize concurrent background writers so temp-file writes and renames
     // can't interleave.
     static WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let _guard = WRITE_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _guard = WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     let tmp = path.with_extension("json.tmp");
     fs::write(&tmp, bytes)?;
@@ -344,7 +353,11 @@ mod tests {
             "theme_mode": "Dark"
         }))
         .expect("config with todos_ratio must still deserialize");
-        assert!((config.tasks_ratio - 0.42).abs() < f32::EPSILON);
+        assert!((config.sessions_share() - 0.594).abs() < 0.0001);
+        assert!(serde_json::to_value(&config)
+            .unwrap()
+            .get("tasks_ratio")
+            .is_none());
     }
 
     /// The theme field is a name, and names outlive the build that wrote them.
@@ -424,7 +437,11 @@ mod restart_tests {
         }
 
         let restored = &state.sessions[&workspace.id][0];
-        assert_eq!(restored.status, SessionStatus::Stopped, "restarted, not live");
+        assert_eq!(
+            restored.status,
+            SessionStatus::Stopped,
+            "restarted, not live"
+        );
         assert_eq!(
             restored.todo_queue.items[0].state,
             TodoState::Pending,

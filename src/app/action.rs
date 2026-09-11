@@ -48,6 +48,9 @@ pub struct ParallelMergePlan {
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub enum Action {
+    PreviewLatestMedia,
+    CloseMedia,
+    BrowseMedia,
     // Navigation
     MoveUp,
     MoveDown,
@@ -109,7 +112,7 @@ pub enum Action {
     SendInput(Uuid, Vec<u8>),
     Paste(String),
     PtyOutput(Uuid, Vec<u8>),
-    SessionExited(Uuid, i32),
+    SessionExited(Uuid, Uuid, i32),
 
     // UI modes
     EnterWorkspaceActionMode, // Opens the Create/Open workspace selector

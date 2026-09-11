@@ -5,19 +5,21 @@ mod audio;
 mod canvas;
 mod cli;
 mod comms;
-mod control;
 mod config;
+mod control;
 mod git;
 mod lifecycle;
+mod links;
 mod logger;
+mod media;
 mod models;
 mod persistence;
-mod scrollback;
 mod ports;
 mod prompt_log;
 mod pty;
 mod remote;
 mod resolve;
+mod scrollback;
 mod theme;
 mod tui;
 
@@ -48,6 +50,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Present an image or video in Workbench
+    Preview {
+        path: PathBuf,
+        /// Owning agent; defaults to the current Workbench session
+        #[arg(long)]
+        agent: Option<String>,
+    },
     /// Add a workspace directory
     Add {
         /// Path to the workspace directory
@@ -166,6 +175,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Some(Commands::Preview { path, agent }) => media::cli(path, agent)?,
         Some(Commands::Add { path, name }) => {
             let abs_path = if path.is_absolute() {
                 path
@@ -216,7 +226,10 @@ fn main() -> Result<()> {
         }) => cli::cmd_wait(target, state, project, timeout, json)?,
         Some(Commands::Prompts { limit, json }) => {
             if json {
-                println!("{}", serde_json::to_string_pretty(&prompt_log::recent(limit)?)?);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&prompt_log::recent(limit)?)?
+                );
             } else {
                 println!("{}", prompt_log::analysis_lines(limit)?.join("\n"));
             }

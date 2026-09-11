@@ -30,6 +30,7 @@ pub(super) struct TerminalViewRequest {
 }
 
 pub(super) struct TerminalView {
+    pub links: Vec<crate::links::Link>,
     /// A window of content rows starting at `window_start` — NOT the full
     /// content. Renderers must scroll by `scroll_offset - window_start`.
     /// Materializing lines for the whole history just so Paragraph::scroll
@@ -107,6 +108,19 @@ pub(super) fn build_terminal_view(
         );
 
         TerminalView {
+            links: (scroll_offset..(scroll_offset + request.viewport_height).min(transcript.len()))
+                .flat_map(|row| {
+                    transcript
+                        .styled_line(row)
+                        .into_iter()
+                        .flat_map(move |line| {
+                            line.links.iter().cloned().map(move |mut link| {
+                                link.row = row - scroll_offset;
+                                link
+                            })
+                        })
+                })
+                .collect(),
             lines: transcript_lines(
                 transcript,
                 selection_bounds,
@@ -170,6 +184,7 @@ pub(super) fn build_terminal_view(
         );
 
         TerminalView {
+            links: crate::links::screen(replay_screen, scroll_offset, request.viewport_height),
             lines: visible_lines(
                 replay_screen,
                 selection_bounds,
@@ -210,6 +225,7 @@ pub(super) fn build_terminal_view(
         );
 
         TerminalView {
+            links: crate::links::screen(screen, scroll_offset, request.viewport_height),
             lines: visible_lines(
                 screen,
                 selection_bounds,

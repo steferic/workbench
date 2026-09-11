@@ -93,14 +93,14 @@ pub struct Palette {
 impl Palette {
     pub fn from_theme(theme: Theme) -> Self {
         Self {
-            user: Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+            user: Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
             assistant: Style::default().fg(theme.fg),
             tool: Style::default().fg(theme.special),
             tool_args: Style::default().fg(theme.fg_dim),
             result: Style::default().fg(theme.fg_faint),
-            heading: Style::default()
-                .fg(theme.info)
-                .add_modifier(Modifier::BOLD),
+            heading: Style::default().fg(theme.info).add_modifier(Modifier::BOLD),
             code: Style::default().fg(theme.success),
             marker: Style::default().fg(theme.accent),
         }
@@ -109,6 +109,7 @@ impl Palette {
 
 fn span(text: impl Into<String>, style: Style) -> TranscriptSpan {
     TranscriptSpan {
+        link: None,
         text: text.into(),
         style,
     }
@@ -185,6 +186,39 @@ fn inline_spans(text: &str, base: Style, palette: &Palette) -> Line {
     };
 
     while i < chars.len() {
+        if chars[i] == '[' {
+            if let Some(label_end) = (i + 1..chars.len().saturating_sub(1))
+                .find(|&j| chars[j] == ']' && chars[j + 1] == '(')
+            {
+                let mut depth = 1;
+                let mut end = label_end + 2;
+                while end < chars.len() && depth > 0 {
+                    if chars[end] == '(' {
+                        depth += 1;
+                    }
+                    if chars[end] == ')' {
+                        depth -= 1;
+                    }
+                    if depth > 0 {
+                        end += 1;
+                    }
+                }
+                if depth == 0 {
+                    let target: String = chars[label_end + 2..end].iter().collect();
+                    if let Some(target) = crate::links::destination(&target) {
+                        flush(&mut buf, &mut out);
+                        let mut linked = span(
+                            chars[i + 1..label_end].iter().collect::<String>(),
+                            base.add_modifier(Modifier::UNDERLINED),
+                        );
+                        linked.link = Some(target);
+                        out.push(linked);
+                        i = end + 1;
+                        continue;
+                    }
+                }
+            }
+        }
         if chars[i] == '`' {
             if let Some(end) = (i + 1..chars.len()).find(|&j| chars[j] == '`') {
                 flush(&mut buf, &mut out);
@@ -303,7 +337,10 @@ fn push_codex(out: &mut Vec<Line>, value: &Value, palette: &Palette, fenced: &mu
             }
         }
         Some("function_call") | Some("custom_tool_call") => {
-            let name = payload.get("name").and_then(Value::as_str).unwrap_or("tool");
+            let name = payload
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("tool");
             let args = payload
                 .get("arguments")
                 .or_else(|| payload.get("input"))
@@ -437,44 +474,67 @@ fn wrap_lines(lines: Vec<Line>, cols: u16) -> Vec<TranscriptLine> {
 }
 
 fn wrap_one(line: Line, width: usize) -> Vec<Line> {
-    // Flattening to styled characters keeps the break logic independent of
-    // where span boundaries happen to fall.
-    let chars: Vec<(char, Style)> = line
-        .iter()
-        .flat_map(|s| s.text.chars().map(move |c| (c, s.style)))
-        .collect();
-    if chars.len() <= width {
-        return vec![line];
-    }
-
-    let mut rows: Vec<Line> = Vec::new();
-    let mut start = 0usize;
-    while start < chars.len() {
-        if chars.len() - start <= width {
-            rows.push(regroup(&chars[start..]));
-            break;
+    use unicode_width::UnicodeWidthChar;
+    // Attach plain URL destinations before wrapping so every fragment retains
+    // the complete URL, including fragments on later rows.
+    let text: String = line.iter().map(|s| s.text.as_str()).collect();
+    let links = crate::links::plain(&text, 0);
+    let mut col = 0;
+    let mut chars = Vec::new();
+    for span in &line {
+        for ch in span.text.chars() {
+            let target = span.link.clone().or_else(|| {
+                links
+                    .iter()
+                    .find(|l| col >= l.start && col < l.end)
+                    .map(|l| l.target.clone())
+            });
+            chars.push((ch, span.style, target));
+            col += ch.width().unwrap_or(0);
         }
-        // Prefer breaking at the last space inside the window.
-        let hard = start + width;
-        let cut = (start..hard)
-            .rev()
-            .find(|&i| chars[i].0 == ' ')
-            .map(|i| i + 1)
-            .filter(|&i| i > start)
-            .unwrap_or(hard);
+    }
+    let mut rows = Vec::new();
+    let mut start = 0;
+    while start < chars.len() {
+        let mut cells = 0;
+        let mut hard = start;
+        while hard < chars.len() {
+            let next = chars[hard].0.width().unwrap_or(0);
+            if cells + next > width.max(2) {
+                break;
+            }
+            cells += next;
+            hard += 1;
+        }
+        let cut = if hard == chars.len() {
+            hard
+        } else {
+            (start..hard)
+                .rev()
+                .find(|&i| chars[i].0 == ' ')
+                .map(|i| i + 1)
+                .unwrap_or(hard)
+        };
         rows.push(regroup(&chars[start..cut]));
         start = cut;
+    }
+    if rows.is_empty() {
+        rows.push(Vec::new());
     }
     rows
 }
 
 /// Re-join runs of identically styled characters back into spans.
-fn regroup(chars: &[(char, Style)]) -> Line {
+fn regroup(chars: &[(char, Style, Option<String>)]) -> Line {
     let mut out: Line = Vec::new();
-    for (ch, style) in chars {
+    for (ch, style, link) in chars {
         match out.last_mut() {
-            Some(last) if last.style == *style => last.text.push(*ch),
-            _ => out.push(span(ch.to_string(), *style)),
+            Some(last) if last.style == *style && last.link == *link => last.text.push(*ch),
+            _ => {
+                let mut part = span(ch.to_string(), *style);
+                part.link = link.clone();
+                out.push(part);
+            }
         }
     }
     out
@@ -552,8 +612,15 @@ mod tests {
         let heading = styled_prose("## Plan", p.assistant, &p, &mut fenced);
         assert_eq!(heading[0].style, p.heading);
 
-        let inline = styled_prose("use `cargo test` and **stop**", p.assistant, &p, &mut fenced);
-        assert!(inline.iter().any(|s| s.text == "cargo test" && s.style == p.code));
+        let inline = styled_prose(
+            "use `cargo test` and **stop**",
+            p.assistant,
+            &p,
+            &mut fenced,
+        );
+        assert!(inline
+            .iter()
+            .any(|s| s.text == "cargo test" && s.style == p.code));
         assert!(inline
             .iter()
             .any(|s| s.text == "stop" && s.style.add_modifier.contains(Modifier::BOLD)));
@@ -624,7 +691,10 @@ mod tests {
         let line = vec![
             span("⏺ ", p.marker),
             span("Bash", p.tool),
-            span("(a very long command line that must wrap somewhere)", p.tool_args),
+            span(
+                "(a very long command line that must wrap somewhere)",
+                p.tool_args,
+            ),
         ];
         let rows = wrap_one(line, 20);
         assert!(rows.len() > 1, "should have wrapped");
@@ -640,7 +710,10 @@ mod tests {
             .iter()
             .flat_map(|r| r.iter().map(|s| s.text.as_str()))
             .collect();
-        assert_eq!(joined.replace(' ', ""), "⏺Bash(averylongcommandlinethatmustwrapsomewhere)");
+        assert_eq!(
+            joined.replace(' ', ""),
+            "⏺Bash(averylongcommandlinethatmustwrapsomewhere)"
+        );
     }
 
     #[test]
@@ -654,3 +727,36 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+mod hyperlink_tests {
+    use super::*;
+    #[test]
+    fn markdown_labels_keep_the_complete_destination_after_wrapping() {
+        let palette = Palette::from_theme(crate::theme::Theme::DARK);
+        let line = inline_spans(
+            "Read [a very long linked label with 界 characters](https://example.com/a(b)) now",
+            palette.assistant,
+            &palette,
+        );
+        let rows = wrap_lines(vec![line], 20);
+        assert!(rows.len() > 1);
+        let links: Vec<_> = rows.iter().flat_map(|r| &r.links).collect();
+        assert!(links.len() > 1);
+        assert!(links
+            .iter()
+            .all(|l| l.target == "https://example.com/a(b)" && l.end <= 20));
+        assert!(!rows
+            .iter()
+            .map(|r| r.text())
+            .collect::<String>()
+            .contains("https://"));
+    }
+    #[test]
+    fn bare_url_fragments_keep_the_full_url_in_log_history() {
+        let palette = Palette::from_theme(crate::theme::Theme::DARK);
+        let url = "https://example.com/this/is/a/long/path/with/no/spaces";
+        let rows = wrap_lines(vec![vec![span(url, palette.assistant)]], 20);
+        assert!(rows.len() > 1);
+        assert!(rows.iter().all(|r| r.links.iter().all(|l| l.target == url)));
+    }
+}

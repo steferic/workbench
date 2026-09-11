@@ -57,6 +57,7 @@ const CAPTURE_FALLBACK: Duration = Duration::from_secs(30);
 
 #[derive(Debug)]
 pub struct CommsState {
+    pub publisher: comms::RosterPublisher,
     pub last_inbox_poll: Instant,
     pub last_roster_refresh: Instant,
     /// Serialized roster per workspace, to skip no-op writes.
@@ -71,6 +72,7 @@ pub struct CommsState {
 impl CommsState {
     pub fn new() -> Self {
         Self {
+            publisher: Default::default(),
             last_inbox_poll: Instant::now(),
             last_roster_refresh: Instant::now(),
             roster_cache: std::collections::HashMap::new(),
@@ -193,12 +195,7 @@ fn retire_closed_workspaces(state: &mut AppState) {
 /// Split out from the tick so it can be tested without touching the disk: the
 /// interesting part is the status word, and it used to be derived here from
 /// the idle queue rather than shared with the rest of workbench.
-fn build_roster(
-    state: &AppState,
-    ws_id: Uuid,
-    ws_name: &str,
-    ws_path: &std::path::Path,
-) -> Roster {
+fn build_roster(state: &AppState, ws_id: Uuid, ws_name: &str, ws_path: &std::path::Path) -> Roster {
     let mut agents: Vec<RosterAgent> = Vec::new();
     if let Some(sessions) = state.data.sessions.get(&ws_id) {
         for s in sessions {
@@ -268,17 +265,17 @@ fn refresh_rosters(state: &mut AppState) {
         }
         state.system.comms.roster_cache.insert(ws_id, fingerprint);
 
-        let ensure_instructions = state.system.comms.instructions_done.insert(ws_id)
-            && !roster.agents.is_empty();
+        let ensure_instructions =
+            state.system.comms.instructions_done.insert(ws_id) && !roster.agents.is_empty();
         let ws_id_str = ws_id.to_string();
+        let publication = comms::roster_path(&ws_id_str)
+            .ok()
+            .map(|path| state.system.comms.publisher.prepare(path));
         tokio::task::spawn_blocking(move || {
             match comms::ensure_workspace_dirs(&ws_id_str) {
                 Ok(_) => {
-                    if let (Ok(path), Ok(json)) = (
-                        comms::roster_path(&ws_id_str),
-                        serde_json::to_string_pretty(&roster),
-                    ) {
-                        if let Err(err) = comms::write_atomic(&path, json.as_bytes()) {
+                    if let Some(publication) = publication {
+                        if let Err(err) = publication.write(&roster) {
                             crate::logger::warn(format!("failed to write roster: {err}"));
                         }
                     }
@@ -291,6 +288,35 @@ fn refresh_rosters(state: &mut AppState) {
                 }
             }
         });
+    }
+}
+
+/// Lifecycle writes bypass the timer and supersede queued background writes.
+pub fn publish_workspace_roster(state: &mut AppState, id: Uuid) {
+    let Some(ws) = state.get_workspace(id) else {
+        return;
+    };
+    let roster = build_roster(state, id, &ws.name, &ws.path);
+    if let Ok(path) = comms::roster_path(&id.to_string()) {
+        if let Err(err) = state.system.comms.publisher.prepare(path).write(&roster) {
+            crate::logger::warn(format!("failed to publish lifecycle roster: {err}"));
+        }
+    }
+    state.system.comms.roster_cache.remove(&id);
+}
+
+pub fn retire_workspace(state: &mut AppState, id: Uuid) {
+    // Called after its sessions are removed but before the workspace itself.
+    // The empty roster preserves access to exported history without offering
+    // deleted agents as consult targets.
+    publish_workspace_roster(state, id);
+    state.system.comms.instructions_done.remove(&id);
+}
+
+pub fn retire_all(state: &mut AppState) {
+    let ids: Vec<_> = state.data.workspaces.iter().map(|ws| ws.id).collect();
+    for id in ids {
+        publish_workspace_roster(state, id);
     }
 }
 
@@ -331,9 +357,11 @@ fn poll_inbox(state: &mut AppState) {
                     message,
                     ..
                 }) => ingest_ask(state, ws_id, ticket, from, to, to_workspace, message),
-                Some(InboxMessage::Alias { ticket, from, alias }) => {
-                    ingest_alias(state, ws_id, ticket, from, alias)
-                }
+                Some(InboxMessage::Alias {
+                    ticket,
+                    from,
+                    alias,
+                }) => ingest_alias(state, ws_id, ticket, from, alias),
                 None => {
                     crate::logger::warn(format!(
                         "unreadable comms message {} — removed",
@@ -388,7 +416,15 @@ fn workspace_name(state: &AppState, ws_id: Uuid) -> Option<String> {
         .map(|w| w.name.clone())
 }
 
-fn refuse(state: &AppState, ws_id: Uuid, ticket: &str, from: &str, to: &str, q: &str, reason: String) {
+fn refuse(
+    state: &AppState,
+    ws_id: Uuid,
+    ticket: &str,
+    from: &str,
+    to: &str,
+    q: &str,
+    reason: String,
+) {
     let reply = Reply {
         ticket: ticket.to_string(),
         status: "refused".to_string(),
@@ -439,7 +475,15 @@ fn ingest_ask(
         })
         .unwrap_or((false, false));
     if !running {
-        refuse(state, origin_ws, &ticket, &from, &to, &message, format!("session {to} is not running"));
+        refuse(
+            state,
+            origin_ws,
+            &ticket,
+            &from,
+            &to,
+            &message,
+            format!("session {to} is not running"),
+        );
         return;
     }
     if !consultable {
@@ -457,13 +501,21 @@ fn ingest_ask(
     //
     // Cycle guard: refuse if the target is itself waiting on a consult it
     // sent to the asker (A→B while B→A would deadlock on idle-gating).
-    let cycle = state.system.comms.pending.iter().any(|p| {
-        p.from_short.eq_ignore_ascii_case(&to) && p.to_short.eq_ignore_ascii_case(&from)
-    });
+    let cycle =
+        state.system.comms.pending.iter().any(|p| {
+            p.from_short.eq_ignore_ascii_case(&to) && p.to_short.eq_ignore_ascii_case(&from)
+        });
     if cycle {
         refuse(
-            state, origin_ws, &ticket, &from, &to, &message,
-            format!("consult cycle: {to} is already waiting on a consult to {from}; answer it first"),
+            state,
+            origin_ws,
+            &ticket,
+            &from,
+            &to,
+            &message,
+            format!(
+                "consult cycle: {to} is already waiting on a consult to {from}; answer it first"
+            ),
         );
         return;
     }
@@ -476,7 +528,12 @@ fn ingest_ask(
         .any(|p| p.from_short.eq_ignore_ascii_case(&from))
     {
         refuse(
-            state, origin_ws, &ticket, &from, &to, &message,
+            state,
+            origin_ws,
+            &ticket,
+            &from,
+            &to,
+            &message,
             "you already have an outstanding consult; collect its reply first".to_string(),
         );
         return;
@@ -530,7 +587,15 @@ fn ingest_alias(state: &mut AppState, ws_id: Uuid, ticket: String, from: String,
         })
         .unwrap_or(false);
     let Some(session_id) = find_session_by_short(state, ws_id, &from) else {
-        refuse(state, ws_id, &ticket, &from, &from, "", "unknown session".into());
+        refuse(
+            state,
+            ws_id,
+            &ticket,
+            &from,
+            &from,
+            "",
+            "unknown session".into(),
+        );
         return;
     };
 
@@ -744,6 +809,21 @@ fn expire_stale(state: &mut AppState) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shutdown_preserves_sessions_but_advertises_them_as_stopped() {
+        let mut state = AppState::default();
+        let ws = crate::models::Workspace::new("test".into(), std::path::PathBuf::from("/unused"));
+        let session = crate::models::Session::new(ws.id, crate::models::AgentType::Claude, false);
+        let id = session.id;
+        state.data.workspaces.push(ws.clone());
+        state.add_session(session);
+        crate::app::cleanup::shutdown(&mut state);
+        assert!(state.get_session(id).is_some());
+        let roster = build_roster(&state, ws.id, &ws.name, &ws.path);
+        assert_eq!(roster.agents[0].status, "stopped");
+    }
+
     use crate::agent_status::{Activity, AgentStatus, Attention};
     use crate::models::{AgentType, Session, Workspace};
 
@@ -798,7 +878,11 @@ mod tests {
                 .clone()
         };
 
-        assert_eq!(status_of(blocked_id), "blocked", "a peer waiting on a human says so");
+        assert_eq!(
+            status_of(blocked_id),
+            "blocked",
+            "a peer waiting on a human says so"
+        );
         assert_eq!(status_of(working_id), "working");
         // No report at all and no output: nothing to do, and reachable.
         assert_eq!(status_of(quiet_id), "idle");

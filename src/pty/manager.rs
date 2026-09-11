@@ -1,9 +1,8 @@
 use anyhow::{Context, Result};
-use portable_pty::{
-    native_pty_system, Child, ChildKiller, CommandBuilder, MasterPty, PtySize, PtySystem,
-};
+use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize, PtySystem};
 use std::io::{Read, Write};
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 #[cfg(unix)]
 use std::time::Instant;
@@ -11,13 +10,20 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 #[cfg(unix)]
-use std::os::unix::io::{FromRawFd, RawFd};
+use std::os::unix::io::FromRawFd;
 
+use super::output::TerminalOutput;
 use crate::app::Action;
 use crate::models::AgentType;
 
-fn report_session_exited(pty_tx: &mpsc::Sender<Action>, session_id: Uuid, exit_code: i32) {
-    if let Err(err) = pty_tx.blocking_send(Action::SessionExited(session_id, exit_code)) {
+fn report_session_exited(
+    pty_tx: &mpsc::Sender<Action>,
+    session_id: Uuid,
+    generation: Uuid,
+    exit_code: i32,
+) {
+    if let Err(err) = pty_tx.blocking_send(Action::SessionExited(session_id, generation, exit_code))
+    {
         crate::logger::warn(format!(
             "failed to report session {session_id} exit status: {err}"
         ));
@@ -29,9 +35,13 @@ pub struct PtyHandle {
     pub child_killer: Box<dyn ChildKiller + Send + Sync>,
     pub process_id: Option<u32>,
     pub writer: Box<dyn Write + Send>,
-    /// Set once the child is known dead (exit reported) or a kill was already
-    /// issued; Drop then skips its safety-net kill so a recycled pid can't be
-    /// signalled by mistake.
+    pub generation: Uuid,
+    output: Arc<Mutex<TerminalOutput>>,
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    process_tree: Option<std::sync::Arc<std::sync::Mutex<super::process_tree::ProcessTree>>>,
+    reaped: Option<std::sync::mpsc::Receiver<()>>,
+    /// Set only after termination and reaping succeed; failures remain
+    /// eligible for the Drop safety net.
     cleanup_done: bool,
     /// The child's kernel start time, captured at spawn. Before any signal is
     /// sent, the pid is checked against this: a pid whose start time changed
@@ -43,16 +53,15 @@ pub struct PtyHandle {
     label: String,
 }
 
-/// Safety net: a handle dropped without an explicit kill (session deletion,
-/// handle-map churn) still takes its process group down, so agent processes
-/// can't outlive their session.
+/// A handle dropped without explicit cleanup still terminates its owned
+/// processes and reaps the direct child.
 impl Drop for PtyHandle {
     fn drop(&mut self) {
         if self.cleanup_done {
             return;
         }
-        if let Err(err) = self.kill_process_group() {
-            crate::logger::warn(format!("failed to kill PTY process group on drop: {err}"));
+        if let Err(err) = self.kill() {
+            crate::logger::warn(format!("failed to clean up PTY on drop: {err}"));
         }
     }
 }
@@ -64,29 +73,89 @@ impl PtyHandle {
         Ok(())
     }
 
+    /// Validate an approval against the reader's latest screen while holding
+    /// its parser lock. It must not wait behind queued UI output or actions.
+    pub fn send_input_if_screen_matches(
+        &mut self,
+        data: &[u8],
+        matches: impl FnOnce(&str) -> bool,
+    ) -> Result<bool> {
+        let output = self.output.lock().unwrap_or_else(|e| e.into_inner());
+        if !matches(&output.screen().contents()) {
+            return Ok(false);
+        }
+        self.writer.write_all(data)?;
+        self.writer.flush()?;
+        Ok(true)
+    }
+
+    pub fn screen_contents(&self) -> String {
+        self.output
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .screen()
+            .contents()
+    }
+
     pub fn resize(&self, rows: u16, cols: u16) -> Result<()> {
-        self.master.resize(PtySize {
-            rows,
-            cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        })?;
+        let (rows, cols) = (rows.max(1), cols.max(1));
+        // Keep query replies in step with the kernel's dimensions. The reader
+        // only holds this lock while parsing, never while waiting on IO.
+        let mut output = self.output.lock().unwrap_or_else(|e| e.into_inner());
+        let current = self.master.get_size()?;
+        if (current.rows, current.cols) != (rows, cols) {
+            self.master.resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })?;
+        }
+        output.resize(rows, cols);
         Ok(())
     }
 
-    /// Record that the child already exited on its own, so Drop won't send a
-    /// kill to a process group that may no longer be ours.
-    pub fn mark_exited(&mut self) {
-        self.cleanup_done = true;
-    }
-
     pub fn kill(&mut self) -> Result<()> {
-        self.cleanup_done = true;
-        self.kill_process_group()
+        self.terminate(Duration::ZERO)
     }
 
     pub fn interrupt_then_kill(&mut self, grace: Duration) -> Result<()> {
+        self.terminate(grace)
+    }
+
+    fn terminate(&mut self, grace: Duration) -> Result<()> {
+        if self.cleanup_done {
+            return Ok(());
+        }
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        if let Some(tree) = &self.process_tree {
+            tree.lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .terminate(grace, &self.label)?;
+            self.wait_for_reap()?;
+            self.cleanup_done = true;
+            return Ok(());
+        }
+        if grace.is_zero() {
+            self.kill_process_group()?;
+        } else {
+            self.interrupt_process_group(grace)?;
+        }
+        self.wait_for_reap()?;
         self.cleanup_done = true;
+        Ok(())
+    }
+
+    fn wait_for_reap(&mut self) -> Result<()> {
+        if let Some(done) = &self.reaped {
+            done.recv_timeout(Duration::from_secs(2))
+                .context("PTY child was not reaped after termination")?;
+            self.reaped = None;
+        }
+        Ok(())
+    }
+
+    fn interrupt_process_group(&mut self, grace: Duration) -> Result<()> {
         #[cfg(unix)]
         {
             if let Some(pgid) = self.verified_pgid("interrupt") {
@@ -452,6 +521,8 @@ impl PtyManager {
             dangerously_skip_permissions,
             use_alternate_screen,
         } = config;
+        let rows = rows.max(1);
+        let cols = cols.max(1);
 
         // Create PTY pair
         let pair = self
@@ -539,16 +610,10 @@ impl PtyManager {
         // renders clipped or mis-wrapped after any pane/window resize, and
         // no amount of SIGWINCH fixes it. The PTY itself always carries the
         // correct size (set at open, updated by resize()).
+        cmd.env_remove("LINES");
+        cmd.env_remove("COLUMNS");
 
-        // Spawn the process
-        let child = pair
-            .slave
-            .spawn_command(cmd)
-            .context("Failed to spawn agent process")?;
-        let child_killer = child.clone_killer();
-        let process_id = child.process_id();
-
-        // Get reader and writer
+        // Acquire fallible resources before starting the child.
         let mut reader = pair
             .master
             .try_clone_reader()
@@ -557,441 +622,116 @@ impl PtyManager {
             .master
             .take_writer()
             .context("Failed to take PTY writer")?;
+        let generation = Uuid::new_v4();
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        cmd.env(super::process_tree::ENV_OWNER, generation.to_string());
+        let mut child = pair
+            .slave
+            .spawn_command(cmd)
+            .context("Failed to spawn agent process")?;
+        let child_killer = child.clone_killer();
+        let process_id = child.process_id();
+        let spawned_start = process_id.and_then(crate::pty::proc_identity::start_time);
+        let label = format!("{} {}", &session_id.to_string()[..8], agent_type.command());
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        let process_tree = std::sync::Arc::new(std::sync::Mutex::new(
+            super::process_tree::ProcessTree::new(process_id, &generation.to_string()),
+        ));
+        let (reaped_tx, reaped) = std::sync::mpsc::channel();
+        let exit_tx = pty_tx.clone();
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        let exit_tree = process_tree.clone();
+        let exit_label = label.clone();
+        // Reap independently of PTY EOF: descendants can hold the slave open
+        // long after the direct child dies. Tell cleanup the child was reaped
+        // before publishing into the bounded UI queue, which may be full.
+        std::thread::spawn(move || {
+            let code = child
+                .wait()
+                .map(|status| status.exit_code() as i32)
+                .unwrap_or(1);
+            let _ = reaped_tx.send(());
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            if let Err(err) = exit_tree
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .terminate(Duration::ZERO, &exit_label)
+            {
+                crate::logger::warn(format!("failed to clean up exited {exit_label}: {err}"));
+            }
+            report_session_exited(&exit_tx, session_id, generation, code);
+        });
 
-        // Get raw fd for immediate DSR response (Unix only)
         #[cfg(unix)]
-        let master_fd = pair.master.as_raw_fd();
+        let query_writer = pair.master.as_raw_fd().and_then(|fd| {
+            let duplicate = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 0) };
+            (duplicate >= 0).then(|| unsafe { std::fs::File::from_raw_fd(duplicate) })
+        });
+        #[cfg(not(unix))]
+        let query_writer = None;
 
         // Spawn async task to read PTY output
         let pty_tx = pty_tx.clone();
         let sid = session_id;
-        let pty_rows = rows;
         let strip_alt_screen = agent_type.is_redraw_style() || !use_alternate_screen;
+        let output = Arc::new(Mutex::new(TerminalOutput::new(
+            rows,
+            cols,
+            strip_alt_screen,
+        )));
+        let reader_output = output.clone();
         std::thread::spawn(move || {
-            #[cfg(unix)]
-            Self::read_pty_output_with_dsr(
-                sid,
-                &mut reader,
-                pty_tx,
-                master_fd,
-                pty_rows,
-                child,
-                strip_alt_screen,
-            );
-            #[cfg(not(unix))]
-            Self::read_pty_output(sid, &mut reader, pty_tx, child, strip_alt_screen);
+            Self::read_pty_output(sid, &mut reader, pty_tx, query_writer, reader_output);
         });
 
-        // Captured now, while the pid is certainly still the child: this is
-        // what lets every later kill check it is not aiming at a stranger.
-        let spawned_start =
-            process_id.and_then(crate::pty::proc_identity::start_time);
         Ok(PtyHandle {
             master: pair.master,
             child_killer,
             process_id,
             writer,
+            generation,
+            output,
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            process_tree: Some(process_tree),
+            reaped: Some(reaped),
             cleanup_done: false,
             spawned_start,
-            label: format!(
-                "{} {}",
-                &session_id.to_string()[..8],
-                agent_type.command()
-            ),
+            label,
         })
     }
 
-    /// Read PTY output with immediate DSR response (Unix only)
-    #[cfg(unix)]
-    fn read_pty_output_with_dsr(
-        session_id: Uuid,
-        reader: &mut Box<dyn Read + Send>,
-        pty_tx: mpsc::Sender<Action>,
-        master_fd: Option<RawFd>,
-        pty_rows: u16,
-        mut child: Box<dyn Child + Send + Sync>,
-        strip_alt_screen: bool,
-    ) {
-        // Responses - use simple VT102 identification
-        // Primary DA: VT102 (simpler than VT100 with AVO)
-        const DA_RESPONSE: &[u8] = b"\x1b[?6c";
-        // Secondary DA: VT102 version 1.0 (>0;0;0c format: terminal;firmware;keyboard)
-        const DA2_RESPONSE: &[u8] = b"\x1b[>0;0;0c";
-
-        // Track cursor position by parsing escape sequences
-        // Default to bottom of screen where input typically is
-        let mut cursor_row: u16 = pty_rows.max(1);
-        let mut cursor_col: u16 = 1;
-
-        let mut buf = [0u8; 4096];
-        loop {
-            match reader.read(&mut buf) {
-                Ok(0) => {
-                    // EOF - process exited; wait for real exit status
-                    let exit_code = match child.wait() {
-                        Ok(status) => status.exit_code() as i32,
-                        Err(_e) => {
-                            // Don't use eprintln! in TUI - it corrupts the display
-                            1
-                        }
-                    };
-                    report_session_exited(&pty_tx, session_id, exit_code);
-                    break;
-                }
-                Ok(n) => {
-                    let mut data = buf[..n].to_vec();
-
-                    // Update cursor position by parsing escape sequences in the data
-                    Self::track_cursor_position(&data, &mut cursor_row, &mut cursor_col, pty_rows);
-
-                    // Handle terminal queries (single-pass detection)
-                    if let Some(fd) = master_fd {
-                        let (has_dsr, has_da, has_da2) = Self::detect_terminal_queries(&data);
-
-                        if has_dsr || has_da || has_da2 {
-                            // SAFETY: fd is a valid file descriptor from the PTY master.
-                            // Wrapped in ManuallyDrop to avoid closing the fd on drop.
-                            let mut file = std::mem::ManuallyDrop::new(unsafe {
-                                std::fs::File::from_raw_fd(fd)
-                            });
-
-                            if has_dsr {
-                                let dsr_response = format!("\x1b[{};{}R", cursor_row, cursor_col);
-                                if let Err(err) = file.write_all(dsr_response.as_bytes()) {
-                                    crate::logger::warn(format!(
-                                        "failed to write cursor-position response: {err}"
-                                    ));
-                                }
-                            }
-
-                            if has_da {
-                                if let Err(err) = file.write_all(DA_RESPONSE) {
-                                    crate::logger::warn(format!(
-                                        "failed to write device-attributes response: {err}"
-                                    ));
-                                }
-                            }
-
-                            if has_da2 {
-                                if let Err(err) = file.write_all(DA2_RESPONSE) {
-                                    crate::logger::warn(format!(
-                                        "failed to write secondary device-attributes response: {err}"
-                                    ));
-                                }
-                            }
-
-                            if let Err(err) = file.flush() {
-                                crate::logger::warn(format!(
-                                    "failed to flush terminal query response: {err}"
-                                ));
-                            }
-                            data = Self::strip_terminal_queries(&data);
-                        }
-                    }
-
-                    // Strip alternate screen sequences for inline-mode agents (e.g. Codex)
-                    if strip_alt_screen && !data.is_empty() && Self::has_alt_screen_sequences(&data)
-                    {
-                        data = Self::strip_alt_screen_sequences(&data);
-                    }
-
-                    if !data.is_empty() {
-                        if let Err(err) = pty_tx.blocking_send(Action::PtyOutput(session_id, data))
-                        {
-                            crate::logger::warn(format!(
-                                "failed to report PTY output for session {session_id}: {err}"
-                            ));
-                            break;
-                        }
-                    }
-                }
-                Err(_e) => {
-                    // Don't use eprintln! in TUI - it corrupts the display
-                    report_session_exited(&pty_tx, session_id, 1);
-                    break;
-                }
-            }
-        }
-    }
-
-    /// Track cursor position by parsing escape sequences
-    #[cfg(unix)]
-    fn track_cursor_position(data: &[u8], row: &mut u16, col: &mut u16, max_rows: u16) {
-        let mut i = 0;
-        while i < data.len() {
-            if data[i] == 0x1b && i + 1 < data.len() && data[i + 1] == b'[' {
-                // Found CSI sequence, parse it
-                let start = i + 2;
-                let mut end = start;
-
-                // Find the end of the sequence (letter character)
-                while end < data.len() && (data[end].is_ascii_digit() || data[end] == b';') {
-                    end += 1;
-                }
-
-                if end < data.len() {
-                    let params = &data[start..end];
-                    let cmd = data[end];
-
-                    match cmd {
-                        // CUP - Cursor Position (ESC[row;colH or ESC[row;colf)
-                        b'H' | b'f' => {
-                            let (r, c) = Self::parse_two_params(params);
-                            *row = r.max(1);
-                            *col = c.max(1);
-                        }
-                        // CUU - Cursor Up (ESC[nA)
-                        b'A' => {
-                            let n = Self::parse_one_param(params).max(1);
-                            *row = row.saturating_sub(n).max(1);
-                        }
-                        // CUD - Cursor Down (ESC[nB)
-                        b'B' => {
-                            let n = Self::parse_one_param(params).max(1);
-                            *row = (*row + n).min(max_rows);
-                        }
-                        // CUF - Cursor Forward (ESC[nC)
-                        b'C' => {
-                            let n = Self::parse_one_param(params).max(1);
-                            *col += n;
-                        }
-                        // CUB - Cursor Backward (ESC[nD)
-                        b'D' => {
-                            let n = Self::parse_one_param(params).max(1);
-                            *col = col.saturating_sub(n).max(1);
-                        }
-                        // CNL - Cursor Next Line (ESC[nE)
-                        b'E' => {
-                            let n = Self::parse_one_param(params).max(1);
-                            *row = (*row + n).min(max_rows);
-                            *col = 1;
-                        }
-                        // CPL - Cursor Previous Line (ESC[nF)
-                        b'F' => {
-                            let n = Self::parse_one_param(params).max(1);
-                            *row = row.saturating_sub(n).max(1);
-                            *col = 1;
-                        }
-                        // CHA - Cursor Horizontal Absolute (ESC[nG)
-                        b'G' => {
-                            *col = Self::parse_one_param(params).max(1);
-                        }
-                        // VPA - Vertical Position Absolute (ESC[nd)
-                        b'd' => {
-                            *row = Self::parse_one_param(params).max(1);
-                        }
-                        _ => {}
-                    }
-                    i = end + 1;
-                    continue;
-                }
-            } else if data[i] == b'\r' {
-                // Carriage return
-                *col = 1;
-            } else if data[i] == b'\n' {
-                // Newline
-                *row = (*row + 1).min(max_rows);
-            } else if data[i] >= 0x20 && data[i] < 0x7f {
-                // Printable character advances cursor
-                *col += 1;
-            }
-            i += 1;
-        }
-    }
-
-    /// Parse a single numeric parameter from CSI sequence
-    #[cfg(unix)]
-    fn parse_one_param(params: &[u8]) -> u16 {
-        if params.is_empty() {
-            return 1;
-        }
-        std::str::from_utf8(params)
-            .ok()
-            .and_then(|s| s.split(';').next())
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(1)
-    }
-
-    /// Parse two numeric parameters from CSI sequence (row;col format)
-    #[cfg(unix)]
-    fn parse_two_params(params: &[u8]) -> (u16, u16) {
-        if params.is_empty() {
-            return (1, 1);
-        }
-        let s = match std::str::from_utf8(params) {
-            Ok(s) => s,
-            Err(_) => return (1, 1),
-        };
-        let mut parts = s.split(';');
-        let first = parts.next().and_then(|p| p.parse().ok()).unwrap_or(1);
-        let second = parts.next().and_then(|p| p.parse().ok()).unwrap_or(1);
-        (first, second)
-    }
-
-    /// Detect which terminal queries are present in the data (single pass).
-    /// Returns (has_dsr, has_da, has_da2).
-    #[cfg(unix)]
-    fn detect_terminal_queries(data: &[u8]) -> (bool, bool, bool) {
-        let mut has_dsr = false;
-        let mut has_da = false;
-        let mut has_da2 = false;
-
-        let mut i = 0;
-        while i + 2 < data.len() {
-            if data[i] == 0x1b && data[i + 1] == b'[' {
-                let rest = &data[i + 2..];
-                if rest.starts_with(b"6n") {
-                    has_dsr = true;
-                    i += 4;
-                } else if rest.starts_with(b">0c") {
-                    has_da2 = true;
-                    i += 5;
-                } else if rest.starts_with(b">c") {
-                    has_da2 = true;
-                    i += 4;
-                } else if rest.starts_with(b"0c") {
-                    has_da = true;
-                    i += 4;
-                } else if !rest.is_empty() && rest[0] == b'c' {
-                    has_da = true;
-                    i += 3;
-                } else {
-                    i += 2;
-                }
-            } else {
-                i += 1;
-            }
-        }
-
-        (has_dsr, has_da, has_da2)
-    }
-
-    /// Check if data contains alternate screen escape sequences
-    fn has_alt_screen_sequences(data: &[u8]) -> bool {
-        let mut i = 0;
-        while i + 4 < data.len() {
-            if data[i] == 0x1b && data[i + 1] == b'[' && data[i + 2] == b'?' {
-                let rest = &data[i + 3..];
-                if rest.starts_with(b"1049h")
-                    || rest.starts_with(b"1049l")
-                    || rest.starts_with(b"1047h")
-                    || rest.starts_with(b"1047l")
-                    || rest.starts_with(b"47h")
-                    || rest.starts_with(b"47l")
-                {
-                    return true;
-                }
-            }
-            i += 1;
-        }
-        false
-    }
-
-    /// Strip alternate screen escape sequences from data.
-    /// These are stripped at the PTY reader level so the live parser never enters
-    /// alternate screen mode (which disables scrollback entirely).
-    fn strip_alt_screen_sequences(data: &[u8]) -> Vec<u8> {
-        let mut result = Vec::with_capacity(data.len());
-        let mut i = 0;
-        while i < data.len() {
-            if data[i] == 0x1b && i + 4 < data.len() && data[i + 1] == b'[' && data[i + 2] == b'?' {
-                let rest = &data[i + 3..];
-                if rest.starts_with(b"1049h") {
-                    i += 8;
-                    continue;
-                }
-                if rest.starts_with(b"1049l") {
-                    i += 8;
-                    continue;
-                }
-                if rest.starts_with(b"1047h") {
-                    i += 8;
-                    continue;
-                }
-                if rest.starts_with(b"1047l") {
-                    i += 8;
-                    continue;
-                }
-                if rest.starts_with(b"47h") {
-                    i += 6;
-                    continue;
-                }
-                if rest.starts_with(b"47l") {
-                    i += 6;
-                    continue;
-                }
-            }
-            result.push(data[i]);
-            i += 1;
-        }
-        result
-    }
-
-    /// Strip terminal query sequences from data (single pass with ESC early-exit)
-    #[cfg(unix)]
-    fn strip_terminal_queries(data: &[u8]) -> Vec<u8> {
-        let mut result = Vec::with_capacity(data.len());
-        let mut i = 0;
-        while i < data.len() {
-            if data[i] == 0x1b && i + 2 < data.len() && data[i + 1] == b'[' {
-                let rest = &data[i + 2..];
-                if rest.starts_with(b"6n") {
-                    i += 4;
-                    continue;
-                }
-                if rest.starts_with(b">0c") {
-                    i += 5;
-                    continue;
-                }
-                if rest.starts_with(b">c") {
-                    i += 4;
-                    continue;
-                }
-                if rest.starts_with(b"0c") {
-                    i += 4;
-                    continue;
-                }
-                if !rest.is_empty() && rest[0] == b'c' {
-                    i += 3;
-                    continue;
-                }
-            }
-            result.push(data[i]);
-            i += 1;
-        }
-        result
-    }
-
-    /// Read PTY output (non-Unix fallback, no DSR handling)
-    #[cfg(not(unix))]
+    /// Parse queries on the reader thread so a busy UI cannot stall startup.
     fn read_pty_output(
         session_id: Uuid,
         reader: &mut Box<dyn Read + Send>,
         pty_tx: mpsc::Sender<Action>,
-        mut child: Box<dyn Child + Send + Sync>,
-        strip_alt_screen: bool,
+        mut query_writer: Option<std::fs::File>,
+        output: Arc<Mutex<TerminalOutput>>,
     ) {
         let mut buf = [0u8; 4096];
         loop {
             match reader.read(&mut buf) {
-                Ok(0) => {
-                    let exit_code = match child.wait() {
-                        Ok(status) => status.exit_code() as i32,
-                        Err(_e) => {
-                            // Don't use eprintln! in TUI - it corrupts the display
-                            1
-                        }
-                    };
-                    report_session_exited(&pty_tx, session_id, exit_code);
-                    break;
-                }
+                Ok(0) => break,
                 Ok(n) => {
-                    let mut data = buf[..n].to_vec();
-                    if strip_alt_screen && Self::has_alt_screen_sequences(&data) {
-                        data = Self::strip_alt_screen_sequences(&data);
+                    let parsed = output
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .process(&buf[..n]);
+                    if !parsed.replies.is_empty() {
+                        if let Some(writer) = query_writer.as_mut() {
+                            if let Err(err) = writer
+                                .write_all(&parsed.replies)
+                                .and_then(|_| writer.flush())
+                            {
+                                crate::logger::warn(format!(
+                                    "failed to answer terminal query: {err}"
+                                ));
+                            }
+                        }
                     }
-                    if !data.is_empty() {
-                        if let Err(err) = pty_tx.blocking_send(Action::PtyOutput(session_id, data))
+                    if !parsed.bytes.is_empty() {
+                        if let Err(err) =
+                            pty_tx.blocking_send(Action::PtyOutput(session_id, parsed.bytes))
                         {
                             crate::logger::warn(format!(
                                 "failed to report PTY output for session {session_id}: {err}"
@@ -1000,9 +740,9 @@ impl PtyManager {
                         }
                     }
                 }
-                Err(_e) => {
-                    // Don't use eprintln! in TUI - it corrupts the display
-                    report_session_exited(&pty_tx, session_id, 1);
+                Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(err) => {
+                    crate::logger::warn(format!("PTY read failed for {session_id}: {err}"));
                     break;
                 }
             }
@@ -1060,7 +800,10 @@ mod tests {
             // Codex refuses untrusted hooks, so an ordinary session would be
             // handed a "dangerously" flag it never asked for.
             let ordinary = agent_args(&AgentType::Codex, id, &Resume::No, false, false, script);
-            assert!(!ordinary.iter().any(|a| a.contains("hooks.")), "{ordinary:?}");
+            assert!(
+                !ordinary.iter().any(|a| a.contains("hooks.")),
+                "{ordinary:?}"
+            );
             assert!(
                 !ordinary
                     .iter()
@@ -1233,11 +976,21 @@ mod tests {
             };
 
             assert_eq!(
-                args(custom("claude"), Resume::Conversation("conv".into()), id, true),
+                args(
+                    custom("claude"),
+                    Resume::Conversation("conv".into()),
+                    id,
+                    true
+                ),
                 vec!["--resume", "conv"]
             );
             assert_eq!(
-                args(custom("codex"), Resume::Conversation("conv".into()), id, true),
+                args(
+                    custom("codex"),
+                    Resume::Conversation("conv".into()),
+                    id,
+                    true
+                ),
                 vec!["resume", "conv"]
             );
         }
@@ -1467,10 +1220,7 @@ mod tests {
         let counter = Arc::new(AtomicUsize::new(0));
         let mut handle = test_handle(counter.clone());
         handle.process_id = Some(pid);
-        handle.spawned_start = Some(crate::pty::proc_identity::ProcStart {
-            sec: 1,
-            usec: 1,
-        });
+        handle.spawned_start = Some(crate::pty::proc_identity::ProcStart { sec: 1, usec: 1 });
         // Forged identity: to the handle, this pid belongs to someone else.
         assert_ne!(handle.spawned_start, Some(real));
 
@@ -1515,10 +1265,75 @@ mod tests {
             child_killer: Box::new(TestChildKiller { calls: counter }),
             process_id: None,
             writer: Box::new(io::sink()),
+            generation: Uuid::nil(),
+            output: Arc::new(Mutex::new(TerminalOutput::new(24, 80, false))),
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            process_tree: None,
+            reaped: None,
             cleanup_done: false,
             spawned_start: None,
             label: "test".to_string(),
         }
+    }
+
+    #[test]
+    fn guarded_input_uses_the_readers_current_screen() {
+        let mut handle = test_handle(Arc::new(AtomicUsize::new(0)));
+        handle.output.lock().unwrap().process(b"new question");
+        assert!(!handle
+            .send_input_if_screen_matches(b"1", |screen| screen == "old question")
+            .unwrap());
+        assert!(handle
+            .send_input_if_screen_matches(b"1", |screen| screen == "new question")
+            .unwrap());
+    }
+
+    #[test]
+    fn resizing_a_pty_updates_cursor_replies_as_well_as_kernel_dimensions() {
+        let pair = native_pty_system().openpty(PtySize::default()).unwrap();
+        let mut handle = test_handle(Arc::new(AtomicUsize::new(0)));
+        handle.master = pair.master;
+        handle.output.lock().unwrap().process(b"\x1b[24;80H");
+        handle.resize(3, 10).unwrap();
+        let size = handle.master.get_size().unwrap();
+        assert_eq!((size.rows, size.cols), (3, 10));
+        assert_eq!(
+            handle.output.lock().unwrap().process(b"\x1b[6n").replies,
+            b"\x1b[3;10R"
+        );
+        // An unchanged resize must preserve terminal state as well.
+        handle.resize(3, 10).unwrap();
+        assert_eq!(
+            handle.output.lock().unwrap().process(b"\x1b[6n").replies,
+            b"\x1b[3;10R"
+        );
+    }
+
+    #[test]
+    fn reader_writes_split_query_replies_to_the_agent() {
+        let (tx, mut rx) = mpsc::channel(10);
+        let mut reader: Box<dyn Read + Send> = Box::new(ChunkedReader::new(vec![
+            b"\x1b[".to_vec(),
+            b"6nabcdefghijkl\x1b[6n".to_vec(),
+        ]));
+        let mut replies = tempfile::tempfile().unwrap();
+        PtyManager::read_pty_output(
+            Uuid::new_v4(),
+            &mut reader,
+            tx,
+            Some(replies.try_clone().unwrap()),
+            Arc::new(Mutex::new(TerminalOutput::new(24, 10, false))),
+        );
+        use std::io::Seek;
+        replies.rewind().unwrap();
+        let mut bytes = Vec::new();
+        replies.read_to_end(&mut bytes).unwrap();
+        assert_eq!(bytes, b"\x1b[1;1R\x1b[2;3R");
+        let mut screen = vt100::Parser::new(24, 10, 0);
+        while let Ok(Action::PtyOutput(_, data)) = rx.try_recv() {
+            screen.process(&data);
+        }
+        assert_eq!(screen.screen().cursor_position(), (1, 2));
     }
 
     struct ChunkedReader {
@@ -1545,24 +1360,25 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
     fn run_read(
         session_id: Uuid,
         reader: &mut Box<dyn Read + Send>,
         tx: mpsc::Sender<Action>,
-        child: Box<dyn Child + Send + Sync>,
+        mut child: Box<dyn Child + Send + Sync>,
     ) {
-        PtyManager::read_pty_output_with_dsr(session_id, reader, tx, None, 0, child, false);
-    }
-
-    #[cfg(not(unix))]
-    fn run_read(
-        session_id: Uuid,
-        reader: &mut Box<dyn Read + Send>,
-        tx: mpsc::Sender<Action>,
-        child: Box<dyn Child + Send + Sync>,
-    ) {
-        PtyManager::read_pty_output(session_id, reader, tx, child, false);
+        PtyManager::read_pty_output(
+            session_id,
+            reader,
+            tx.clone(),
+            None,
+            Arc::new(Mutex::new(TerminalOutput::new(24, 80, false))),
+        );
+        report_session_exited(
+            &tx,
+            session_id,
+            Uuid::nil(),
+            child.wait().unwrap().exit_code() as i32,
+        );
     }
 
     #[test]
@@ -1590,7 +1406,7 @@ mod tests {
         ));
         assert!(matches!(
             &actions[2],
-            Action::SessionExited(id, code) if *id == session_id && *code == 0
+            Action::SessionExited(id, _, code) if *id == session_id && *code == 0
         ));
     }
 
@@ -1641,7 +1457,7 @@ mod tests {
         let third = recv_with_timeout(&mut rx, Duration::from_millis(100));
         assert!(matches!(
             third,
-            Action::SessionExited(id, code) if id == session_id && code == 0
+            Action::SessionExited(id, _, code) if id == session_id && code == 0
         ));
 
         handle.join().unwrap();

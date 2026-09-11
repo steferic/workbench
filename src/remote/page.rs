@@ -18,7 +18,7 @@ pub const HTML: &str = r##"<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <!-- Deliberately not `black-translucent`. Under it iOS gives a home-screen
      app a web view the full width but the height of the screen *minus* the
@@ -30,6 +30,7 @@ pub const HTML: &str = r##"<!doctype html>
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="theme-color" content="#171a21">
 <title>workbench</title>
+<link rel="manifest" id="manifest">
 <style>
   /* Served from this binary, not from Google — see `server::font_for`. */
   @font-face {
@@ -105,7 +106,7 @@ pub const HTML: &str = r##"<!doctype html>
     --accent:#3355e8; --on-accent:#fff;
     --warn:#a96a00; --warn-bg:#fdf5e6; --ok:#1f8a4c;
     --shadow:0 1px 2px #10121a14, 0 1px 1px #10121a0f;
-    --field:#f2f3f7;
+    --field:#f2f3f7; --edge:#e6e9ef; --chrome:#fbfbfd; --accent-2:hsl(228 22% 62%);
   }
 
   /* One hue throughout, differentiated by lightness. Everything below is
@@ -683,7 +684,7 @@ pub const HTML: &str = r##"<!doctype html>
        `viewport-fit=cover` the containing block is the whole screen, and
        without it the containing block is the web view, which already excludes
        the status bar. Either way the composer reaches the bottom edge. */
-    position:fixed; inset:0; overflow:hidden;
+    position:fixed; inset:var(--viewport-top,0px) 0 var(--keyboard-inset,0px); overflow:hidden;
     margin:0; background:transparent; color:var(--fg);
     display:flex; flex-direction:column;
     /* Monospace throughout. It is what the thing being read *is* — terminal
@@ -695,21 +696,15 @@ pub const HTML: &str = r##"<!doctype html>
     -webkit-font-smoothing:antialiased;
   }
   button, a { font:inherit; color:inherit; }
-  /* The page is a portrait layout; sideways it re-flows into something
-     nobody designed. A web page cannot refuse to rotate (Safari has no
-     orientation lock), so the next best thing: an opaque cover asking for
-     portrait back. It lies *over* the app rather than unmounting it, so
-     rotating back finds the conversation exactly where it was, scroll and
-     all. Coarse pointer + short viewport keeps this to phones — an iPad or
-     a squat desktop window never sees it. */
-  #rotate { display:none; }
-  @media (orientation: landscape) and (pointer: coarse) and (max-height: 480px) {
-    #rotate {
-      display:grid; place-items:center; position:fixed; inset:0;
-      z-index:99; background:var(--page); color:var(--dim);
-      text-align:center; font-size:12px; letter-spacing:-.02em;
-    }
-    #rotate .glyph { display:block; font-size:28px; margin-bottom:10px; color:var(--faint); }
+  [hidden] { display:none !important; }
+  .panel-close { float:right; min-width:44px; min-height:44px; border:0;
+    background:none; font-size:20px; color:var(--fg); }
+  .palette:not(.open), .managers:not(.open), aside:not(.open) { visibility:hidden; }
+  .delivery { color:var(--dim); font-size:12px; margin-top:6px; }
+  .delivery button { min-height:44px; margin:4px 6px 0 0; padding:6px 12px;
+    border:1px solid var(--line); border-radius:8px; background:var(--surface); }
+  button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible {
+    outline:2px solid var(--accent); outline-offset:3px;
   }
   /* Everything tappable answers the finger. Without this the page is correct
      and feels dead: on a touch screen the press *is* the feedback, because
@@ -874,6 +869,10 @@ pub const HTML: &str = r##"<!doctype html>
        code block, which does its own scrolling inside its own box. */
     overflow-x:hidden;
   }
+  .media-card { display:block; max-width:100%; color:var(--fg); border:1px solid var(--line); border-radius:12px; overflow:hidden; text-decoration:none; margin:12px 0; }
+  .media-card img { display:block; max-width:100%; max-height:320px; width:100%; object-fit:contain; }
+  .media-card span { display:flex; align-items:center; min-height:44px; padding:8px 12px; overflow-wrap:anywhere; }
+  .media-card:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
   /* A flex row per message, so a bubble hugs its text but a wide code block
      inside one cannot shrink it to a column of single letters. */
   /* Without boxes, the space between turns is what separates them. */
@@ -913,7 +912,7 @@ pub const HTML: &str = r##"<!doctype html>
   }
   .row.you { padding-left:12%; }
   .row.you .msg { font-weight:500; }
-  .row.pending .msg { opacity:.5; }
+  .row.pending .msg { opacity:1; }
   /* Already monospace, so inline code is marked by weight and a wash rather
      than by changing face — which now would not read as anything. */
   .msg code { background:#8b93a426; border-radius:4px; padding:1px 4px; font-weight:500; }
@@ -1208,7 +1207,7 @@ pub const HTML: &str = r##"<!doctype html>
   /* Same 44px touch minimum as a proposal button, and for the same reason:
      a mis-tap here queues work or drops a check. */
   .deskrow .acts button {
-    min-width:44px; min-height:38px; border-radius:9px;
+    min-width:44px; min-height:44px; border-radius:9px;
     border:1px solid var(--line); background:none; font:inherit; font-size:13px;
     color:var(--fg);
   }
@@ -1232,7 +1231,7 @@ pub const HTML: &str = r##"<!doctype html>
   .palette h2 span { letter-spacing:0; text-transform:none; }
   .forms { display:flex; gap:6px; }
   .forms button {
-    flex:1; padding:9px 0; border-radius:9px; font-size:10.5px; font-weight:500;
+    flex:1; min-height:44px; padding:9px 0; border-radius:9px; font-size:10.5px; font-weight:500;
     border:0; background:none; color:var(--dim); box-shadow:var(--lift);
   }
   .forms button.on { background:var(--raised); color:var(--fg); box-shadow:var(--lift-on); }
@@ -1289,7 +1288,7 @@ pub const HTML: &str = r##"<!doctype html>
   /* Was dashed, to say "this makes a new one". The dash cannot survive next
      to the ring without doubling the edge, so the dim label carries it. */
   .new button {
-    flex:1; font-size:11px; padding:8px; border-radius:10px;
+    flex:1; min-height:44px; font-size:11px; padding:8px; border-radius:10px;
     border:0; background:none; color:var(--dim); box-shadow:var(--lift);
   }
   .drawer-actions { display:flex; gap:8px; padding:2px 16px 8px; }
@@ -1308,7 +1307,7 @@ pub const HTML: &str = r##"<!doctype html>
      colour it actually is — which says more than its name does anyway. */
   .theme { display:flex; flex-wrap:wrap; gap:6px; }
   .theme button {
-    display:flex; align-items:center; gap:7px; padding:7px 11px 7px 8px;
+    display:flex; align-items:center; gap:7px; padding:7px 11px 7px 8px; min-height:44px;
     border:0; border-radius:999px; background:none;
     color:var(--dim); font-size:10.5px; font-weight:500; box-shadow:var(--lift);
   }
@@ -1346,6 +1345,19 @@ pub const HTML: &str = r##"<!doctype html>
     font-size:8px; line-height:1.3; white-space:pre;
     pointer-events:none;
   }
+  @media (orientation: landscape) and (max-height: 500px) {
+    header { padding-top:max(4px,env(safe-area-inset-top)) !important; padding-bottom:4px !important; }
+    .foot { padding-top:4px !important; }
+    .dock { display:grid; grid-template-columns:minmax(100px,1fr) auto; align-items:end; }
+    .dock #attached { grid-column:1 / -1; grid-row:1; }
+    .dock #msg { grid-column:1; grid-row:2; min-width:0; }
+    .dock .tools { grid-column:2; grid-row:2; padding:4px; }
+    .dock .tools .gap { display:none; }
+    .ask .body { max-height:20vh; }
+    .ask { padding:6px 10px; margin-bottom:4px; max-height:44vh; overflow-y:auto; }
+    .ask button { display:inline-block; width:auto; min-width:80px; margin:3px 6px 0 0; }
+    .palette, .managers { max-height:88vh; overflow-y:auto; }
+  }
 </style>
 <script>
   /* Before the first paint, so a chosen theme never flashes the other one. */
@@ -1358,16 +1370,15 @@ pub const HTML: &str = r##"<!doctype html>
 </script>
 </head>
 <body>
-<div id="rotate"><div><span class="glyph">⟳</span>portrait, please</div></div>
 <header>
   <div class="identity">
     <span class="dot" id="hdot"></span>
     <span class="who"><b id="hproject">—</b><span id="hagent"></span></span>
   </div>
   <nav class="tools">
-    <button class="icon" onclick="togglePalette()" title="theme">◑</button>
-    <button class="icon" onclick="toggleManagers()" title="managers">◆<span class="badge" id="mbadge" hidden></span></button>
-    <button class="icon" onclick="toggleDrawer()" title="projects">☰<span class="badge" id="hbadge" hidden></span></button>
+    <button class="icon" onclick="togglePalette()" title="theme" aria-label="Appearance" aria-controls="palette" aria-expanded="false">◑</button>
+    <button class="icon" onclick="toggleManagers()" title="managers" aria-label="Managers and decisions" aria-controls="managersSheet" aria-expanded="false">◆<span class="badge" id="mbadge" hidden></span></button>
+    <button class="icon" onclick="toggleDrawer()" title="projects" aria-label="Projects" aria-controls="drawer" aria-expanded="false">☰<span class="badge" id="hbadge" hidden></span></button>
   </nav>
 </header>
 
@@ -1378,13 +1389,13 @@ pub const HTML: &str = r##"<!doctype html>
 <div class="foot">
 <div id="stale" hidden></div>
 <div id="ask"></div>
-<div class="note" id="note" hidden></div>
+<div class="note" id="note" role="status" aria-live="polite" hidden></div>
 
 <div class="composer">
   <input type="file" id="file" accept="image/*,text/*,.pdf,.log,.json" multiple hidden>
   <div class="dock">
     <div id="attached"></div>
-    <textarea id="msg" rows="1" placeholder="Message"></textarea>
+    <textarea id="msg" aria-label="Message" rows="1" placeholder="Message"></textarea>
     <div class="tools">
       <button class="act switcher" id="cycleproj" onclick="cycleProject()"
               title="next project" aria-label="next project" hidden>
@@ -1415,20 +1426,22 @@ pub const HTML: &str = r##"<!doctype html>
 </div>
 
 <div class="scrim" id="paletteScrim" onclick="togglePalette()"></div>
-<section class="palette" id="palette">
+<section class="palette" id="palette" role="dialog" aria-modal="true" aria-label="Appearance" aria-hidden="true" inert>
+  <button class="panel-close" onclick="togglePalette()" aria-label="Close appearance">×</button>
   <h2>theme</h2>
   <div class="theme" id="theme"></div>
   <h2>gradient</h2>
   <div class="forms" id="forms"></div>
   <h2>surfaces <span id="bubbleValue"></span></h2>
-  <input type="range" id="bubbles" min="0" max="100" step="5"
+  <input type="range" id="bubbles" aria-label="Surface opacity" min="0" max="100" step="5"
          oninput="setBubbles(this.value)">
   <h2>blur <span id="blurValue"></span></h2>
-  <input type="range" id="blur" min="0" max="240" step="10" oninput="setBlur(this.value)">
+  <input type="range" id="blur" aria-label="Background blur" min="0" max="240" step="10" oninput="setBlur(this.value)">
 </section>
 
 <div class="scrim" id="managersScrim" onclick="toggleManagers()"></div>
-<section class="managers" id="managersSheet">
+<section class="managers" id="managersSheet" role="dialog" aria-modal="true" aria-label="Managers and decisions" aria-hidden="true" inert>
+  <button class="panel-close" onclick="toggleManagers()" aria-label="Close managers and decisions">×</button>
   <h2>waiting on you</h2>
   <div id="deskList"></div>
   <h2>managers</h2>
@@ -1436,7 +1449,8 @@ pub const HTML: &str = r##"<!doctype html>
 </section>
 
 <div class="scrim" id="scrim" onclick="toggleDrawer()"></div>
-<aside id="drawer">
+<aside id="drawer" role="dialog" aria-modal="true" aria-label="Projects" aria-hidden="true" inert>
+  <button class="panel-close" onclick="toggleDrawer()" aria-label="Close projects">×</button>
   <h2>projects</h2>
   <div class="tree" id="tree"></div>
   <h2>message actions</h2>
@@ -1452,6 +1466,7 @@ pub const HTML: &str = r##"<!doctype html>
 <script>
 const token = new URLSearchParams(location.search).get("t") || "";
 const q = p => p + (p.includes("?") ? "&" : "?") + "t=" + encodeURIComponent(token);
+document.getElementById("manifest").href = q("/manifest.webmanifest");
 /* What to call an agent: the model it is answering with, or the agent it runs
    in until it has said one. Both agents can change model mid-session, so this
    is read off every snapshot rather than remembered. */
@@ -1459,39 +1474,79 @@ const named = a => a.model || a.provider;
 
 const esc = s => (s||"").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const store = {
-  get: (k, d) => { const v = localStorage.getItem(k); return v === null ? d : v; },
-  set: (k, v) => localStorage.setItem(k, v),
+  get: (k, d) => { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
+  set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* In-memory recovery still works. */ } },
 };
 
 let data = null;                        // last snapshot
+let serverClockOffset = 0;
 let thread = [];                        // the open conversation, accumulated
 let have = 0;                           // how much of it we hold (see msg_total)
 let epoch = "";                         // which counting life `have` belongs to
 let current = store.get("agent", null); // the conversation on screen
-let sent = [];                          // your messages, until the journal catches up
-let busy = false;
+const HISTORY_LIMIT = 200;
+function saved(key, fallback) { try { return JSON.parse(store.get(key, "null")) || fallback; } catch { return fallback; } }
+const drafts = saved("drafts", {});
+let outbox = saved("outbox", []).map(item => ({...item, status:item.status === "pending" ? "unknown" : item.status, inflight:false}));
+function draftFor(id) { return drafts[id] ||= {text:"", attached:[], revision:0}; }
+function persistDrafts() { store.set("drafts", JSON.stringify(drafts, (key, value) => key === "preview" ? undefined : value)); }
+function persistOutbox() { store.set("outbox", JSON.stringify(outbox, (key, value) => key === "preview" || key === "inflight" ? undefined : value)); }
+function pendingFor(id) { return outbox.filter(item => item.agent === id); }
+function commandMeta() {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 15) | 64; bytes[8] = (bytes[8] & 63) | 128;
+  const hex = [...bytes].map(x => x.toString(16).padStart(2,"0")).join("");
+  return {id:[hex.slice(0,8),hex.slice(8,12),hex.slice(12,16),hex.slice(16,20),hex.slice(20)].join("-"),
+          issued:Math.floor(Date.now()/1000) + serverClockOffset, instance:data?.instance || ""};
+}
 let signature = "";                     // what the log currently shows
 let tag = null;                         // ETag of the last snapshot we took
 
-async function post(path, body) {
-  busy = true;
+async function request(path, options = {}, timeout = 15000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
   try {
-    const res = await fetch(q(path), {
-      method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(body),
-    });
-    if (!res.ok) throw new Error(await res.text());
-  } catch (err) {
-    note("could not reach workbench: " + err);
-  } finally {
-    busy = false;
-  }
+    const response = await fetch(q(path), {...options, signal:controller.signal});
+    if (response.status === 304) return {unchanged:true};
+    const text = await response.text();
+    if (!response.ok) {
+      const error = new Error(text || "Request failed"); error.status = response.status; throw error;
+    }
+    return {value:JSON.parse(text), tag:response.headers.get("ETag")};
+  } finally { clearTimeout(timer); }
 }
 
-function note(text) {
+async function post(path, body, meta = commandMeta()) {
+  if (!meta.instance) throw new Error("Waiting for workbench to connect. Your draft is saved.");
+  const headers = {"Content-Type":"application/json", "X-Command-Id":meta.id,
+                   "X-Command-Time":String(meta.issued)};
+  if (meta.instance) headers["X-Workbench-Instance"] = meta.instance;
+  if (meta.prompt) headers["X-Prompt-Id"] = meta.prompt;
+  return (await request(path, {method:"POST", headers, body:JSON.stringify(body)})).value;
+}
+
+let noteTimer;
+function note(text, transient = false) {
+  clearTimeout(noteTimer);
   const el = document.getElementById("note");
-  el.textContent = text;
-  el.hidden = !text;
-  if (text) setTimeout(() => { el.hidden = true; }, 4000);
+  el.textContent = text; el.hidden = !text;
+  if (text && transient) noteTimer = setTimeout(() => { el.hidden = true; }, 4000);
+}
+
+const actions = new Map();
+async function action(path, body, options = {}) {
+  const key = path + JSON.stringify(body) + (options.prompt || "");
+  let item = actions.get(key);
+  if (item?.pending) return;
+  if (!item) { item = {...commandMeta(), ...options}; actions.set(key, item); }
+  item.pending = true; render();
+  try {
+    await post(path, body, item);
+    actions.delete(key); note("Accepted by workbench", true); await refresh();
+  } catch (error) {
+    if (error.status && error.status < 500) actions.delete(key);
+    note(error.message || "Connection interrupted. Try the action again.");
+  } finally { item.pending = false; render(); }
 }
 
 function agent(id) { return (data?.agents || []).find(a => a.id === id) || null; }
@@ -1505,9 +1560,10 @@ function agent(id) { return (data?.agents || []).find(a => a.id === id) || null;
    describes the old one. */
 function merge(a) {
   if (!a) return;
-  if (a.msg_reset) thread = a.messages;
+  if (a.msg_reset || (a.msg_epoch && epoch && a.msg_epoch !== epoch)) thread = a.messages;
   else if (a.messages.length) thread = thread.concat(a.messages);
-  if (a.msg_total) have = a.msg_total;
+  thread = thread.slice(-HISTORY_LIMIT);
+  if (a.msg_total !== undefined && (a.msg_reset || a.msg_epoch)) have = a.msg_total;
   // Counts only mean anything within one life; quoting the epoch back is
   // what lets the desktop tell a resumable `have` from a stale one. Without
   // it, every workbench restart re-served the tail of the conversation and
@@ -1516,23 +1572,14 @@ function merge(a) {
 }
 
 function pick(id) {
-  current = id;
-  store.set("agent", id);
-  sent = [];
-  attached = [];
-  renderAttached();
-  thread = [];
-  drawn = 0;
-  have = 0;
-  epoch = "";
-  // The ETag says "same as the body you already folded in". Having just
-  // thrown that away, a 304 would leave the log empty.
-  tag = null;
-  signature = "";
-  post("/api/focus", { agent: id });   // only the open conversation is published
+  if (listening) { recog.onresult = null; recog.stop(); setListening(false); }
+  current = id; store.set("agent", id);
+  attached = draftFor(id).attached;
+  document.getElementById("msg").value = draftFor(id).text;
+  resizeComposer(); renderAttached();
+  thread = []; drawn = 0; have = 0; epoch = ""; tag = null; signature = "";
   if (drawerOpen) toggleDrawer();
-  render();
-  refresh();                           // don't sit on an empty log for a tick
+  render(); refresh();
 }
 
 /* Next agent in the same project, wrapping — for flicking between the two or
@@ -1570,31 +1617,71 @@ function cycleProject() {
 }
 
 function newAgent(projectId, provider) {
-  post("/api/new-agent", { agent: projectId, text: provider });
-  note("starting " + provider + "…");
+  action("/api/new-agent", {agent:projectId, text:provider});
   if (drawerOpen) toggleDrawer();
 }
 
 function take() {
-  const box = document.getElementById("msg");
-  const text = box.value.trim();
-  if (!text || !current) return null;
-  box.value = "";
-  box.style.height = "auto";
-  document.getElementById("send").disabled = true;
-  return text;
+  const text = document.getElementById("msg").value.trim();
+  return text && current ? text : null;
 }
 
-function sendMessage() {
-  const typed = take();
-  // An attachment on its own is a message: "look at this" is implied.
-  if (!typed && !attached.length) return;
-  const text = [typed, ...attached.map(a => a.path)].filter(Boolean).join("\n");
-  attached = [];
-  renderAttached();
-  sent.push(text);                      // appears immediately, like a chat app
-  render();
-  post("/api/reply", { agent: current, text });
+function sendMessage() { submitDraft("reply"); }
+function submitDraft(kind) {
+  if (!current) return;
+  if (!data?.instance) { note("Waiting for workbench to connect. Your draft is saved."); return; }
+  const draft = draftFor(current);
+  const text = [take(), ...draft.attached.map(a => a.path)].filter(Boolean).join("\n");
+  if (!text) return;
+  let item = outbox.find(x => x.agent === current && x.kind === kind && x.text === text && x.status !== "accepted");
+  if (!item) {
+    item = {...commandMeta(), agent:current, text, kind, status:"pending",
+            draftRevision:draft.revision, typed:draft.text, attached:[...draft.attached]};
+    outbox.push(item); persistOutbox();
+  }
+  deliver(item.id);
+}
+
+async function deliver(id) {
+  const item = outbox.find(x => x.id === id);
+  if (!item || item.inflight || item.status === "accepted") return;
+  item.inflight = true; item.status = "pending"; item.error = "";
+  persistOutbox(); render(); renderAttached();
+  try {
+    await post("/api/" + item.kind, {agent:item.agent, text:item.text}, item);
+    item.status = "accepted";
+    const draft = draftFor(item.agent);
+    if (draft.revision === item.draftRevision) {
+      draft.text = ""; draft.attached = []; draft.revision++;
+      if (current === item.agent) {
+        attached = draft.attached; document.getElementById("msg").value = ""; resizeComposer();
+      }
+    }
+    for (const file of item.attached) { if (file.preview) URL.revokeObjectURL(file.preview); file.preview = null; }
+    // An acknowledgment means the desktop accepted it. The journal is what
+    // confirms it appeared in the conversation.
+    note(item.kind === "todo" ? "Added to the queue" : "Accepted by workbench", true);
+    persistDrafts();
+  } catch (error) {
+    item.status = error.status && error.status < 500 ? "failed" : "unknown";
+    item.error = error.message || "Connection interrupted. Delivery is unconfirmed.";
+    note(item.error);
+  } finally {
+    item.inflight = false; persistOutbox(); render(); renderAttached();
+  }
+}
+
+function editDelivery(id) {
+  const item = outbox.find(x => x.id === id);
+  if (!item || item.inflight || item.status === "accepted") return;
+  const draft = draftFor(item.agent);
+  // Never overwrite a newer draft to recover an older one.
+  if (draft.text && draft.text !== item.typed) { note("Save or send the current draft before restoring this message."); return; }
+  if (item.status === "unknown") {
+    note("Delivery is unconfirmed. Use Retry to check the original request before sending a changed copy."); return;
+  }
+  draft.text = item.typed; draft.attached = item.attached; draft.revision++;
+  outbox = outbox.filter(x => x.id !== id); persistOutbox(); persistDrafts(); pick(item.agent);
 }
 
 /* ---- attachments ------------------------------------------------------- */
@@ -1602,40 +1689,35 @@ function sendMessage() {
 /* Files land on the desktop and the agent is handed the path, which is how
    both Claude and Codex take an image. Nothing is sent until you do, so a
    photo can have a caption. */
-let attached = [];
+let attached = current ? draftFor(current).attached : [];
 
 function pickFile() {
   document.getElementById("file").click();
 }
 
 document.getElementById("file").addEventListener("change", async event => {
-  const files = [...event.target.files];
-  event.target.value = "";               // so the same photo can be picked twice
+  const files = [...event.target.files]; event.target.value = "";
+  const owner = current;
+  if (!owner) return;
   for (const file of files) {
-    note("sending " + file.name + "…");
+    note("Uploading " + file.name + "…");
     try {
-      const res = await fetch(
-        q("/api/upload?agent=" + encodeURIComponent(current) +
-          "&name=" + encodeURIComponent(file.name)),
-        { method: "POST", body: file });
-      if (!res.ok) throw new Error(await res.text());
-      const { path } = await res.json();
-      attached.push({
-        path,
-        name: file.name,
-        preview: file.type.startsWith("image/") ? URL.createObjectURL(file) : null,
-      });
-      note("");
-      renderAttached();
-    } catch (err) {
-      note("could not send " + file.name + ": " + err.message);
-    }
+      const {value} = await request("/api/upload?agent=" + encodeURIComponent(owner) +
+        "&name=" + encodeURIComponent(file.name), {method:"POST", body:file}, 75000);
+      const draft = draftFor(owner);
+      draft.attached.push({path:value.path, name:file.name,
+        preview:file.type.startsWith("image/") ? URL.createObjectURL(file) : null});
+      draft.revision++; persistDrafts();
+      note(current === owner ? "" : "File attached to its original agent's draft", true);
+      if (current === owner) { attached = draft.attached; renderAttached(); }
+    } catch (error) { note("Could not upload " + file.name + ": " + error.message); }
   }
 });
 
 function removeAttached(index) {
   const [gone] = attached.splice(index, 1);
   if (gone?.preview) URL.revokeObjectURL(gone.preview);
+  draftFor(current).revision++; persistDrafts();
   renderAttached();
 }
 
@@ -1647,28 +1729,26 @@ function renderAttached() {
       <button onclick="removeAttached(${i})" aria-label="remove">×</button>
     </span>`).join("");
   document.getElementById("send").disabled =
-    !attached.length && !document.getElementById("msg").value.trim();
+    (!attached.length && !document.getElementById("msg").value.trim()) || pendingFor(current).some(x => x.inflight);
 }
 
 /* The queue is the other way to give an agent work: it waits for the turn in
    flight to end instead of interrupting it. */
-function queueMessage() {
-  const text = take();
-  if (!text) return;
-  post("/api/todo", { agent: current, text });
-  note("queued — it goes out when this turn ends");
-}
+function queueMessage() { submitDraft("todo"); }
 
-function answer(key) {
-  post("/api/answer", { agent: current, text: key });
-  document.getElementById("ask").innerHTML = "";
+function answer(key, prompt, owner) {
+  if (current !== owner || !agent(current)?.prompt || agent(current).prompt.id !== prompt) { note("That question has changed. Review it again."); return; }
+  action("/api/answer", {agent:owner, text:key}, {prompt});
 }
 
 const box = document.getElementById("msg");
-box.addEventListener("input", e => {
-  e.target.style.height = "auto";
-  e.target.style.height = Math.min(e.target.scrollHeight, 132) + "px";
-  document.getElementById("send").disabled = !e.target.value.trim() && !attached.length;
+function resizeComposer() {
+  box.style.height = "auto";
+  box.style.height = Math.min(box.scrollHeight, Math.max(54, Math.min(132, innerHeight * .2))) + "px";
+}
+box.addEventListener("input", () => {
+  if (current) { const draft = draftFor(current); draft.text = box.value; draft.revision++; persistDrafts(); }
+  resizeComposer(); renderAttached();
 });
 
 /* dictation — needs a secure context, so say so rather than failing quietly */
@@ -1690,9 +1770,11 @@ function toggleMic() {
   recog.lang = navigator.language || "en-US";
 
   const before = box.value ? box.value + " " : "";
+  const owner = current;
   recog.onresult = e => {
+    if (current !== owner || !listening) return;
     let text = "";
-    for (let i = e.resultIndex; i < e.results.length; i++) text += e.results[i][0].transcript;
+    for (let i = 0; i < e.results.length; i++) text += e.results[i][0].transcript;
     box.value = before + text;
     box.dispatchEvent(new Event("input"));
   };
@@ -1875,6 +1957,19 @@ async function enablePush() {
   } catch (err) {
     say("Could not turn them on: " + err.message);
   }
+}
+
+async function restorePush() {
+  if (store.get("push", "") !== "on") return;
+  if (!window.isSecureContext || !("serviceWorker" in navigator) || !("Notification" in window)) { markPush(false); return; }
+  try {
+    if (Notification.permission !== "granted") { markPush(false); return; }
+    const registration = await navigator.serviceWorker.register(q("/sw.js"));
+    const subscription = await registration.pushManager.getSubscription();
+    if (!subscription) { markPush(false); return; }
+    await post("/api/subscribe", {agent:"-", text:subscription.endpoint});
+    markPush(true);
+  } catch { markPush(false); note("Notification registration could not be confirmed. Open Projects to try again."); }
 }
 
 /* base64url → the Uint8Array `subscribe` insists on. */
@@ -2140,20 +2235,40 @@ function setBlur(px) {
   document.getElementById("blur").value = px;
 }
 
-let paletteOpen = false;
-function togglePalette() {
-  paletteOpen = !paletteOpen;
-  document.getElementById("palette").classList.toggle("open", paletteOpen);
-  document.getElementById("paletteScrim").classList.toggle("open", paletteOpen);
+let paletteOpen = false, managersOpen = false, drawerOpen = false;
+let activePanel = null, panelTrigger = null;
+const panels = [["palette", "paletteScrim"], ["managersSheet", "managersScrim"], ["drawer", "scrim"]];
+function setPanel(id) {
+  if (!activePanel && id) panelTrigger = document.activeElement;
+  activePanel = id;
+  paletteOpen = id === "palette"; managersOpen = id === "managersSheet"; drawerOpen = id === "drawer";
+  for (const [panelId, scrimId] of panels) {
+    const open = panelId === id, panel = document.getElementById(panelId);
+    panel.inert = !open; panel.setAttribute("aria-hidden", String(!open));
+    panel.classList.toggle("open", open);
+    document.getElementById(scrimId).classList.toggle("open", open);
+    document.querySelector('[aria-controls="' + panelId + '"]').setAttribute("aria-expanded", String(open));
+  }
+  for (const el of document.querySelectorAll("header, #log, .foot")) el.inert = !!id;
+  if (id) document.getElementById(id).querySelector("button").focus();
+  else { panelTrigger?.focus(); panelTrigger = null; }
 }
-
-let managersOpen = false;
+function togglePalette() { setPanel(paletteOpen ? null : "palette"); }
 function toggleManagers() {
-  managersOpen = !managersOpen;
-  document.getElementById("managersSheet").classList.toggle("open", managersOpen);
-  document.getElementById("managersScrim").classList.toggle("open", managersOpen);
-  if (managersOpen) { renderDesk(); renderManagers(); }
+  if (!managersOpen) { renderDesk(); renderManagers(); }
+  setPanel(managersOpen ? null : "managersSheet");
 }
+function toggleDrawer() { setPanel(drawerOpen ? null : "drawer"); }
+document.addEventListener("keydown", event => {
+  if (!activePanel) return;
+  if (event.key === "Escape") { event.preventDefault(); setPanel(null); return; }
+  if (event.key !== "Tab") return;
+  const controls = [...document.getElementById(activePanel).querySelectorAll("button, a[href], input, textarea, [tabindex]")]
+    .filter(el => !el.disabled && el.tabIndex >= 0 && el.getClientRects().length);
+  const first = controls[0], last = controls[controls.length - 1];
+  if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+  else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+});
 
 /* Every manager across every project, each with what its project is working
    toward and what it has proposed. Tapping one opens its conversation — a
@@ -2167,7 +2282,7 @@ function toggleManagers() {
    next snapshot rather than optimistically: what the desktop actually did
    (queued, or refused with a reason in its log) is the truth worth showing. */
 function decide(id, approve) {
-  post("/api/proposal", { agent: id, text: approve ? "approve" : "decline" });
+  action("/api/proposal", { agent: id, text: approve ? "approve" : "decline" });
   managersSig = "";                       // repaint from the next snapshot
   deskSig = "";
 }
@@ -2176,11 +2291,11 @@ function decide(id, approve) {
    TUI's keys do. A check belongs to its objective, so that is what is named;
    re-arming names the proposal whose review the manager punted. */
 function decideCheck(id, approve) {
-  post("/api/check", { agent: id, text: approve ? "approve" : "drop" });
+  action("/api/check", { agent: id, text: approve ? "approve" : "drop" });
   deskSig = "";
 }
 function rearm(id) {
-  post("/api/rearm", { agent: id, text: "rearm" });
+  action("/api/rearm", { agent: id, text: "rearm" });
   deskSig = "";
 }
 
@@ -2200,8 +2315,7 @@ function renderDesk() {
   // Length-prefixed so the signature is never the empty string: an empty
   // desk would otherwise match the initial sentinel and the "nothing waiting"
   // line would never paint on first open.
-  const sig = rows.length + "|" +
-    rows.map(r => [r.kind, r.id, r.title, r.detail || ""].join(":")).join("|");
+  const sig = JSON.stringify(rows);
   if (sig === deskSig) return;
   deskSig = sig;
   if (!rows.length) {
@@ -2243,10 +2357,8 @@ let managersSig = "";
 function renderManagers() {
   const managers = (data?.agents || []).filter(a => a.manager);
   const el = document.getElementById("managersList");
-  const sig = managers.map(m => [m.id, m.status, m.running, m.queued.length].join(":")).join("|")
-    + "||" + (data?.projects || []).map(p =>
-        (p.objectives || []).map(o => o.id + o.state + (o.done_when || "")).join(",") + ";" +
-        (p.proposals || []).map(x => x.id + x.state + (x.verdict || "") + (x.phase || "")).join(",")).join("|");
+  const sig = JSON.stringify([managers.map(m => [m.id, m.status, m.running, m.queued, m.model, m.project]),
+    (data?.projects || []).map(p => [p.id, p.objectives, p.proposals])]);
   if (sig === managersSig) return;
   managersSig = sig;
   if (!managers.length) {
@@ -2292,13 +2404,6 @@ function renderManagers() {
   }).join("");
 }
 
-let drawerOpen = false;
-function toggleDrawer() {
-  drawerOpen = !drawerOpen;
-  document.getElementById("drawer").classList.toggle("open", drawerOpen);
-  document.getElementById("scrim").classList.toggle("open", drawerOpen);
-}
-
 function toggleProject(id) {
   const key = "proj:" + id;
   store.set(key, store.get(key, "1") === "1" ? "0" : "1");
@@ -2328,8 +2433,42 @@ const clock = at => {
    drawn now can tell arriving from re-rendering. */
 let drawn = 0;
 
+const markup = new Map();
+function setMarkup(id, html) {
+  if (markup.get(id) === html) return;
+  document.getElementById(id).innerHTML = html; markup.set(id, html);
+}
+function reconcileLog(log, html) {
+  const template = document.createElement("template"); template.innerHTML = html;
+  const old = new Map([...log.children].map(el => [el.dataset.key, el]));
+  let before = log.firstElementChild;
+  for (const next of [...template.content.children]) {
+    let node = next.dataset.key ? old.get(next.dataset.key) : null;
+    if (node) {
+      const same = node.innerHTML === next.innerHTML;
+      if (!same) { node.replaceWith(next); if (before === node) before = next; node = next; }
+      old.delete(next.dataset.key);
+    } else node = next;
+    if (node !== before) log.insertBefore(node, before);
+    before = node.nextElementSibling;
+  }
+  while (before) { const next = before.nextElementSibling; before.remove(); before = next; }
+}
+
+function mediaHtml(agent) {
+  return (data?.media || []).filter(item => item.agent === agent).map(item => {
+    const base = '/media/' + encodeURIComponent(item.id);
+    const viewer = base + '?t=' + encodeURIComponent(token);
+    const preview = base + (item.kind === 'video' ? '/poster' : '/file') + '?t=' + encodeURIComponent(token);
+    const picture = item.kind === 'image' || item.poster
+      ? '<img src="' + esc(preview) + '" alt="' + esc(item.name) + '" loading="lazy">' : '';
+    return '<a class="media-card" data-key="media-' + esc(item.id) + '" href="' + esc(viewer) + '" target="_blank" rel="noopener noreferrer">' +
+      picture + '<span>' + (item.kind === 'video' ? '▶ Play ' : 'View ') + esc(item.name) + '</span></a>';
+  }).join('');
+}
 function messagesHtml(a) {
   const parts = [];
+  if (have > thread.length && thread.length) parts.push('<div data-key="history-limit" class="when">Showing the latest ' + thread.length + ' entries</div>');
   let last = null;
   let index = 0;
   // A first load animates as a short cascade; after that only the new line
@@ -2341,24 +2480,32 @@ function messagesHtml(a) {
       ? ` style="animation-delay:${Math.min(index * 28, 340)}ms"` : "";
     // A gap means the conversation was picked up later; say when.
     const at = m.at ? new Date(m.at) : null;
-    if (at && (!last || at - last > 10 * 60 * 1000)) parts.push('<div class="when">' + clock(m.at) + "</div>");
+    if (at && (!last || at - last > 10 * 60 * 1000)) parts.push('<div data-key="time-' + esc(epoch) + '-' + (have - thread.length + index) + '" class="when">' + clock(m.at) + "</div>");
     if (at) last = at;
 
     if (m.role === "tool") {
       const [name, detail] = m.text.split(" · ");
-      parts.push('<div class="tool' + fresh + '"' + delay + '><span class="n">' + esc(name) + "</span>" +
+      parts.push('<div data-key="message-' + esc(epoch) + '-' + (have - thread.length + index) + '" class="tool' + fresh + '"' + delay + '><span class="n">' + esc(name) + "</span>" +
                  '<span class="d">' + esc(detail || "") + "</span></div>");
     } else {
-      parts.push('<div class="row' + fresh + " " + (m.role === "you" ? "you" : "") + '"' + delay + '>' +
+      parts.push('<div data-key="message-' + esc(epoch) + '-' + (have - thread.length + index) + '" class="row' + fresh + " " + (m.role === "you" ? "you" : "") + '"' + delay + '>' +
                  '<div class="msg">' + markdown(m.text) + "</div></div>");
     }
   }
   if (!thread.length && a.tail.length) {
     // No journal we can read: the terminal is all there is.
-    parts.push('<div class="raw">' + esc(a.tail.join("\n")) + "</div>");
+    parts.push('<div data-key="raw" class="raw">' + esc(a.tail.join("\n")) + "</div>");
   }
-  for (const t of sent) parts.push('<div class="row you pending fresh"><div class="msg">' + esc(t) + "</div></div>");
-  if (a.status === "working") parts.push('<div class="typing"><i></i><i></i><i></i></div>');
+  for (const item of pendingFor(current)) {
+    const label = {pending:"Sending…", accepted:"Accepted by workbench", unknown:"Delivery unconfirmed", failed:"Not accepted"}[item.status];
+    const recovery = item.status === "unknown" ? `<button onclick="deliver('${item.id}')">Retry</button>`
+      : item.status === "failed" ? `<button onclick="editDelivery('${item.id}')">Edit draft</button>` : "";
+    parts.push(`<div data-key="delivery-${item.id}" class="row you pending"><div class="msg">${esc(item.text)}
+      <div class="delivery">${esc(label)}${item.error ? " · " + esc(item.error) : ""}${recovery}</div></div></div>`);
+  }
+  const media = mediaHtml(a.id);
+  if (media) parts.push(media);
+  if (a.status === "working") parts.push('<div data-key="typing" class="typing"><i></i><i></i><i></i></div>');
   drawn = thread.length;
   if (!parts.length) {
     parts.push('<div class="empty">' +
@@ -2369,10 +2516,11 @@ function messagesHtml(a) {
 }
 
 function askHtml(a) {
-  if (!a.prompt) return "";
+  if (!a.prompt?.id) return "";
+  const waiting = [...actions.values()].some(item => item.prompt === a.prompt.id && item.pending);
   const options = a.prompt.options.map((o, i) =>
-    '<button class="' + (i === 0 ? "first" : "") + '" onclick="answer(\'' + esc(o.key) + '\')">' +
-    '<span class="key">' + esc(o.key) + "</span>" + esc(o.label) + "</button>").join("");
+    `<button ${waiting ? "disabled" : ""} class="${i === 0 ? "first" : ""}" onclick="answer('${esc(o.key)}','${esc(a.prompt.id)}','${esc(a.id)}')">
+      <span class="key">${esc(o.key)}</span>${esc(o.label)}</button>`).join("");
   return '<div class="ask"><h3>waiting on you</h3>' +
     '<div class="body">' + esc(a.prompt.lines.join("\n")) + "</div>" + options + "</div>";
 }
@@ -2387,7 +2535,7 @@ function renderTree() {
   const rank = p => p.global ? 2 : (p.agents.some(x => x.status === "blocked") ? 1 : 0);
   projects.sort((a, b) => rank(b) - rank(a));
 
-  document.getElementById("tree").innerHTML = projects.map(p => {
+  const html = projects.map(p => {
     const blocked = p.agents.filter(a => a.status === "blocked").length;
     const open = store.get("proj:" + p.id, "1") === "1";
     const rows = open ? p.agents.map(a => `
@@ -2418,6 +2566,7 @@ function renderTree() {
         <span class="n">${p.agents.length}</span>
       </button>${rows}${servers}${add}`;
   }).join("") || '<div class="empty">no projects</div>';
+  setMarkup("tree", html);
 }
 
 function render() {
@@ -2469,67 +2618,50 @@ function render() {
     (data.projects || []).filter(p => data.agents.some(x => x.project_id === p.id)).length < 2;
   // Redraw only when there is something new: rewriting the log every second
   // fights your scrolling and drops any text you had selected.
-  const last = thread[thread.length - 1];
-  const next = [current, a.status, thread.length, last?.text.length || 0,
-                a.tail.length, sent.length].join("|");
+  const next = JSON.stringify([current, epoch, a.status, thread, a.tail, pendingFor(current), (data?.media || []).filter(m => m.agent === current)]);
   if (next !== signature) {
     signature = next;
     const log = document.getElementById("log");
     // Stay put if you scrolled up to read; follow along if you were at the end.
     const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
-    log.innerHTML = messagesHtml(a);
+    reconcileLog(log, messagesHtml(a));
     if (atBottom) log.scrollTop = log.scrollHeight;
   }
-  document.getElementById("ask").innerHTML = askHtml(a);
+  setMarkup("ask", askHtml(a));
 }
 
-let refreshing = false;                 // one poll in flight, ever
+let refreshing = false;
 async function refresh() {
-  // Only a POST holds this off, so its effect is in the next snapshot rather
-  // than racing it. Typing no longer does: the composer is not redrawn, and
-  // freezing the conversation the moment the keyboard opens is worse than
-  // anything it was protecting against.
-  if (busy) return;
-  // One at a time, and give up on a dead radio. Without both, a subway ride
-  // stacked a poll per second behind a radio that never answered — each
-  // carrying the `have` from before the tunnel — and when signal returned
-  // they all completed, each appending the same "messages you are owed"
-  // window. One message, fifteen times over.
   if (refreshing) return;
   refreshing = true;
+  const owner = current;
   try {
-    // `have` asks for only the messages we do not hold; the ETag turns a
-    // tick where nothing moved at all into an empty 304.
-    const res = await fetch(q("/api/state?have=" + have + "&epoch=" + encodeURIComponent(epoch)), {
-      cache: "no-store",
-      headers: tag ? { "If-None-Match": tag } : {},
-      signal: AbortSignal.timeout ? AbortSignal.timeout(20000) : undefined,
-    });
-    if (res.status === 304) return;
-    if (!res.ok) throw new Error(res.status === 401 ? "bad or missing token" : await res.text());
-    tag = res.headers.get("ETag");
-    data = await res.json();
-  } catch (err) {
+    const result = await request("/api/state?agent=" + encodeURIComponent(owner || "") +
+      "&have=" + have + "&epoch=" + encodeURIComponent(epoch), {
+        cache:"no-store", headers:tag ? {"If-None-Match":tag} : {},
+      }, 20000);
+    // A response started for A must never advance B's cursor after a switch.
+    if (owner !== current) return;
+    if (result.unchanged) { render(); return; }
+    tag = result.tag; data = result.value;
+    if (Number.isFinite(data.at)) serverClockOffset = data.at - Math.floor(Date.now()/1000);
+    merge(agent(current));
+    const said = thread.filter(m => m.role === "you").map(m => m.text);
+    outbox = outbox.filter(item => !(item.agent === current && item.status === "accepted" &&
+      (item.kind === "todo" || said.some(text => text === item.text || text.startsWith(item.text + "\n")))));
+    // Keep unconfirmed requests recoverable; bound only acknowledged echoes.
+    const accepted = outbox.filter(item => item.status === "accepted");
+    if (accepted.length > 50) {
+      const remove = new Set(accepted.slice(0, -50).map(item => item.id));
+      outbox = outbox.filter(item => !remove.has(item.id));
+    }
+    persistOutbox(); render();
+  } catch (error) {
     document.getElementById("hagent").textContent = "offline";
-    return;
   } finally {
     refreshing = false;
+    if (owner !== current) queueMicrotask(refresh);
   }
-  // Focus lives in workbench memory and restarts as "none"; this page and
-  // its localStorage live on. The boot-time claim below covers a reload, but
-  // a page that stays open across a workbench restart never boots again —
-  // it just polled forever while its thread silently stopped growing,
-  // statuses still ticking, which is exactly what "some agents' history is
-  // out of date" looks like. When nobody holds the conversation we think we
-  // have open, claim it again. Only when nobody does: another device holding
-  // a different one is a choice, not an outage, and re-claiming per tick
-  // from two devices would have them wrestling once a second.
-  if (current && data.open == null) post("/api/focus", { agent: current });
-  merge(agent(current));
-  // Drop the local echo once the agent's journal has your message in it.
-  const said = thread.filter(m => m.role === "you").map(m => m.text);
-  sent = sent.filter(t => !said.some(s => s.startsWith(t.slice(0, 40))));
-  render();
 }
 
 setForm(store.get("gradient", "linear"));
@@ -2561,12 +2693,25 @@ markPush(store.get("push", "") === "on");
 })();
 showDebug();
 checkStaleWebClip();
-if (window.visualViewport) {
-  visualViewport.addEventListener("resize", () => { showDebug(); checkStaleWebClip(); });
+function fitViewport() {
+  const view = window.visualViewport;
+  const normalScale = !view || Math.abs(view.scale - 1) < .01;
+  document.documentElement.style.setProperty("--viewport-top", (normalScale && view ? view.offsetTop : 0) + "px");
+  document.documentElement.style.setProperty("--keyboard-inset", (normalScale && view ? Math.max(0, innerHeight - view.height - view.offsetTop) : 0) + "px");
+  resizeComposer();
 }
+if (window.visualViewport) {
+  visualViewport.addEventListener("resize", fitViewport);
+  visualViewport.addEventListener("scroll", fitViewport);
+}
+addEventListener("resize", fitViewport);
+fitViewport();
 setInterval(showDebug, 1000);
-if (current) post("/api/focus", { agent: current });
-refresh();
+if (current) {
+  box.value = draftFor(current).text; attached = draftFor(current).attached;
+  resizeComposer(); renderAttached();
+}
+refresh().then(restorePush);
 setInterval(refresh, 1000);
 </script>
 </body>
@@ -2608,7 +2753,12 @@ self.addEventListener("push", event => {
     let tag = "workbench";
     try {
       // `have` is nonsense on purpose: we want statuses, not the conversation.
-      const res = await fetch(url("/api/state?have=999999999"), { cache: "no-store" });
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000);
+      let res;
+      try { res = await fetch(url("/api/state?agent="), {cache:"no-store", signal:controller.signal});
+        if (res.ok) { const state = await res.json(); res = {ok:true, json:async () => state}; }
+      } finally { clearTimeout(timeout); }
       if (res.ok) {
         const agents = (await res.json()).agents;
         // Its own copy of the rule in page.js: a service worker shares no
@@ -2644,9 +2794,8 @@ self.addEventListener("push", event => {
           title = finished.length + " agents finished";
           body = finished.map(a => named(a) + " · " + a.project).join(", ");
         } else {
-          // Answered or picked up again at the desk between the poke and its
-          // delivery — there is nothing left to say.
-          return;
+          title = "Workbench update";
+          body = "The agent's status changed. Open workbench for the latest conversation.";
         }
       }
     } catch (err) {
@@ -2734,10 +2883,7 @@ mod tests {
         let start = source
             .find(&head)
             .unwrap_or_else(|| panic!("the page has no {name}"));
-        let open = start
-            + source[start..]
-                .find('{')
-                .expect("a function has a body");
+        let open = start + source[start..].find('{').expect("a function has a body");
         let mut depth = 0usize;
         for (offset, ch) in source[open..].char_indices() {
             match ch {
@@ -2777,7 +2923,11 @@ mod tests {
             "renderManagers body looks truncated"
         );
 
-        for handler in ["onclick=\"decide(", "onclick=\"decideCheck(", "onclick=\"rearm("] {
+        for handler in [
+            "onclick=\"decide(",
+            "onclick=\"decideCheck(",
+            "onclick=\"rearm(",
+        ] {
             let everywhere = HTML.matches(handler).count();
             let on_the_desk = desk.matches(handler).count();
             assert!(on_the_desk > 0, "the desk has to offer {handler}");

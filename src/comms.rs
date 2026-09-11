@@ -93,6 +93,52 @@ pub struct Roster {
     pub agents: Vec<RosterAgent>,
 }
 
+/// Reserve the revision on the event loop, before offloading a write. A
+/// queued live roster must not overwrite a newer deletion/shutdown roster.
+#[derive(Clone, Debug, Default)]
+pub struct RosterPublisher {
+    revisions: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<PathBuf, u64>>>,
+}
+
+pub struct RosterPublication {
+    publisher: RosterPublisher,
+    path: PathBuf,
+    revision: u64,
+}
+
+impl RosterPublisher {
+    pub fn prepare(&self, path: PathBuf) -> RosterPublication {
+        let mut revisions = self.revisions.lock().unwrap_or_else(|e| e.into_inner());
+        let revision = revisions.entry(path.clone()).or_default();
+        *revision += 1;
+        RosterPublication {
+            publisher: self.clone(),
+            path,
+            revision: *revision,
+        }
+    }
+}
+
+impl RosterPublication {
+    pub fn write(self, roster: &Roster) -> Result<()> {
+        // Serialize before locking; hold the lock through rename so a writer
+        // already in flight finishes before a newer revision is reserved.
+        let bytes = serde_json::to_vec_pretty(roster)?;
+        let revisions = self
+            .publisher
+            .revisions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if revisions.get(&self.path) != Some(&self.revision) {
+            return Ok(());
+        }
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        write_atomic(&self.path, &bytes)
+    }
+}
+
 pub fn roster_path(workspace_id: &str) -> Result<PathBuf> {
     Ok(workspace_dir(workspace_id)?.join("agents.json"))
 }
@@ -114,7 +160,9 @@ pub fn load_roster(workspace_id: &str) -> Result<Roster> {
 pub fn find_workspace_for_cwd(cwd: &Path) -> Result<String> {
     let root = comms_root()?;
     let mut best: Option<(usize, String)> = None;
-    for entry in fs::read_dir(&root).with_context(|| format!("no comms data at {}", root.display()))? {
+    for entry in
+        fs::read_dir(&root).with_context(|| format!("no comms data at {}", root.display()))?
+    {
         let entry = entry?;
         let ws_id = entry.file_name().to_string_lossy().to_string();
         let Ok(roster) = load_roster(&ws_id) else {
@@ -234,8 +282,8 @@ impl Directory {
     pub fn load() -> Result<Self> {
         let root = comms_root()?;
         let mut entries = Vec::new();
-        let dir = fs::read_dir(&root)
-            .with_context(|| format!("no comms data at {}", root.display()))?;
+        let dir =
+            fs::read_dir(&root).with_context(|| format!("no comms data at {}", root.display()))?;
         for workspace in dir.flatten() {
             let workspace_id = workspace.file_name().to_string_lossy().to_string();
             let Ok(roster) = load_roster(&workspace_id) else {
@@ -371,7 +419,11 @@ pub fn write_reply(workspace_id: &str, reply: &Reply) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 pub fn transcript_path(workspace_id: &str, provider: &str, short_id: &str) -> Result<PathBuf> {
-    let name = format!("{}-{}.md", provider.to_lowercase().replace(' ', "-"), short_id);
+    let name = format!(
+        "{}-{}.md",
+        provider.to_lowercase().replace(' ', "-"),
+        short_id
+    );
     Ok(workspace_dir(workspace_id)?.join("transcripts").join(name))
 }
 
@@ -401,6 +453,7 @@ You are running inside the workbench TUI, possibly alongside other coding
 agents (Claude, Codex, ...). Your session id is in `$WORKBENCH_SESSION`.
 The `workbench` CLI lets you discover and communicate with peers:
 
+- `workbench preview <file>` — present an image or video to the user; Workbench opens a preview for the focused agent and includes it on the phone. Use this for screenshots, diagrams, and rendered demos.
 - `workbench agents` — list agent sessions here (id, provider, alias, branch, state); `--all` also lists agents in other projects
 - `workbench transcript <id|alias> --lines 200` — read a peer's recent conversation (exported each time it goes idle)
 - `workbench ask <id|alias> "question" --wait` — deliver a question to a live peer and collect its answer (or collect later: `workbench replies <ticket> --wait`)
@@ -531,7 +584,11 @@ pub fn upsert_instructions_file(path: &Path, block: &str) -> Result<bool> {
                 }
                 format!("{}{}{}", &content[..start], block, &content[end..])
             } else {
-                let sep = if content.ends_with('\n') { "\n" } else { "\n\n" };
+                let sep = if content.ends_with('\n') {
+                    "\n"
+                } else {
+                    "\n\n"
+                };
                 format!("{content}{sep}{block}\n")
             }
         }
@@ -690,8 +747,14 @@ mod tests {
         let global = instructions_block_for(true);
         let project = instructions_block_for(false);
         assert!(global.starts_with(BLOCK_BEGIN) && global.trim_end().ends_with(BLOCK_END));
-        assert!(global.contains("You are in the global workspace"), "{global}");
-        assert!(global.contains("Reads are yours; writes are not."), "{global}");
+        assert!(
+            global.contains("You are in the global workspace"),
+            "{global}"
+        );
+        assert!(
+            global.contains("Reads are yours; writes are not."),
+            "{global}"
+        );
         assert!(global.contains("workbench agents --all"), "{global}");
         assert!(!project.contains("global workspace"), "{project}");
 
@@ -700,7 +763,10 @@ mod tests {
         let written = fs::read_to_string(dir.path().join("CLAUDE.local.md")).unwrap();
         assert!(written.contains("You are in the global workspace"));
         let agents = fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
-        assert!(agents.contains("You are in the global workspace"), "codex reads AGENTS.md");
+        assert!(
+            agents.contains("You are in the global workspace"),
+            "codex reads AGENTS.md"
+        );
     }
 
     /// A project-owned, committed AGENTS.md must never be rewritten: the
@@ -726,8 +792,7 @@ mod tests {
             sidecar.contains(BLOCK_BEGIN),
             "the block must still reach agents via the untracked sidecar"
         );
-        let exclude =
-            fs::read_to_string(root.join(".git/info/exclude")).unwrap_or_default();
+        let exclude = fs::read_to_string(root.join(".git/info/exclude")).unwrap_or_default();
         assert!(exclude.lines().any(|l| l.trim() == "AGENTS.local.md"));
         assert!(
             !exclude.lines().any(|l| l.trim() == "AGENTS.md"),
@@ -748,8 +813,7 @@ mod tests {
         let agents = fs::read_to_string(root.join("AGENTS.md")).unwrap();
         assert!(agents.contains(BLOCK_BEGIN));
         assert!(!root.join("AGENTS.local.md").exists());
-        let exclude =
-            fs::read_to_string(root.join(".git/info/exclude")).unwrap_or_default();
+        let exclude = fs::read_to_string(root.join(".git/info/exclude")).unwrap_or_default();
         assert!(exclude.lines().any(|l| l.trim() == "AGENTS.md"));
     }
 
@@ -768,8 +832,14 @@ mod tests {
         upsert_instructions_file(&path, &instructions_block_for(false)).unwrap();
 
         let out = fs::read_to_string(&path).unwrap();
-        assert!(out.starts_with("before"), "content before the fence is kept");
-        assert!(out.trim_end().ends_with("after"), "content after the fence is kept");
+        assert!(
+            out.starts_with("before"),
+            "content before the fence is kept"
+        );
+        assert!(
+            out.trim_end().ends_with("after"),
+            "content after the fence is kept"
+        );
         assert!(!out.contains("stale"), "the fenced section is replaced");
     }
 
@@ -832,7 +902,9 @@ mod tests {
                       "message":"hi","created_at":"now"}"#;
         let msg: InboxMessage = serde_json::from_str(raw).unwrap();
         match msg {
-            InboxMessage::Ask { to_workspace, to, .. } => {
+            InboxMessage::Ask {
+                to_workspace, to, ..
+            } => {
                 assert_eq!(to, "bbbb2222");
                 assert!(to_workspace.is_none());
             }
@@ -870,7 +942,11 @@ mod tests {
         let read = |ws: &str| -> Roster {
             serde_json::from_slice(&fs::read(root.join(ws).join("agents.json")).unwrap()).unwrap()
         };
-        assert_eq!(read("open-ws").agents[0].status, "idle", "an open workspace is left alone");
+        assert_eq!(
+            read("open-ws").agents[0].status,
+            "idle",
+            "an open workspace is left alone"
+        );
         assert_eq!(read("closed-ws").agents[0].status, "stopped");
 
         // Idempotent: a second pass finds nothing left to change.
@@ -899,13 +975,50 @@ mod tests {
         assert!(!created);
 
         // User content around the block survives a block update.
-        std::fs::write(&path, format!("# mine\n\n{}\ntrailing\n", instructions_block_for(false))).unwrap();
-        upsert_instructions_file(&path, "<!-- workbench:begin -->\nnew\n<!-- workbench:end -->")
-            .unwrap();
+        std::fs::write(
+            &path,
+            format!("# mine\n\n{}\ntrailing\n", instructions_block_for(false)),
+        )
+        .unwrap();
+        upsert_instructions_file(
+            &path,
+            "<!-- workbench:begin -->\nnew\n<!-- workbench:end -->",
+        )
+        .unwrap();
         let updated = std::fs::read_to_string(&path).unwrap();
         assert!(updated.starts_with("# mine"));
         assert!(updated.contains("\nnew\n"));
         assert!(updated.contains("trailing"));
         assert!(!updated.contains("workbench agents"));
+    }
+    #[test]
+    fn stale_roster_writes_cannot_resurrect_deleted_or_stopped_agents() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("agents.json");
+        let publisher = RosterPublisher::default();
+        let live = Roster {
+            workspace_id: "workspace".into(),
+            workspace_name: "test".into(),
+            workspace_path: "/test".into(),
+            updated_at: "now".into(),
+            agents: vec![agent("aaaa1111", "claude", None, "working")],
+        };
+        for deleted in [false, true] {
+            let delayed = publisher.prepare(path.clone());
+            let mut retired = live.clone();
+            if deleted {
+                retired.agents.clear();
+            } else {
+                retired.agents[0].status = "stopped".into();
+            }
+            publisher.prepare(path.clone()).write(&retired).unwrap();
+            delayed.write(&live).unwrap();
+            let saved: Roster = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            assert_eq!(saved, retired);
+        }
+        // A later reopen can publish again; retirement is not a permanent ban.
+        publisher.prepare(path.clone()).write(&live).unwrap();
+        let saved: Roster = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved, live);
     }
 }

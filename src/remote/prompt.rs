@@ -42,6 +42,7 @@ use serde::Serialize;
 /// A question on an agent's screen, with the choices it will accept.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Prompt {
+    pub id: String,
     /// What is being asked, as the agent laid it out: the command, the reason,
     /// the question. Rendered monospace, because some of it is a command.
     pub lines: Vec<String>,
@@ -110,7 +111,11 @@ pub fn parse(screen: &str) -> Option<Prompt> {
         return None;
     }
 
-    Some(Prompt { lines, options })
+    Some(Prompt {
+        id: String::new(),
+        lines,
+        options,
+    })
 }
 
 /// `❯ 2. Yes, and always allow…` → `(2, "Yes, and always allow…", true)`.

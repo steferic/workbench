@@ -128,26 +128,6 @@
 "3" = "CreateCodex"
 "4" = "CreateGrok"
 
-[panel.tasks_pane]
-"j" = "SelectNextTask"
-"Down" = "SelectNextTask"
-"k" = "SelectPrevTask"
-"Up" = "SelectPrevTask"
-"l" = "FocusRight"
-"Tab" = "ToggleTasksTab"
-"Enter" = "FocusSelectedTaskAgent"
-"n" = "AddTodo"
-"e" = "EditTodo"
-"d" = "DeleteTodo"
-"p" = "ToggleQueuePaused"
-"c" = "ClearCompletedTodos"
-"J" = "MoveTodoLater"
-"K" = "MoveTodoEarlier"
-"v" = "ViewReport"
-"m" = "MergeSelectedReport"
-"h" = "EnterConfigWindow"
-"?" = "EnterConfigWindow"
-
 [panel.utilities_pane]
 "j" = "SelectNextUtility"
 "Down" = "SelectNextUtility"
