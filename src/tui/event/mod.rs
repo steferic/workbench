@@ -12,6 +12,7 @@ use tokio::sync::mpsc;
 enum TerminalEvent {
     Key(KeyEvent),
     Paste(String),
+    MouseMove(u16, u16),
     MouseDown(u16, u16),
     MouseDrag(u16, u16),
     MouseUp(u16, u16),
@@ -44,6 +45,9 @@ impl EventHandler {
                     match event::read() {
                         Ok(Event::Key(key)) => TerminalEvent::Key(key),
                         Ok(Event::Mouse(mouse)) => match mouse.kind {
+                            MouseEventKind::Moved => {
+                                TerminalEvent::MouseMove(mouse.column, mouse.row)
+                            }
                             MouseEventKind::Down(MouseButton::Left) => {
                                 TerminalEvent::MouseDown(mouse.column, mouse.row)
                             }
@@ -104,6 +108,7 @@ impl EventHandler {
             return match event {
                 TerminalEvent::Key(key) => Ok(self.handle_key_event(key, state)),
                 TerminalEvent::Paste(data) => Ok(Action::Paste(data)),
+                TerminalEvent::MouseMove(x, y) => Ok(Action::MouseMove(x, y)),
                 TerminalEvent::MouseDown(x, y) => Ok(Action::MouseClick(x, y)),
                 TerminalEvent::MouseDrag(x, y) => Ok(Action::MouseDrag(x, y)),
                 TerminalEvent::MouseUp(x, y) => Ok(Action::MouseUp(x, y)),
@@ -129,6 +134,7 @@ impl EventHandler {
                 match event {
                     TerminalEvent::Key(key) => Ok(self.handle_key_event(key, state)),
                     TerminalEvent::Paste(data) => Ok(Action::Paste(data)),
+                    TerminalEvent::MouseMove(x, y) => Ok(Action::MouseMove(x, y)),
                     TerminalEvent::MouseDown(x, y) => Ok(Action::MouseClick(x, y)),
                     TerminalEvent::MouseDrag(x, y) => Ok(Action::MouseDrag(x, y)),
                     TerminalEvent::MouseUp(x, y) => Ok(Action::MouseUp(x, y)),

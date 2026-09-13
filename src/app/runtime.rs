@@ -270,6 +270,7 @@ async fn run_main_loop(
                 crate::logger::warn(format!("giving up: the terminal could not be drawn: {err}"));
                 return Err(err.into());
             }
+            crate::links::flush_pointer(state);
 
             // End frame timing (measures render time)
             state.system.perf.frame_end();
@@ -321,7 +322,9 @@ async fn run_main_loop(
         // Anything but a bare tick changes state worth showing. A tick that
         // carries a queued palette action does too — it executes inside the
         // tick handler and shouldn't wait out the heartbeat.
-        if !matches!(&action, Action::Tick) || state.ui.palette.pending_action.is_some() {
+        if !matches!(&action, Action::Tick | Action::MouseMove(..))
+            || state.ui.palette.pending_action.is_some()
+        {
             needs_draw = true;
         }
 

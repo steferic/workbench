@@ -26,6 +26,11 @@ pub fn process_action(
     action_tx: &mpsc::UnboundedSender<Action>,
     pty_tx: &mpsc::Sender<Action>,
 ) -> Result<()> {
+    state.ui.link_pointer.track(&action);
+    if matches!(action, Action::MouseMove(..)) {
+        crate::links::flush_pointer(state);
+        return Ok(());
+    }
     if state.ui.input_mode == crate::app::InputMode::Normal
         && state.ui.media_preview.is_none()
         && state.ui.detail.is_none()
@@ -481,6 +486,7 @@ pub fn process_action(
                 }
 
                 // Global already handled
+                Action::MouseMove(_, _) |
                 Action::PreviewLatestMedia | Action::CloseMedia | Action::BrowseMedia |
                 Action::Quit | Action::ConfirmQuit | Action::Tick | Action::Resize(_, _) |
                 Action::ForceRedraw | Action::OpenRepositoryMap |

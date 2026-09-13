@@ -43,6 +43,7 @@ pub fn init(use_alternate_screen: bool) -> Result<Terminal> {
 
 pub fn restore(use_alternate_screen: bool) -> Result<()> {
     let mut cmd = stdout();
+    crate::links::reset_pointer();
 
     // Send terminal-state escape sequences BEFORE disabling raw mode so the
     // terminal driver doesn't echo them. Order matters: clear the alt screen,

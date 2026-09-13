@@ -3,6 +3,105 @@ use ratatui::layout::Rect;
 use std::sync::OnceLock;
 use unicode_width::UnicodeWidthStr;
 
+#[cfg(test)]
+mod fixture;
+
+const HAND: &str = "\x1b]22;pointer\x1b\\";
+const DEFAULT_POINTER: &str = "\x1b]22;default\x1b\\";
+
+/// Mouse position belongs to the outer terminal; hit regions belong to the
+/// latest Workbench frame. Recheck both after scrolling, resizing or a modal.
+#[derive(Default)]
+pub struct Pointer {
+    position: Option<(u16, u16)>,
+    dragging: bool,
+    hand: bool,
+}
+
+impl Pointer {
+    pub fn track(&mut self, action: &crate::app::Action) {
+        use crate::app::Action;
+        match action {
+            Action::MouseMove(x, y) | Action::MouseClick(x, y) | Action::MouseUp(x, y) => {
+                self.position = Some((*x, *y));
+                self.dragging = false;
+            }
+            Action::MouseDrag(x, y) => {
+                self.position = Some((*x, *y));
+                self.dragging = true;
+            }
+            Action::MouseScrollUp(x, y) | Action::MouseScrollDown(x, y) => {
+                self.position = Some((*x, *y));
+            }
+            Action::Resize(..) => self.position = None,
+            _ => {}
+        }
+    }
+
+    fn sequence(&mut self, hits: &[Hit], enabled: bool) -> Option<&'static str> {
+        let hand = enabled
+            && !self.dragging
+            && self
+                .position
+                .is_some_and(|(x, y)| hits.iter().any(|hit| hit.area.contains((x, y).into())));
+        if hand == self.hand {
+            return None;
+        }
+        self.hand = hand;
+        Some(if hand { HAND } else { DEFAULT_POINTER })
+    }
+}
+
+fn supports_pointer_shape() -> bool {
+    // OSC 22 names are not portable to X11-based terminals. These terminals
+    // use CSS names: https://ghostty.org/docs/vt/osc/22
+    static SUPPORTED: OnceLock<bool> = OnceLock::new();
+    *SUPPORTED.get_or_init(|| {
+        matches!(
+            std::env::var("TERM_PROGRAM").as_deref(),
+            Ok("ghostty" | "kitty")
+        ) || matches!(
+            std::env::var("TERM").as_deref(),
+            Ok("xterm-ghostty" | "xterm-kitty" | "foot" | "foot-extra")
+        )
+    })
+}
+
+fn write_pointer(sequence: &str) {
+    use std::io::Write;
+    let mut out = std::io::stdout().lock();
+    if std::env::var_os("TMUX").is_some() {
+        let _ = write!(
+            out,
+            "\x1bPtmux;{}\x1b\\",
+            sequence.replace('\x1b', "\x1b\x1b")
+        );
+    } else {
+        let _ = out.write_all(sequence.as_bytes());
+    }
+    let _ = out.flush();
+}
+
+pub fn flush_pointer(state: &mut crate::app::AppState) {
+    if !supports_pointer_shape() {
+        return;
+    }
+    let enabled = state.ui.input_mode == crate::app::InputMode::Normal
+        && state.ui.media_preview.is_none()
+        && state.ui.detail.is_none()
+        && !state.ui.pending_quit
+        && state.ui.pending_delete.is_none();
+    if let Some(sequence) = state.ui.link_pointer.sequence(&state.ui.link_hits, enabled) {
+        write_pointer(sequence);
+    }
+}
+
+pub fn reset_pointer() {
+    if supports_pointer_shape() {
+        write_pointer(DEFAULT_POINTER);
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Link {
     pub row: usize,

@@ -93,6 +93,11 @@ pub fn get_selection_bounds(
 ) -> Option<SelectionBounds> {
     let start = selection.start?;
     let end = selection.end?;
+    // A press only anchors a possible drag. A single click selects nothing
+    // on release, so do not flash a selected character while the button is down.
+    if selection.is_dragging && start == end {
+        return None;
+    }
     if content_length == 0 || cols == 0 {
         return None;
     }

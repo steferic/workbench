@@ -119,6 +119,9 @@ Embedded terminal links are clickable, including links whose visible label hides
 the URL. Links survive scrolling and log-derived history. Ordinary HTTP(S) URLs
 are clickable too. Dragging still selects text; a click opens the link with the
 system browser or the local file's associated application.
+Use a normal left-click, with no modifier key. Ghostty, Kitty, and Foot show a
+hand pointer while hovering over a recognized link. The pointer resets when you
+leave the link, open a dialog, or quit Workbench.
 
 ## Agent-to-agent communication
 

@@ -166,6 +166,7 @@ impl Default for LayoutState {
 }
 
 pub struct UIState {
+    pub link_pointer: crate::links::Pointer,
     pub link_hits: Vec<crate::links::Hit>,
     pub pressed_link: Option<(u16, u16, String)>,
     pub media_preview: Option<crate::media::Preview>,
@@ -294,6 +295,7 @@ impl UIState {
     pub fn new() -> Self {
         Self {
             focus: FocusPanel::WorkspaceList,
+            link_pointer: crate::links::Pointer::default(),
             link_hits: Vec::new(),
             pressed_link: None,
             media_preview: None,

@@ -133,6 +133,7 @@ pub enum Action {
     SetStartCommand(Uuid, String),
 
     // Mouse selection
+    MouseMove(u16, u16), // Hover without a button held
     MouseDrag(u16, u16), // (x, y) coordinates during drag
     MouseUp(u16, u16),   // (x, y) coordinates on release
     CopySelection,       // Copy selected text to clipboard
