@@ -41,6 +41,7 @@ mod layout_tests {
 
 pub fn draw(frame: &mut Frame, state: &mut AppState) {
     state.ui.link_hits.clear();
+    state.ui.servers.hits.clear();
     // Activate the chosen theme for this frame and fill the background so light
     // mode doesn't show through to the terminal's (dark) default.
     crate::theme::set_current(state.ui.theme_mode);
@@ -256,6 +257,7 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
         && state.ui.detail.is_none()
         && !state.ui.pending_quit
         && state.ui.pending_delete.is_none()
+        && state.ui.servers.dialog.is_none()
     {
         crate::media::render(frame, state);
     }
@@ -264,8 +266,16 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
         || state.ui.detail.is_some()
         || state.ui.pending_quit
         || state.ui.pending_delete.is_some()
+        || state.ui.servers.dialog.is_some()
     {
         state.ui.link_hits.clear();
+        state.ui.servers.hits.clear();
+    }
+    if state.ui.servers.dialog.is_some()
+        && !state.ui.pending_quit
+        && state.ui.pending_delete.is_none()
+    {
+        crate::tui::components::servers_pane::dialog(frame, state);
     }
 
     // Toast notifications are intentionally suppressed — the in-app toast

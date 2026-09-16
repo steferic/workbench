@@ -79,6 +79,16 @@ pub enum Action {
     ActivateSession(Uuid),
     /// Swap the Sessions pane between agents and terminals.
     ToggleSessionsTab,
+    SetSessionsTab(crate::app::SessionsTab),
+    SelectServer(crate::ports::ServerKey),
+    ServerScope,
+    ServerRefresh,
+    ServerDetails,
+    ServerOpen,
+    ServerAskStop,
+    ServerConfirmStop,
+    ServerClose,
+    ServerStopped(crate::ports::ServerKey, Result<(), String>),
     RestartSession(Uuid),
     StopSession(Uuid),
     KillSession(Uuid),
@@ -216,7 +226,7 @@ pub enum Action {
     /// Drop the items that have already run.
     ClearCompletedTodos,
     /// Off-thread scan for listening dev servers finished.
-    PortsScanned(Vec<crate::ports::DevServer>),
+    PortsScanned(Result<super::servers::Scan, String>),
     /// A push service answered 404/410 for this endpoint: the device
     /// unsubscribed or was wiped, and the subscription can never work again.
     PushEndpointGone(String),

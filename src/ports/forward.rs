@@ -7,31 +7,75 @@
 
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpStream};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 /// Run a connection in both directions. Returns immediately; the pair lives on
 /// two threads until either end closes.
+#[cfg(test)]
 pub fn splice(a: TcpStream, b: TcpStream) {
+    spawn(a, b, None);
+}
+
+pub fn splice_until(a: TcpStream, b: TcpStream, stop: Arc<AtomicBool>) {
+    let timeout = Some(std::time::Duration::from_millis(250));
+    for stream in [&a, &b] {
+        let _ = stream.set_read_timeout(timeout);
+        let _ = stream.set_write_timeout(timeout);
+    }
+    spawn(a, b, Some(stop));
+}
+
+fn spawn(a: TcpStream, b: TcpStream, stop: Option<Arc<AtomicBool>>) {
     let (Ok(a_read), Ok(b_read)) = (a.try_clone(), b.try_clone()) else {
         return;
     };
-    std::thread::spawn(move || pump(a_read, b));
-    std::thread::spawn(move || pump(b_read, a));
+    let other = stop.clone();
+    std::thread::spawn(move || pump(a_read, b, stop));
+    std::thread::spawn(move || pump(b_read, a, other));
 }
 
 /// One direction. When it ends, shut *both* halves down — otherwise the other
 /// thread sits in `read` on a connection that is never going to say anything
 /// again, and the pair leaks.
-fn pump(mut from: TcpStream, mut to: TcpStream) {
+fn pump(mut from: TcpStream, mut to: TcpStream, stop: Option<Arc<AtomicBool>>) {
     let mut buffer = [0u8; 32 * 1024];
-    loop {
+    let stopped = || stop.as_ref().is_some_and(|s| s.load(Ordering::Relaxed));
+    'read: while !stopped() {
         match from.read(&mut buffer) {
             Ok(0) => break,
             Ok(n) => {
-                if to.write_all(&buffer[..n]).is_err() {
-                    break;
+                let mut sent = 0;
+                while sent < n && !stopped() {
+                    match to.write(&buffer[sent..n]) {
+                        Ok(0) => break 'read,
+                        Ok(written) => sent += written,
+                        Err(e)
+                            if matches!(
+                                e.kind(),
+                                std::io::ErrorKind::Interrupted
+                                    | std::io::ErrorKind::WouldBlock
+                                    | std::io::ErrorKind::TimedOut
+                            ) =>
+                        {
+                            continue
+                        }
+                        Err(_) => break 'read,
+                    }
                 }
             }
-            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    std::io::ErrorKind::Interrupted
+                        | std::io::ErrorKind::WouldBlock
+                        | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                continue
+            }
             Err(_) => break,
         }
     }

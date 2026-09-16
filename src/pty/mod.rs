@@ -2,7 +2,7 @@ mod manager;
 mod output;
 pub mod proc_identity;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-mod process_tree;
+pub(crate) mod process_tree;
 
 pub use manager::{PtyHandle, PtyManager, Resume, SessionSpawnConfig};
 

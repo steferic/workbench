@@ -384,6 +384,7 @@ pub fn present_if_visible(state: &mut AppState, id: &str) {
         && state.ui.detail.is_none()
         && !state.ui.pending_quit
         && state.ui.pending_delete.is_none()
+        && state.ui.servers.dialog.is_none()
         && focused_owner(state).as_deref() == Some(artifact.view.agent.as_str())
     {
         show(state, id);

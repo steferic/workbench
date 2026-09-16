@@ -12,6 +12,7 @@ impl EventHandler {
             && state.ui.detail.is_none()
             && !state.ui.pending_quit
             && state.ui.pending_delete.is_none()
+            && state.ui.servers.dialog.is_none()
         {
             return match (key.code, key.modifiers) {
                 (KeyCode::Char('q'), mods) if mods.contains(KeyModifiers::CONTROL) => {
@@ -57,6 +58,20 @@ impl EventHandler {
                 Action::ConfirmQuit
             } else {
                 Action::CancelQuit
+            };
+        }
+
+        // Server dialogs own ordinary keys even if focus moved underneath.
+        if let Some(dialog) = &state.ui.servers.dialog {
+            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('q') {
+                return Action::InitiateQuit;
+            }
+            return match key.code {
+                KeyCode::Esc => Action::ServerClose,
+                KeyCode::Enter if dialog.confirming => Action::ServerConfirmStop,
+                KeyCode::Char('o') | KeyCode::Enter if !dialog.confirming => Action::ServerOpen,
+                KeyCode::Char('x') if !dialog.confirming => Action::ServerAskStop,
+                _ => Action::Tick,
             };
         }
 
@@ -132,6 +147,23 @@ impl EventHandler {
             return action;
         }
 
+        if state.sessions_tab() == crate::app::SessionsTab::Servers {
+            return match key.code {
+                KeyCode::Tab => Action::ToggleSessionsTab,
+                KeyCode::Char('j') | KeyCode::Down => Action::MoveDown,
+                KeyCode::Char('k') | KeyCode::Up => Action::MoveUp,
+                KeyCode::Char('a') => Action::ServerScope,
+                KeyCode::Char('r') => Action::ServerRefresh,
+                KeyCode::Char('o') => Action::ServerOpen,
+                KeyCode::Char('x') => Action::ServerAskStop,
+                KeyCode::Enter => Action::ServerDetails,
+                KeyCode::Left => Action::FocusLeft,
+                KeyCode::Right | KeyCode::Char('l') => Action::FocusRight,
+                KeyCode::Char('h') | KeyCode::Char('?') => Action::EnterConfigWindow,
+                _ => Action::Tick,
+            };
+        }
+
         if let Some((agent_type, dangerously_skip_permissions, with_worktree)) =
             agent_shortcut(&key, &state.system.user_config.agents)
         {
@@ -142,7 +174,7 @@ impl EventHandler {
             KeyCode::Char('j') | KeyCode::Down => Action::MoveDown,
             KeyCode::Char('k') | KeyCode::Up => Action::MoveUp,
             KeyCode::Char('l') => Action::FocusRight,
-            // Tab walks the pane's own tabs: agents, then terminals.
+            // Tab walks agents, terminals, and servers.
             KeyCode::Tab => Action::ToggleSessionsTab,
             KeyCode::Char('n') => Action::EnterCreateSessionMode,
             KeyCode::Enter => {

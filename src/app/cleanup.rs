@@ -98,6 +98,7 @@ pub fn stop_session(state: &mut AppState, id: Uuid) {
 /// Retain session records and worktrees for resume, but wait for all active
 /// and previously deleted sessions to stop before returning to the shell.
 pub fn shutdown(state: &mut AppState) {
+    state.system.forwarded.clear();
     crate::media::close(state);
     if let Ok(snapshot) = state.system.remote_state.lock() {
         snapshot.media_library.shutdown();

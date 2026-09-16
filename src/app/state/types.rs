@@ -126,13 +126,15 @@ pub enum SessionsTab {
     Agents,
     /// Plain shells, including any parallel-task attempts' terminals.
     Terminals,
+    Servers,
 }
 
 impl SessionsTab {
     pub fn toggle(&self) -> Self {
         match self {
             SessionsTab::Agents => SessionsTab::Terminals,
-            SessionsTab::Terminals => SessionsTab::Agents,
+            SessionsTab::Terminals => SessionsTab::Servers,
+            SessionsTab::Servers => SessionsTab::Agents,
         }
     }
 }

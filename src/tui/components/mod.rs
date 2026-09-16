@@ -11,6 +11,7 @@ pub mod output_pane;
 pub mod parallel_merge_confirm_modal;
 pub mod parallel_task_modal;
 pub mod pinned_terminal_pane;
+pub mod servers_pane;
 pub mod session_list;
 pub mod status_bar;
 mod terminal_view;

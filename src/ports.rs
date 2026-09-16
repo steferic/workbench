@@ -23,6 +23,7 @@
 //! different proposition from forwarding vite. A process running inside one of
 //! your projects is the thing you started to work on it.
 
+use crate::pty::proc_identity::{self, ProcStart};
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
@@ -36,8 +37,11 @@ pub mod forward;
 const EPHEMERAL_FROM: u16 = 49152;
 
 /// Something listening, and whose it is.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DevServer {
+    pub pid: u32,
+    pub start: Option<ProcStart>,
+    pub addresses: Vec<SocketAddr>,
     pub port: u16,
     /// The program, as the OS names it ("node", "beam.smp").
     pub command: String,
@@ -48,16 +52,55 @@ pub struct DevServer {
     pub loopback_only: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ServerKey {
+    pub pid: u32,
+    pub port: u16,
+    pub start: Option<ProcStart>,
+}
+
+impl DevServer {
+    pub fn key(&self) -> ServerKey {
+        ServerKey {
+            pid: self.pid,
+            port: self.port,
+            start: self.start,
+        }
+    }
+    pub fn endpoint(&self) -> SocketAddr {
+        let addr = self
+            .addresses
+            .iter()
+            .find(|a| a.is_ipv4())
+            .or(self.addresses.first())
+            .copied()
+            .unwrap_or_else(|| SocketAddr::from(([127, 0, 0, 1], self.port)));
+        if addr.ip().is_unspecified() {
+            SocketAddr::new(
+                if addr.is_ipv4() {
+                    std::net::Ipv4Addr::LOCALHOST.into()
+                } else {
+                    std::net::Ipv6Addr::LOCALHOST.into()
+                },
+                addr.port(),
+            )
+        } else {
+            addr
+        }
+    }
+    pub fn url(&self) -> String {
+        format!("http://{}", self.endpoint())
+    }
+}
+
 /// Everything listening on this machine, attributed by working directory.
 ///
 /// Two `lsof` calls: one for the listeners, one for those processes' working
 /// directories. Blocking and a fork apiece, so it belongs off the event loop.
-pub fn scan() -> Vec<DevServer> {
-    let listeners = run(&["-nP", "-iTCP", "-sTCP:LISTEN", "-F", "pcn"])
-        .map(|out| parse_listeners(&out))
-        .unwrap_or_default();
+pub fn scan() -> anyhow::Result<Vec<DevServer>> {
+    let listeners = parse_listeners(&run(&["-nP", "-iTCP", "-sTCP:LISTEN", "-F", "pcn"])?);
     if listeners.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     let pids: Vec<String> = {
@@ -66,38 +109,106 @@ pub fn scan() -> Vec<DevServer> {
         seen.dedup();
         seen.iter().map(u32::to_string).collect()
     };
-    let cwds = run(&["-a", "-p", &pids.join(","), "-d", "cwd", "-F", "pn"])
-        .map(|out| parse_cwds(&out))
-        .unwrap_or_default();
+    let starts: HashMap<_, _> = listeners
+        .iter()
+        .map(|l| (l.pid, proc_identity::start_time(l.pid)))
+        .collect();
+    let cwds = parse_cwds(&run(&[
+        "-a",
+        "-p",
+        &pids.join(","),
+        "-d",
+        "cwd",
+        "-F",
+        "pn",
+    ])?);
+    Ok(assemble(listeners, &cwds, &starts))
+}
 
+fn assemble(
+    listeners: Vec<Listener>,
+    cwds: &HashMap<u32, PathBuf>,
+    starts: &HashMap<u32, Option<ProcStart>>,
+) -> Vec<DevServer> {
     let mut servers: Vec<DevServer> = Vec::new();
     for listener in listeners {
-        if listener.port >= EPHEMERAL_FROM {
+        // Never let our own proxy win the port deduplication race. Its cwd
+        // is Workbench's, not the project hosting the actual server.
+        if listener.port >= EPHEMERAL_FROM
+            || listener.pid == std::process::id()
+            || matches!(listener.command.as_str(), "workbench" | "wbport")
+        {
             continue;
         }
         let Some(cwd) = cwds.get(&listener.pid) else {
             continue;
         };
-        // One process can listen on the same port over v4 and v6; the port is
-        // what we forward, so it is the identity.
-        if let Some(existing) = servers.iter_mut().find(|s| s.port == listener.port) {
+        if let Some(existing) = servers
+            .iter_mut()
+            .find(|s| s.pid == listener.pid && s.port == listener.port)
+        {
             existing.loopback_only &= listener.loopback;
+            if !existing.addresses.contains(&listener.address) {
+                existing.addresses.push(listener.address);
+            }
             continue;
         }
         servers.push(DevServer {
+            pid: listener.pid,
+            start: starts.get(&listener.pid).copied().flatten(),
+            addresses: vec![listener.address],
             port: listener.port,
             command: listener.command,
             cwd: cwd.clone(),
             loopback_only: listener.loopback,
         });
     }
-    servers.sort_by_key(|s| s.port);
+    servers.sort_by_key(|s| (s.port, s.pid));
     servers
 }
 
-fn run(args: &[&str]) -> Option<String> {
-    let output = Command::new("lsof").args(args).output().ok()?;
-    Some(String::from_utf8_lossy(&output.stdout).into_owned())
+fn run(args: &[&str]) -> anyhow::Result<String> {
+    let output = Command::new("lsof").args(args).output()?;
+    // lsof returns 1 for an empty selection (including a process that exited).
+    if !output.status.success() && !(output.status.code() == Some(1) && output.stderr.is_empty()) {
+        anyhow::bail!(
+            "Could not scan listening processes: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+pub fn stop(server: &DevServer) -> anyhow::Result<()> {
+    let start = server
+        .start
+        .ok_or_else(|| anyhow::anyhow!("Cannot verify this process's identity"))?;
+    if server.pid <= 1
+        || server.pid == std::process::id()
+        || matches!(server.command.as_str(), "workbench" | "wbport")
+    {
+        anyhow::bail!("Workbench's own processes cannot be stopped here");
+    }
+    if !scan()?
+        .iter()
+        .any(|now| now.key() == server.key() && now.cwd == server.cwd)
+    {
+        anyhow::bail!("This server changed or exited. Refresh the list before stopping it.");
+    }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        crate::pty::process_tree::ProcessTree::for_server(server.pid, start)
+            .stop_server(&format!("server :{}", server.port))?;
+        if scan()?.iter().any(|now| now.key() == server.key()) {
+            anyhow::bail!("The process is still listening; it could not be stopped");
+        }
+        Ok(())
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        let _ = start;
+        anyhow::bail!("Stopping servers is supported on macOS and Linux")
+    }
 }
 
 /// The ones running inside `roots`, newest project first in the caller's order.
@@ -128,6 +239,7 @@ struct Listener {
     command: String,
     port: u16,
     loopback: bool,
+    address: SocketAddr,
 }
 
 /// `lsof -F pcn` emits a process line, a command line, then a line per open
@@ -150,11 +262,19 @@ fn parse_listeners(output: &str) -> Vec<Listener> {
             "c" => command = value.to_string(),
             "n" => {
                 if let Some((address, port)) = split_address(value) {
+                    let ip = if address == "*" {
+                        std::net::Ipv4Addr::UNSPECIFIED.into()
+                    } else if let Ok(ip) = address.trim_matches(['[', ']']).parse::<IpAddr>() {
+                        ip
+                    } else {
+                        continue;
+                    };
                     listeners.push(Listener {
                         pid,
                         command: command.clone(),
                         port,
                         loopback: is_loopback(address),
+                        address: SocketAddr::new(ip, port),
                     });
                 }
             }
@@ -216,6 +336,7 @@ pub struct Forwarder {
     /// Where the forwarder is listening. The caller usually named the port,
     /// but a bind to port 0 only learns it here.
     bound: SocketAddr,
+    upstream: SocketAddr,
     worker: Worker,
 }
 
@@ -227,19 +348,16 @@ enum Worker {
         /// workbench is gone and it should leave too.
         _lifeline: Option<std::process::ChildStdin>,
     },
-    /// Forwarding from a thread in this process — the fallback when the
-    /// helper binary is missing, and the marker for "do not retry" when the
-    /// bind failed. Reports alive forever, exactly the old behavior.
-    Thread,
+    /// Cancellable fallback when the helper binary is missing.
+    Thread {
+        stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        listener: Option<std::thread::JoinHandle<()>>,
+    },
 }
 
 impl Forwarder {
-    /// A forwarder that is nothing but the "do not retry this port" marker.
-    pub fn unretryable(bind: SocketAddr) -> Self {
-        Forwarder {
-            bound: bind,
-            worker: Worker::Thread,
-        }
+    pub fn upstream(&self) -> SocketAddr {
+        self.upstream
     }
 
     /// Only tests need to ask — production names the port up front.
@@ -251,8 +369,26 @@ impl Forwarder {
     /// Still standing? Reaps the child if it died.
     pub fn alive(&mut self) -> bool {
         match &mut self.worker {
-            Worker::Child { child, .. } => !matches!(child.try_wait(), Ok(Some(_))),
-            Worker::Thread => true,
+            Worker::Child { child, .. } => matches!(child.try_wait(), Ok(None)),
+            Worker::Thread { stop, .. } => !stop.load(std::sync::atomic::Ordering::Relaxed),
+        }
+    }
+}
+
+impl Drop for Forwarder {
+    fn drop(&mut self) {
+        match &mut self.worker {
+            Worker::Child { child, .. } => {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            Worker::Thread { stop, listener } => {
+                stop.store(true, std::sync::atomic::Ordering::Relaxed);
+                // Release the port before a replacement tries to bind it.
+                if let Some(listener) = listener.take() {
+                    let _ = listener.join();
+                }
+            }
         }
     }
 }
@@ -277,10 +413,11 @@ pub fn expose(bind: SocketAddr, upstream: SocketAddr) -> std::io::Result<Forward
         .filter(|path| path.is_file());
     let bound = listener.local_addr()?;
     let Some(helper) = helper else {
-        splice_in_process(listener, upstream);
+        let worker = splice_in_process(listener, upstream)?;
         return Ok(Forwarder {
             bound,
-            worker: Worker::Thread,
+            upstream,
+            worker,
         });
     };
 
@@ -305,6 +442,7 @@ pub fn expose(bind: SocketAddr, upstream: SocketAddr) -> std::io::Result<Forward
             let lifeline = child.stdin.take();
             Ok(Forwarder {
                 bound,
+                upstream,
                 worker: Worker::Child {
                     child,
                     _lifeline: lifeline,
@@ -312,10 +450,11 @@ pub fn expose(bind: SocketAddr, upstream: SocketAddr) -> std::io::Result<Forward
             })
         }
         Err(_) => {
-            splice_in_process(listener, upstream);
+            let worker = splice_in_process(listener, upstream)?;
             Ok(Forwarder {
                 bound,
-                worker: Worker::Thread,
+                upstream,
+                worker,
             })
         }
     }
@@ -325,32 +464,106 @@ pub fn expose(bind: SocketAddr, upstream: SocketAddr) -> std::io::Result<Forward
 pub fn expose(bind: SocketAddr, upstream: SocketAddr) -> std::io::Result<Forwarder> {
     let listener = TcpListener::bind(bind)?;
     let bound = listener.local_addr()?;
-    splice_in_process(listener, upstream);
+    let worker = splice_in_process(listener, upstream)?;
     Ok(Forwarder {
         bound,
-        worker: Worker::Thread,
+        upstream,
+        worker,
     })
 }
 
 /// The old in-process forwarding, kept as the fallback.
-fn splice_in_process(listener: TcpListener, upstream: SocketAddr) {
-    std::thread::spawn(move || {
-        for incoming in listener.incoming() {
-            let Ok(from_phone) = incoming else { continue };
-            // Dialled per connection rather than held open, so a dev server
-            // that restarts is picked up with no bookkeeping — and one that
-            // has gone away simply refuses, as it would locally.
-            let Ok(to_server) = TcpStream::connect(upstream) else {
-                continue;
-            };
-            forward::splice(from_phone, to_server);
-        }
-    });
+fn splice_in_process(listener: TcpListener, upstream: SocketAddr) -> std::io::Result<Worker> {
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+    use std::time::Duration;
+    listener.set_nonblocking(true)?;
+    let stop = Arc::new(AtomicBool::new(false));
+    let stopped = stop.clone();
+    let listener = std::thread::Builder::new()
+        .name("port-forwarder".into())
+        .spawn(move || {
+            while !stopped.load(Ordering::Relaxed) {
+                let from_phone = match listener.accept() {
+                    Ok((stream, _)) => stream,
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(25));
+                        continue;
+                    }
+                    Err(_) => break,
+                };
+                // Dialled per connection rather than held open, so a dev server
+                // that restarts is picked up with no bookkeeping — and one that
+                // has gone away simply refuses, as it would locally.
+                let Ok(to_server) =
+                    TcpStream::connect_timeout(&upstream, Duration::from_millis(250))
+                else {
+                    continue;
+                };
+                forward::splice_until(from_phone, to_server, stopped.clone());
+            }
+            stopped.store(true, Ordering::Relaxed);
+        })?;
+    Ok(Worker::Thread {
+        stop,
+        listener: Some(listener),
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn proxies_never_claim_a_backend_and_ipv6_is_preserved() {
+        let listeners = parse_listeners("p100\ncwbport\nn100.86.1.2:3000\np200\ncnode\nn[::1]:3000\np300\ncworkbench\nn127.0.0.1:8765\np400\ncnode\nn127.0.0.1:3000\n");
+        let cwds = [
+            (100, "/projects/workbench"),
+            (200, "/projects/site"),
+            (300, "/projects/workbench"),
+            (400, "/projects/other"),
+        ]
+        .into_iter()
+        .map(|(pid, path)| (pid, PathBuf::from(path)))
+        .collect();
+        let servers = assemble(listeners, &cwds, &HashMap::new());
+        assert_eq!(
+            servers.len(),
+            2,
+            "separate processes on one port remain separate"
+        );
+        assert_eq!(servers[0].pid, 200);
+        assert_eq!(servers[0].cwd, PathBuf::from("/projects/site"));
+        assert_eq!(servers[0].url(), "http://[::1]:3000");
+        assert_eq!(servers[1].url(), "http://127.0.0.1:3000");
+    }
+
+    #[test]
+    fn dropping_a_forwarder_closes_its_listener_and_active_connections() {
+        use std::io::Read;
+        let upstream = TcpListener::bind("127.0.0.1:0").unwrap();
+        let forwarder = expose(
+            "127.0.0.1:0".parse().unwrap(),
+            upstream.local_addr().unwrap(),
+        )
+        .unwrap();
+        let addr = forwarder.addr();
+        let mut client = TcpStream::connect(addr).unwrap();
+        client
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .unwrap();
+        let (mut server, _) = upstream.accept().unwrap();
+        server
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .unwrap();
+        drop(forwarder);
+        let mut byte = [0];
+        assert_eq!(client.read(&mut byte).unwrap(), 0);
+        assert_eq!(server.read(&mut byte).unwrap(), 0);
+        assert!(TcpStream::connect(addr).is_err());
+    }
 
     /// Captured verbatim from `lsof -nP -iTCP -sTCP:LISTEN -F pcn` on a
     /// working machine, trimmed to the interesting shapes: a wildcard bind, a
@@ -398,7 +611,9 @@ n/Users/me/Code/site/packages/api
 
         let redis: Vec<&Listener> = listeners.iter().filter(|l| l.port == 6379).collect();
         assert_eq!(redis.len(), 2, "v4 and v6 are separate files");
-        assert!(redis.iter().all(|l| l.loopback && l.command == "redis-server"));
+        assert!(redis
+            .iter()
+            .all(|l| l.loopback && l.command == "redis-server"));
 
         let vite = listeners.iter().find(|l| l.port == 5173).unwrap();
         assert!(vite.loopback, "[::1] is loopback");
@@ -414,22 +629,7 @@ n/Users/me/Code/site/packages/api
         let listeners = parse_listeners(LISTENERS);
         let cwds = parse_cwds(CWDS);
 
-        let mut servers: Vec<DevServer> = Vec::new();
-        for listener in listeners {
-            let Some(cwd) = cwds.get(&listener.pid) else {
-                continue;
-            };
-            if let Some(existing) = servers.iter_mut().find(|s| s.port == listener.port) {
-                existing.loopback_only &= listener.loopback;
-                continue;
-            }
-            servers.push(DevServer {
-                port: listener.port,
-                command: listener.command,
-                cwd: cwd.clone(),
-                loopback_only: listener.loopback,
-            });
-        }
+        let servers = assemble(listeners, &cwds, &HashMap::new());
         assert_eq!(servers.iter().filter(|s| s.port == 6379).count(), 1);
     }
 
@@ -451,18 +651,21 @@ n/Users/me/Code/site/packages/api
                 command: "redis-server".into(),
                 cwd: PathBuf::from("/Users/me"),
                 loopback_only: true,
+                ..DevServer::default()
             },
             DevServer {
                 port: 5173,
                 command: "node".into(),
                 cwd: PathBuf::from("/Users/me/Code/site"),
                 loopback_only: true,
+                ..DevServer::default()
             },
             DevServer {
                 port: 3099,
                 command: "node".into(),
                 cwd: PathBuf::from("/Users/me/Code/site/packages/api"),
                 loopback_only: false,
+                ..DevServer::default()
             },
         ];
         let site = uuid::Uuid::new_v4();
@@ -484,10 +687,14 @@ n/Users/me/Code/site/packages/api
             command: "node".into(),
             cwd: PathBuf::from("/Users/me/Code/site/.worktrees/feature"),
             loopback_only: true,
+            ..DevServer::default()
         }];
         let roots = vec![
             (PathBuf::from("/Users/me/Code/site"), other),
-            (PathBuf::from("/Users/me/Code/site/.worktrees/feature"), project),
+            (
+                PathBuf::from("/Users/me/Code/site/.worktrees/feature"),
+                project,
+            ),
         ];
 
         let owned = owned_by(&servers, &roots);
@@ -511,12 +718,17 @@ n/Users/me/Code/site/packages/api
                 let mut out = stream.try_clone().unwrap();
                 let mut line = String::new();
                 BufReader::new(stream).read_line(&mut line).unwrap();
-                out.write_all(format!("served {}\n", line.trim()).as_bytes()).unwrap();
+                out.write_all(format!("served {}\n", line.trim()).as_bytes())
+                    .unwrap();
             }
         });
 
         let front = expose("127.0.0.1:0".parse().unwrap(), upstream).expect("the forwarder binds");
-        assert_ne!(front.addr().port(), upstream.port(), "a different socket entirely");
+        assert_ne!(
+            front.addr().port(),
+            upstream.port(),
+            "a different socket entirely"
+        );
 
         let mut client = TcpStream::connect(front.addr()).unwrap();
         client.write_all(b"a request\n").unwrap();
@@ -541,4 +753,3 @@ n/Users/me/Code/site/packages/api
         assert!(split_address("nonsense").is_none());
     }
 }
-

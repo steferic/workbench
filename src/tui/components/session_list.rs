@@ -11,7 +11,7 @@ use ratatui::{
 };
 use uuid::Uuid;
 
-pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
+pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
     let t = crate::theme::current();
     let is_focused = state.ui.focus == FocusPanel::SessionList;
     let border_style = if is_focused {
@@ -34,7 +34,13 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         .constraints([
             Constraint::Length(1),
             Constraint::Min(1),
-            Constraint::Length(1),
+            Constraint::Length(
+                if state.sessions_tab() == crate::app::SessionsTab::Servers {
+                    2
+                } else {
+                    1
+                },
+            ),
         ])
         .split(inner_area);
 
@@ -43,6 +49,10 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     let action_area = chunks[2];
 
     render_tab_bar(frame, tab_area, state, is_focused);
+    if state.sessions_tab() == crate::app::SessionsTab::Servers {
+        super::servers_pane::render(frame, list_area, action_area, state);
+        return;
+    }
 
     let sessions = state.sessions_for_selected_workspace();
     let pinned_ids = state.pinned_terminal_ids();
@@ -192,6 +202,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         let hint = match state.sessions_tab() {
             crate::app::SessionsTab::Agents => "no agents — press 1-4 to start one",
             crate::app::SessionsTab::Terminals => "no terminals — press t for one",
+            crate::app::SessionsTab::Servers => unreachable!(),
         };
         items.push(ListItem::new(Line::from(vec![Span::styled(
             format!("  {hint}"),
@@ -229,7 +240,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
 
     let action_bar = Paragraph::new(Line::from(vec![
         Span::styled("Tab", key_style),
-        Span::styled(":agents/terminals  ", action_style),
+        Span::styled(":tabs  ", action_style),
         Span::styled("h", key_style),
         Span::styled(":help", action_style),
     ]));
@@ -237,8 +248,8 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     frame.render_widget(action_bar, action_area);
 }
 
-/// Agents and terminals, and which one the pane is showing.
-fn render_tab_bar(frame: &mut Frame, area: Rect, state: &AppState, is_focused: bool) {
+/// The pane's clickable tabs, including the current server count.
+fn render_tab_bar(frame: &mut Frame, area: Rect, state: &mut AppState, is_focused: bool) {
     let t = crate::theme::current();
     let active = if is_focused {
         Style::default().fg(t.accent).add_modifier(Modifier::BOLD)
@@ -248,15 +259,47 @@ fn render_tab_bar(frame: &mut Frame, area: Rect, state: &AppState, is_focused: b
     let dim = Style::default().fg(t.fg_faint);
 
     let (agents, terminals) = state.sessions_tab_counts();
-    let (agents_style, terminals_style) = match state.sessions_tab() {
-        crate::app::SessionsTab::Agents => (active, dim),
-        crate::app::SessionsTab::Terminals => (dim, active),
+    use crate::app::SessionsTab;
+    let tabs = [
+        SessionsTab::Agents,
+        SessionsTab::Terminals,
+        SessionsTab::Servers,
+    ];
+    let style = |tab| {
+        if state.sessions_tab() == tab {
+            active
+        } else {
+            dim
+        }
+    };
+    let labels = if area.width >= 24 {
+        ["Agents", "Terminals", "Servers"]
+    } else if area.width >= 20 {
+        ["Agents", "Terms", "Servers"]
+    } else {
+        ["A", "T", "Servers"]
     };
     let names = [
-        ("Agents", agents_style, format!("({agents})")),
-        ("Terminals", terminals_style, format!("({terminals})")),
+        (labels[0], style(tabs[0]), format!("({agents})")),
+        (labels[1], style(tabs[1]), format!("({terminals})")),
+        (
+            labels[2],
+            style(tabs[2]),
+            format!("({})", crate::app::servers::rows(state).len()),
+        ),
     ];
     let spans = tab_spans(&names, dim, area.width as usize);
+    let mut x = area.x;
+    for (index, span) in spans.iter().enumerate() {
+        let width = (span.content.chars().count() as u16).min(area.right().saturating_sub(x));
+        if index % 2 == 0 && width > 0 {
+            state.ui.servers.hits.push((
+                Rect::new(x, area.y, width, area.height),
+                crate::app::Action::SetSessionsTab(tabs[index / 2]),
+            ));
+        }
+        x += width;
+    }
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
@@ -446,7 +489,7 @@ mod tests {
     use crate::models::{AgentType, Workspace};
     use ratatui::{backend::TestBackend, Terminal};
 
-    fn screen(state: &AppState, width: u16, height: u16) -> String {
+    fn screen(state: &mut AppState, width: u16, height: u16) -> String {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal
             .draw(|frame| render(frame, frame.area(), state))
@@ -488,11 +531,11 @@ mod tests {
 
     #[test]
     fn a_blocked_agent_says_so_on_its_row() {
-        let state = state_with_blocked_agent(
+        let mut state = state_with_blocked_agent(
             Attention::Permission,
             "Claude needs your permission to use Bash",
         );
-        let out = screen(&state, 44, 10);
+        let out = screen(&mut state, 44, 10);
 
         assert!(out.contains("needs approval"), "{out}");
         // The marker replaces the idle diamond, so a glance at the column is
@@ -505,7 +548,7 @@ mod tests {
     fn an_unblocked_agent_keeps_the_ordinary_row() {
         let mut state = state_with_blocked_agent(Attention::Input, "waiting");
         state.system.agent_status.clear();
-        let out = screen(&state, 44, 10);
+        let out = screen(&mut state, 44, 10);
 
         assert!(!out.contains('!'), "{out}");
         assert!(out.contains("◆ Claude"), "{out}");

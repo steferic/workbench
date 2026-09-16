@@ -349,21 +349,19 @@ fn dev_servers(state: &AppState) -> std::collections::HashMap<Uuid, Vec<ServerVi
         return by_project;
     };
 
-    let mut roots: Vec<(PathBuf, Uuid)> = Vec::new();
-    for workspace in &state.data.workspaces {
-        roots.push((workspace.path.clone(), workspace.id));
-        for session in state.data.sessions.get(&workspace.id).into_iter().flatten() {
-            if let Some(worktree) = &session.worktree_path {
-                roots.push((worktree.clone(), workspace.id));
-            }
-        }
-    }
+    let roots = crate::app::servers::roots(state);
 
     for (server, project) in crate::ports::owned_by(&state.system.dev_servers, &roots) {
         if server.port == state.system.user_config.remote_port {
             continue;
         }
-        if server.loopback_only && !state.system.forwarded.contains_key(&server.port) {
+        if server.loopback_only
+            && !state
+                .system
+                .forwarded
+                .get(&server.port)
+                .is_some_and(|f| f.upstream() == server.endpoint())
+        {
             continue;
         }
         by_project.entry(project).or_default().push(ServerView {

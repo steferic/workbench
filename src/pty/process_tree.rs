@@ -27,7 +27,7 @@ struct Process {
 
 pub struct ProcessTree {
     root: Option<Identity>,
-    marker: Vec<u8>,
+    marker: Option<Vec<u8>>,
     known: HashMap<u32, Identity>,
     finished: bool,
 }
@@ -38,10 +38,25 @@ impl ProcessTree {
             pid.and_then(|pid| proc_identity::start_time(pid).map(|start| Identity { pid, start }));
         Self {
             root,
-            marker: format!("{ENV_OWNER}={token}").into_bytes(),
+            marker: Some(format!("{ENV_OWNER}={token}").into_bytes()),
             known: HashMap::new(),
             finished: false,
         }
+    }
+
+    /// A user-selected server owns only its descendants, not every sibling
+    /// carrying the coding agent's environment marker. Keep its scan identity.
+    pub fn for_server(pid: u32, start: ProcStart) -> Self {
+        Self {
+            root: Some(Identity { pid, start }),
+            marker: None,
+            known: HashMap::new(),
+            finished: false,
+        }
+    }
+
+    pub fn stop_server(&mut self, label: &str) -> Result<()> {
+        self.terminate_with_signal(Duration::from_millis(1500), label, libc::SIGTERM)
     }
 
     fn refresh(&mut self) -> Result<()> {
@@ -70,7 +85,11 @@ impl ProcessTree {
             {
                 continue;
             }
-            if has_marker(id.pid, &self.marker, &mut env_buffer) {
+            if self
+                .marker
+                .as_ref()
+                .is_some_and(|marker| has_marker(id.pid, marker, &mut env_buffer))
+            {
                 self.known.insert(id.pid, id);
             }
         }
@@ -118,12 +137,16 @@ impl ProcessTree {
     }
 
     pub fn terminate(&mut self, grace: Duration, label: &str) -> Result<()> {
+        self.terminate_with_signal(grace, label, libc::SIGINT)
+    }
+
+    fn terminate_with_signal(&mut self, grace: Duration, label: &str, signal: i32) -> Result<()> {
         if self.finished {
             return Ok(());
         }
         self.refresh()?;
         if !grace.is_zero() && !self.known.is_empty() {
-            self.signal(libc::SIGINT, label)?;
+            self.signal(signal, label)?;
             let deadline = Instant::now() + grace;
             while Instant::now() < deadline {
                 if self.known.values().all(|id| !is_live(*id)) {
@@ -314,7 +337,7 @@ fn has_marker(pid: u32, marker: &[u8], _buffer: &mut Vec<u8>) -> bool {
 }
 
 #[cfg(test)]
-pub(super) fn running(pid: u32) -> bool {
+pub(crate) fn running(pid: u32) -> bool {
     process(pid).is_some_and(|p| !p.zombie)
 }
 

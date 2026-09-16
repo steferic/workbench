@@ -11,7 +11,7 @@
 //! signalled.
 
 /// A process's kernel start time, opaque beyond equality.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ProcStart {
     pub sec: u64,
     pub usec: u64,

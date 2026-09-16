@@ -31,6 +31,21 @@ pub struct EventHandler {
 }
 
 impl EventHandler {
+    #[cfg(test)]
+    pub(crate) fn test_key(key: KeyEvent, state: &AppState) -> Action {
+        let (action_tx, action_rx) = mpsc::unbounded_channel();
+        let (pty_tx, pty_rx) = mpsc::channel(1);
+        let (_, terminal_rx) = mpsc::unbounded_channel();
+        Self {
+            action_tx,
+            action_rx,
+            pty_tx,
+            pty_rx,
+            terminal_rx,
+        }
+        .handle_key_event(key, state)
+    }
+
     pub fn new() -> Self {
         const PTY_QUEUE_SIZE: usize = 256;
         let (action_tx, action_rx) = mpsc::unbounded_channel();

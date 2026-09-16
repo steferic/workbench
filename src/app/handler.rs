@@ -26,6 +26,53 @@ pub fn process_action(
     action_tx: &mpsc::UnboundedSender<Action>,
     pty_tx: &mpsc::Sender<Action>,
 ) -> Result<()> {
+    let action = if let Action::MouseClick(x, y) = action {
+        let hit = state
+            .ui
+            .servers
+            .hits
+            .iter()
+            .find(|(area, _)| area.contains((x, y).into()))
+            .map(|(_, action)| action.clone());
+        if let Some(action) = hit {
+            state.ui.focus = crate::app::FocusPanel::SessionList;
+            action
+        } else if state.ui.servers.dialog.is_some() {
+            return Ok(());
+        } else {
+            Action::MouseClick(x, y)
+        }
+    } else {
+        action
+    };
+    if matches!(
+        action,
+        Action::SetSessionsTab(_)
+            | Action::SelectServer(_)
+            | Action::ServerScope
+            | Action::ServerRefresh
+            | Action::ServerDetails
+            | Action::ServerOpen
+            | Action::ServerAskStop
+            | Action::ServerConfirmStop
+            | Action::ServerClose
+            | Action::ServerStopped(..)
+    ) {
+        super::servers::handle(state, action, action_tx);
+        return Ok(());
+    }
+    if state.ui.servers.dialog.is_some()
+        && matches!(
+            action,
+            Action::MouseDrag(..)
+                | Action::MouseUp(..)
+                | Action::MouseScrollUp(..)
+                | Action::MouseScrollDown(..)
+                | Action::Paste(_)
+        )
+    {
+        return Ok(());
+    }
     state.ui.link_pointer.track(&action);
     if matches!(action, Action::MouseMove(..)) {
         crate::links::flush_pointer(state);
@@ -36,6 +83,7 @@ pub fn process_action(
         && state.ui.detail.is_none()
         && !state.ui.pending_quit
         && state.ui.pending_delete.is_none()
+        && state.ui.servers.dialog.is_none()
     {
         if let Some(target) =
             crate::links::mouse(&mut state.ui.pressed_link, &state.ui.link_hits, &action)
@@ -218,9 +266,17 @@ pub fn process_action(
             state.system.diff_stats = stats;
         }
         Action::PortsScanned(servers) => {
-            state.system.dev_servers = servers;
             state.system.port_scan_inflight = false;
-            expose_project_servers(state);
+            match servers {
+                Ok(scan) => {
+                    state.system.dev_servers = scan.servers;
+                    state.ui.servers.resolved_roots = scan.resolved_roots;
+                    state.ui.servers.scan_error = None;
+                    super::servers::reconcile(state);
+                    expose_project_servers(state);
+                }
+                Err(error) => state.ui.servers.scan_error = Some(error),
+            }
         }
         Action::PushEndpointGone(endpoint) => {
             // Said once, at the moment of dropping — not on every notification.
@@ -486,6 +542,7 @@ pub fn process_action(
                 }
 
                 // Global already handled
+                Action::SetSessionsTab(_) | Action::SelectServer(_) | Action::ServerScope | Action::ServerRefresh | Action::ServerDetails | Action::ServerOpen | Action::ServerAskStop | Action::ServerConfirmStop | Action::ServerClose | Action::ServerStopped(..) |
                 Action::MouseMove(_, _) |
                 Action::PreviewLatestMedia | Action::CloseMedia | Action::BrowseMedia |
                 Action::Quit | Action::ConfirmQuit | Action::Tick | Action::Resize(_, _) |
@@ -1117,14 +1174,17 @@ const PORT_SCAN_EVERY: Duration = Duration::from_secs(5);
 
 /// Look for listening dev servers, off the event loop.
 fn scan_ports(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) {
-    if !state.system.user_config.expose_dev_servers || state.system.port_scan_inflight {
+    if state.data.workspaces.is_empty()
+        || state.system.remote.is_none()
+        || !state.system.user_config.expose_dev_servers
+    {
+        state.system.forwarded.clear();
+    }
+    if state.system.port_scan_inflight {
         return;
     }
-    // Everything the scan feeds is a phone-view feature — the dev-server
-    // list and the tailnet forwarders — and both attribute servers to a
-    // workspace. Without a running remote or any workspace to own a port,
-    // the two lsof forks every 5 seconds buy nothing.
-    if state.system.remote.is_none() || state.data.workspaces.is_empty() {
+    // The local Servers tab works independently of phone access.
+    if state.data.workspaces.is_empty() {
         return;
     }
     let due = state
@@ -1138,76 +1198,48 @@ fn scan_ports(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) {
     state.system.last_port_scan = Some(std::time::Instant::now());
     state.system.port_scan_inflight = true;
 
+    let roots = super::servers::workspace_roots(state);
     let tx = action_tx.clone();
     tokio::task::spawn_blocking(move || {
-        dispatch_action(&tx, Action::PortsScanned(crate::ports::scan()));
+        dispatch_action(&tx, Action::PortsScanned(super::servers::scan(roots)));
     });
 }
 
-/// Splice each project's dev servers onto the tailnet address.
-///
-/// Only what runs inside a project, and only what binds loopback — a server
-/// already on every interface is reachable as it is. Forwarders are additive:
-/// see `SystemState::forwarded` for why none is ever taken down.
+/// Keep phone forwarders aligned with live project backends. Proxy listeners
+/// are excluded by the scanner, so they cannot keep themselves alive forever.
 fn expose_project_servers(state: &mut AppState) {
-    let Some(tailnet) = state.system.remote.as_ref().map(|r| r.config.addr.ip()) else {
-        return;
-    };
-    let phone_port = state.system.user_config.remote_port;
+    let tailnet = state.system.remote.as_ref().map(|r| r.config.addr.ip());
+    reconcile_forwarders(state, tailnet);
+}
 
-    let mut roots: Vec<(std::path::PathBuf, uuid::Uuid)> = Vec::new();
-    for workspace in &state.data.workspaces {
-        roots.push((workspace.path.clone(), workspace.id));
-        for session in state.data.sessions.get(&workspace.id).into_iter().flatten() {
-            if let Some(worktree) = &session.worktree_path {
-                roots.push((worktree.clone(), workspace.id));
+fn reconcile_forwarders(state: &mut AppState, tailnet: Option<std::net::IpAddr>) {
+    let mut wanted = std::collections::HashMap::new();
+    if state.system.user_config.expose_dev_servers && tailnet.is_some() {
+        for row in super::servers::all_rows(state) {
+            let server = row.server;
+            if server.loopback_only && server.port != state.system.user_config.remote_port {
+                wanted.entry(server.port).or_insert(server.endpoint());
             }
         }
     }
-
-    // Reap forwarders that were shot. Port-freeing scripts kill by number
-    // and hit ours too; the whole design is that the death lands on a
-    // disposable child. Removing it here lets the loop below respawn it.
     state.system.forwarded.retain(|port, forwarder| {
-        let standing = forwarder.alive();
-        if !standing {
-            crate::logger::info(format!(
-                "forwarder for port {port} was killed; respawning if still wanted"
-            ));
-        }
-        standing
+        Some(forwarder.addr().ip()) == tailnet
+            && wanted.get(port) == Some(&forwarder.upstream())
+            && forwarder.alive()
     });
-
-    let wanted: Vec<u16> = crate::ports::owned_by(&state.system.dev_servers, &roots)
-        .into_iter()
-        .filter(|(server, _)| server.loopback_only && server.port != phone_port)
-        .map(|(server, _)| server.port)
-        .collect();
-
-    for port in wanted {
+    let Some(tailnet) = tailnet else {
+        return;
+    };
+    for (port, upstream) in wanted {
         if state.system.forwarded.contains_key(&port) {
             continue;
         }
         let bind = std::net::SocketAddr::new(tailnet, port);
-        let upstream =
-            std::net::SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), port);
         match crate::ports::expose(bind, upstream) {
             Ok(forwarder) => {
-                crate::logger::info(format!(
-                    "dev server on {port} is now reachable from the phone"
-                ));
                 state.system.forwarded.insert(port, forwarder);
             }
-            // Almost always "address in use" — something else already has that
-            // port on the tailnet address. A Thread entry is the "do not try
-            // again every five seconds" marker: it always reports alive.
-            Err(err) => {
-                crate::logger::warn(format!("could not forward port {port}: {err}"));
-                state
-                    .system
-                    .forwarded
-                    .insert(port, crate::ports::Forwarder::unretryable(bind));
-            }
+            Err(err) => crate::logger::warn(format!("could not forward port {port}: {err}")),
         }
     }
 }
@@ -1839,6 +1871,64 @@ fn refresh_agent_tasks(state: &mut AppState, action_tx: &mpsc::UnboundedSender<A
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn server_scans_run_without_phone_access_and_close_unwanted_forwards() {
+        let mut state = super::AppState::default();
+        state.system.user_config.expose_dev_servers = false;
+        state
+            .data
+            .workspaces
+            .push(Workspace::new("test".into(), std::env::temp_dir()));
+        let forwarder = crate::ports::expose(
+            "127.0.0.1:0".parse().unwrap(),
+            "127.0.0.1:1".parse().unwrap(),
+        )
+        .unwrap();
+        let address = forwarder.addr();
+        state.system.forwarded.insert(address.port(), forwarder);
+        let (tx, mut rx) = super::mpsc::unbounded_channel();
+        super::scan_ports(&mut state, &tx);
+        assert!(state.system.port_scan_inflight);
+        assert!(state.system.forwarded.is_empty());
+        assert!(std::net::TcpStream::connect(address).is_err());
+        let action = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(action, super::Action::PortsScanned(Ok(_))),
+            "{action:?}"
+        );
+    }
+
+    #[test]
+    fn a_forwarder_lives_only_while_its_project_backend_is_wanted() {
+        let mut state = super::AppState::default();
+        state.system.user_config.expose_dev_servers = true;
+        state
+            .data
+            .workspaces
+            .push(Workspace::new("test".into(), "/projects/test".into()));
+        let upstream = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = upstream.local_addr().unwrap();
+        state.system.dev_servers.push(crate::ports::DevServer {
+            port: endpoint.port(),
+            addresses: vec![endpoint],
+            cwd: "/projects/test".into(),
+            loopback_only: true,
+            ..Default::default()
+        });
+        let forwarder = crate::ports::expose("127.0.0.1:0".parse().unwrap(), endpoint).unwrap();
+        let address = forwarder.addr();
+        state.system.forwarded.insert(endpoint.port(), forwarder);
+        super::reconcile_forwarders(&mut state, Some(address.ip()));
+        assert_eq!(state.system.forwarded.len(), 1);
+        state.system.dev_servers.clear();
+        super::reconcile_forwarders(&mut state, Some(address.ip()));
+        assert!(state.system.forwarded.is_empty());
+        assert!(std::net::TcpStream::connect(address).is_err());
+    }
+
     /// `notify_phone` with a throwaway action channel: these tests are about
     /// what counts as news, not about the push delivery behind it.
     fn poke(state: &mut super::AppState) -> Vec<String> {

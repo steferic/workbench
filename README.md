@@ -14,6 +14,7 @@ A TUI for managing AI agent workspaces and sessions. Run Claude, Codex, Gemini, 
 - Run agents in isolated git worktrees and merge their work back with one key
 - Parallel tasks: race several agents on the same prompt in separate worktrees
 - Pinned terminal panes alongside the agent output
+- Servers tab in Sessions: inspect project servers across all workspaces, open their URLs, and stop unused processes
 - Local repository map: open any workspace as a searchable, live file tree on a clean light infinite canvas, with read-only highlighted code previews and agent-generated explanations, highlights, notes, connections, groups, and diagrams
 - Scrollback reconstruction for full-screen agents (Claude, Codex)
 - Dark/light themes, mouse support, clipboard integration
@@ -58,6 +59,19 @@ git clone https://github.com/steferic/workbench.git
 cd workbench
 cargo build --release   # binary at target/release/workbench
 ```
+
+## Managing local servers
+
+Click **Servers** in the Sessions pane, or focus Sessions and press `Tab` to cycle through Agents, Terminals, and Servers. The list refreshes every five seconds and includes servers running inside your open projects and their agent worktrees. It works without phone access enabled.
+
+- `a`: switch between all projects and the selected project
+- `↑` / `↓` (or `k` / `j`): select a server
+- `Enter`: show its project, process, PID, directory, URL, and ports
+- `o`: open the URL in your browser
+- `x`: ask to stop the selected server; `Enter` confirms and `Esc` cancels
+- `r`: refresh now
+
+Stopping checks that the process still matches the selected row, then terminates it and its children. All ports held by that process close; a supervisor may restart it. Phone forwarders are removed when their backend disappears. Workbench's own listeners and forwarders are excluded from the list. Discovery uses `lsof`; stopping is supported on macOS and Linux.
 
 ## Agents
 

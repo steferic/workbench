@@ -57,6 +57,17 @@ fn handle_mouse_scroll(
         }
     }
 
+    if state.sessions_tab() == crate::app::SessionsTab::Servers
+        && state
+            .ui
+            .session_area
+            .is_some_and(|area| is_in_area(x, y, area))
+    {
+        state.ui.focus = FocusPanel::SessionList;
+        crate::app::servers::move_selection(state, up);
+        return;
+    }
+
     for idx in 0..state.ui.pinned_pane_areas.len() {
         if let Some(area) = state.ui.pinned_pane_areas[idx] {
             if is_in_area(x, y, area) {
@@ -101,7 +112,11 @@ pub fn handle_navigation_action(
                 move_workspace_selection(state, true, pty_manager, pty_tx);
             }
             FocusPanel::SessionList => {
-                state.select_prev_session();
+                if state.sessions_tab() == crate::app::SessionsTab::Servers {
+                    crate::app::servers::move_selection(state, true);
+                } else {
+                    state.select_prev_session();
+                }
             }
             _ => {}
         },
@@ -110,7 +125,11 @@ pub fn handle_navigation_action(
                 move_workspace_selection(state, false, pty_manager, pty_tx);
             }
             FocusPanel::SessionList => {
-                state.select_next_session();
+                if state.sessions_tab() == crate::app::SessionsTab::Servers {
+                    crate::app::servers::move_selection(state, false);
+                } else {
+                    state.select_next_session();
+                }
             }
             _ => {}
         },
@@ -213,6 +232,7 @@ pub fn handle_navigation_action(
         Action::ToggleSessionsTab => {
             let next = state.sessions_tab().toggle();
             state.set_sessions_tab(next);
+            crate::app::servers::reconcile(state);
         }
         Action::CycleNextSession => cycle_session(state, true),
         Action::CyclePrevSession => cycle_session(state, false),
@@ -964,6 +984,9 @@ mod tests {
             "the cursor must land on a row this tab lists"
         );
 
+        toggle_tab(&mut state);
+        assert_eq!(state.sessions_tab(), crate::app::SessionsTab::Servers);
+        assert!(state.session_visual_order().is_empty());
         toggle_tab(&mut state);
         assert_eq!(state.sessions_tab(), crate::app::SessionsTab::Agents);
         assert_eq!(state.selected_session_idx(), 0);

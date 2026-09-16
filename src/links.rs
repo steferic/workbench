@@ -90,7 +90,8 @@ pub fn flush_pointer(state: &mut crate::app::AppState) {
         && state.ui.media_preview.is_none()
         && state.ui.detail.is_none()
         && !state.ui.pending_quit
-        && state.ui.pending_delete.is_none();
+        && state.ui.pending_delete.is_none()
+        && state.ui.servers.dialog.is_none();
     if let Some(sequence) = state.ui.link_pointer.sequence(&state.ui.link_hits, enabled) {
         write_pointer(sequence);
     }
