@@ -92,11 +92,7 @@ pub struct UserConfig {
     #[serde(default = "default_true")]
     pub use_alternate_screen: bool,
 
-    // Legacy fields — ignored on load, derived from scrollback_mb
-    #[serde(skip)]
-    pub scrollback_buffer_kb: usize,
-    #[serde(skip)]
-    pub replay_parser_rows: u16,
+    // Derived terminal-history retention limit.
     #[serde(skip)]
     pub live_scrollback_rows: usize,
     /// Max committed transcript lines per redraw-style agent (Claude/Codex
@@ -275,10 +271,6 @@ impl UserConfig {
     pub fn apply_scrollback_derived(&mut self) {
         let mb = self.scrollback_mb.clamp(1, 16);
         self.scrollback_mb = mb;
-        // Raw buffer: direct MB to KB conversion
-        self.scrollback_buffer_kb = mb * 1024;
-        // Replay parser rows: scale proportionally (1 MB = 500 rows)
-        self.replay_parser_rows = (mb as u16 * 500).clamp(500, 8000);
         // Live scrollback rows: scale proportionally (1 MB = 200 rows)
         self.live_scrollback_rows = (mb * 200).clamp(200, 4000);
         // Transcript history: a styled line is ~100-300 bytes, so give it a
@@ -301,8 +293,6 @@ impl Default for UserConfig {
             remote_token: String::new(),
             expose_dev_servers: true,
             use_alternate_screen: default_true(),
-            scrollback_buffer_kb: 0,
-            replay_parser_rows: 0,
             live_scrollback_rows: 0,
             transcript_max_lines: 0,
         };

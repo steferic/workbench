@@ -84,10 +84,7 @@ pub struct Screen {
 }
 
 impl Screen {
-    pub(crate) fn new(
-        size: crate::grid::Size,
-        scrollback_len: usize,
-    ) -> Self {
+    pub(crate) fn new(size: crate::grid::Size, scrollback_len: usize) -> Self {
         let mut grid = crate::grid::Grid::new(size, scrollback_len);
         grid.allocate_rows();
         Self {
@@ -116,6 +113,31 @@ impl Screen {
         self.grid.set_size(crate::grid::Size { rows, cols });
         self.alternate_grid
             .set_size(crate::grid::Size { rows, cols });
+    }
+
+    pub(crate) fn resize_reflow(&mut self, rows: u16, cols: u16) {
+        let size = crate::grid::Size {
+            rows: rows.max(1),
+            cols: cols.max(1),
+        };
+        self.grid.resize_reflow(size);
+        self.alternate_grid.set_size(size);
+    }
+
+    /// Number of retained rows, including the current screen.
+    #[must_use]
+    pub fn history_len(&self) -> usize {
+        self.grid().history_len()
+    }
+
+    /// Stored normal-buffer rows followed by the current screen, with their
+    /// original cells and soft-wrap boundaries. Never replays output bytes.
+    pub fn history_rows(
+        &self,
+    ) -> impl Iterator<Item = (Vec<crate::cell::Cell>, bool)> + '_ {
+        self.grid()
+            .history_rows()
+            .map(|row| (row.cells().cloned().collect(), row.wrapped()))
     }
 
     /// Returns the current size of the terminal.
@@ -338,11 +360,9 @@ impl Screen {
             crate::term::HideCursor::new(self.hide_cursor())
                 .write_buf(contents);
         }
-        let prev_attrs = self.grid().write_contents_diff(
-            contents,
-            prev.grid(),
-            prev.attrs,
-        );
+        let prev_attrs =
+            self.grid()
+                .write_contents_diff(contents, prev.grid(), prev.attrs);
         self.attrs.write_escape_code_diff(contents, &prev_attrs);
     }
 
@@ -402,14 +422,10 @@ impl Screen {
     }
 
     fn write_input_mode_formatted(&self, contents: &mut Vec<u8>) {
-        crate::term::ApplicationKeypad::new(
-            self.mode(MODE_APPLICATION_KEYPAD),
-        )
-        .write_buf(contents);
-        crate::term::ApplicationCursor::new(
-            self.mode(MODE_APPLICATION_CURSOR),
-        )
-        .write_buf(contents);
+        crate::term::ApplicationKeypad::new(self.mode(MODE_APPLICATION_KEYPAD))
+            .write_buf(contents);
+        crate::term::ApplicationCursor::new(self.mode(MODE_APPLICATION_CURSOR))
+            .write_buf(contents);
         crate::term::BracketedPaste::new(self.mode(MODE_BRACKETED_PASTE))
             .write_buf(contents);
         crate::term::MouseProtocolMode::new(
@@ -451,8 +467,7 @@ impl Screen {
             )
             .write_buf(contents);
         }
-        if self.mode(MODE_BRACKETED_PASTE) != prev.mode(MODE_BRACKETED_PASTE)
-        {
+        if self.mode(MODE_BRACKETED_PASTE) != prev.mode(MODE_BRACKETED_PASTE) {
             crate::term::BracketedPaste::new(self.mode(MODE_BRACKETED_PASTE))
                 .write_buf(contents);
         }
@@ -546,10 +561,8 @@ impl Screen {
 
     fn write_attributes_formatted(&self, contents: &mut Vec<u8>) {
         crate::term::ClearAttrs::default().write_buf(contents);
-        self.attrs.write_escape_code_diff(
-            contents,
-            &crate::attrs::Attrs::default(),
-        );
+        self.attrs
+            .write_escape_code_diff(contents, &crate::attrs::Attrs::default());
     }
 
     /// Returns the current cursor position of the terminal.
@@ -1430,8 +1443,7 @@ impl Screen {
                         let r = next_param_u8!();
                         let g = next_param_u8!();
                         let b = next_param_u8!();
-                        self.attrs.fgcolor =
-                            crate::attrs::Color::Rgb(r, g, b);
+                        self.attrs.fgcolor = crate::attrs::Color::Rgb(r, g, b);
                     }
                     &[5] => {
                         self.attrs.fgcolor =
@@ -1476,8 +1488,7 @@ impl Screen {
                         let r = next_param_u8!();
                         let g = next_param_u8!();
                         let b = next_param_u8!();
-                        self.attrs.bgcolor =
-                            crate::attrs::Color::Rgb(r, g, b);
+                        self.attrs.bgcolor = crate::attrs::Color::Rgb(r, g, b);
                     }
                     &[5] => {
                         self.attrs.bgcolor =
@@ -1681,8 +1692,13 @@ impl vte::Perform for Screen {
                 // The parser splits OSC parameters on semicolons; semicolons
                 // after the second delimiter belong to the URI itself.
                 let uri = params.get(2..).unwrap_or_default().join(&b';');
-                self.hyperlink = std::str::from_utf8(&uri).ok()
-                    .filter(|s| !s.is_empty() && s.len() <= 8192 && !s.chars().any(char::is_control))
+                self.hyperlink = std::str::from_utf8(&uri)
+                    .ok()
+                    .filter(|s| {
+                        !s.is_empty()
+                            && s.len() <= 8192
+                            && !s.chars().any(char::is_control)
+                    })
                     .map(std::sync::Arc::from);
             }
             _ => {

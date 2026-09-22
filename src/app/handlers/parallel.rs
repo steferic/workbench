@@ -326,6 +326,7 @@ fn handle_parallel_worktrees_ready(
             resume: crate::pty::Resume::No,
             dangerously_skip_permissions,
             use_alternate_screen: state.system.use_alternate_screen,
+            scrollback_rows: state.system.user_config.live_scrollback_rows,
             extra_env: Vec::new(),
         }) {
             Ok(handle) => {

@@ -224,6 +224,7 @@ fn render_session_output(
     };
 
     state.set_output_content_length(view.content_len);
+    state.set_output_scroll_offset(view.scroll_from_bottom.min(u16::MAX as usize) as u16);
     state.set_output_on_replay(view.on_replay);
     state.set_text_selection(view.selection);
 
@@ -240,7 +241,7 @@ fn render_session_output(
     let duration = session.map(|s| s.duration_string()).unwrap_or_default();
     let title = if view.scroll_from_bottom > 0 {
         format!(
-            " {} - {} - {} [↑{}] ",
+            " {} - {} - {} [history ↑{}] ",
             display_name, short_id, duration, view.scroll_from_bottom
         )
     } else {

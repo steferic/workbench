@@ -1,4 +1,5 @@
 use crate::term::BufWrite as _;
+mod reflow;
 
 #[derive(Clone, Debug)]
 pub struct Grid {
@@ -35,10 +36,8 @@ impl Grid {
     pub fn allocate_rows(&mut self) {
         if self.rows.is_empty() {
             self.rows.extend(
-                std::iter::repeat_with(|| {
-                    crate::row::Row::new(self.size.cols)
-                })
-                .take(usize::from(self.size.rows)),
+                std::iter::repeat_with(|| crate::row::Row::new(self.size.cols))
+                    .take(usize::from(self.size.rows)),
             );
         }
     }
@@ -127,6 +126,14 @@ impl Grid {
 
     pub fn drawing_rows(&self) -> impl Iterator<Item = &crate::row::Row> {
         self.rows.iter()
+    }
+
+    pub fn history_rows(&self) -> impl Iterator<Item = &crate::row::Row> {
+        self.scrollback.iter().chain(self.rows.iter())
+    }
+
+    pub fn history_len(&self) -> usize {
+        self.scrollback.len() + self.rows.len()
     }
 
     pub fn drawing_rows_mut(
@@ -374,15 +381,11 @@ impl Grid {
                             }
                         } else {
                             crate::term::MoveTo::new(pos).write_buf(contents);
-                            cell.attrs().write_escape_code_diff(
-                                contents,
-                                &prev_attrs,
-                            );
+                            cell.attrs()
+                                .write_escape_code_diff(contents, &prev_attrs);
                             contents.extend(cell.contents().as_bytes());
-                            prev_attrs.write_escape_code_diff(
-                                contents,
-                                cell.attrs(),
-                            );
+                            prev_attrs
+                                .write_escape_code_diff(contents, cell.attrs());
                         }
                         contents.extend(
                             "\n".repeat(usize::from(self.pos.row - i))

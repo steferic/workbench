@@ -114,6 +114,7 @@ impl Case {
                 resume: Resume::No,
                 dangerously_skip_permissions: false,
                 use_alternate_screen: false,
+                scrollback_rows: 200,
                 extra_env: Vec::new(),
             })
             .unwrap();

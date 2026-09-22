@@ -1,4 +1,3 @@
-use crate::app::PARSER_BUFFER_ROWS;
 use crate::config::user_config::UserConfig;
 use crate::config::KeybindingConfig;
 use crate::git::DiffStat;
@@ -238,57 +237,6 @@ pub struct PendingSessionStart {
     pub provider_session_id: Option<String>,
 }
 
-/// Circular buffer storing raw PTY output bytes for replay-based scrollback
-pub struct RawOutputBuffer {
-    pub bytes: VecDeque<u8>,
-    pub capacity: usize,
-    pub generation: u64,
-}
-
-impl RawOutputBuffer {
-    pub fn new(capacity: usize) -> Self {
-        Self {
-            bytes: VecDeque::with_capacity(capacity),
-            capacity,
-            generation: 0,
-        }
-    }
-
-    pub fn append(&mut self, data: &[u8]) {
-        // Trim from front if exceeding capacity
-        let total = self.bytes.len() + data.len();
-        if total > self.capacity {
-            let to_drain = total - self.capacity;
-            if to_drain >= self.bytes.len() {
-                self.bytes.clear();
-                // If data itself exceeds capacity, only keep the tail
-                if data.len() > self.capacity {
-                    let start = data.len() - self.capacity;
-                    self.bytes.extend(&data[start..]);
-                } else {
-                    self.bytes.extend(data);
-                }
-            } else {
-                self.bytes.drain(..to_drain);
-                self.bytes.extend(data);
-            }
-        } else {
-            self.bytes.extend(data);
-        }
-        self.generation = self.generation.wrapping_add(1);
-    }
-}
-
-/// Cached replay parser to avoid re-replaying raw bytes every frame.
-/// The parser is expensive to create (feeds all raw bytes through vt100),
-/// but rendering visible lines from it each frame is cheap.
-pub struct ReplayCache {
-    pub generation: u64,
-    pub cols: u16,
-    pub parser: vt100::Parser,
-    pub content_length: usize,
-}
-
 struct SynchronizedOutputBuffer {
     bytes: Vec<u8>,
     started_at: Instant,
@@ -309,6 +257,8 @@ pub struct TranscriptSpan {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TranscriptLine {
+    /// Logical block and character offset for stable scroll positioning.
+    pub anchor: Option<(usize, usize)>,
     pub links: Vec<crate::links::Link>,
     text: String,
     spans: Vec<TranscriptSpan>,
@@ -318,6 +268,7 @@ impl TranscriptLine {
     #[cfg(test)]
     fn raw(text: String) -> Self {
         Self {
+            anchor: None,
             links: crate::links::plain(&text, 0),
             spans: if text.is_empty() {
                 Vec::new()
@@ -362,7 +313,12 @@ impl TranscriptLine {
                 links.push(link);
             }
         }
-        Self { text, spans, links }
+        Self {
+            text,
+            spans,
+            links,
+            anchor: None,
+        }
     }
 
     pub fn text(&self) -> &str {
@@ -389,6 +345,9 @@ impl TranscriptLine {
 /// content region of successive frames (see [`align_shift`]). The displayed
 /// history is `committed` ++ visible frame.
 pub struct TranscriptBuffer {
+    reading: Option<ReadingPosition>,
+    document: Option<std::sync::Arc<crate::scrollback::Document>>,
+    rendered_cols: u16,
     /// Lines that have scrolled off the top and are final.
     lines: VecDeque<TranscriptLine>,
     /// The current visible frame (trailing blanks trimmed), shown below `lines`.
@@ -403,9 +362,20 @@ pub struct TranscriptBuffer {
     pub generation: u64,
 }
 
+struct ReadingPosition {
+    anchor: Option<(usize, usize)>,
+    text: String,
+    row: usize,
+    scroll: usize,
+    generation: u64,
+}
+
 impl TranscriptBuffer {
     pub fn new(max_lines: usize) -> Self {
         Self {
+            reading: None,
+            document: None,
+            rendered_cols: 0,
             lines: VecDeque::new(),
             visible: Vec::new(),
             prev_frame: Vec::new(),
@@ -416,7 +386,81 @@ impl TranscriptBuffer {
     }
 
     pub fn len(&self) -> usize {
-        self.history_len() + self.visible.len()
+        self.history_len()
+            + if self.log_history.is_some() {
+                0
+            } else {
+                self.visible.len()
+            }
+    }
+
+    pub fn follow_live(&mut self) {
+        self.reading = None;
+    }
+
+    pub fn set_document(&mut self, history: crate::scrollback::History, cols: u16) {
+        self.set_log_history(Some(history.lines));
+        self.document = Some(history.document);
+        self.rendered_cols = cols;
+    }
+
+    pub fn reflow(&mut self, cols: u16) {
+        if self.rendered_cols != cols {
+            if let Some(document) = &self.document {
+                let lines = document.render(cols);
+                self.set_log_history(Some(lines));
+                self.rendered_cols = cols;
+            }
+        }
+    }
+
+    /// Re-find a logical passage after append/reflow, then apply only the
+    /// user's scroll delta. A distance from the moving bottom is not an anchor.
+    pub fn reading_position(&mut self, requested: usize, height: usize) -> (usize, usize) {
+        let max = self.len().saturating_sub(height);
+        let row = if let Some(previous) = &self.reading {
+            let mut row = previous.row;
+            if previous.generation != self.generation {
+                let anchored = previous.anchor.and_then(|(block, offset)| {
+                    (0..self.len())
+                        .filter(|&i| {
+                            self.get(i)
+                                .and_then(|l| l.anchor)
+                                .is_some_and(|(b, o)| b == block && o <= offset)
+                        })
+                        .min_by_key(|&i| {
+                            (
+                                offset - self.get(i).unwrap().anchor.unwrap().1,
+                                i.abs_diff(previous.row),
+                            )
+                        })
+                });
+                row = anchored
+                    .or_else(|| {
+                        (0..self.len())
+                            .filter(|&i| self.line(i) == Some(previous.text.as_str()))
+                            .min_by_key(|&i| i.abs_diff(previous.row))
+                    })
+                    .unwrap_or(row);
+            }
+            if requested >= previous.scroll {
+                row.saturating_sub(requested - previous.scroll)
+            } else {
+                row.saturating_add(previous.scroll - requested)
+            }
+        } else {
+            max.saturating_sub(requested)
+        }
+        .min(max.saturating_sub(1));
+        let scroll = max.saturating_sub(row).max(1);
+        self.reading = Some(ReadingPosition {
+            anchor: self.get(row).and_then(|l| l.anchor),
+            text: self.line(row).unwrap_or_default().to_owned(),
+            row,
+            scroll,
+            generation: self.generation,
+        });
+        (scroll, row)
     }
 
     /// How much committed history there is: the session log when we have it,
@@ -447,22 +491,30 @@ impl TranscriptBuffer {
     }
 
     /// Install (or clear) history parsed from the agent's session log.
-    pub fn set_log_history(&mut self, lines: Option<Vec<TranscriptLine>>) {
-        if self.log_history.as_deref().map(<[_]>::len) != lines.as_deref().map(<[_]>::len) {
+    pub fn set_log_history(&mut self, mut lines: Option<Vec<TranscriptLine>>) {
+        // One empty tail row lets scroll=1 show the final content row while
+        // scroll=0 consistently means live output, including mouse selection.
+        if let Some(lines) = &mut lines {
+            if !lines.is_empty() {
+                lines.push(TranscriptLine::from_spans(Vec::new()));
+            }
+        }
+        if self.log_history != lines {
             self.generation = self.generation.wrapping_add(1);
         }
         self.log_history = lines;
     }
 
     pub fn is_empty(&self) -> bool {
-        self.history_len() == 0 && self.visible.is_empty()
+        self.len() == 0
     }
 
     /// Index across committed history followed by the current visible frame.
     fn get(&self, index: usize) -> Option<&TranscriptLine> {
         match self.history_get(index) {
             Some(line) => Some(line),
-            None => self.visible.get(index - self.history_len()),
+            None if self.log_history.is_none() => self.visible.get(index - self.history_len()),
+            None => None,
         }
     }
 
@@ -497,7 +549,7 @@ impl TranscriptBuffer {
             let Some(line) = self.line(row) else {
                 continue;
             };
-            let char_count = line.chars().count();
+            let char_count = unicode_width::UnicodeWidthStr::width(line);
             let row_start = if row == start_row {
                 start_col.min(char_count)
             } else {
@@ -585,7 +637,17 @@ impl TranscriptBuffer {
 }
 
 fn line_slice(line: &str, start: usize, end: usize) -> String {
-    line.chars().skip(start).take(end - start).collect()
+    use unicode_segmentation::UnicodeSegmentation;
+    use unicode_width::UnicodeWidthStr;
+    let mut column = 0;
+    line.graphemes(true)
+        .filter(|glyph| {
+            let width = glyph.width();
+            let selected = column < end && column + width > start;
+            column += width;
+            selected
+        })
+        .collect()
 }
 
 fn snapshot_line_from_screen(screen: &vt100::Screen, row: u16, cols: u16) -> TranscriptLine {
@@ -708,6 +770,8 @@ fn align_shift(prev: &[TranscriptLine], cur: &[TranscriptLine]) -> Option<isize>
 }
 
 pub struct SystemState {
+    pub native_history_sessions: std::collections::HashSet<Uuid>,
+    pub native_history_dirty: std::collections::HashSet<Uuid>,
     pub cleanup_jobs: crate::app::cleanup::CleanupJobs,
     /// PTY handles (not serializable)
     pub pty_handles: HashMap<Uuid, PtyHandle>,
@@ -735,13 +799,9 @@ pub struct SystemState {
     pub keybindings: KeybindingConfig,
     /// Performance metrics for FPS monitoring
     pub perf: PerformanceMetrics,
-    /// Raw PTY output bytes for replay-based scrollback
-    pub raw_output_buffers: HashMap<Uuid, RawOutputBuffer>,
     /// Text transcript buffers for agents that redraw the screen instead of
     /// emitting append-only terminal output.
     pub transcript_buffers: HashMap<Uuid, TranscriptBuffer>,
-    /// Cached replay lines (invalidated on new output or scroll change)
-    pub replay_caches: HashMap<Uuid, ReplayCache>,
     /// Buffered terminal synchronized-update blocks (ESC[?2026h ... ESC[?2026l).
     sync_output_buffers: HashMap<Uuid, SynchronizedOutputBuffer>,
     /// Live mirror of each agent's own task list, keyed by session. Parsed
@@ -893,9 +953,9 @@ impl SystemState {
             startup_queue: VecDeque::new(),
             keybindings: KeybindingConfig::default(),
             perf: PerformanceMetrics::new(),
-            raw_output_buffers: HashMap::new(),
+            native_history_sessions: Default::default(),
+            native_history_dirty: Default::default(),
             transcript_buffers: HashMap::new(),
-            replay_caches: HashMap::new(),
             sync_output_buffers: HashMap::new(),
             agent_tasks: HashMap::new(),
             prompt_capture: Default::default(),
@@ -947,7 +1007,7 @@ impl SystemState {
         }
     }
 
-    /// Create parser + raw output buffer for a new session.
+    /// Create a real-sized terminal parser and fresh history for a session.
     pub fn create_session_buffers(
         &mut self,
         session_id: Uuid,
@@ -955,11 +1015,13 @@ impl SystemState {
         cols: u16,
         agent_type: &AgentType,
     ) {
-        let parser_rows = if agent_type.is_redraw_style() {
-            rows.max(1)
-        } else {
-            PARSER_BUFFER_ROWS
-        };
+        let parser_rows = rows.max(1);
+        self.native_history_sessions.remove(&session_id);
+        self.native_history_dirty.remove(&session_id);
+        if !agent_type.is_redraw_style() {
+            self.native_history_sessions.insert(session_id);
+            self.native_history_dirty.insert(session_id);
+        }
         let parser = vt100::Parser::new(
             parser_rows,
             cols.max(1),
@@ -975,16 +1037,15 @@ impl SystemState {
         self.agent_status.remove(&session_id);
         self.session_spawned_at
             .insert(session_id, chrono::Utc::now());
-        self.raw_output_buffers.insert(
-            session_id,
-            RawOutputBuffer::new(self.user_config.scrollback_buffer_kb * 1024),
-        );
+        self.scrollback_state.remove(&session_id);
         self.transcript_buffers.remove(&session_id);
         self.sync_output_buffers.remove(&session_id);
     }
 
-    /// Remove parser + raw output buffer + replay cache for a session
+    /// Remove terminal state and stored history for a session
     pub fn remove_session_buffers(&mut self, session_id: &Uuid) {
+        self.native_history_sessions.remove(session_id);
+        self.native_history_dirty.remove(session_id);
         self.scrollback_state.remove(session_id);
         self.manager_wakes.remove(session_id);
         self.agent_tasks.remove(session_id);
@@ -992,9 +1053,7 @@ impl SystemState {
         self.agent_status.remove(session_id);
         self.session_spawned_at.remove(session_id);
         self.output_buffers.remove(session_id);
-        self.raw_output_buffers.remove(session_id);
         self.transcript_buffers.remove(session_id);
-        self.replay_caches.remove(session_id);
         self.sync_output_buffers.remove(session_id);
     }
 
@@ -1109,7 +1168,6 @@ impl Default for SystemState {
 #[cfg(test)]
 mod tests {
     use super::{SystemState, TranscriptBuffer, TranscriptLine};
-    use crate::app::PARSER_BUFFER_ROWS;
     use crate::models::AgentType;
     use ratatui::style::Style;
     use uuid::Uuid;
@@ -1155,7 +1213,7 @@ mod tests {
             .unwrap()
             .screen()
             .size();
-        assert_eq!(size, (PARSER_BUFFER_ROWS, 80));
+        assert_eq!(size, (24, 80));
     }
 
     #[test]
@@ -1378,9 +1436,10 @@ mod tests {
         ]));
         assert_eq!(transcript.line(0), Some("logged 1"));
         assert_eq!(transcript.line(1), Some("logged 2"));
-        // Visible frame still follows the history.
-        assert_eq!(transcript.line(2), Some("b"));
-        assert_eq!(transcript.len(), 2 + transcript.visible.len());
+        // Structured history already contains the newest messages.
+        assert_eq!(transcript.line(2), Some(""));
+        assert_eq!(transcript.line(3), None);
+        assert_eq!(transcript.len(), 3);
 
         // Clearing falls back to the differ's history.
         transcript.set_log_history(None);

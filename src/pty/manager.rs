@@ -340,6 +340,7 @@ pub struct SessionSpawnConfig<'a> {
     pub resume: Resume,
     pub dangerously_skip_permissions: bool,
     pub use_alternate_screen: bool,
+    pub scrollback_rows: usize,
     /// Extra variables for the child, on top of workbench's own identity
     /// set. A job run puts its id here so the CLI inside the pane can report
     /// against it without being told which run it is.
@@ -524,6 +525,7 @@ impl PtyManager {
             resume,
             dangerously_skip_permissions,
             use_alternate_screen,
+            scrollback_rows,
             extra_env,
         } = config;
         let rows = rows.max(1);
@@ -682,11 +684,10 @@ impl PtyManager {
         let pty_tx = pty_tx.clone();
         let sid = session_id;
         let strip_alt_screen = agent_type.is_redraw_style() || !use_alternate_screen;
-        let output = Arc::new(Mutex::new(TerminalOutput::new(
-            rows,
-            cols,
-            strip_alt_screen,
-        )));
+        let output = Arc::new(Mutex::new(
+            TerminalOutput::new(rows, cols, strip_alt_screen)
+                .with_reflow(!agent_type.is_redraw_style(), scrollback_rows),
+        ));
         let reader_output = output.clone();
         std::thread::spawn(move || {
             Self::read_pty_output(sid, &mut reader, pty_tx, query_writer, reader_output);

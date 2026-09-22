@@ -32,6 +32,12 @@ impl Parser {
         self.screen.set_size(rows, cols);
     }
 
+    /// Resize append-style output, preserving normal-buffer soft lines.
+    /// Full-screen applications should continue to use `set_size`.
+    pub fn resize_reflow(&mut self, rows: u16, cols: u16) {
+        self.screen.resize_reflow(rows, cols);
+    }
+
     /// Scrolls to the given position in the scrollback.
     ///
     /// This position indicates the offset from the top of the screen, and

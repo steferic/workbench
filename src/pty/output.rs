@@ -6,6 +6,7 @@ pub(super) struct TerminalOutput {
     screen: vt100::Parser,
     queries: vte::Parser,
     detector: Detector,
+    reflow: bool,
 }
 
 pub(super) struct Output {
@@ -16,6 +17,7 @@ pub(super) struct Output {
 impl TerminalOutput {
     pub fn new(rows: u16, cols: u16, strip_alt_screen: bool) -> Self {
         Self {
+            reflow: false,
             screen: vt100::Parser::new(rows.max(1), cols.max(1), 0),
             queries: vte::Parser::new(),
             detector: Detector {
@@ -29,10 +31,23 @@ impl TerminalOutput {
         self.screen.screen()
     }
 
+    pub fn with_reflow(mut self, reflow: bool, scrollback_rows: usize) -> Self {
+        if reflow {
+            let (rows, cols) = self.screen.screen().size();
+            self.screen = vt100::Parser::new(rows, cols, scrollback_rows);
+        }
+        self.reflow = reflow;
+        self
+    }
+
     pub fn resize(&mut self, rows: u16, cols: u16) {
         let size = (rows.max(1), cols.max(1));
         if self.screen.screen().size() != size {
-            self.screen.set_size(size.0, size.1);
+            if self.reflow {
+                self.screen.resize_reflow(size.0, size.1);
+            } else {
+                self.screen.set_size(size.0, size.1);
+            }
         }
     }
 
@@ -158,6 +173,28 @@ impl Perform for Detector {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reflow_keeps_reader_replies_aligned_with_the_ui_parser() {
+        let mut reader = TerminalOutput::new(4, 20, false).with_reflow(true, 100);
+        let mut ui = vt100::Parser::new(4, 20, 100);
+        let bytes = "abcdefghij界klmnopqrstuvwxyz".repeat(8);
+        ui.process(&reader.process(bytes.as_bytes()).bytes);
+        for (rows, cols) in [(3, 8), (5, 30), (4, 12)] {
+            reader.resize(rows, cols);
+            ui.resize_reflow(rows, cols);
+            assert_eq!(
+                reader.screen().cursor_position(),
+                ui.screen().cursor_position()
+            );
+            let (row, col) = ui.screen().cursor_position();
+            let reply = reader.process(b"\x1b[6n").replies;
+            assert_eq!(
+                reply,
+                format!("\x1b[{};{}R", row + 1, col.min(cols - 1) + 1).as_bytes()
+            );
+        }
+    }
 
     #[test]
     fn replies_describe_the_cursor_at_each_query_not_the_end_of_the_read() {

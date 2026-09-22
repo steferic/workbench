@@ -73,6 +73,7 @@ pub fn render_at(frame: &mut Frame, area: Rect, state: &mut AppState, pane_index
         pane.on_replay = view.on_replay;
         pane.text_selection = view.selection;
         pane.content_length = view.content_len;
+        pane.scroll_offset = view.scroll_from_bottom.min(u16::MAX as usize) as u16;
     }
 
     // view.lines is a window starting at view.window_start, so the Paragraph

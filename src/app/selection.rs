@@ -6,8 +6,6 @@ use uuid::Uuid;
 enum SelectionSurface {
     /// Coordinates came from the live vt100 screen currently being rendered.
     Live,
-    /// Coordinates came from the replay parser used for deep scrollback.
-    Replay,
     /// Coordinates came from reconstructed transcript scrollback.
     Transcript,
 }
@@ -122,9 +120,7 @@ pub fn extract_selected_text(
 
 fn extract_for_surface(
     parser: &vt100::Parser,
-    raw_buf: Option<&crate::app::RawOutputBuffer>,
     transcript: Option<&crate::app::TranscriptBuffer>,
-    replay_rows: u16,
     start: (usize, usize),
     end: (usize, usize),
     surface: SelectionSurface,
@@ -132,16 +128,6 @@ fn extract_for_surface(
     if surface == SelectionSurface::Transcript {
         if let Some(transcript) = transcript {
             return transcript.extract_text(start, end);
-        }
-    }
-
-    if surface == SelectionSurface::Replay {
-        if let Some(raw_buf) = raw_buf {
-            if !raw_buf.bytes.is_empty() {
-                let cols = parser.screen().size().1;
-                let replay = crate::tui::replay::create_replay_parser(raw_buf, cols, replay_rows);
-                return extract_selected_text(replay.screen(), start, end);
-            }
         }
     }
 
@@ -167,9 +153,7 @@ pub fn copy_active_selection(state: &mut AppState) -> bool {
         let parser = state.system.output_buffers.get(&session_id)?;
         Some(extract_for_surface(
             parser,
-            state.system.raw_output_buffers.get(&session_id),
             state.system.transcript_buffers.get(&session_id),
-            state.system.user_config.replay_parser_rows,
             start,
             end,
             surface,
@@ -184,7 +168,7 @@ pub fn copy_active_selection(state: &mut AppState) -> bool {
                     if state.system.transcript_buffers.contains_key(&session_id) {
                         SelectionSurface::Transcript
                     } else {
-                        SelectionSurface::Replay
+                        SelectionSurface::Live
                     }
                 } else {
                     SelectionSurface::Live
@@ -207,7 +191,7 @@ pub fn copy_active_selection(state: &mut AppState) -> bool {
                         if state.system.transcript_buffers.contains_key(&session_id) {
                             SelectionSurface::Transcript
                         } else {
-                            SelectionSurface::Replay
+                            SelectionSurface::Live
                         }
                     } else {
                         SelectionSurface::Live
@@ -285,7 +269,7 @@ pub fn copy_to_clipboard(text: &str) {
 #[cfg(test)]
 mod tests {
     use super::{extract_for_surface, pane_text_position, transition_workspace, SelectionSurface};
-    use crate::app::{AppState, RawOutputBuffer};
+    use crate::app::{AppState, TranscriptBuffer, TranscriptLine, TranscriptSpan};
     use crate::models::Workspace;
     use std::path::PathBuf;
 
@@ -378,26 +362,27 @@ mod tests {
         let mut live_parser = vt100::Parser::new(4, 40, 0);
         live_parser.process(b"current short words");
 
-        let mut raw = RawOutputBuffer::new(1024);
-        raw.append(b"history alpha\r\nhistory beta\r\ncurrent short words");
-
+        let mut history = TranscriptBuffer::new(20);
+        history.set_log_history(Some(vec![TranscriptLine::from_styled_spans(vec![
+            TranscriptSpan {
+                text: "history alpha".into(),
+                style: Default::default(),
+                link: None,
+            },
+        ])]));
         let live_text = extract_for_surface(
             &live_parser,
-            Some(&raw),
-            None,
-            4,
+            Some(&history),
             (0, 0),
             (0, 6),
             SelectionSurface::Live,
         );
         let replay_text = extract_for_surface(
             &live_parser,
-            Some(&raw),
-            None,
-            4,
+            Some(&history),
             (0, 0),
             (0, 6),
-            SelectionSurface::Replay,
+            SelectionSurface::Transcript,
         );
 
         assert_eq!(live_text, "current");

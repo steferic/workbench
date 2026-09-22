@@ -217,7 +217,10 @@ fn render_quickref_tab(frame: &mut Frame, area: Rect, state: &AppState) {
 
     // -- Jobs --
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled("  Jobs window (F4)", section_style)));
+    lines.push(Line::from(Span::styled(
+        "  Jobs window (F4)",
+        section_style,
+    )));
     lines.push(sep());
     lines.push(Line::from(vec![
         Span::styled("  Tab / 1-4          ", key_style),
@@ -638,20 +641,6 @@ fn render_scrollback_tab(frame: &mut Frame, area: Rect, state: &AppState) {
         "    Current allocation per session:",
         Style::default().fg(t.fg_dim),
     )]));
-    lines.push(Line::from(vec![
-        Span::styled("      Raw buffer:       ", Style::default().fg(t.fg_faint)),
-        Span::styled(
-            format!("{} KB", config.scrollback_buffer_kb),
-            Style::default().fg(t.fg_dim),
-        ),
-    ]));
-    lines.push(Line::from(vec![
-        Span::styled("      Replay rows:      ", Style::default().fg(t.fg_faint)),
-        Span::styled(
-            format!("{}", config.replay_parser_rows),
-            Style::default().fg(t.fg_dim),
-        ),
-    ]));
     lines.push(Line::from(vec![
         Span::styled("      Live scrollback:  ", Style::default().fg(t.fg_faint)),
         Span::styled(

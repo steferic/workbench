@@ -19,10 +19,8 @@ pub fn request_pty_resize(state: &mut AppState) {
 /// width. If the parser has a different column count, it interprets that output
 /// incorrectly — lines wrap at the wrong boundary and fullscreen apps break.
 ///
-/// For append-style sessions, we only resize parser columns; their parser row
-/// count is preserved and deep scrollback uses raw byte replay. Redraw-style
-/// agents need parser rows to match the PTY rows because their cursor moves and
-/// clears are relative to the visible terminal grid.
+/// Every parser uses its actual PTY dimensions. Append-style normal buffers
+/// reflow stored cells on resize; redraw-style agents retain viewport semantics.
 pub fn resize_ptys_to_panes(state: &mut AppState) {
     // Geometry must come from the rects the last draw actually laid out
     // (`ui.output_pane_area`, `ui.pinned_pane_areas`). The ratio math used as
@@ -77,8 +75,7 @@ pub fn resize_ptys_to_panes(state: &mut AppState) {
         }
     }
 
-    // Resize vt100 parsers to match new column widths. For redraw-style agents,
-    // rows also need to match the visible PTY height.
+    // Keep the parser and PTY geometry identical for cursor-addressed output.
     for (session_id, parser) in state.system.output_buffers.iter_mut() {
         let Some((rows, cols)) = size_for(session_id) else {
             continue;
@@ -86,24 +83,16 @@ pub fn resize_ptys_to_panes(state: &mut AppState) {
         let cols = cols.max(1);
 
         let (parser_rows, parser_cols) = parser.screen().size();
-        let target_rows = if redraw_session_ids.contains(session_id) {
-            rows.max(1)
-        } else {
-            parser_rows
-        };
+        let target_rows = rows.max(1);
         if parser_cols != cols || parser_rows != target_rows {
-            parser.set_size(target_rows, cols);
+            if redraw_session_ids.contains(session_id) {
+                parser.set_size(target_rows, cols);
+            } else {
+                parser.resize_reflow(target_rows, cols);
+                state.system.native_history_dirty.insert(*session_id);
+            }
         }
     }
-
-    // Drop replay caches whose column count no longer matches their pane —
-    // rebuilding one replays the whole raw buffer, so a resize that left a
-    // pane's width alone must not cost its sessions their caches. (Staleness
-    // from new output is handled at use: build_terminal_view checks the
-    // cache's generation and cols before trusting it.)
-    state.system.replay_caches.retain(|session_id, cache| {
-        size_for(session_id).is_none_or(|(_, cols)| cache.cols == cols.max(1))
-    });
 }
 
 #[cfg(test)]
@@ -151,8 +140,6 @@ mod tests {
         state.ui.output_pane_area = Some((30, 0, 100, 42));
         state.ui.pinned_pane_areas[0] = Some((130, 0, 47, 21));
 
-        let pinned_rows_before = state.system.output_buffers[&pinned_id].screen().size().0;
-
         resize_ptys_to_panes(&mut state);
 
         // Redraw-style agent: rows and cols both track its pane (minus borders).
@@ -160,11 +147,10 @@ mod tests {
             state.system.output_buffers[&agent_id].screen().size(),
             (40, 98)
         );
-        // Append-style terminal: cols track its own pane — not the output
-        // pane's, not the ratio estimate — and parser rows are preserved.
+        // The terminal uses its own real pane dimensions too.
         assert_eq!(
             state.system.output_buffers[&pinned_id].screen().size(),
-            (pinned_rows_before, 45)
+            (19, 45)
         );
     }
 

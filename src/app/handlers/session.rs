@@ -259,7 +259,7 @@ pub fn handle_session_action(
             // from screen snapshots via frame alignment. (Claude 2.1.185+ renders
             // in the alternate screen / full-repaint mode, so the older
             // scroll-based capture no longer applies.) Append-style sessions use
-            // raw byte replay.
+            // the terminal parser's stored cells.
             let uses_transcript = state
                 .data
                 .sessions
@@ -270,7 +270,6 @@ pub fn handle_session_action(
                 .unwrap_or(false);
 
             let output_chunks = state.system.synchronized_output_chunks(session_id, &data);
-            let has_processed_output = !output_chunks.is_empty();
 
             for chunk in output_chunks {
                 if chunk.is_empty() {
@@ -285,17 +284,12 @@ pub fn handle_session_action(
                 if uses_transcript {
                     state.system.update_transcript_from_screen(session_id);
                 } else {
-                    // Append raw bytes for append-style sessions; replay scrollback uses this for deep history.
-                    if let Some(raw_buf) = state.system.raw_output_buffers.get_mut(&session_id) {
-                        raw_buf.append(&chunk);
-                    }
+                    // History is captured from parsed cells on demand, never
+                    // reinterpreted from an arbitrary tail of terminal bytes.
+                    state.system.native_history_dirty.insert(session_id);
                 }
             }
 
-            // Invalidate replay cache only if one exists (user is scrolled back)
-            if has_processed_output && state.system.replay_caches.contains_key(&session_id) {
-                state.system.replay_caches.remove(&session_id);
-            }
             // Only count as agent activity if this isn't an echo of recent user input.
             // Keystroke echoes arrive within ~50ms of SendInput; real agent output is autonomous.
             let is_echo = state
@@ -527,6 +521,7 @@ fn spawn_in_workspace(
         resume: Resume::No,
         dangerously_skip_permissions,
         use_alternate_screen: state.system.use_alternate_screen,
+        scrollback_rows: state.system.user_config.live_scrollback_rows,
         extra_env,
     });
     let started = finish_session_spawn(
@@ -647,6 +642,7 @@ fn finish_worktree_session_spawn(
         resume: Resume::No,
         dangerously_skip_permissions,
         use_alternate_screen: state.system.use_alternate_screen,
+        scrollback_rows: state.system.user_config.live_scrollback_rows,
         extra_env: Vec::new(),
     });
     finish_session_spawn(
@@ -700,6 +696,7 @@ fn create_terminal(
         resume: Resume::No,
         dangerously_skip_permissions: false,
         use_alternate_screen: state.system.use_alternate_screen,
+        scrollback_rows: state.system.user_config.live_scrollback_rows,
         extra_env: Vec::new(),
     });
     let started = finish_session_spawn(
@@ -847,6 +844,7 @@ fn restart_session(
         resume,
         dangerously_skip_permissions,
         use_alternate_screen: state.system.use_alternate_screen,
+        scrollback_rows: state.system.user_config.live_scrollback_rows,
         extra_env: Vec::new(),
     }) {
         Ok(handle) => {

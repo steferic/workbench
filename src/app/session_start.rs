@@ -65,6 +65,7 @@ fn spawn_single_session(
         pty_tx: pty_tx.clone(),
         dangerously_skip_permissions: request.dangerously_skip_permissions,
         use_alternate_screen: state.system.use_alternate_screen,
+        scrollback_rows: state.system.user_config.live_scrollback_rows,
         extra_env: Vec::new(),
     }) {
         Ok(handle) => {
@@ -134,8 +135,13 @@ pub fn start_workspace_sessions(
     }
 
     // Start each stopped session
-    for (session_id, agent_type, dangerously_skip_permissions, worktree_path, provider_session_id) in
-        stopped_sessions
+    for (
+        session_id,
+        agent_type,
+        dangerously_skip_permissions,
+        worktree_path,
+        provider_session_id,
+    ) in stopped_sessions
     {
         spawn_single_session(
             state,
@@ -357,5 +363,4 @@ mod tests {
         assert_eq!(queued_ids, vec![selected_session_id]);
         assert!(!queued_ids.contains(&other_session_id));
     }
-
 }

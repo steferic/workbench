@@ -29,7 +29,7 @@ impl Row {
         self.wrapped = false;
     }
 
-    fn cells(&self) -> impl Iterator<Item = &crate::cell::Cell> {
+    pub(crate) fn cells(&self) -> impl Iterator<Item = &crate::cell::Cell> {
         self.cells.iter()
     }
 
@@ -198,8 +198,7 @@ impl Row {
                     {
                         if new_pos.col > 0 {
                             contents.extend(
-                                " ".repeat(usize::from(new_pos.col))
-                                    .as_bytes(),
+                                " ".repeat(usize::from(new_pos.col)).as_bytes(),
                             );
                         } else {
                             contents.extend(b" ");
@@ -307,8 +306,7 @@ impl Row {
         {
             let first_cell_attrs = first_cell.attrs();
             if &prev_attrs != first_cell_attrs {
-                first_cell_attrs
-                    .write_escape_code_diff(contents, &prev_attrs);
+                first_cell_attrs.write_escape_code_diff(contents, &prev_attrs);
                 prev_attrs = *first_cell_attrs;
             }
             let mut cell_contents = prev_first_cell.contents();
@@ -356,8 +354,7 @@ impl Row {
                     {
                         if new_pos.col > 0 {
                             contents.extend(
-                                " ".repeat(usize::from(new_pos.col))
-                                    .as_bytes(),
+                                " ".repeat(usize::from(new_pos.col)).as_bytes(),
                             );
                         } else {
                             contents.extend(b" ");
@@ -438,8 +435,7 @@ impl Row {
         // wrapped, we need to redraw the last character without erasing it to
         // position the cursor after the end of the line correctly so that
         // drawing the next line can just start writing and be wrapped.
-        if (!self.wrapped && prev.wrapped) || (!prev.wrapped && self.wrapped)
-        {
+        if (!self.wrapped && prev.wrapped) || (!prev.wrapped && self.wrapped) {
             let end_pos = if self.cells[usize::from(self.cols() - 1)]
                 .is_wide_continuation()
             {
@@ -453,8 +449,7 @@ impl Row {
                     col: self.cols() - 1,
                 }
             };
-            crate::term::MoveFromTo::new(prev_pos, end_pos)
-                .write_buf(contents);
+            crate::term::MoveFromTo::new(prev_pos, end_pos).write_buf(contents);
             prev_pos = end_pos;
             if !self.wrapped {
                 crate::term::EraseChar::new(1).write_buf(contents);

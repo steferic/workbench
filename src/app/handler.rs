@@ -271,15 +271,44 @@ pub fn process_action(
             lines,
             log_size,
             cols,
+            theme,
+            generation,
+            path,
         } => {
             state.system.scrollback_inflight = false;
+            if !state.system.output_buffers.contains_key(&session_id)
+                || state.ui.theme_mode != theme
+                || state
+                    .system
+                    .pty_handles
+                    .get(&session_id)
+                    .map(|h| h.generation)
+                    != generation
+                || state
+                    .get_session(session_id)
+                    .is_none_or(|s| s.journal_path.as_ref().is_some_and(|p| p != &path))
+            {
+                return Ok(());
+            }
+            let lines = match lines {
+                Ok(lines) => lines,
+                Err(error) => {
+                    crate::logger::warn(format!("could not read session history: {error}"));
+                    return Ok(());
+                }
+            };
             state
                 .system
                 .scrollback_state
-                .insert(session_id, (log_size, cols, state.ui.theme_mode));
-            if let Some(transcript) = state.system.transcript_buffers.get_mut(&session_id) {
-                transcript.set_log_history(Some(lines));
-            }
+                .insert(session_id, (log_size, cols, theme));
+            state
+                .system
+                .transcript_buffers
+                .entry(session_id)
+                .or_insert_with(|| {
+                    crate::app::TranscriptBuffer::new(state.system.user_config.transcript_max_lines)
+                })
+                .set_document(lines, cols);
         }
         Action::DiffStatsUpdated(stats) => {
             state.system.diff_stats = stats;
@@ -1819,12 +1848,8 @@ fn plan_task_refresh(state: &AppState) -> TaskRefreshPlan {
     }
 }
 
-/// Re-read every running agent's task list off the UI thread.
-///
-/// Trackers are cloned out, refreshed, and sent back whole: they carry their
-/// own file offsets, so a pass only parses bytes appended since the last one.
-/// Reload durable scrollback for any agent whose session log has grown (or
-/// whose pane changed width, since the log text is wrapped to fit).
+/// Reload structured history when a session log grows or its theme changes.
+/// Width-only changes reflow the cached document without reading the log again.
 fn refresh_scrollback(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) {
     use crate::scrollback::{log_path, LogFormat};
 
@@ -1835,7 +1860,6 @@ fn refresh_scrollback(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Ac
     }
     state.system.last_scrollback_refresh = std::time::Instant::now();
 
-    let cols = state.output_pane_cols();
     let theme_mode = state.ui.theme_mode;
     let live: std::collections::HashSet<uuid::Uuid> = state
         .data
@@ -1867,6 +1891,13 @@ fn refresh_scrollback(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Ac
         .flatten()
         .filter_map(|session| {
             let format = LogFormat::for_agent(&session.agent_type)?;
+            let cols = state
+                .system
+                .output_buffers
+                .get(&session.id)?
+                .screen()
+                .size()
+                .1;
             // The task tracker already resolves which log belongs to which
             // session (it handles claiming and spawn order); fall back to a
             // lookup by conversation id only if it has not got there yet.
@@ -1876,11 +1907,14 @@ fn refresh_scrollback(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Ac
             };
             let size = std::fs::metadata(&path).ok()?.len();
             let current = state.system.scrollback_state.get(&session.id);
-            (current != Some(&(size, cols, theme_mode))).then_some((session.id, format, path, size))
+            (!current.is_some_and(|(old_size, _, old_theme)| {
+                *old_size == size && *old_theme == theme_mode
+            }))
+            .then_some((session.id, format, path, size, cols))
         })
         .collect();
 
-    let Some((session_id, format, path, size)) = open
+    let Some((session_id, format, path, size, cols)) = open
         .and_then(|open| stale.iter().find(|(id, ..)| *id == open))
         .or_else(|| stale.first())
         .cloned()
@@ -1891,6 +1925,11 @@ fn refresh_scrollback(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Ac
     // `theme::current()` is thread-local, so it has to be read here on the
     // event loop — a worker thread would silently get the dark default.
     let theme = crate::theme::current();
+    let generation = state
+        .system
+        .pty_handles
+        .get(&session_id)
+        .map(|h| h.generation);
     state.system.scrollback_inflight = true;
     let tx = action_tx.clone();
     tokio::task::spawn_blocking(move || {
@@ -1902,6 +1941,9 @@ fn refresh_scrollback(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Ac
                 lines,
                 log_size: size,
                 cols,
+                theme: theme_mode,
+                generation,
+                path,
             },
         );
     });

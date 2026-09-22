@@ -1,4 +1,6 @@
-use crate::app::{Action, AppState, FocusPanel, InputMode, Toast, ToastLevel, WorktreeMergeOutcome};
+use crate::app::{
+    Action, AppState, FocusPanel, InputMode, Toast, ToastLevel, WorktreeMergeOutcome,
+};
 use crate::git;
 use crate::models::{AgentType, Session, SessionStatus};
 use crate::pty::{PtyManager, Resume, SessionSpawnConfig};
@@ -173,7 +175,11 @@ pub(super) fn handle_merge_finished(
             };
             show_toast(state, msg, ToastLevel::Success);
             if !worktree_removed {
-                show_toast(state, "Merged, but failed to remove worktree", ToastLevel::Error);
+                show_toast(
+                    state,
+                    "Merged, but failed to remove worktree",
+                    ToastLevel::Error,
+                );
             }
         }
         WorktreeMergeOutcome::WorkspaceDirty => {
@@ -184,7 +190,11 @@ pub(super) fn handle_merge_finished(
             );
         }
         WorktreeMergeOutcome::CommitFailed => {
-            show_toast(state, "Failed to commit worktree changes", ToastLevel::Error);
+            show_toast(
+                state,
+                "Failed to commit worktree changes",
+                ToastLevel::Error,
+            );
         }
         WorktreeMergeOutcome::MergeFailed => {
             show_toast(
@@ -256,6 +266,7 @@ pub(super) fn handle_switch_to_worktree(
         resume: Resume::No,
         dangerously_skip_permissions: false,
         use_alternate_screen: state.system.use_alternate_screen,
+        scrollback_rows: state.system.user_config.live_scrollback_rows,
         extra_env: Vec::new(),
     }) {
         Ok(handle) => {

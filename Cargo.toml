@@ -115,6 +115,8 @@ chunked_transfer = "1.5.0"
 p256 = { version = "0.13", features = ["ecdsa"] }
 base64 = "0.22"
 qrcode = { version = "0.14.1", default-features = false }
+pulldown-cmark = { version = "0.13", default-features = false }
+unicode-segmentation = "1"
 
 [patch.crates-io]
 # Preserve OSC 8 destinations in terminal cells for clickable agent links.

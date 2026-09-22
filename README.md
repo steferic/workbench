@@ -74,6 +74,12 @@ Click **Servers** in the Sessions pane, or focus Sessions and press `Tab` to cyc
 
 Stopping checks that the process still matches the selected row, then terminates it and its children. All ports held by that process close; a supervisor may restart it. Phone forwarders are removed when their backend disappears. Workbench's own listeners and forwarders are excluded from the list. Discovery uses `lsof`; stopping is supported on macOS and Linux.
 
+## Scrollback
+
+Scrolling above live output opens a conversation history for Claude and Codex, read from that session's own log. Markdown headings, lists, tables, code and links are rendered consistently; tool results retain their full text. History stays separate from the live screen so the latest answer is not repeated. The passage you are reading stays anchored as new output arrives or the pane changes width.
+
+Other agents and terminals use the terminal parser's stored cells, preserving colors, links and soft line wraps without replaying old cursor commands. Normal terminal buffers reflow when resized. A full-screen application that erases its output still needs a provider log to recover the erased conversation; terminal cells alone cannot reconstruct it reliably.
+
 ## Project jobs
 
 A project can declare repeatable agent jobs — the email triage, the comment review, the weekly research pass — in `.workbench/jobs.toml` at its root. `F4` opens the **Jobs** window over the whole screen: the project's jobs on the left, and on the right the selected job in four tabs. **Overview** is what to read before pressing Enter — the description, the ledger's totals (runs by outcome, success rate, mean duration, who has run it), and each instruction file's hash now against the hash the last run recorded, so an edit nobody has run yet is called out. **Runs** is the ledger newest first with the cursor's run spelled out below it. **Lessons** and **Prompt** are the two things the next run will read, the prompt shown exactly as the agent will get it, footer included. `Enter` runs the job: the window closes, a fresh agent starts in that project aliased after the job, and the output pane shows it begin.
