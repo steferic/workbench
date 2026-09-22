@@ -358,7 +358,7 @@ impl AppState {
     /// renderer, and the Alt+Up/Down cycler — so none of them can offer a
     /// session the pane is not showing.
     pub fn session_visual_order(&self) -> Vec<usize> {
-        if self.sessions_tab() == SessionsTab::Servers {
+        if !self.sessions_tab().lists_sessions() {
             return Vec::new();
         }
         let sessions = self.sessions_for_selected_workspace();

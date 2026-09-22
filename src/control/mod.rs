@@ -557,6 +557,36 @@ fn dispatch(
             },
         ),
 
+        // A project's repeatable jobs, as the Jobs tab lists them.
+        "jobs.list" => with_snapshot(shared, |snapshot| {
+            Ok(json!(snapshot
+                .projects
+                .iter()
+                .flat_map(|project| {
+                    project.jobs.iter().map(move |job| {
+                        json!({
+                            "project": project.name,
+                            "project_id": project.id,
+                            "id": job.id,
+                            "title": job.title,
+                            "every": job.every,
+                            "due": job.due,
+                            "running": job.running,
+                            "last_status": job.last_status,
+                            "last_at": job.last_at,
+                        })
+                    })
+                })
+                .collect::<Vec<_>>()))
+        }),
+        "jobs.run" => queue(
+            commands,
+            RemoteCommand::RunJob {
+                project: text_param(params, "project")?,
+                job: text_param(params, "job")?,
+            },
+        ),
+
         // The hook fast path (see `src/bin/wbhook.rs`). Interpreting the
         // event stays here rather than in the little forwarder, so the rule
         // for what an event means lives in one place.
@@ -697,6 +727,8 @@ fn schema() -> Value {
             {"name": "agent.answer", "params": ["agent", "key", "prompt"], "kind": "write"},
             {"name": "agent.focus", "params": ["agent"], "kind": "write"},
             {"name": "agent.new", "params": ["project", "provider"], "kind": "write"},
+            {"name": "jobs.list", "params": [], "kind": "read"},
+            {"name": "jobs.run", "params": ["project", "job"], "kind": "write"},
             {"name": "events.subscribe", "params": [], "kind": "stream"},
             {"name": "hook", "params": ["workspace", "session", "event", "payload"], "kind": "write"},
             {"name": "manager.propose_check",
@@ -732,6 +764,7 @@ mod tests {
                 objectives: Vec::new(),
                 proposals: Vec::new(),
                 servers: Vec::new(),
+                jobs: Vec::new(),
             }],
             agents,
             desk: Vec::new(),

@@ -26,6 +26,7 @@ pub(super) fn check_global_keys(
                     "TestToast" => Some(Action::TestToast),
                     "ForceRedraw" => Some(Action::ForceRedraw),
                     "ToggleDesk" => Some(Action::ToggleDesk),
+                    "OpenJobs" => Some(Action::OpenJobs),
                     _ => None,
                 };
             }

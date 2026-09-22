@@ -62,7 +62,7 @@ fn servers_and_click_targets_fit_small_windows_and_modals_own_the_mouse() {
         terminal
             .draw(|f| crate::tui::ui::draw(f, &mut state))
             .unwrap();
-        for (rect, _) in &state.ui.servers.hits {
+        for (rect, _) in &state.ui.click_hits {
             assert!(rect.right() <= width && rect.bottom() <= height, "{rect:?}");
         }
         if width >= 60 {
@@ -84,8 +84,7 @@ fn servers_and_click_targets_fit_small_windows_and_modals_own_the_mouse() {
         assert!(state.ui.link_hits.is_empty());
         assert!(state
             .ui
-            .servers
-            .hits
+            .click_hits
             .iter()
             .all(|(_, a)| matches!(a, Action::ServerConfirmStop | Action::ServerClose)));
     }
@@ -231,8 +230,7 @@ async fn keyboard_and_mouse_controls_stop_only_the_confirmed_server() {
         .unwrap();
     let hit = state
         .ui
-        .servers
-        .hits
+        .click_hits
         .iter()
         .find(|(_, a)| matches!(a, Action::SelectServer(key) if key.pid == second.child.id()))
         .unwrap()

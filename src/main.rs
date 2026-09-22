@@ -8,6 +8,7 @@ mod comms;
 mod config;
 mod control;
 mod git;
+mod jobs;
 mod lifecycle;
 mod links;
 mod logger;
@@ -153,12 +154,72 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// A project's repeatable agent jobs: list, run, history, report, init
+    Jobs {
+        #[command(subcommand)]
+        cmd: Option<JobsCmd>,
+    },
     /// Report an agent lifecycle event (invoked by the agent's own hooks)
     Hook {
         /// The provider's event name, e.g. `Stop` or `Notification`. Omitted
         /// by providers whose hook command cannot carry arguments (Codex),
         /// where the event is read from the payload instead.
         event: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum JobsCmd {
+    /// List the jobs of the project containing the current directory
+    List {
+        /// A project name (asked of the running workbench) or a path
+        #[arg(long)]
+        project: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Ask the running workbench to start a job, as Enter on its row does
+    Run {
+        /// The job id from .workbench/jobs.toml
+        id: String,
+        /// A project name or path; defaults to the one this pane is in
+        #[arg(long)]
+        project: Option<String>,
+    },
+    /// Print a job's run ledger, newest first
+    History {
+        id: String,
+        #[arg(long, default_value_t = 10)]
+        limit: usize,
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        project: Option<String>,
+    },
+    /// Close the current run: called by the job's agent when it finishes
+    Report {
+        /// completed, partial, blocked or failed
+        #[arg(long)]
+        status: String,
+        /// One paragraph on what happened
+        #[arg(long)]
+        summary: String,
+        /// Where this run's artifacts are, relative to the repository
+        #[arg(long)]
+        artifacts: Option<String>,
+        /// A reusable lesson, appended to the job's lessons file (repeatable)
+        #[arg(long)]
+        lesson: Vec<String>,
+        /// The run id; defaults to $WORKBENCH_JOB_RUN
+        #[arg(long)]
+        run: Option<String>,
+        #[arg(long)]
+        project: Option<String>,
+    },
+    /// Create .workbench/jobs.toml and its README, history and lessons dirs
+    Init {
+        /// The repository root; defaults to the current directory
+        path: Option<PathBuf>,
     },
 }
 
@@ -216,6 +277,35 @@ fn main() -> Result<()> {
             timeout,
         }) => cli::cmd_replies(ticket, wait, timeout)?,
         Some(Commands::Hook { event }) => cli::cmd_hook(event.as_deref()),
+        Some(Commands::Jobs { cmd }) => match cmd.unwrap_or(JobsCmd::List {
+            project: None,
+            json: false,
+        }) {
+            JobsCmd::List { project, json } => cli::cmd_jobs_list(project, json)?,
+            JobsCmd::Run { id, project } => cli::cmd_jobs_run(id, project)?,
+            JobsCmd::History {
+                id,
+                limit,
+                json,
+                project,
+            } => cli::cmd_jobs_history(id, limit, json, project)?,
+            JobsCmd::Report {
+                status,
+                summary,
+                artifacts,
+                lesson,
+                run,
+                project,
+            } => cli::cmd_jobs_report(cli::JobReport {
+                status,
+                summary,
+                artifacts,
+                lessons: lesson,
+                run,
+                project,
+            })?,
+            JobsCmd::Init { path } => cli::cmd_jobs_init(path)?,
+        },
         Some(Commands::Alias { name }) => cli::cmd_alias(name)?,
         Some(Commands::Wait {
             target,

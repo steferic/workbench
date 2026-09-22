@@ -42,6 +42,7 @@ pub use action::{
     Action, ParallelMergePlan, ParallelWorktreeSpec, UtilityContentPayload, WorktreeMergeOutcome,
 };
 pub use runtime::run_tui;
+pub(crate) mod jobs;
 pub(crate) mod servers;
 pub use state::{
     AppState, ConfigTab, Divider, FocusPanel, InputMode, PendingDelete, PendingSessionStart,

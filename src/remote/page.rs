@@ -1284,6 +1284,17 @@ pub const HTML: &str = r##"<!doctype html>
     font-weight:500; flex:none;
   }
   .server .cmd { color:var(--dim); font-size:10px; margin-left:auto; flex:none; }
+  .job {
+    display:flex; align-items:center; gap:9px; width:100%;
+    padding:6px 16px 6px 38px; color:var(--fg); font-size:12px;
+  }
+  .job .label { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .job .what { font-size:10px; color:var(--dim); white-space:nowrap; }
+  .job.due .what { color:var(--accent); }
+  .job.running .what { color:var(--ok); }
+  .job button {
+    min-height:32px; font-size:11px; padding:4px 10px; border-radius:8px;
+  }
   .new { display:flex; gap:8px; padding:2px 16px 12px 38px; }
   /* Was dashed, to say "this makes a new one". The dash cannot survive next
      to the ring without doubling the edge, so the dim label carries it. */
@@ -1618,6 +1629,11 @@ function cycleProject() {
 
 function newAgent(projectId, provider) {
   action("/api/new-agent", {agent:projectId, text:provider});
+  if (drawerOpen) toggleDrawer();
+}
+
+function runJob(projectId, jobId) {
+  action("/api/job", {agent:projectId, text:jobId});
   if (drawerOpen) toggleDrawer();
 }
 
@@ -2553,6 +2569,16 @@ function renderTree() {
         <span>${esc(s.url.replace(/^https?:\/\//, ""))}</span>
         <span class="cmd">${esc(s.command)}</span>
       </a>`).join("") : "";
+    // The project's repeatable jobs, runnable from here: a teammate's phone
+    // is as good a trigger as the desk's Enter key.
+    const jobs = open ? (p.jobs || []).map(j => `
+      <div class="job ${j.running ? "running" : j.due ? "due" : ""}">
+        <span class="label">${esc(j.title)}</span>
+        <span class="what">${j.running ? "running"
+          : j.last_status ? esc(j.last_status) + (j.last_by ? " · " + esc(j.last_by) : "")
+          : "never run"}${j.due ? " · due" : ""}</span>
+        <button onclick="runJob('${p.id}','${esc(j.id)}')">${j.running ? "Run again" : "Run"}</button>
+      </div>`).join("") : "";
     const add = open ? `
       <div class="new">
         <button onclick="newAgent('${p.id}','claude')">+ Claude</button>
@@ -2564,7 +2590,7 @@ function renderTree() {
         <span class="name">${p.global ? "◎ " : ""}${esc(p.name)}</span>
         ${blocked ? '<span class="pill">' + blocked + "</span>" : ""}
         <span class="n">${p.agents.length}</span>
-      </button>${rows}${servers}${add}`;
+      </button>${rows}${servers}${jobs}${add}`;
   }).join("") || '<div class="empty">no projects</div>';
   setMarkup("tree", html);
 }

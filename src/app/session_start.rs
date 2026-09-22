@@ -65,6 +65,7 @@ fn spawn_single_session(
         pty_tx: pty_tx.clone(),
         dangerously_skip_permissions: request.dangerously_skip_permissions,
         use_alternate_screen: state.system.use_alternate_screen,
+        extra_env: Vec::new(),
     }) {
         Ok(handle) => {
             state.system.pty_handles.insert(request.session_id, handle);

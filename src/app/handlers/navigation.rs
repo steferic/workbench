@@ -68,6 +68,7 @@ fn handle_mouse_scroll(
         return;
     }
 
+
     for idx in 0..state.ui.pinned_pane_areas.len() {
         if let Some(area) = state.ui.pinned_pane_areas[idx] {
             if is_in_area(x, y, area) {

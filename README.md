@@ -15,6 +15,7 @@ A TUI for managing AI agent workspaces and sessions. Run Claude, Codex, Gemini, 
 - Parallel tasks: race several agents on the same prompt in separate worktrees
 - Pinned terminal panes alongside the agent output
 - Servers tab in Sessions: inspect project servers across all workspaces, open their URLs, and stop unused processes
+- Jobs window (`F4`): a project's repeatable agent jobs, declared in a manifest committed to its repo, with their stats and run history; `Enter` runs one in a fresh agent, every run lands in a git-versioned ledger your teammates can read, and `i` starts an agent that tightens the job from what its runs taught
 - Local repository map: open any workspace as a searchable, live file tree on a clean light infinite canvas, with read-only highlighted code previews and agent-generated explanations, highlights, notes, connections, groups, and diagrams
 - Scrollback reconstruction for full-screen agents (Claude, Codex)
 - Dark/light themes, mouse support, clipboard integration
@@ -72,6 +73,36 @@ Click **Servers** in the Sessions pane, or focus Sessions and press `Tab` to cyc
 - `r`: refresh now
 
 Stopping checks that the process still matches the selected row, then terminates it and its children. All ports held by that process close; a supervisor may restart it. Phone forwarders are removed when their backend disappears. Workbench's own listeners and forwarders are excluded from the list. Discovery uses `lsof`; stopping is supported on macOS and Linux.
+
+## Project jobs
+
+A project can declare repeatable agent jobs — the email triage, the comment review, the weekly research pass — in `.workbench/jobs.toml` at its root. `F4` opens the **Jobs** window over the whole screen: the project's jobs on the left, and on the right the selected job in four tabs. **Overview** is what to read before pressing Enter — the description, the ledger's totals (runs by outcome, success rate, mean duration, who has run it), and each instruction file's hash now against the hash the last run recorded, so an edit nobody has run yet is called out. **Runs** is the ledger newest first with the cursor's run spelled out below it. **Lessons** and **Prompt** are the two things the next run will read, the prompt shown exactly as the agent will get it, footer included. `Enter` runs the job: the window closes, a fresh agent starts in that project aliased after the job, and the output pane shows it begin.
+
+- `Enter`: run the selected job, or jump to its session if a run is already open here; `R` starts another regardless
+- `Tab` / `1`-`4`: move between the list and the detail; pick a detail tab. `j`/`k` walk whichever side has the cursor
+- `i`: start an agent that reads the job's runs and lessons and tightens its instructions, leaving the diff for review
+- `n`: create the manifest if the project has none, then start an agent that adds a job with you
+- `a`: all projects or the selected one; `r`: re-read the files now (they are also re-read every five seconds, and when the window opens)
+- `Esc`, `q` or `F4`: close
+
+The manifest is an index, not a copy: the job's real configuration stays in the project's own files and the prompt names them. Each entry has an `id`, a `title`, a `prompt` (or `prompt_file`), optional `every` (`30m`, `12h`, `1d`, `1w` — marks the row due, never starts it), `agent`, and `instructions`, the files whose hashes are recorded on every run.
+
+Every run is one JSON line in `.workbench/jobs/history/<id>.jsonl`: who, when, where, the agent, the instruction versions, then the agent's own report — status, a summary, an artifacts path, lessons. It is append-only and merges by union, so it is committed and two machines never conflict. Metadata only; captures and customer data stay in the project's own directories. The agent closes a run with
+
+```sh
+workbench jobs report --status completed --summary "..." [--artifacts <path>] [--lesson "..."]
+```
+
+and a run whose agent ends its turn without reporting is marked `unreported`; one whose session dies first, `aborted`. `--lesson` appends to `.workbench/jobs/lessons/<id>.md`, which every later run reads first.
+
+```sh
+workbench jobs init             # scaffold .workbench/jobs.toml, README, history and lessons dirs
+workbench jobs                  # list the jobs of the repo you are in
+workbench jobs run <id>         # what Enter does, from a shell or another agent
+workbench jobs history <id>     # the ledger, newest first
+```
+
+`init`, `list`, `history` and `report` read and write the repo directly and need no running workbench. The phone view lists each project's jobs with a Run button.
 
 ## Agents
 

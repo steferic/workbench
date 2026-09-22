@@ -27,11 +27,7 @@ pub fn render(frame: &mut Frame, area: Rect, actions: Rect, state: &mut AppState
         Paragraph::new(title).style(Style::default().fg(t.accent)),
         scope_area,
     );
-    state
-        .ui
-        .servers
-        .hits
-        .push((scope_area, Action::ServerScope));
+    state.ui.click_hits.push((scope_area, Action::ServerScope));
     let body = Rect::new(
         area.x,
         area.y + header_rows,
@@ -103,11 +99,7 @@ pub fn render(frame: &mut Frame, area: Rect, actions: Rect, state: &mut AppState
                 )),
             ];
             frame.render_widget(Paragraph::new(text).style(selected_style), rect);
-            state
-                .ui
-                .servers
-                .hits
-                .push((rect, Action::SelectServer(row.server.key())));
+            state.ui.click_hits.push((rect, Action::SelectServer(row.server.key())));
         }
     }
     let message = state
@@ -158,7 +150,7 @@ fn buttons(frame: &mut Frame, area: Rect, state: &mut AppState, buttons: &[(&str
             Paragraph::new(*label).style(Style::default().fg(t.accent)),
             rect,
         );
-        state.ui.servers.hits.push((rect, action.clone()));
+        state.ui.click_hits.push((rect, action.clone()));
     }
 }
 

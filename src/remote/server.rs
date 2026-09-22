@@ -74,6 +74,12 @@ pub enum RemoteCommand {
         project: String,
         provider: String,
     },
+    /// Run one of a project's repeatable jobs (see `app::jobs`). `project`
+    /// is the project id and `job` the job id from its manifest.
+    RunJob {
+        project: String,
+        job: String,
+    },
     /// A device asking to be told when an agent needs you.
     Subscribe {
         endpoint: String,
@@ -410,6 +416,9 @@ fn handle(
         }),
         ("POST", "/api/new-agent") => command_from(request, commands, |project, provider| {
             Some(RemoteCommand::NewAgent { project, provider })
+        }),
+        ("POST", "/api/job") => command_from(request, commands, |project, job| {
+            Some(RemoteCommand::RunJob { project, job })
         }),
         _ => status(404, "not found"),
     }

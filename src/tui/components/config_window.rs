@@ -215,6 +215,35 @@ fn render_quickref_tab(frame: &mut Frame, area: Rect, state: &AppState) {
         Span::raw("Pin/unpin to side panel"),
     ]));
 
+    // -- Jobs --
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled("  Jobs window (F4)", section_style)));
+    lines.push(sep());
+    lines.push(Line::from(vec![
+        Span::styled("  Tab / 1-4          ", key_style),
+        Span::raw("List ↔ detail / Overview, Runs, Lessons, Prompt"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  Enter              ", key_style),
+        Span::raw("Run the job (or go to its open run)"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  R                  ", key_style),
+        Span::raw("Run it again alongside"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  i                  ", key_style),
+        Span::raw("Improve the job from its runs"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  n                  ", key_style),
+        Span::raw("New job (scaffolds .workbench/jobs.toml)"),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  a / r              ", key_style),
+        Span::raw("All projects / re-read files"),
+    ]));
+
     // -- Worktrees --
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled("  Worktrees", section_style)));
@@ -475,6 +504,7 @@ fn format_action_name(action: &str) -> &str {
         "EnterConfigWindow" => "Help & Settings",
         "ForceRedraw" => "Force Redraw",
         "ToggleDesk" => "Open the Desk",
+        "OpenJobs" => "Open the Jobs window",
         _ => action,
     }
 }

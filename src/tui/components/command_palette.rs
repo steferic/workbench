@@ -51,6 +51,16 @@ fn palette_entries() -> Vec<PaletteEntry> {
             keybinding: "P",
         },
         PaletteEntry {
+            name: "Open Jobs Window",
+            action: Action::OpenJobs,
+            keybinding: "F4",
+        },
+        PaletteEntry {
+            name: "Jobs: New Job",
+            action: Action::JobNew,
+            keybinding: "",
+        },
+        PaletteEntry {
             name: "New Workspace",
             action: Action::EnterWorkspaceActionMode,
             keybinding: "n",

@@ -277,6 +277,19 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
                     Style::default().fg(t.fg_dim),
                 )],
             ),
+            InputMode::JobsWindow => (
+                vec![Span::styled(
+                    " JOBS ",
+                    Style::default()
+                        .fg(t.on_accent)
+                        .bg(t.active)
+                        .add_modifier(Modifier::BOLD),
+                )],
+                vec![Span::styled(
+                    "Enter: run  R: again  i: improve  n: new  Tab: detail  1-4: tabs  a: scope  Esc: close",
+                    Style::default().fg(t.fg_dim),
+                )],
+            ),
             InputMode::ConfigWindow => (
                 vec![Span::styled(
                     " CONFIG ",

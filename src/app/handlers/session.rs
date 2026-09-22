@@ -99,6 +99,7 @@ pub fn handle_session_action(
             }
         }
         Action::KillSession(session_id) => {
+            crate::app::jobs::close_run(state, session_id, crate::jobs::RunStatus::Aborted);
             crate::app::cleanup::stop_session(state, session_id);
 
             if let Some(session) = state.get_session_mut(session_id) {
@@ -241,6 +242,8 @@ pub fn handle_session_action(
                 return Ok(());
             }
             state.system.pty_handles.remove(&session_id);
+            // A job whose agent exits before reporting did not finish it.
+            crate::app::jobs::close_run(state, session_id, crate::jobs::RunStatus::Aborted);
             if let Some(session) = state.get_session_mut(session_id) {
                 if exit_code == 0 {
                     session.mark_stopped();
@@ -477,6 +480,29 @@ pub(crate) fn create_session_in(
     }
 
     // Default: run in workspace directly (no worktree isolation)
+    spawn_in_workspace(
+        state,
+        workspace_id,
+        agent_type,
+        dangerously_skip_permissions,
+        Vec::new(),
+        pty_manager,
+        pty_tx,
+    )
+}
+
+/// Start an agent in the workspace directory itself, with extra environment
+/// for the child. The common tail of an ordinary session and a job's.
+fn spawn_in_workspace(
+    state: &mut AppState,
+    workspace_id: Uuid,
+    agent_type: AgentType,
+    dangerously_skip_permissions: bool,
+    extra_env: Vec<(String, String)>,
+    pty_manager: &PtyManager,
+    pty_tx: &mpsc::Sender<Action>,
+) -> Option<Uuid> {
+    let workspace_path = state.get_workspace(workspace_id)?.path.clone();
     let session = Session::new(
         workspace_id,
         agent_type.clone(),
@@ -501,6 +527,7 @@ pub(crate) fn create_session_in(
         resume: Resume::No,
         dangerously_skip_permissions,
         use_alternate_screen: state.system.use_alternate_screen,
+        extra_env,
     });
     let started = finish_session_spawn(
         state,
@@ -510,6 +537,41 @@ pub(crate) fn create_session_in(
         "failed to save created session",
     );
     started.then_some(session_id)
+}
+
+/// Start the agent for a job run (see `app::jobs`).
+///
+/// Never in a worktree: a job's work is the project's own files and its
+/// ledger, on the branch that is checked out — a run recorded on a throwaway
+/// branch would be one nobody else could see. The run's identity travels in
+/// the environment so `workbench jobs report` inside the pane needs no
+/// arguments.
+pub(crate) fn create_job_session(
+    state: &mut AppState,
+    workspace_id: Uuid,
+    agent_type: AgentType,
+    dangerously_skip_permissions: bool,
+    job_id: &str,
+    run_id: &str,
+    pty_manager: &PtyManager,
+    pty_tx: &mpsc::Sender<Action>,
+) -> Option<Uuid> {
+    if let Some(ws) = state.get_workspace_mut(workspace_id) {
+        ws.touch();
+    }
+    let env = vec![
+        (crate::jobs::ENV_JOB.to_string(), job_id.to_string()),
+        (crate::jobs::ENV_RUN.to_string(), run_id.to_string()),
+    ];
+    spawn_in_workspace(
+        state,
+        workspace_id,
+        agent_type,
+        dangerously_skip_permissions,
+        env,
+        pty_manager,
+        pty_tx,
+    )
 }
 
 /// Completion of a worktree-backed session creation: the worktree was created
@@ -585,6 +647,7 @@ fn finish_worktree_session_spawn(
         resume: Resume::No,
         dangerously_skip_permissions,
         use_alternate_screen: state.system.use_alternate_screen,
+        extra_env: Vec::new(),
     });
     finish_session_spawn(
         state,
@@ -637,6 +700,7 @@ fn create_terminal(
         resume: Resume::No,
         dangerously_skip_permissions: false,
         use_alternate_screen: state.system.use_alternate_screen,
+        extra_env: Vec::new(),
     });
     let started = finish_session_spawn(
         state,
@@ -783,6 +847,7 @@ fn restart_session(
         resume,
         dangerously_skip_permissions,
         use_alternate_screen: state.system.use_alternate_screen,
+        extra_env: Vec::new(),
     }) {
         Ok(handle) => {
             state.system.pty_handles.insert(session_id, handle);
@@ -832,6 +897,7 @@ fn confirm_delete_session(state: &mut AppState, action_tx: &mpsc::UnboundedSende
     let Some(session) = state.get_session(session_id).cloned() else {
         return;
     };
+    crate::app::jobs::close_run(state, session_id, crate::jobs::RunStatus::Aborted);
     let task_id = state.get_workspace(session.workspace_id).and_then(|ws| {
         ws.parallel_tasks
             .iter()

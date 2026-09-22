@@ -1,7 +1,7 @@
 use crate::app::{AppState, InputMode};
 use crate::tui::components::{
     banner, command_palette, config_window, create_session_dialog, create_workspace_dialog,
-    debug_overlay, decision_detail, desk_pane, merge_confirm_modal, output_pane,
+    debug_overlay, decision_detail, desk_pane, jobs_window, merge_confirm_modal, output_pane,
     parallel_merge_confirm_modal, parallel_task_modal, pinned_terminal_pane, session_list,
     status_bar, utilities_pane, workspace_action_dialog, workspace_list, workspace_name_dialog,
 };
@@ -41,7 +41,7 @@ mod layout_tests {
 
 pub fn draw(frame: &mut Frame, state: &mut AppState) {
     state.ui.link_hits.clear();
-    state.ui.servers.hits.clear();
+    state.ui.click_hits.clear();
     // Activate the chosen theme for this frame and fill the background so light
     // mode doesn't show through to the terminal's (dark) default.
     crate::theme::set_current(state.ui.theme_mode);
@@ -250,6 +250,10 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
         InputMode::ConfigWindow => {
             config_window::render(frame, state);
         }
+        InputMode::JobsWindow => {
+            // Drawn below, after the frame's hits are cleared: its own rows
+            // and tabs are the only things clickable while it is open.
+        }
         InputMode::Normal => {}
     }
 
@@ -269,7 +273,13 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
         || state.ui.servers.dialog.is_some()
     {
         state.ui.link_hits.clear();
-        state.ui.servers.hits.clear();
+        state.ui.click_hits.clear();
+    }
+    if state.ui.input_mode == InputMode::JobsWindow
+        && !state.ui.pending_quit
+        && state.ui.pending_delete.is_none()
+    {
+        jobs_window::render(frame, state);
     }
     if state.ui.servers.dialog.is_some()
         && !state.ui.pending_quit

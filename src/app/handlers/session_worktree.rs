@@ -256,6 +256,7 @@ pub(super) fn handle_switch_to_worktree(
         resume: Resume::No,
         dangerously_skip_permissions: false,
         use_alternate_screen: state.system.use_alternate_screen,
+        extra_env: Vec::new(),
     }) {
         Ok(handle) => {
             state.system.pty_handles.insert(new_session_id, handle);

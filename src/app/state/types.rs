@@ -10,6 +10,8 @@ pub enum FocusPanel {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputMode {
     Normal,
+    /// The Jobs window: a project's repeatable agent jobs (see `app::jobs`).
+    JobsWindow,
     SelectWorkspaceAction, // Choose between Create New or Open Existing
     CreateWorkspace,       // Browse to select existing directory (Open Existing)
     EnterWorkspaceName,    // Enter name for new workspace (Create New)
@@ -136,6 +138,12 @@ impl SessionsTab {
             SessionsTab::Terminals => SessionsTab::Servers,
             SessionsTab::Servers => SessionsTab::Agents,
         }
+    }
+
+    /// Whether this tab lists sessions at all. The other tabs keep their own
+    /// cursor, so the session cursor has nothing to point at.
+    pub fn lists_sessions(&self) -> bool {
+        matches!(self, SessionsTab::Agents | SessionsTab::Terminals)
     }
 }
 

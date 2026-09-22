@@ -34,13 +34,11 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
         .constraints([
             Constraint::Length(1),
             Constraint::Min(1),
-            Constraint::Length(
-                if state.sessions_tab() == crate::app::SessionsTab::Servers {
-                    2
-                } else {
-                    1
-                },
-            ),
+            Constraint::Length(if state.sessions_tab().lists_sessions() {
+                1
+            } else {
+                2
+            }),
         ])
         .split(inner_area);
 
@@ -293,7 +291,7 @@ fn render_tab_bar(frame: &mut Frame, area: Rect, state: &mut AppState, is_focuse
     for (index, span) in spans.iter().enumerate() {
         let width = (span.content.chars().count() as u16).min(area.right().saturating_sub(x));
         if index % 2 == 0 && width > 0 {
-            state.ui.servers.hits.push((
+            state.ui.click_hits.push((
                 Rect::new(x, area.y, width, area.height),
                 crate::app::Action::SetSessionsTab(tabs[index / 2]),
             ));

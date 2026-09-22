@@ -167,6 +167,12 @@ impl Default for LayoutState {
 
 pub struct UIState {
     pub servers: crate::app::servers::ServerUi,
+    pub jobs: crate::app::jobs::JobsUi,
+    /// This frame's click targets: the Sessions pane's tab headers, the
+    /// Servers tab's rows and buttons, and everything in the Jobs window
+    /// while it is open. Rebuilt on every draw and consulted before any
+    /// other mouse handling.
+    pub click_hits: Vec<(ratatui::layout::Rect, crate::app::Action)>,
     pub link_pointer: crate::links::Pointer,
     pub link_hits: Vec<crate::links::Hit>,
     pub pressed_link: Option<(u16, u16, String)>,
@@ -297,6 +303,8 @@ impl UIState {
         Self {
             focus: FocusPanel::WorkspaceList,
             servers: crate::app::servers::ServerUi::default(),
+            jobs: crate::app::jobs::JobsUi::default(),
+            click_hits: Vec::new(),
             link_pointer: crate::links::Pointer::default(),
             link_hits: Vec::new(),
             pressed_link: None,

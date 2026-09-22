@@ -56,6 +56,17 @@ pub struct Session {
     /// mirrored task list the agent maintains for itself.
     #[serde(default)]
     pub todo_queue: super::TodoQueue,
+    /// The repeatable job run this session was started for, if any (see
+    /// `jobs`). Persisted so a restart still knows which ledger line to close.
+    #[serde(default)]
+    pub job: Option<JobLink>,
+}
+
+/// Which job and which run of it a session belongs to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JobLink {
+    pub job_id: String,
+    pub run_id: String,
 }
 
 impl Session {
@@ -89,6 +100,7 @@ impl Session {
             provider_session_id: None,
             journal_path: None,
             todo_queue,
+            job: None,
         }
     }
 
@@ -116,6 +128,7 @@ impl Session {
             provider_session_id: None,
             journal_path: None,
             todo_queue: super::TodoQueue::default(),
+            job: None,
         }
     }
 
@@ -144,6 +157,7 @@ impl Session {
             provider_session_id: None,
             journal_path: None,
             todo_queue: super::TodoQueue::default(),
+            job: None,
         }
     }
 
@@ -166,6 +180,7 @@ impl Session {
             provider_session_id: None,
             journal_path: None,
             todo_queue: super::TodoQueue::default(),
+            job: None,
         }
     }
 

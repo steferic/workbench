@@ -1,7 +1,6 @@
 //! The server list and the phone share one project attribution path.
 use super::{Action, AppState, SessionsTab};
 use crate::ports::{DevServer, ServerKey};
-use ratatui::layout::Rect;
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
@@ -35,7 +34,6 @@ pub struct ServerUi {
     pub stopping: HashSet<ServerKey>,
     pub message: Option<String>,
     pub scan_error: Option<String>,
-    pub hits: Vec<(Rect, Action)>,
 }
 
 impl ServerUi {

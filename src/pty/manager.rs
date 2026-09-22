@@ -340,6 +340,10 @@ pub struct SessionSpawnConfig<'a> {
     pub resume: Resume,
     pub dangerously_skip_permissions: bool,
     pub use_alternate_screen: bool,
+    /// Extra variables for the child, on top of workbench's own identity
+    /// set. A job run puts its id here so the CLI inside the pane can report
+    /// against it without being told which run it is.
+    pub extra_env: Vec<(String, String)>,
 }
 
 /// The provider-specific CLI arguments for a session.
@@ -520,6 +524,7 @@ impl PtyManager {
             resume,
             dangerously_skip_permissions,
             use_alternate_screen,
+            extra_env,
         } = config;
         let rows = rows.max(1);
         let cols = cols.max(1);
@@ -602,6 +607,9 @@ impl PtyManager {
         // cannot be expected to guess a path that moves with the platform.
         if let Ok(socket) = crate::control::socket_path() {
             cmd.env(crate::control::ENV_SOCKET, socket);
+        }
+        for (key, value) in &extra_env {
+            cmd.env(key, value);
         }
 
         // Do NOT export LINES/COLUMNS. Exported, they override the live

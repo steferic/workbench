@@ -321,6 +321,32 @@ pub fn save_config(config: &GlobalConfig) -> Result<()> {
 mod tests {
     use super::*;
 
+    /// Sessions saved before jobs existed carry no `job` link.
+    #[test]
+    fn a_session_saved_without_a_job_link_still_loads() {
+        let session: crate::models::Session = serde_json::from_value(serde_json::json!({
+            "id": Uuid::new_v4(),
+            "workspace_id": Uuid::new_v4(),
+            "agent_type": "Claude",
+            "status": "Running",
+            "started_at": "2026-01-01T00:00:00Z",
+            "stopped_at": null
+        }))
+        .expect("a pre-jobs session must still deserialize");
+        assert!(session.job.is_none());
+        let linked = serde_json::json!({
+            "id": Uuid::new_v4(),
+            "workspace_id": Uuid::new_v4(),
+            "agent_type": "Claude",
+            "status": "Running",
+            "started_at": "2026-01-01T00:00:00Z",
+            "stopped_at": null,
+            "job": {"job_id": "tiktok", "run_id": "r1"}
+        });
+        let session: crate::models::Session = serde_json::from_value(linked).unwrap();
+        assert_eq!(session.job.as_ref().unwrap().run_id, "r1");
+    }
+
     /// Files written before the todos pane became the tasks pane still carry
     /// `todos` on each workspace and `todos_ratio` in the config.
     #[test]

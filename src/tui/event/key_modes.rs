@@ -164,6 +164,28 @@ pub(super) fn handle_input_mode_key(key: &KeyEvent, state: &AppState) -> Option<
             KeyCode::Char(c) => Action::CommandPaletteInput(c),
             _ => Action::Tick,
         },
+        InputMode::JobsWindow => {
+            use crate::app::jobs::DetailTab;
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::F(4) => Action::CloseJobs,
+                KeyCode::Char('j') | KeyCode::Down => Action::JobsMove(false),
+                KeyCode::Char('k') | KeyCode::Up => Action::JobsMove(true),
+                KeyCode::Tab | KeyCode::Char('l') | KeyCode::Char('h') | KeyCode::Left | KeyCode::Right => {
+                    Action::JobsSwitchFocus
+                }
+                KeyCode::Char('1') => Action::JobsTab(DetailTab::Overview),
+                KeyCode::Char('2') => Action::JobsTab(DetailTab::Runs),
+                KeyCode::Char('3') => Action::JobsTab(DetailTab::Lessons),
+                KeyCode::Char('4') => Action::JobsTab(DetailTab::Prompt),
+                KeyCode::Enter => Action::JobRun,
+                KeyCode::Char('R') => Action::JobRunForce,
+                KeyCode::Char('i') => Action::JobImprove,
+                KeyCode::Char('n') => Action::JobNew,
+                KeyCode::Char('a') => Action::JobsScope,
+                KeyCode::Char('r') => Action::JobsRefresh,
+                _ => Action::Tick,
+            }
+        }
         InputMode::ConfigWindow => {
             if state.ui.config.rebinding {
                 Action::ConfigRebindKey(*key)

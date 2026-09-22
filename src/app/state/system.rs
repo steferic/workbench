@@ -835,6 +835,11 @@ pub struct SystemState {
         std::collections::HashMap<uuid::Uuid, (chrono::NaiveDate, u32, std::time::Instant)>,
     pub last_port_scan: Option<Instant>,
     pub port_scan_inflight: bool,
+    /// Each project's repeatable jobs, read from its repo on a slow timer
+    /// (`crate::jobs`). Absent for a project without a manifest.
+    pub project_jobs: HashMap<uuid::Uuid, crate::jobs::ProjectJobs>,
+    pub last_jobs_scan: Option<Instant>,
+    pub jobs_scan_inflight: bool,
     /// What each agent was doing last tick, so the phone is poked on a change
     /// rather than every tick a state persists.
     pub remote_seen: HashMap<String, String>,
@@ -933,6 +938,9 @@ impl SystemState {
             manager_wakes: Default::default(),
             last_port_scan: None,
             port_scan_inflight: false,
+            project_jobs: HashMap::new(),
+            last_jobs_scan: None,
+            jobs_scan_inflight: false,
             remote_seen: Default::default(),
             remote_working_since: Default::default(),
             remote_finished: Default::default(),

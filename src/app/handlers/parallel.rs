@@ -326,6 +326,7 @@ fn handle_parallel_worktrees_ready(
             resume: crate::pty::Resume::No,
             dangerously_skip_permissions,
             use_alternate_screen: state.system.use_alternate_screen,
+            extra_env: Vec::new(),
         }) {
             Ok(handle) => {
                 state.system.pty_handles.insert(session_id, handle);

@@ -29,15 +29,18 @@ pub fn process_action(
     let action = if let Action::MouseClick(x, y) = action {
         let hit = state
             .ui
-            .servers
-            .hits
+            .click_hits
             .iter()
             .find(|(area, _)| area.contains((x, y).into()))
             .map(|(_, action)| action.clone());
         if let Some(action) = hit {
-            state.ui.focus = crate::app::FocusPanel::SessionList;
+            if !super::jobs::is_jobs_action(&action) {
+                state.ui.focus = crate::app::FocusPanel::SessionList;
+            }
             action
-        } else if state.ui.servers.dialog.is_some() {
+        } else if state.ui.servers.dialog.is_some()
+            || state.ui.input_mode == crate::app::InputMode::JobsWindow
+        {
             return Ok(());
         } else {
             Action::MouseClick(x, y)
@@ -61,7 +64,22 @@ pub fn process_action(
         super::servers::handle(state, action, action_tx);
         return Ok(());
     }
-    if state.ui.servers.dialog.is_some()
+    // The wheel walks the Jobs window while it is open.
+    let action = match action {
+        Action::MouseScrollUp(..) if state.ui.input_mode == crate::app::InputMode::JobsWindow => {
+            Action::JobsMove(true)
+        }
+        Action::MouseScrollDown(..) if state.ui.input_mode == crate::app::InputMode::JobsWindow => {
+            Action::JobsMove(false)
+        }
+        other => other,
+    };
+    if super::jobs::is_jobs_action(&action) {
+        super::jobs::handle(state, action, pty_manager, pty_tx);
+        return Ok(());
+    }
+    if (state.ui.servers.dialog.is_some()
+        || state.ui.input_mode == crate::app::InputMode::JobsWindow)
         && matches!(
             action,
             Action::MouseDrag(..)
@@ -190,6 +208,7 @@ pub fn process_action(
             refresh_scrollback(state, action_tx);
 
             scan_ports(state, action_tx);
+            scan_jobs(state, action_tx);
 
             // Refresh diff stats every 5 seconds
             if state.system.last_diff_refresh.elapsed() >= Duration::from_secs(5) {
@@ -543,6 +562,7 @@ pub fn process_action(
 
                 // Global already handled
                 Action::SetSessionsTab(_) | Action::SelectServer(_) | Action::ServerScope | Action::ServerRefresh | Action::ServerDetails | Action::ServerOpen | Action::ServerAskStop | Action::ServerConfirmStop | Action::ServerClose | Action::ServerStopped(..) |
+                Action::OpenJobs | Action::CloseJobs | Action::SelectJob(_) | Action::JobsScope | Action::JobsRefresh | Action::JobsSwitchFocus | Action::JobsMove(_) | Action::JobsTab(_) | Action::JobRun | Action::JobRunForce | Action::JobImprove | Action::JobNew | Action::JobStart(_) | Action::JobsScanned(_) |
                 Action::MouseMove(_, _) |
                 Action::PreviewLatestMedia | Action::CloseMedia | Action::BrowseMedia |
                 Action::Quit | Action::ConfirmQuit | Action::Tick | Action::Resize(_, _) |
@@ -1205,6 +1225,32 @@ fn scan_ports(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) {
     });
 }
 
+/// How often to re-read the projects' job files. A stat per project between
+/// reads, so cheap; and a ledger line the agent just wrote is worth seeing soon.
+const JOBS_SCAN_EVERY: Duration = Duration::from_secs(5);
+
+/// Re-read changed job manifests and ledgers, off the event loop.
+fn scan_jobs(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) {
+    if state.system.jobs_scan_inflight || state.data.workspaces.is_empty() {
+        return;
+    }
+    let due = state
+        .system
+        .last_jobs_scan
+        .map(|at| at.elapsed() >= JOBS_SCAN_EVERY)
+        .unwrap_or(true);
+    if !due {
+        return;
+    }
+    state.system.last_jobs_scan = Some(std::time::Instant::now());
+    state.system.jobs_scan_inflight = true;
+    let inputs = super::jobs::scan_inputs(state);
+    let tx = action_tx.clone();
+    tokio::task::spawn_blocking(move || {
+        dispatch_action(&tx, Action::JobsScanned(super::jobs::scan(inputs)));
+    });
+}
+
 /// Keep phone forwarders aligned with live project backends. Proxy listeners
 /// are excluded by the scanner, so they cannot keep themselves alive forever.
 fn expose_project_servers(state: &mut AppState) {
@@ -1553,6 +1599,53 @@ fn apply_remote(
         return Ok(());
     }
 
+    // Running a job names a project and a job in its manifest, not a session.
+    if let RemoteCommand::RunJob { project, job } = &command {
+        let workspace_id = project
+            .parse::<uuid::Uuid>()
+            .ok()
+            .filter(|id| state.get_workspace(*id).is_some())
+            .or_else(|| {
+                // By name, or by path — the CLI from a shell knows the
+                // directory it is in, not the id workbench gave it.
+                let path = std::path::Path::new(project);
+                let canonical = path.canonicalize().ok();
+                state
+                    .data
+                    .workspaces
+                    .iter()
+                    .find(|w| {
+                        w.name.eq_ignore_ascii_case(project)
+                            || w.path == path
+                            || canonical
+                                .as_ref()
+                                .is_some_and(|c| w.path.canonicalize().ok().as_ref() == Some(c))
+                    })
+                    .map(|w| w.id)
+            })
+            .ok_or_else(|| format!("No such project: {project}"))?;
+        let known = state
+            .system
+            .project_jobs
+            .get(&workspace_id)
+            .is_some_and(|p| p.job(job).is_some());
+        if !known {
+            return Err(format!(
+                "No job `{job}` in that project's {} (or it has not been read yet)",
+                crate::jobs::MANIFEST
+            ));
+        }
+        crate::logger::info(format!("remote asked to run job {job} in {project}"));
+        dispatch_action(
+            action_tx,
+            Action::JobStart(crate::app::jobs::JobKey {
+                workspace: workspace_id,
+                id: job.clone(),
+            }),
+        );
+        return Ok(());
+    }
+
     if let RemoteCommand::ProposeCheck {
         manager,
         objective,
@@ -1582,6 +1675,7 @@ fn apply_remote(
         | RemoteCommand::Focus { agent } => agent.clone(),
         // Handled above.
         RemoteCommand::NewAgent { .. }
+        | RemoteCommand::RunJob { .. }
         | RemoteCommand::Subscribe { .. }
         | RemoteCommand::ShowMedia { .. } => return Ok(()),
         // Applied above; they name a project, a proposal or an objective,
@@ -1600,6 +1694,7 @@ fn apply_remote(
     match command {
         // Applied before the agent lookup above; unreachable here.
         RemoteCommand::Propose { .. }
+        | RemoteCommand::RunJob { .. }
         | RemoteCommand::ProposeCheck { .. }
         | RemoteCommand::Decide { .. }
         | RemoteCommand::DecideCheck { .. }

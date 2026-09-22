@@ -89,6 +89,29 @@ pub enum Action {
     ServerConfirmStop,
     ServerClose,
     ServerStopped(crate::ports::ServerKey, Result<(), String>),
+    // The Jobs window (see `app::jobs`).
+    OpenJobs,
+    CloseJobs,
+    SelectJob(crate::app::jobs::JobKey),
+    JobsScope,
+    JobsRefresh,
+    /// Which side of the window the cursor is on: the job list or the detail.
+    JobsSwitchFocus,
+    /// Move the cursor on whichever side has it; `true` is up.
+    JobsMove(bool),
+    JobsTab(crate::app::jobs::DetailTab),
+    /// Run the selected job, or go to its session if a run is already open.
+    JobRun,
+    /// Run it even if a run is open.
+    JobRunForce,
+    /// Start an agent that tightens the job from what its runs taught.
+    JobImprove,
+    /// Start an agent that adds a job to the manifest with the user.
+    JobNew,
+    /// Run this job, wherever the cursor is (the phone and the CLI).
+    JobStart(crate::app::jobs::JobKey),
+    /// Off-thread re-read of the projects' job files finished.
+    JobsScanned(Vec<(Uuid, crate::app::jobs::Scanned)>),
     RestartSession(Uuid),
     StopSession(Uuid),
     KillSession(Uuid),

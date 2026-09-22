@@ -114,6 +114,7 @@ impl Case {
                 resume: Resume::No,
                 dangerously_skip_permissions: false,
                 use_alternate_screen: false,
+                extra_env: Vec::new(),
             })
             .unwrap();
         wait_for(|| dir.path().join("ready").exists());

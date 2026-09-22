@@ -12,6 +12,6 @@ pub use objective::{
     MAX_REVIEW_ROUNDS,
 };
 pub use parallel_task::{AttemptStatus, ParallelTask, ParallelTaskAttempt, ParallelTaskStatus};
-pub use session::{Session, SessionStatus};
+pub use session::{JobLink, Session, SessionStatus};
 pub use todo_queue::{QueuedTodo, TodoQueue, TodoState};
 pub use workspace::{Workspace, MAX_PINNED_TERMINALS};

@@ -392,6 +392,9 @@ fn retire_finished(
         // cannot skip it: the turn ending is what triggers it.
         if let Some(todo_id) = finished {
             verify_finished_work(state, session_id, todo_id, action_tx);
+            // A job's agent that ends its turn without reporting did not
+            // finish the run; the ledger says so rather than "running" forever.
+            crate::app::jobs::close_run(state, session_id, crate::jobs::RunStatus::Unreported);
         }
     }
 }

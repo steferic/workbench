@@ -156,6 +156,24 @@ pub struct ProjectView {
     pub proposals: Vec<ProposalView>,
     /// Dev servers running in this project, reachable from the phone.
     pub servers: Vec<ServerView>,
+    /// The project's repeatable jobs, from its own manifest (see `app::jobs`).
+    pub jobs: Vec<JobView>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct JobView {
+    pub id: String,
+    pub title: String,
+    /// The cadence as written (`1d`), when the job has one.
+    pub every: Option<String>,
+    pub due: bool,
+    /// A session in this workbench is running it now.
+    pub running: bool,
+    pub last_status: Option<String>,
+    /// When the last run began, RFC 3339.
+    pub last_at: Option<String>,
+    pub last_by: Option<String>,
+    pub last_summary: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -337,6 +355,33 @@ pub fn since(snapshot: &Snapshot, have: usize, epoch: Option<&str>) -> Snapshot 
     trimmed
 }
 
+/// Each project's jobs as the Jobs tab lists them, per project.
+fn project_jobs(state: &AppState) -> std::collections::HashMap<Uuid, Vec<JobView>> {
+    crate::app::jobs::by_project(state)
+        .into_iter()
+        .map(|(id, rows)| {
+            let views = rows
+                .into_iter()
+                .filter_map(|row| {
+                    let job = row.job?;
+                    Some(JobView {
+                        id: job.id,
+                        title: job.title,
+                        every: job.every.map(crate::jobs::manifest::describe_every),
+                        due: row.due,
+                        running: row.open_session.is_some(),
+                        last_status: row.last.as_ref().map(|r| r.status.label().to_string()),
+                        last_at: row.last.as_ref().map(|r| r.started_utc.to_rfc3339()),
+                        last_by: row.last.as_ref().map(|r| r.by.user.clone()),
+                        last_summary: row.last.as_ref().and_then(|r| r.summary.clone()),
+                    })
+                })
+                .collect();
+            (id, views)
+        })
+        .collect()
+}
+
 /// The dev servers the phone can reach, per project.
 ///
 /// A server bound to every interface needs no forwarder and is listed anyway —
@@ -446,6 +491,7 @@ fn publish_with(
     let desk = phone_desk_rows(state);
     let mut agents = Vec::new();
     let servers = dev_servers(state);
+    let jobs = project_jobs(state);
     let projects: Vec<ProjectView> = state
         .data
         .workspaces
@@ -514,6 +560,7 @@ fn publish_with(
                 })
                 .collect(),
             servers: servers.get(&workspace.id).cloned().unwrap_or_default(),
+            jobs: jobs.get(&workspace.id).cloned().unwrap_or_default(),
         })
         .collect();
 

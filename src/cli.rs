@@ -505,3 +505,394 @@ pub fn cmd_wait(
     );
     std::process::exit(EXIT_TIMEOUT);
 }
+
+
+// ---- `workbench jobs` ------------------------------------------------------
+//
+// Everything but `run` is a file reader or writer against the repository, so
+// it works with no TUI running — `report` in particular is called by an agent
+// that may outlive the workbench that started it.
+
+/// Where the project is: `--project` as a path or a name the running
+/// workbench knows, else the pane's own workspace, else the nearest manifest
+/// above the current directory. Says what it tried when nothing fits.
+fn jobs_root(project: Option<&str>) -> Result<PathBuf> {
+    if let Some(project) = project {
+        let path = PathBuf::from(project);
+        if path.is_dir() {
+            return crate::jobs::find_root(&path.canonicalize()?)
+                .ok_or_else(|| anyhow!("no {} in or above {project}", crate::jobs::MANIFEST));
+        }
+        let mut client = crate::control::Client::connect()
+            .map_err(|err| anyhow!("`{project}` is not a directory, and {err}"))?;
+        let projects = client.call("projects.list", serde_json::json!({}))?;
+        let projects = projects.as_array().cloned().unwrap_or_default();
+        let wanted = projects
+            .iter()
+            .find(|p| p.get("name").and_then(|n| n.as_str()).is_some_and(|n| n.eq_ignore_ascii_case(project)))
+            .and_then(|p| p.get("path").and_then(|v| v.as_str()))
+            .ok_or_else(|| anyhow!("workbench has no project named `{project}`"))?;
+        return Ok(PathBuf::from(wanted));
+    }
+    if let Ok(workspace_id) = std::env::var(comms::ENV_WORKSPACE) {
+        if let Ok(roster) = comms::load_roster(&workspace_id) {
+            let path = PathBuf::from(&roster.workspace_path);
+            if path.join(crate::jobs::MANIFEST).is_file() {
+                return Ok(path);
+            }
+        }
+    }
+    let cwd = std::env::current_dir()?;
+    crate::jobs::find_root(&cwd).ok_or_else(|| {
+        anyhow!(
+            "no {} in or above {} — run `workbench jobs init` there, or pass --project",
+            crate::jobs::MANIFEST,
+            cwd.display()
+        )
+    })
+}
+
+fn jobs_project(root: &std::path::Path) -> Result<crate::jobs::ProjectJobs> {
+    let project = crate::jobs::load(root)
+        .ok_or_else(|| anyhow!("no {} in {}", crate::jobs::MANIFEST, root.display()))?;
+    if let Some(Err(error)) = &project.manifest {
+        bail!("{}: {error}", crate::jobs::MANIFEST);
+    }
+    Ok(project)
+}
+
+fn describe_run(run: &crate::jobs::RunRecord) -> String {
+    let mut line = format!(
+        "{}  {:<10} {} on {}",
+        run.started_utc.format("%Y-%m-%d %H:%M"),
+        run.status.label(),
+        run.by.user,
+        run.by.host
+    );
+    if let Some(summary) = &run.summary {
+        line.push_str("\n    ");
+        line.push_str(summary.trim());
+    }
+    if let Some(artifacts) = &run.artifacts {
+        line.push_str(&format!("\n    artifacts: {artifacts}"));
+    }
+    for lesson in &run.lessons {
+        line.push_str(&format!("\n    lesson: {lesson}"));
+    }
+    line
+}
+
+pub fn cmd_jobs_list(project: Option<String>, json: bool) -> Result<()> {
+    let root = jobs_root(project.as_deref())?;
+    let project = jobs_project(&root)?;
+    let now = chrono::Utc::now();
+    if json {
+        let rows: Vec<serde_json::Value> = project
+            .jobs()
+            .iter()
+            .map(|job| {
+                let last = project.last_run(&job.id);
+                serde_json::json!({
+                    "id": job.id,
+                    "title": job.title,
+                    "description": job.description,
+                    "agent": job.agent,
+                    "every": job.every.map(crate::jobs::manifest::describe_every),
+                    "due": project.due(job, now),
+                    "last": last,
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&rows)?);
+        return Ok(());
+    }
+    println!("{}  ({})", root.display(), crate::jobs::MANIFEST);
+    if project.jobs().is_empty() {
+        println!("no jobs");
+    }
+    for job in project.jobs() {
+        let every = job
+            .every
+            .map(|e| format!("every {}", crate::jobs::manifest::describe_every(e)))
+            .unwrap_or_else(|| "on demand".into());
+        let due = if project.due(job, now) { "  DUE" } else { "" };
+        println!("{:<28} {:<36} {every}{due}", job.id, job.title);
+        match project.last_run(&job.id) {
+            None => println!("{:<28} last: never", ""),
+            Some(run) => println!(
+                "{:<28} last: {} {} by {}",
+                "",
+                run.started_utc.format("%Y-%m-%d %H:%M"),
+                run.status.label(),
+                run.by.user
+            ),
+        }
+    }
+    Ok(())
+}
+
+pub fn cmd_jobs_history(id: String, limit: usize, json: bool, project: Option<String>) -> Result<()> {
+    let root = jobs_root(project.as_deref())?;
+    let project = jobs_project(&root)?;
+    if project.job(&id).is_none() {
+        bail!("no job `{id}` in {}", crate::jobs::MANIFEST);
+    }
+    let mut runs = crate::jobs::history::read(&root, &project.history_dir(), &id);
+    runs.reverse();
+    runs.truncate(limit);
+    if json {
+        println!("{}", serde_json::to_string_pretty(&runs)?);
+        return Ok(());
+    }
+    if runs.is_empty() {
+        println!("{id}: never run");
+    }
+    for run in &runs {
+        println!("{}", describe_run(run));
+    }
+    if let Some(lessons) = project.lessons.get(&id) {
+        println!("\n{}", lessons.trim_end());
+    }
+    Ok(())
+}
+
+pub fn cmd_jobs_run(id: String, project: Option<String>) -> Result<()> {
+    use serde_json::json;
+    let mut client = crate::control::Client::connect()?;
+    // The TUI resolves the project by id or name; from a pane, the pane's own.
+    let project = match project {
+        Some(project) => project,
+        None => std::env::var(comms::ENV_WORKSPACE).map_err(|_| {
+            anyhow!("not inside a workbench pane: say which project with --project <name>")
+        })?,
+    };
+    let reply = client.call("jobs.run", json!({"project": project, "job": id}))?;
+    if reply.get("accepted").and_then(|v| v.as_bool()) == Some(true) {
+        println!("asked workbench to run `{id}` in {project}");
+    } else {
+        println!("{reply}");
+    }
+    Ok(())
+}
+
+pub struct JobReport {
+    pub status: String,
+    pub summary: String,
+    pub artifacts: Option<String>,
+    pub lessons: Vec<String>,
+    pub run: Option<String>,
+    pub project: Option<String>,
+}
+
+pub fn cmd_jobs_report(report: JobReport) -> Result<()> {
+    use crate::jobs::{history, RunStatus};
+    let status = RunStatus::parse(&report.status)
+        .filter(|s| !matches!(s, RunStatus::Running))
+        .ok_or_else(|| anyhow!("--status must be completed, partial, blocked or failed"))?;
+    if report.summary.trim().is_empty() {
+        bail!("--summary must say what happened");
+    }
+    let run_id = report
+        .run
+        .or_else(|| std::env::var(crate::jobs::ENV_RUN).ok())
+        .filter(|id| !id.trim().is_empty())
+        .ok_or_else(|| {
+            anyhow!(
+                "which run? pass --run <id>, or run this from the job's own pane where ${} is set",
+                crate::jobs::ENV_RUN
+            )
+        })?;
+    let root = jobs_root(report.project.as_deref())?;
+    let project = jobs_project(&root)?;
+    let history_dir = project.history_dir();
+    // The job is whichever ledger holds the run; the environment is a hint.
+    let job_id = std::env::var(crate::jobs::ENV_JOB)
+        .ok()
+        .filter(|id| history::find(&root, &history_dir, id, &run_id).is_some())
+        .or_else(|| {
+            project
+                .jobs()
+                .iter()
+                .map(|job| job.id.clone())
+                .find(|id| history::find(&root, &history_dir, id, &run_id).is_some())
+        })
+        .ok_or_else(|| anyhow!("no run `{run_id}` in any ledger under {}", history_dir.display()))?;
+    let latest = history::find(&root, &history_dir, &job_id, &run_id).expect("found above");
+    let mut closed = crate::jobs::close_record(&latest, status);
+    closed.summary = Some(report.summary.trim().to_string());
+    if let Some(artifacts) = report.artifacts.map(|a| a.trim().to_string()).filter(|a| !a.is_empty()) {
+        closed.artifacts = Some(artifacts);
+    }
+    let lessons: Vec<String> = report
+        .lessons
+        .iter()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect();
+    closed.lessons.extend(lessons.iter().cloned());
+    let path = history::append(&root, &history_dir, &closed)?;
+    for lesson in &lessons {
+        history::append_lesson(&root, &job_id, lesson)?;
+    }
+    println!(
+        "recorded {} as {} in {}",
+        run_id,
+        status.label(),
+        path.strip_prefix(&root).unwrap_or(&path).display()
+    );
+    if !lessons.is_empty() {
+        println!(
+            "added {} lesson(s) to {}",
+            lessons.len(),
+            crate::jobs::lessons_path(&root, &job_id)
+                .strip_prefix(&root)
+                .map(|p| p.display().to_string())
+                .unwrap_or_default()
+        );
+    }
+    if latest.status != RunStatus::Running {
+        println!(
+            "note: the run was already {}; this report supersedes it",
+            latest.status.label()
+        );
+    }
+    Ok(())
+}
+
+pub fn cmd_jobs_init(path: Option<PathBuf>) -> Result<()> {
+    let root = match path {
+        Some(path) => path,
+        None => std::env::current_dir()?,
+    };
+    let written = crate::jobs::init(&root)?;
+    for path in &written {
+        println!("wrote {}", path.strip_prefix(&root).unwrap_or(path).display());
+    }
+    println!(
+        "next: edit {} (the example job is a placeholder), then open the project in workbench and press F4",
+        crate::jobs::MANIFEST
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+mod jobs_tests {
+    use super::*;
+    use crate::jobs::{self, history, RunStatus};
+
+    fn project() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        jobs::init(dir.path()).unwrap();
+        dir
+    }
+
+    fn running_line(root: &std::path::Path, run_id: &str) {
+        let project = jobs::load(root).unwrap();
+        let job = project.job("example-check").unwrap().clone();
+        let record = jobs::start_record(root, &job, run_id, "claude", None);
+        history::append(root, &project.history_dir(), &record).unwrap();
+    }
+
+    #[test]
+    fn report_without_a_run_id_names_both_ways_to_give_one() {
+        let dir = project();
+        std::env::remove_var(jobs::ENV_RUN);
+        let err = cmd_jobs_report(JobReport {
+            status: "completed".into(),
+            summary: "fine".into(),
+            artifacts: None,
+            lessons: vec![],
+            run: None,
+            project: Some(dir.path().display().to_string()),
+        })
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("--run") && err.contains(jobs::ENV_RUN), "{err}");
+    }
+
+    #[test]
+    fn report_rejects_a_status_the_ledger_does_not_take_from_an_agent() {
+        let dir = project();
+        running_line(dir.path(), "r1");
+        for status in ["running", "great", ""] {
+            let err = cmd_jobs_report(JobReport {
+                status: status.into(),
+                summary: "fine".into(),
+                artifacts: None,
+                lessons: vec![],
+                run: Some("r1".into()),
+                project: Some(dir.path().display().to_string()),
+            })
+            .unwrap_err()
+            .to_string();
+            assert!(err.contains("--status"), "{status:?}: {err}");
+        }
+    }
+
+    #[test]
+    fn report_closes_the_run_and_files_the_lessons_and_history_reads_it_back() {
+        let dir = project();
+        let root = dir.path();
+        running_line(root, "r1");
+        cmd_jobs_report(JobReport {
+            status: "partial".into(),
+            summary: "  Two of three videos; the third timed out.  ".into(),
+            artifacts: Some("ops/runs/r1".into()),
+            lessons: vec!["Open comments twice".into(), " ".into()],
+            run: Some("r1".into()),
+            project: Some(root.display().to_string()),
+        })
+        .unwrap();
+        let project = jobs::load(root).unwrap();
+        let run = project.last_run("example-check").unwrap();
+        assert_eq!(run.status, RunStatus::Partial);
+        assert_eq!(run.summary.as_deref(), Some("Two of three videos; the third timed out."));
+        assert_eq!(run.artifacts.as_deref(), Some("ops/runs/r1"));
+        assert_eq!(run.lessons, vec!["Open comments twice".to_string()]);
+        assert!(run.ended_utc.is_some());
+        assert!(project.lessons["example-check"].contains("- 20"));
+        assert!(project.lessons["example-check"].trim_end().ends_with("Open comments twice"));
+        cmd_jobs_history("example-check".into(), 5, false, Some(root.display().to_string())).unwrap();
+        cmd_jobs_list(Some(root.display().to_string()), true).unwrap();
+        let err = cmd_jobs_history("nope".into(), 5, false, Some(root.display().to_string()))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("`nope`"), "{err}");
+    }
+
+    #[test]
+    fn the_run_id_can_come_from_the_environment_and_names_the_job_itself() {
+        let dir = project();
+        let root = dir.path();
+        running_line(root, "r-env");
+        std::env::set_var(jobs::ENV_RUN, "r-env");
+        std::env::set_var(jobs::ENV_JOB, "not-this-job");
+        let result = cmd_jobs_report(JobReport {
+            status: "done".into(),
+            summary: "ok".into(),
+            artifacts: None,
+            lessons: vec![],
+            run: None,
+            project: Some(root.display().to_string()),
+        });
+        std::env::remove_var(jobs::ENV_RUN);
+        std::env::remove_var(jobs::ENV_JOB);
+        result.unwrap();
+        let project = jobs::load(root).unwrap();
+        assert_eq!(project.last_run("example-check").unwrap().status, RunStatus::Completed);
+    }
+
+    #[test]
+    fn the_project_is_found_from_a_subdirectory_and_a_path_without_a_manifest_says_so() {
+        let dir = project();
+        let sub = dir.path().join("ops/deep");
+        std::fs::create_dir_all(&sub).unwrap();
+        assert_eq!(
+            jobs_root(Some(sub.to_str().unwrap())).unwrap(),
+            dir.path().canonicalize().unwrap()
+        );
+        let bare = tempfile::tempdir().unwrap();
+        let err = jobs_root(Some(bare.path().to_str().unwrap())).unwrap_err().to_string();
+        assert!(err.contains(jobs::MANIFEST), "{err}");
+    }
+}
