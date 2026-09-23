@@ -12,7 +12,7 @@ use tokio::sync::mpsc;
 use tokio::task;
 use uuid::Uuid;
 
-use super::{report_background_error, report_runtime_error, save_state};
+use super::{report_background_error, report_runtime_error, report_spawn_error, save_state};
 
 pub fn handle_parallel_action(
     state: &mut AppState,
@@ -337,17 +337,10 @@ fn handle_parallel_worktrees_ready(
                     .last_activity
                     .insert(session_id, std::time::Instant::now());
             }
-            Err(_) => {
+            Err(err) => {
                 let agent_name = spec.agent_type.display_name();
                 let msg = format!("Failed to spawn {} for parallel task", agent_name);
-                let duration = std::time::Duration::from_secs(5);
-                state
-                    .ui
-                    .toasts
-                    .push_back(Toast::new(msg, ToastLevel::Error, duration));
-                while state.ui.toasts.len() > 5 {
-                    state.ui.toasts.pop_front();
-                }
+                report_spawn_error(state, &msg, err);
                 state.system.remove_session_buffers(&session_id);
                 let workspace_path = workspace_path.clone();
                 let worktree_path = spec.worktree_path.clone();

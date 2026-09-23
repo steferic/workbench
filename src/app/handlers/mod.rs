@@ -41,6 +41,15 @@ pub(crate) fn report_background_error(context: &str, err: impl Display) {
     crate::logger::warn(format!("{context}: {err}"));
 }
 
+/// Keep the OS cause visible, with the complete context chain in the log.
+pub(crate) fn report_spawn_error(state: &mut AppState, message: &str, err: anyhow::Error) {
+    crate::logger::warn(format!("{message}: {err:#}"));
+    state.ui.session_start_error = Some((
+        format!("{message}: {}", err.root_cause()),
+        std::time::Instant::now(),
+    ));
+}
+
 /// Mark state as needing a save. The actual write is debounced and performed
 /// off the event loop by [`flush_dirty_state`]; every flush includes notepad
 /// content, so the two save entry points below are equivalent.

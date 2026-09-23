@@ -108,6 +108,16 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         return;
     }
 
+    if let Some((message, at)) = &state.ui.session_start_error {
+        if at.elapsed() < std::time::Duration::from_secs(15) {
+            frame.render_widget(
+                Paragraph::new(format!(" {message}")).style(Style::default().fg(t.error).bg(t.bg)),
+                area,
+            );
+            return;
+        }
+    }
+
     let (left_text, right_text) =
         match state.ui.input_mode {
             // The modal itself says what the keys are; nothing to add here.
@@ -531,7 +541,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     frame.render_widget(paragraph, area);
 }
 
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use ratatui::{backend::TestBackend, Terminal};
@@ -539,6 +549,7 @@ mod tests {
     /// Swap is the number that predicts death on this machine, so the bar
     /// must carry it whenever the kernel will answer the question.
     #[test]
+    #[cfg(target_os = "macos")]
     fn the_bar_reports_system_swap() {
         let state = AppState::default();
         assert!(
@@ -556,5 +567,30 @@ mod tests {
             .collect();
         assert!(line.contains("swap "), "{line}");
         assert!(line.contains('%'), "{line}");
+    }
+
+    #[test]
+    fn launch_error_shows_os_cause_and_expires_without_hiding_confirmations() {
+        let mut state = AppState::default();
+        crate::app::handlers::report_spawn_error(
+            &mut state,
+            "Failed to spawn session",
+            anyhow::anyhow!("Too many open files (os error 24)").context("Failed to open PTY"),
+        );
+        let mut terminal = Terminal::new(TestBackend::new(100, 1)).unwrap();
+        let mut draw = |state: &AppState| {
+            terminal
+                .draw(|frame| render(frame, frame.area(), state))
+                .unwrap();
+            (0..100)
+                .map(|x| terminal.backend().buffer()[(x, 0)].symbol())
+                .collect::<String>()
+        };
+        assert!(draw(&state).contains("Failed to spawn session: Too many open files (os error 24)"));
+        state.ui.pending_quit = true;
+        assert!(draw(&state).contains("QUIT?"));
+        state.ui.pending_quit = false;
+        state.ui.session_start_error.as_mut().unwrap().1 -= std::time::Duration::from_secs(16);
+        assert!(!draw(&state).contains("Too many open files"));
     }
 }

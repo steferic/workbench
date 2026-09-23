@@ -296,6 +296,8 @@ pub struct UIState {
 
     // Toast notifications
     pub toasts: VecDeque<Toast>,
+    /// Launch failures must remain visible even though toast overlays are disabled.
+    pub session_start_error: Option<(String, std::time::Instant)>,
 }
 
 impl UIState {
@@ -360,6 +362,7 @@ impl UIState {
             config: ConfigWindowState::default(),
             palette: CommandPaletteState::default(),
             toasts: VecDeque::new(),
+            session_start_error: None,
         }
     }
 }

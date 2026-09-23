@@ -1,5 +1,5 @@
-use crate::app::handlers::{report_background_error, save_state};
-use crate::app::{Action, AppState, PendingSessionStart, Toast, ToastLevel};
+use crate::app::handlers::{report_background_error, report_spawn_error, save_state};
+use crate::app::{Action, AppState, PendingSessionStart};
 use crate::models::{AgentType, SessionStatus};
 use crate::pty::{PtyManager, Resume, SessionSpawnConfig};
 use std::path::{Path, PathBuf};
@@ -75,16 +75,8 @@ fn spawn_single_session(
             }
             true
         }
-        Err(_e) => {
-            let duration = std::time::Duration::from_secs(5);
-            state.ui.toasts.push_back(Toast::new(
-                "Failed to start session on launch".to_string(),
-                ToastLevel::Error,
-                duration,
-            ));
-            while state.ui.toasts.len() > 5 {
-                state.ui.toasts.pop_front();
-            }
+        Err(err) => {
+            report_spawn_error(state, "Failed to start session on launch", err);
             state.system.remove_session_buffers(&request.session_id);
             if let Some(session) = state.get_session_mut(request.session_id) {
                 session.mark_errored();

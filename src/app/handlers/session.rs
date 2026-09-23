@@ -12,7 +12,7 @@ use super::session_worktree::{
     handle_confirm_merge_with_commit, handle_merge_checked, handle_merge_finished,
     handle_merge_session_worktree, handle_switch_to_worktree,
 };
-use super::{report_background_error, report_runtime_error, save_state};
+use super::{report_background_error, report_runtime_error, report_spawn_error, save_state};
 
 fn show_toast(state: &mut AppState, msg: impl Into<String>, level: ToastLevel) {
     let duration = match level {
@@ -351,13 +351,13 @@ pub fn handle_session_action(
 }
 
 /// Register a freshly spawned session: insert its PTY handle, add it to state,
-/// focus it, and persist. On spawn failure show a toast and drop its buffers.
+/// focus it, and persist. On spawn failure show the cause and drop its buffers.
 /// Shared by [`create_session`] and [`create_terminal`].
 fn finish_session_spawn(
     state: &mut AppState,
     session: Session,
     spawn_result: Result<PtyHandle>,
-    failure_toast: &str,
+    failure_message: &str,
     save_msg: &str,
 ) -> bool {
     let session_id = session.id;
@@ -386,8 +386,8 @@ fn finish_session_spawn(
             save_state(state, save_msg);
             true
         }
-        Err(_e) => {
-            show_toast(state, failure_toast, ToastLevel::Error);
+        Err(err) => {
+            report_spawn_error(state, failure_message, err);
             state.system.remove_session_buffers(&session_id);
             false
         }
@@ -876,8 +876,8 @@ fn restart_session(
             }
             save_state(state, "failed to save restarted session");
         }
-        Err(_e) => {
-            show_toast(state, "Failed to restart session", ToastLevel::Error);
+        Err(err) => {
+            report_spawn_error(state, "Failed to restart session", err);
             state.system.remove_session_buffers(&session_id);
             if let Some(session) = state.get_session_mut(session_id) {
                 session.mark_errored();
@@ -937,4 +937,37 @@ fn confirm_delete_session(state: &mut AppState, action_tx: &mpsc::UnboundedSende
         state.set_selected_session_idx(session_count - 1);
     }
     save_state(state, "failed to save deleted session");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failed_second_agent_preserves_first_and_reports_cause() {
+        let mut state = AppState::default();
+        let workspace_id = Uuid::new_v4();
+        let first = Session::new(workspace_id, AgentType::Claude, false);
+        let first_id = first.id;
+        state.add_session(first);
+        let second = Session::new(workspace_id, AgentType::Claude, false);
+        let second_id = second.id;
+        state
+            .system
+            .create_session_buffers(second_id, 24, 80, &AgentType::Claude);
+        assert!(!finish_session_spawn(
+            &mut state,
+            second,
+            Err(anyhow::anyhow!("Too many open files").context("Failed to open PTY")),
+            "Failed to spawn session",
+            "test",
+        ));
+        assert!(state.get_session(first_id).is_some());
+        assert!(state.get_session(second_id).is_none());
+        assert!(!state.system.output_buffers.contains_key(&second_id));
+        assert_eq!(
+            state.ui.session_start_error.unwrap().0,
+            "Failed to spawn session: Too many open files"
+        );
+    }
 }

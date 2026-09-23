@@ -9,7 +9,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use super::{report_background_error, save_state};
+use super::{report_background_error, report_spawn_error, save_state};
 
 fn show_toast(state: &mut AppState, msg: impl Into<String>, level: ToastLevel) {
     let duration = match level {
@@ -281,8 +281,8 @@ pub(super) fn handle_switch_to_worktree(
 
             save_state(state, "failed to save worktree viewer");
         }
-        Err(_e) => {
-            show_toast(state, "Failed to open worktree terminal", ToastLevel::Error);
+        Err(err) => {
+            report_spawn_error(state, "Failed to open worktree terminal", err);
             state.system.remove_session_buffers(&new_session_id);
         }
     }

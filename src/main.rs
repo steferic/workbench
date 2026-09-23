@@ -20,6 +20,7 @@ mod prompt_log;
 mod pty;
 mod remote;
 mod resolve;
+mod resource_limits;
 mod scrollback;
 mod theme;
 mod tui;
@@ -325,6 +326,9 @@ fn main() -> Result<()> {
             }
         }
         None => {
+            // Do this before the runtime, sockets, and restored PTYs consume
+            // the small descriptor allowance inherited from a GUI launcher.
+            resource_limits::prepare();
             // Load config to get default, CLI flag overrides
             let config = load_user_config();
             let use_alt_screen = if cli.no_alt_screen {
