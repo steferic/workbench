@@ -77,10 +77,10 @@ pub fn parse(screen: &str) -> Option<Prompt> {
     }
 
     let mut options = Vec::new();
-    let mut first = last;
+    let mut index = last;
     let mut expected = option(lines[last])?.0;
     loop {
-        let Some((number, label, selected)) = option(lines[first]) else {
+        let Some((number, label, selected)) = option(lines[index]) else {
             break;
         };
         // The run has to count down to 1 without gaps; anything else is prose
@@ -93,11 +93,13 @@ pub fn parse(screen: &str) -> Option<Prompt> {
             label: truncate(&label),
             selected,
         });
-        first -= 1;
         expected -= 1;
-        if expected == 0 || first == 0 {
+        // The run can reach the top of the screen, when the question has
+        // scrolled off; stop there rather than step above line 0.
+        if expected == 0 || index == 0 {
             break;
         }
+        index -= 1;
     }
     options.reverse();
     if options.len() < 2 || options[0].key != "1" {
@@ -106,7 +108,7 @@ pub fn parse(screen: &str) -> Option<Prompt> {
 
     // A choice has to be attached to something. Nothing above the run means
     // we found a list the agent was writing, not a question it stopped on.
-    let lines = body(&lines[..=first]);
+    let lines = body(&lines[..last + 1 - options.len()]);
     if lines.is_empty() {
         return None;
     }
@@ -308,6 +310,17 @@ mod tests {
 ❯
 ";
         assert_eq!(parse(screen), None);
+    }
+
+    /// A run that reaches line 0 once walked off the top of the screen and
+    /// panicked with an index of `usize::MAX`, taking the whole app down.
+    #[test]
+    fn an_option_run_at_the_top_of_the_screen_does_not_panic() {
+        assert_eq!(parse("3. No\n"), None);
+        assert_eq!(parse("2. Maybe\n3. No\n"), None);
+        // The whole question scrolled off: options, but nothing they answer.
+        assert_eq!(parse("❯ 1. Yes\n  2. No\n"), None);
+        assert_eq!(parse("1. Yes\n2. No\n\n Esc to cancel\n"), None);
     }
 
     #[test]
