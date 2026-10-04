@@ -68,6 +68,11 @@ pub enum RemoteCommand {
     Focus {
         agent: String,
     },
+    /// Stop an agent and its process tree: the TUI's `x`. From
+    /// `workbench kill`, for an agent that has grown too large to keep.
+    Kill {
+        agent: String,
+    },
     /// Start a new agent in a project. `agent` carries the project id and
     /// `text` the provider, since every write endpoint speaks that shape.
     NewAgent {

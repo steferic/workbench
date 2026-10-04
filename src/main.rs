@@ -146,6 +146,20 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Show how much memory each running agent holds, largest first
+    Mem {
+        /// Print one JSON array instead of a table
+        #[arg(long)]
+        json: bool,
+    },
+    /// Stop an agent and everything it started (the Sessions pane's `x`)
+    Kill {
+        /// Target agent: short id, alias, or provider name (if unique)
+        target: String,
+        /// Which project to look in, by name, for a bare provider name
+        #[arg(long)]
+        project: Option<String>,
+    },
     /// Analyze messages submitted to agents through Workbench
     Prompts {
         /// How many recent messages to include
@@ -308,6 +322,8 @@ fn main() -> Result<()> {
             JobsCmd::Init { path } => cli::cmd_jobs_init(path)?,
         },
         Some(Commands::Alias { name }) => cli::cmd_alias(name)?,
+        Some(Commands::Mem { json }) => cli::cmd_mem(json)?,
+        Some(Commands::Kill { target, project }) => cli::cmd_kill(target, project)?,
         Some(Commands::Wait {
             target,
             state,

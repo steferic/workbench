@@ -2795,7 +2795,22 @@ self.addEventListener("push", event => {
         // read back off the state. A recent finish is the only other reason.
         const finished = agents.filter(a => a.finished_ago !== null && a.finished_ago < 180);
 
-        if (blocked.length === 1) {
+        // Also read back off the state: an agent that just went over the
+        // memory limit. First, because it is the one reason to be woken that
+        // the other rows would hide.
+        const heavy = agents.filter(a => a.memory_over_ago != null && a.memory_over_ago < 180);
+        const gb = a => (a.memory_mb / 1024).toFixed(1) + " GB";
+
+        if (heavy.length === 1) {
+          const a = heavy[0];
+          tag = "workbench-memory";
+          title = named(a) + " · " + a.project + " uses " + gb(a);
+          body = "Over the memory limit. Stop it with: workbench kill " + a.id;
+        } else if (heavy.length > 1) {
+          tag = "workbench-memory";
+          title = heavy.length + " agents are over the memory limit";
+          body = heavy.map(a => named(a) + " · " + a.project + " " + gb(a)).join(", ");
+        } else if (blocked.length === 1) {
           const a = blocked[0];
           tag = "workbench-blocked";
           title = named(a) + " · " + a.project;

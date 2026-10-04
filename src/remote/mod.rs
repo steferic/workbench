@@ -252,6 +252,19 @@ pub struct AgentView {
     /// was recent. The service worker reads it to tell "finished" apart from
     /// "needs you" — the push itself carries no payload to say which.
     pub finished_ago: Option<i64>,
+    /// Memory held by the agent and everything it started, in MB, from the
+    /// last sample (see `crate::pty::memory`). `None` for a stopped agent and
+    /// until the first sample lands.
+    #[serde(default)]
+    pub memory_mb: Option<u64>,
+    /// The agent process's own share of `memory_mb`. A big gap between the
+    /// two means a job it started is heavy, not the agent.
+    #[serde(default)]
+    pub memory_own_mb: Option<u64>,
+    /// Seconds since the agent went over `agent_memory_limit_mb`, while it
+    /// stays over. The service worker reads it to say why it was woken.
+    #[serde(default)]
+    pub memory_over_ago: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -614,6 +627,7 @@ fn publish_with(
                 other => Some(other.label().to_string()),
             };
 
+            let memory = state.system.agent_memory.get(&session.id).copied();
             agents.push(AgentView {
                 id: session.short_id(),
                 project: workspace.name.clone(),
@@ -671,6 +685,13 @@ fn publish_with(
                     .get(&session.short_id())
                     .map(|at| (chrono::Utc::now() - *at).num_seconds())
                     .filter(|age| *age < 180),
+                memory_mb: memory.map(|m| m.total / (1024 * 1024)),
+                memory_own_mb: memory.map(|m| m.own / (1024 * 1024)),
+                memory_over_ago: state
+                    .system
+                    .memory_over
+                    .get(&session.id)
+                    .map(|at| (chrono::Utc::now() - *at).num_seconds()),
             });
         }
     }
@@ -1402,6 +1423,9 @@ mod tests {
             msg_epoch: "life-1".into(),
             tail: Vec::new(),
             finished_ago: None,
+            memory_mb: None,
+            memory_own_mb: None,
+            memory_over_ago: None,
         });
 
         // Up to date: nothing owed.
@@ -1463,6 +1487,9 @@ mod tests {
             msg_epoch: "life-1".into(),
             tail: Vec::new(),
             finished_ago: None,
+            memory_mb: None,
+            memory_own_mb: None,
+            memory_over_ago: None,
         });
 
         let ahead = since(&snapshot, 347, Some("life-1"));
@@ -1626,6 +1653,9 @@ mod tests {
             msg_epoch: "life-2".into(),
             tail: Vec::new(),
             finished_ago: None,
+            memory_mb: None,
+            memory_own_mb: None,
+            memory_over_ago: None,
         });
 
         // The phone holds 40 messages counted in life-1. In life-2's terms it

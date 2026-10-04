@@ -507,6 +507,132 @@ pub fn cmd_wait(
 }
 
 
+// ---- `workbench mem` and `workbench kill` ----------------------------------
+//
+// Both go through the control socket: the running TUI owns the processes and
+// the sample, and a kill has to go through it so the pane and the roster
+// agree the agent has stopped.
+
+/// Every running agent on the machine with the memory it holds, largest first.
+pub fn cmd_mem(json_out: bool) -> Result<()> {
+    use serde_json::{json, Value};
+
+    let mut client = crate::control::Client::connect()?;
+    let agents = client.call("agents.list", json!({}))?;
+    let mut agents: Vec<Value> = agents
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|agent| agent.get("memory_mb").and_then(Value::as_u64).is_some())
+        .collect();
+    let mb = |agent: &Value, key: &str| agent.get(key).and_then(Value::as_u64).unwrap_or(0);
+    let text = |agent: &Value, key: &str| {
+        agent
+            .get(key)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string()
+    };
+    agents.sort_by_key(|agent| std::cmp::Reverse(mb(agent, "memory_mb")));
+
+    if json_out {
+        let rows: Vec<Value> = agents
+            .iter()
+            .map(|agent| {
+                json!({
+                    "agent": text(agent, "id"),
+                    "alias": agent.get("alias"),
+                    "project": text(agent, "project"),
+                    "provider": text(agent, "provider"),
+                    "status": text(agent, "status"),
+                    "memory_mb": mb(agent, "memory_mb"),
+                    "own_mb": mb(agent, "memory_own_mb"),
+                    "over_limit": agent.get("memory_over_ago").is_some_and(|v| !v.is_null()),
+                })
+            })
+            .collect();
+        println!("{}", Value::Array(rows));
+        return Ok(());
+    }
+
+    if agents.is_empty() {
+        println!("no running agents (or the first sample has not landed yet)");
+        return Ok(());
+    }
+    let human = |mb: u64| crate::pty::memory::human(mb * 1024 * 1024);
+    println!(
+        "{:<8}  {:<20} {:<8} {:<8} {:>9} {:>9}",
+        "AGENT", "PROJECT", "PROVIDER", "STATE", "MEMORY", "OWN"
+    );
+    for agent in &agents {
+        let project: String = text(agent, "project").chars().take(20).collect();
+        let alias = agent
+            .get("alias")
+            .and_then(Value::as_str)
+            .map(|alias| format!("  “{alias}”"))
+            .unwrap_or_default();
+        let over = if agent.get("memory_over_ago").is_some_and(|v| !v.is_null()) {
+            "  over limit"
+        } else {
+            ""
+        };
+        println!(
+            "{:<8}  {:<20} {:<8} {:<8} {:>9} {:>9}{over}{alias}",
+            text(agent, "id"),
+            project,
+            text(agent, "provider").to_lowercase(),
+            text(agent, "status"),
+            human(mb(agent, "memory_mb")),
+            human(mb(agent, "memory_own_mb")),
+        );
+    }
+    let total: u64 = agents.iter().map(|agent| mb(agent, "memory_mb")).sum();
+    println!(
+        "\ntotal {} across {} agent(s). MEMORY counts what an agent started; OWN is the agent alone.",
+        human(total),
+        agents.len()
+    );
+    println!("stop one with: workbench kill <agent>");
+    Ok(())
+}
+
+/// Stop an agent and everything it started, the same as `x` in the Sessions
+/// pane. Its conversation stays on disk.
+pub fn cmd_kill(target: String, project: Option<String>) -> Result<()> {
+    use serde_json::{json, Value};
+
+    let mut client = crate::control::Client::connect()?;
+    let agents = client.call("agents.list", json!({}))?;
+    let agents = agents.as_array().cloned().unwrap_or_default();
+    let mut scope = crate::control::Scope::from_env();
+    if let Some(name) = project.as_deref() {
+        let projects = client.call("projects.list", json!({}))?;
+        let projects = projects.as_array().cloned().unwrap_or_default();
+        scope.project_id = Some(crate::control::resolve_project(&projects, name)?);
+    }
+    let agent = crate::control::resolve_agent(&agents, &target, &scope)?;
+    let found = agents
+        .iter()
+        .find(|candidate| candidate.get("id").and_then(Value::as_str) == Some(agent.as_str()));
+    let project = found
+        .and_then(|found| found.get("project").and_then(Value::as_str))
+        .unwrap_or("?")
+        .to_string();
+    let memory = found
+        .and_then(|found| found.get("memory_mb").and_then(Value::as_u64))
+        .map(|mb| format!(", {}", crate::pty::memory::human(mb * 1024 * 1024)))
+        .unwrap_or_default();
+
+    let mut params = json!({"agent": agent});
+    if let Ok(from) = std::env::var(comms::ENV_SESSION) {
+        params["from"] = json!(from);
+    }
+    client.call("agent.kill", params)?;
+    println!("stopping {agent} ({project}{memory})");
+    Ok(())
+}
+
 // ---- `workbench jobs` ------------------------------------------------------
 //
 // Everything but `run` is a file reader or writer against the repository, so

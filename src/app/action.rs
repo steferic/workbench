@@ -250,6 +250,8 @@ pub enum Action {
     ClearCompletedTodos,
     /// Off-thread scan for listening dev servers finished.
     PortsScanned(Result<super::servers::Scan, String>),
+    /// Off-thread sample of each agent's memory finished.
+    MemorySampled(HashMap<uuid::Uuid, crate::pty::memory::AgentMemory>),
     /// A push service answered 404/410 for this endpoint: the device
     /// unsubscribed or was wiped, and the subscription can never work again.
     PushEndpointGone(String),

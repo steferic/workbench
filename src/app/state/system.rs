@@ -895,6 +895,14 @@ pub struct SystemState {
         std::collections::HashMap<uuid::Uuid, (chrono::NaiveDate, u32, std::time::Instant)>,
     pub last_port_scan: Option<Instant>,
     pub port_scan_inflight: bool,
+    /// Each running agent's memory, from the last off-thread sample
+    /// (`handler::scan_memory`). Absent until the first one lands.
+    pub agent_memory: HashMap<uuid::Uuid, crate::pty::memory::AgentMemory>,
+    /// When each agent went over `agent_memory_limit_mb`. Present only while
+    /// it stays over, so the warning is given once per crossing.
+    pub memory_over: HashMap<uuid::Uuid, chrono::DateTime<chrono::Utc>>,
+    pub last_memory_scan: Option<Instant>,
+    pub memory_scan_inflight: bool,
     /// Each project's repeatable jobs, read from its repo on a slow timer
     /// (`crate::jobs`). Absent for a project without a manifest.
     pub project_jobs: HashMap<uuid::Uuid, crate::jobs::ProjectJobs>,
@@ -998,6 +1006,10 @@ impl SystemState {
             manager_wakes: Default::default(),
             last_port_scan: None,
             port_scan_inflight: false,
+            agent_memory: HashMap::new(),
+            memory_over: HashMap::new(),
+            last_memory_scan: None,
+            memory_scan_inflight: false,
             project_jobs: HashMap::new(),
             last_jobs_scan: None,
             jobs_scan_inflight: false,

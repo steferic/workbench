@@ -1,4 +1,5 @@
 mod manager;
+pub mod memory;
 mod output;
 pub mod proc_identity;
 #[cfg(any(target_os = "macos", target_os = "linux"))]

@@ -174,6 +174,15 @@ impl ProcessTree {
     }
 }
 
+/// Each live process's parent, for walking a tree without signalling it.
+pub(crate) fn parents() -> Result<HashMap<u32, u32>> {
+    Ok(snapshot()?
+        .into_iter()
+        .filter(|(_, p)| !p.zombie)
+        .map(|(pid, p)| (pid, p.parent))
+        .collect())
+}
+
 fn is_live(identity: Identity) -> bool {
     process(identity.pid).is_some_and(|p| !p.zombie && p.identity == identity)
 }

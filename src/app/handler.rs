@@ -209,6 +209,7 @@ pub fn process_action(
 
             scan_ports(state, action_tx);
             scan_jobs(state, action_tx);
+            scan_memory(state, action_tx);
 
             // Refresh diff stats every 5 seconds
             if state.system.last_diff_refresh.elapsed() >= Duration::from_secs(5) {
@@ -325,6 +326,11 @@ pub fn process_action(
                 }
                 Err(error) => state.ui.servers.scan_error = Some(error),
             }
+        }
+        Action::MemorySampled(sampled) => {
+            state.system.memory_scan_inflight = false;
+            state.system.agent_memory = sampled;
+            check_memory_limit(state, action_tx);
         }
         Action::PushEndpointGone(endpoint) => {
             // Said once, at the moment of dropping — not on every notification.
@@ -597,7 +603,7 @@ pub fn process_action(
                 Action::Quit | Action::ConfirmQuit | Action::Tick | Action::Resize(_, _) |
                 Action::ForceRedraw | Action::OpenRepositoryMap |
                 Action::UtilityContentLoaded(_) | Action::DiffStatsUpdated(_) |
-                Action::PortsScanned(_) | Action::PushEndpointGone(_) |
+                Action::PortsScanned(_) | Action::PushEndpointGone(_) | Action::MemorySampled(_) |
                 Action::ScrollbackLoaded { .. } => {}
             }
 
@@ -1254,6 +1260,95 @@ fn scan_ports(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) {
     });
 }
 
+/// How often to measure the agents' memory. A leak builds over hours, so
+/// this only has to be quick enough that `workbench mem` is not stale.
+const MEMORY_SCAN_EVERY: Duration = Duration::from_secs(10);
+
+/// Measure each running agent's process tree, off the event loop.
+fn scan_memory(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) {
+    if state.system.memory_scan_inflight {
+        return;
+    }
+    let due = state
+        .system
+        .last_memory_scan
+        .map(|at| at.elapsed() >= MEMORY_SCAN_EVERY)
+        .unwrap_or(true);
+    if !due {
+        return;
+    }
+    state.system.last_memory_scan = Some(std::time::Instant::now());
+
+    let roots: Vec<(uuid::Uuid, u32)> = state
+        .data
+        .sessions
+        .values()
+        .flatten()
+        .filter(|s| s.agent_type.is_agent() && s.status == crate::models::SessionStatus::Running)
+        .filter_map(|s| {
+            let pid = state.system.pty_handles.get(&s.id)?.process_id?;
+            Some((s.id, pid))
+        })
+        .collect();
+    if roots.is_empty() {
+        state.system.agent_memory.clear();
+        state.system.memory_over.clear();
+        return;
+    }
+    state.system.memory_scan_inflight = true;
+    let tx = action_tx.clone();
+    tokio::task::spawn_blocking(move || {
+        dispatch_action(
+            &tx,
+            Action::MemorySampled(crate::pty::memory::sample(&roots)),
+        );
+    });
+}
+
+/// Warn once when an agent crosses `agent_memory_limit_mb`.
+///
+/// Only a warning, by design: stopping an agent mid-turn loses its work. The
+/// mark clears once the agent is back under nine tenths of the limit, so a
+/// tree that hovers at the line does not warn on every sample.
+fn check_memory_limit(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) {
+    let limit = state.system.user_config.agent_memory_limit_mb * 1024 * 1024;
+    if limit == 0 {
+        state.system.memory_over.clear();
+        return;
+    }
+    let memory = &state.system.agent_memory;
+    state
+        .system
+        .memory_over
+        .retain(|id, _| memory.get(id).is_some_and(|m| m.total >= limit / 10 * 9));
+
+    let crossed: Vec<(uuid::Uuid, crate::pty::memory::AgentMemory)> = memory
+        .iter()
+        .filter(|(id, m)| m.total > limit && !state.system.memory_over.contains_key(id))
+        .map(|(id, m)| (*id, *m))
+        .collect();
+    if crossed.is_empty() {
+        return;
+    }
+    for (id, m) in &crossed {
+        state.system.memory_over.insert(*id, chrono::Utc::now());
+        let short = crate::models::Session::short_id_of(*id);
+        let message = format!(
+            "{short} uses {} of memory, over the {} MB limit. Stop it with `workbench kill {short}`.",
+            crate::pty::memory::human(m.total),
+            state.system.user_config.agent_memory_limit_mb,
+        );
+        crate::logger::warn(format!(
+            "memory: {message} (own {}, total {})",
+            crate::pty::memory::human(m.own),
+            crate::pty::memory::human(m.total)
+        ));
+    }
+    if !state.system.push.is_empty() {
+        state.system.push.notify(action_tx);
+    }
+}
+
 /// How often to re-read the projects' job files. A stat per project between
 /// reads, so cheap; and a ledger line the agent just wrote is worth seeing soon.
 const JOBS_SCAN_EVERY: Duration = Duration::from_secs(5);
@@ -1701,7 +1796,8 @@ fn apply_remote(
         RemoteCommand::Todo { agent, .. }
         | RemoteCommand::Reply { agent, .. }
         | RemoteCommand::Answer { agent, .. }
-        | RemoteCommand::Focus { agent } => agent.clone(),
+        | RemoteCommand::Focus { agent }
+        | RemoteCommand::Kill { agent } => agent.clone(),
         // Handled above.
         RemoteCommand::NewAgent { .. }
         | RemoteCommand::RunJob { .. }
@@ -1766,6 +1862,18 @@ fn apply_remote(
         RemoteCommand::Focus { .. } => {
             state.system.remote_focus = Some(session_id);
             // Legacy CLI focus; browser reads select an agent independently.
+        }
+        // The same act as `x` in the Sessions pane, so the pane, the roster
+        // and the saved state all agree the agent has stopped.
+        RemoteCommand::Kill { .. } => {
+            let running = state
+                .get_session(session_id)
+                .is_some_and(|s| s.status == crate::models::SessionStatus::Running);
+            if !running {
+                return Err(format!("{agent} is not running"));
+            }
+            crate::logger::info(format!("remote asked to kill {agent}"));
+            dispatch_action(action_tx, Action::KillSession(session_id));
         }
         // Handled before the session lookup, which they do not need.
         RemoteCommand::NewAgent { .. }
@@ -2008,6 +2116,40 @@ fn refresh_agent_tasks(state: &mut AppState, action_tx: &mpsc::UnboundedSender<A
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_memory_warning_fires_once_per_crossing_and_clears_below_nine_tenths() {
+        use crate::pty::memory::AgentMemory;
+        const MB: u64 = 1024 * 1024;
+        let mut state = super::AppState::default();
+        state.system.user_config.agent_memory_limit_mb = 1000;
+        let (tx, _rx) = super::mpsc::unbounded_channel();
+        let agent = uuid::Uuid::new_v4();
+        let mut sample = |state: &mut super::AppState, mb: u64| {
+            state.system.agent_memory = [(
+                agent,
+                AgentMemory {
+                    own: mb * MB,
+                    total: mb * MB,
+                },
+            )]
+            .into();
+            super::check_memory_limit(state, &tx);
+            state.system.memory_over.get(&agent).copied()
+        };
+
+        assert_eq!(sample(&mut state, 900), None);
+        let crossed = sample(&mut state, 1200).expect("over the limit is marked");
+        // Still over, and still hovering near the line: the same crossing.
+        assert_eq!(sample(&mut state, 1300), Some(crossed));
+        assert_eq!(sample(&mut state, 950), Some(crossed));
+        // Well under: the mark clears, so the next crossing warns again.
+        assert_eq!(sample(&mut state, 800), None);
+        assert!(sample(&mut state, 1100).is_some());
+
+        state.system.user_config.agent_memory_limit_mb = 0;
+        assert_eq!(sample(&mut state, 5000), None, "0 turns the warning off");
+    }
+
     #[tokio::test]
     async fn server_scans_run_without_phone_access_and_close_unwanted_forwards() {
         let mut state = super::AppState::default();

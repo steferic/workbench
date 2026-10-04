@@ -89,6 +89,13 @@ pub struct UserConfig {
     /// the like are left alone. Set to false to forward nothing.
     #[serde(default = "default_true")]
     pub expose_dev_servers: bool,
+    /// Warn when one agent, with everything it started, holds more memory
+    /// than this. Two Claude sessions once grew to 54 GB between them over a
+    /// day and a half and ran the Mac out of memory without a word. Only a
+    /// warning: stopping an agent mid-turn loses its work, so that stays your
+    /// call (`workbench kill`). 0 turns the warning off.
+    #[serde(default = "default_agent_memory_limit_mb")]
+    pub agent_memory_limit_mb: u64,
     #[serde(default = "default_true")]
     pub use_alternate_screen: bool,
 
@@ -261,6 +268,10 @@ fn default_manager_wake_daily_cap() -> u32 {
     10
 }
 
+fn default_agent_memory_limit_mb() -> u64 {
+    4096
+}
+
 fn default_remote_port() -> u16 {
     8765
 }
@@ -292,6 +303,7 @@ impl Default for UserConfig {
             manager_wake_daily_cap: default_manager_wake_daily_cap(),
             remote_token: String::new(),
             expose_dev_servers: true,
+            agent_memory_limit_mb: default_agent_memory_limit_mb(),
             use_alternate_screen: default_true(),
             live_scrollback_rows: 0,
             transcript_max_lines: 0,

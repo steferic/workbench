@@ -446,6 +446,20 @@ fn create_session_item<'a>(
         None => Span::raw(""),
     };
 
+    // Over `agent_memory_limit_mb`: say how much, in the colour that means
+    // "act on this". Two agents once reached 54 GB between them with nothing
+    // on screen to say so.
+    let memory_indicator = match (
+        state.system.memory_over.contains_key(&session.id),
+        state.system.agent_memory.get(&session.id),
+    ) {
+        (true, Some(memory)) => Span::styled(
+            format!(" {}", crate::pty::memory::human(memory.total)),
+            Style::default().fg(t.danger).add_modifier(Modifier::BOLD),
+        ),
+        _ => Span::raw(""),
+    };
+
     let main_spans = vec![
         Span::styled(prefix.to_string(), name_style),
         Span::styled(status_icon, Style::default().fg(status_color)),
@@ -456,6 +470,7 @@ fn create_session_item<'a>(
         Span::styled(state.session_label(session.id), name_style),
         alias_indicator,
         attention_indicator,
+        memory_indicator,
         dangerous_indicator,
         branch_indicator,
     ];
@@ -540,6 +555,28 @@ mod tests {
         // enough — this is the row you have to act on.
         assert!(out.contains("! Claude"), "{out}");
         assert!(!out.contains("◆ Claude"), "{out}");
+    }
+
+    #[test]
+    fn an_agent_over_the_memory_limit_shows_how_much_it_holds() {
+        let mut state = state_with_blocked_agent(Attention::Input, "waiting");
+        state.system.agent_status.clear();
+        let session_id = state.data.sessions.values().flatten().next().unwrap().id;
+        let memory = crate::pty::memory::AgentMemory {
+            own: 30 * 1024 * 1024 * 1024,
+            total: 32 * 1024 * 1024 * 1024,
+        };
+        state.system.agent_memory.insert(session_id, memory);
+
+        // Measured but under the limit: nothing to say.
+        assert!(!screen(&mut state, 44, 10).contains("GB"));
+
+        state
+            .system
+            .memory_over
+            .insert(session_id, chrono::Utc::now());
+        let out = screen(&mut state, 44, 10);
+        assert!(out.contains("Claude 32.0 GB"), "{out}");
     }
 
     #[test]

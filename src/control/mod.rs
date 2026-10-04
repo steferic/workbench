@@ -481,6 +481,9 @@ fn dispatch(
         // it names one. A guard against a manager overstepping its brief, not
         // against one determined to lie about its identity — everything here
         // runs on your machine because you started it.
+        "agent.kill" if is_manager(params, shared) => {
+            Err(("read_only", "stopping an agent is the user's step".into()))
+        }
         "agent.prompt" | "agent.todo" if is_manager(params, shared) => Err((
             "read_only",
             "a manager proposes work with manager.propose; dispatching is the user's step".into(),
@@ -511,6 +514,12 @@ fn dispatch(
         "agent.focus" => queue(
             commands,
             RemoteCommand::Focus {
+                agent: text_param(params, "agent")?,
+            },
+        ),
+        "agent.kill" => queue(
+            commands,
+            RemoteCommand::Kill {
                 agent: text_param(params, "agent")?,
             },
         ),
@@ -708,6 +717,10 @@ fn summarize(agent: &crate::remote::AgentView) -> Value {
         "queued": agent.queued.len(),
         "paused": agent.paused,
         "blocked_on": agent.prompt.as_ref().map(|_| true).unwrap_or(false),
+        // What `workbench mem` and `workbench kill` read.
+        "memory_mb": agent.memory_mb,
+        "memory_own_mb": agent.memory_own_mb,
+        "memory_over_ago": agent.memory_over_ago,
     })
 }
 
@@ -726,6 +739,7 @@ fn schema() -> Value {
             {"name":"media.present", "params":["agent", "path"], "kind":"write"},
             {"name": "agent.answer", "params": ["agent", "key", "prompt"], "kind": "write"},
             {"name": "agent.focus", "params": ["agent"], "kind": "write"},
+            {"name": "agent.kill", "params": ["agent"], "kind": "write"},
             {"name": "agent.new", "params": ["project", "provider"], "kind": "write"},
             {"name": "jobs.list", "params": [], "kind": "read"},
             {"name": "jobs.run", "params": ["project", "job"], "kind": "write"},
@@ -797,6 +811,9 @@ mod tests {
             msg_epoch: String::new(),
             tail: Vec::new(),
             finished_ago: None,
+            memory_mb: None,
+            memory_own_mb: None,
+            memory_over_ago: None,
         }
     }
 
@@ -805,6 +822,18 @@ mod tests {
         tokio::sync::mpsc::UnboundedReceiver<RemoteCommand>,
     ) {
         tokio::sync::mpsc::unbounded_channel()
+    }
+
+    #[test]
+    fn the_agent_list_carries_memory_for_workbench_mem() {
+        let mut heavy = agent("a", "working");
+        heavy.memory_mb = Some(9963);
+        heavy.memory_own_mb = Some(364);
+        heavy.memory_over_ago = Some(30);
+        let row = summarize(&heavy);
+        assert_eq!(row["memory_mb"], 9963);
+        assert_eq!(row["memory_own_mb"], 364);
+        assert_eq!(row["memory_over_ago"], 30);
     }
 
     #[test]
