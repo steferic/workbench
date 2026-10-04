@@ -27,6 +27,10 @@ pub struct View {
     pub name: String,
     pub kind: String,
     pub poster: bool,
+    /// When it was presented, RFC3339 like a message's `at`, so the phone
+    /// can place it in the conversation where it happened rather than under
+    /// everything said since.
+    pub at: String,
 }
 
 #[derive(Debug)]
@@ -163,6 +167,7 @@ impl Library {
                     .collect(),
                 kind: kind.into(),
                 poster: poster.is_some(),
+                at: chrono::Utc::now().to_rfc3339(),
             },
             mime,
             size: copied,

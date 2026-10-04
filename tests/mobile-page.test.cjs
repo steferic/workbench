@@ -172,10 +172,51 @@ test('media cards belong to their agent and keep untrusted filenames as text', (
     {id:'image-1',agent:'A',name:'screen <img onerror=oops>.png',kind:'image'},
     {id:'video-1',agent:'A',name:'demo.mp4',kind:'video',poster:true},
     {id:'private',agent:'B',name:'another agent.png',kind:'image'}];`);
-  const html = p.run('mediaHtml("A")');
+  const html = p.run('mediaItems("A").map(item => item.html).join("")');
   assert.match(html, /\/media\/image-1\/file\?t=test/);
   assert.match(html, /\/media\/video-1\/poster\?t=test/);
   assert.match(html, /&lt;img onerror=oops&gt;/);
-  assert.match(html, /rel="noopener noreferrer"/);
+  // Opened in the page: a new tab in the standalone app had no way back.
+  assert.match(html, /onclick="return openMedia\(event, 'image-1'\)"/);
+  assert.doesNotMatch(html, /target="_blank"/);
   assert.doesNotMatch(html, /private|another agent|<img onerror/);
+});
+
+test('media sits in the conversation where it was shown, not under everything since', () => {
+  const p = page();
+  p.run(`data.media = [
+    {id:'late',agent:'A',name:'late.png',kind:'image',at:'2026-09-28T10:30:00Z'},
+    {id:'early',agent:'A',name:'early.png',kind:'image',at:'2026-09-28T10:05:00Z'}];
+    thread = [
+      {role:'you',text:'first',at:'2026-09-28T10:00:00Z'},
+      {role:'agent',text:'second',at:'2026-09-28T10:10:00Z'},
+      {role:'you',text:'third',at:'2026-09-28T10:20:00Z'}];
+    have = 3;`);
+  const html = p.run('messagesHtml({id:"A",status:"idle",tail:[]})');
+  const order = ['first', 'early.png', 'second', 'third', 'late.png'].map(word => html.indexOf(word));
+  assert.ok(order.every(at => at >= 0), String(order));
+  assert.deepEqual([...order].sort((x, y) => x - y), order);
+});
+
+test('the media viewer opens in the page and every way out closes it', () => {
+  const p = page();
+  p.run(`data.media = [{id:'image-1',agent:'A',name:'shot.png',kind:'image'}];
+    var pushed = 0, backs = 0;
+    history = {state:null, pushState(state){ this.state = state; pushed++; },
+      back(){ backs++; this.state = null; hideMedia(); }};
+    var prevented = false;
+    var opened = openMedia({preventDefault(){ prevented = true; }}, 'image-1');`);
+  assert.equal(p.run('opened'), false);
+  assert.equal(p.run('prevented'), true);
+  assert.equal(p.element('lightbox').hidden, false);
+  assert.match(p.element('lbBody').innerHTML, /\/media\/image-1\/file\?t=test/);
+  assert.equal(p.run('pushed'), 1, 'the back gesture needs an entry to unwind');
+
+  p.run('closeMedia()');
+  assert.equal(p.element('lightbox').hidden, true);
+  assert.equal(p.run('backs'), 1);
+  assert.equal(p.element('lbBody').innerHTML, '');
+
+  // An item that has expired falls through to the link rather than an empty viewer.
+  assert.equal(p.run(`openMedia({preventDefault(){}}, 'gone')`), true);
 });

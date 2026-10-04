@@ -873,6 +873,21 @@ pub const HTML: &str = r##"<!doctype html>
   .media-card img { display:block; max-width:100%; max-height:320px; width:100%; object-fit:contain; }
   .media-card span { display:flex; align-items:center; min-height:44px; padding:8px 12px; overflow-wrap:anywhere; }
   .media-card:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+  /* The media viewer. In the page, not a new tab: the phone app runs
+     standalone, with no browser chrome, and a new page there had no way
+     back. Close, a tap outside the picture, Escape and the back gesture all
+     leave it. */
+  .lightbox { position:fixed; inset:0; z-index:10; display:flex; flex-direction:column;
+    background:#000; color:#fff;
+    padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+  .lightbox[hidden] { display:none; }
+  .lightbox header { display:flex; align-items:center; gap:8px; padding:4px 4px 4px 16px; }
+  .lightbox h2 { flex:1; margin:0; color:#fff; text-transform:none; letter-spacing:normal; font-size:14px; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lightbox .lb-close { min-width:44px; min-height:44px; border:0; background:none; color:#fff; font-size:24px; }
+  .lightbox .lb-body { flex:1; min-height:0; display:flex; align-items:center; justify-content:center; padding:8px; }
+  .lightbox .lb-body img, .lightbox .lb-body video { max-width:100%; max-height:100%; object-fit:contain; }
+  .lightbox footer { display:flex; justify-content:center; padding:4px 16px 12px; }
+  .lightbox footer a { color:#fff; display:inline-flex; align-items:center; min-height:44px; }
   /* A flex row per message, so a bubble hugs its text but a wide code block
      inside one cannot shrink it to a column of single letters. */
   /* Without boxes, the space between turns is what separates them. */
@@ -1459,6 +1474,11 @@ pub const HTML: &str = r##"<!doctype html>
   <div id="managersList"></div>
 </section>
 
+<div id="lightbox" class="lightbox" role="dialog" aria-modal="true" aria-labelledby="lbTitle" hidden onclick="if (event.target === this || event.target.classList.contains('lb-body')) closeMedia()">
+  <header><h2 id="lbTitle"></h2><button class="lb-close" onclick="closeMedia()" aria-label="Close">×</button></header>
+  <div class="lb-body" id="lbBody"></div>
+  <footer><a id="lbDownload" download>Download original</a></footer>
+</div>
 <div class="scrim" id="scrim" onclick="toggleDrawer()"></div>
 <aside id="drawer" role="dialog" aria-modal="true" aria-label="Projects" aria-hidden="true" inert>
   <button class="panel-close" onclick="toggleDrawer()" aria-label="Close projects">×</button>
@@ -2471,17 +2491,59 @@ function reconcileLog(log, html) {
   while (before) { const next = before.nextElementSibling; before.remove(); before = next; }
 }
 
-function mediaHtml(agent) {
+/* An agent's presented media, oldest first, each with the time it was
+   shown so messagesHtml can place it in the conversation where it happened. */
+function mediaItems(agent) {
   return (data?.media || []).filter(item => item.agent === agent).map(item => {
     const base = '/media/' + encodeURIComponent(item.id);
     const viewer = base + '?t=' + encodeURIComponent(token);
     const preview = base + (item.kind === 'video' ? '/poster' : '/file') + '?t=' + encodeURIComponent(token);
     const picture = item.kind === 'image' || item.poster
       ? '<img src="' + esc(preview) + '" alt="' + esc(item.name) + '" loading="lazy">' : '';
-    return '<a class="media-card" data-key="media-' + esc(item.id) + '" href="' + esc(viewer) + '" target="_blank" rel="noopener noreferrer">' +
+    const html = '<a class="media-card" data-key="media-' + esc(item.id) + '" href="' + esc(viewer) + '" onclick="return openMedia(event, \'' + esc(item.id) + '\')">' +
       picture + '<span>' + (item.kind === 'video' ? '▶ Play ' : 'View ') + esc(item.name) + '</span></a>';
-  }).join('');
+    return { at: item.at ? new Date(item.at) : null, html };
+  }).sort((x, y) => (x.at || 0) - (y.at || 0));
 }
+
+let lightboxOpen = false;
+function openMedia(event, id) {
+  const item = (data?.media || []).find(m => m.id === id);
+  if (!item) return true;
+  event.preventDefault();
+  const file = '/media/' + encodeURIComponent(id) + '/file?t=' + encodeURIComponent(token);
+  const body = document.getElementById("lbBody");
+  body.innerHTML = item.kind === 'video'
+    ? '<video src="' + esc(file) + '" controls playsinline autoplay></video>'
+    : '<img src="' + esc(file) + '" alt="' + esc(item.name) + '">';
+  document.getElementById("lbTitle").textContent = item.name;
+  const download = document.getElementById("lbDownload");
+  download.href = file; download.setAttribute("download", item.name);
+  const box = document.getElementById("lightbox");
+  box.hidden = false;
+  box.querySelector(".lb-close").focus();
+  // An entry of its own, so the back gesture closes the viewer rather than
+  // leaving the page.
+  if (!lightboxOpen) history.pushState({ lightbox: true }, "");
+  lightboxOpen = true;
+  return false;
+}
+function hideMedia() {
+  lightboxOpen = false;
+  const box = document.getElementById("lightbox");
+  box.hidden = true;
+  document.getElementById("lbBody").innerHTML = "";
+}
+function closeMedia() {
+  if (!lightboxOpen) return;
+  // Unwind the entry openMedia pushed; popstate then hides the viewer.
+  if (history.state?.lightbox) history.back(); else hideMedia();
+}
+addEventListener("popstate", () => { if (lightboxOpen) hideMedia(); });
+document.addEventListener("keydown", event => {
+  if (lightboxOpen && event.key === "Escape") { event.preventDefault(); event.stopImmediatePropagation(); closeMedia(); }
+}, true);
+
 function messagesHtml(a) {
   const parts = [];
   if (have > thread.length && thread.length) parts.push('<div data-key="history-limit" class="when">Showing the latest ' + thread.length + ' entries</div>');
@@ -2490,7 +2552,11 @@ function messagesHtml(a) {
   // A first load animates as a short cascade; after that only the new line
   // moves, and it does not wait its turn behind the ones already on screen.
   const cascade = drawn === 0;
+  // Each media item goes in before the first message said after it was shown.
+  const media = mediaItems(a.id);
   for (const m of thread) {
+    const said = m.at ? new Date(m.at) : null;
+    while (said && media.length && media[0].at && media[0].at <= said) parts.push(media.shift().html);
     const fresh = index++ >= drawn ? " fresh" : "";
     const delay = cascade && fresh
       ? ` style="animation-delay:${Math.min(index * 28, 340)}ms"` : "";
@@ -2508,6 +2574,8 @@ function messagesHtml(a) {
                  '<div class="msg">' + markdown(m.text) + "</div></div>");
     }
   }
+  // Newer than every message, or undated: after the conversation.
+  for (const item of media) parts.push(item.html);
   if (!thread.length && a.tail.length) {
     // No journal we can read: the terminal is all there is.
     parts.push('<div data-key="raw" class="raw">' + esc(a.tail.join("\n")) + "</div>");
@@ -2519,8 +2587,6 @@ function messagesHtml(a) {
     parts.push(`<div data-key="delivery-${item.id}" class="row you pending"><div class="msg">${esc(item.text)}
       <div class="delivery">${esc(label)}${item.error ? " · " + esc(item.error) : ""}${recovery}</div></div></div>`);
   }
-  const media = mediaHtml(a.id);
-  if (media) parts.push(media);
   if (a.status === "working") parts.push('<div data-key="typing" class="typing"><i></i><i></i><i></i></div>');
   drawn = thread.length;
   if (!parts.length) {
