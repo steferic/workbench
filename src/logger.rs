@@ -11,6 +11,19 @@ fn log_path() -> Option<PathBuf> {
     Some(dir.join("workbench.log"))
 }
 
+/// A second append handle on the log, for the TUI to put under stderr (see
+/// `tui::init`). `None` under test, for the same reason `write` is silent.
+pub fn open_for_stderr() -> Option<File> {
+    if cfg!(test) {
+        return None;
+    }
+    OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path()?)
+        .ok()
+}
+
 /// Lazily-opened append-only file handle. Held behind a Mutex so concurrent
 /// writes from async tasks don't interleave a single log line.
 fn handle() -> Option<&'static Mutex<File>> {
