@@ -210,6 +210,7 @@ pub fn process_action(
             scan_ports(state, action_tx);
             scan_jobs(state, action_tx);
             scan_memory(state, action_tx);
+            crate::words::keep_current();
 
             // Refresh diff stats every 5 seconds
             if state.system.last_diff_refresh.elapsed() >= Duration::from_secs(5) {

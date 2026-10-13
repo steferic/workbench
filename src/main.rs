@@ -24,6 +24,7 @@ mod resource_limits;
 mod scrollback;
 mod theme;
 mod tui;
+mod words;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -145,6 +146,46 @@ enum Commands {
         /// Print one JSON object instead of a sentence
         #[arg(long)]
         json: bool,
+    },
+    /// Count the words you and your agents use, by project, provider and model
+    Words {
+        /// Only what you typed (`you`) or only what agents wrote (`agent`)
+        #[arg(long)]
+        speaker: Option<String>,
+        /// Only this project
+        #[arg(long)]
+        project: Option<String>,
+        /// Only this provider: anthropic or openai
+        #[arg(long)]
+        provider: Option<String>,
+        /// Only this model, e.g. claude-opus-5-5
+        #[arg(long)]
+        model: Option<String>,
+        /// Leave out words shorter than this
+        #[arg(long, default_value_t = 0)]
+        min_len: usize,
+        /// Hide these words from every cloud (the phone's tap-to-hide)
+        #[arg(long, value_delimiter = ',')]
+        hide: Vec<String>,
+        /// Show these hidden words again
+        #[arg(long, value_delimiter = ',')]
+        unhide: Vec<String>,
+        /// How many words to list
+        #[arg(long, default_value_t = 40)]
+        top: usize,
+        /// Print one JSON object instead of a table
+        #[arg(long)]
+        json: bool,
+    },
+    /// Delete old Claude and Codex transcripts whose words are counted.
+    /// Lists what would go; pass --yes to delete it
+    PruneSessions {
+        /// Keep anything written to in the last this many days
+        #[arg(long, default_value_t = 14)]
+        days: u64,
+        /// Delete, rather than only list
+        #[arg(long)]
+        yes: bool,
     },
     /// Show how much memory each running agent holds, largest first
     Mem {
@@ -322,6 +363,29 @@ fn main() -> Result<()> {
             JobsCmd::Init { path } => cli::cmd_jobs_init(path)?,
         },
         Some(Commands::Alias { name }) => cli::cmd_alias(name)?,
+        Some(Commands::Words {
+            speaker,
+            project,
+            provider,
+            model,
+            min_len,
+            hide,
+            unhide,
+            top,
+            json,
+        }) => cli::cmd_words(
+            words::Filter {
+                project,
+                provider,
+                model,
+                speaker,
+                min_len,
+            },
+            (hide, unhide),
+            top,
+            json,
+        )?,
+        Some(Commands::PruneSessions { days, yes }) => cli::cmd_prune_sessions(days, yes)?,
         Some(Commands::Mem { json }) => cli::cmd_mem(json)?,
         Some(Commands::Kill { target, project }) => cli::cmd_kill(target, project)?,
         Some(Commands::Wait {

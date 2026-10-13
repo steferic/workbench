@@ -901,6 +901,93 @@ pub fn cmd_jobs_init(path: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
+/// `workbench words`: bring the counts up to date, then print the top words.
+pub fn cmd_words(
+    filter: crate::words::Filter,
+    (hide, unhide): (Vec<String>, Vec<String>),
+    top: usize,
+    json_out: bool,
+) -> Result<()> {
+    use std::io::Write;
+
+    let path = crate::words::db_path()?;
+    let mut shown = false;
+    crate::words::scan(&path, |done, of| {
+        // The first scan reads every transcript and takes minutes; later
+        // ones read only what was appended and finish before this shows.
+        if of > 64 << 20 && !json_out {
+            eprint!(
+                "\rreading transcripts: {:>3}% of {}",
+                done * 100 / of.max(1),
+                crate::pty::memory::human(of)
+            );
+            let _ = std::io::stderr().flush();
+            shown = true;
+        }
+    })?;
+    if shown {
+        eprintln!();
+    }
+
+    let connection = crate::words::open(&path)?;
+    crate::words::set_hidden(&connection, &hide, true)?;
+    crate::words::set_hidden(&connection, &unhide, false)?;
+    let cloud = crate::words::query(&connection, &filter, top)?;
+    if json_out {
+        println!("{}", serde_json::to_string(&cloud)?);
+        return Ok(());
+    }
+    let width = cloud.words.iter().map(|(w, _)| w.len()).max().unwrap_or(4);
+    for (word, n) in &cloud.words {
+        println!("{word:<width$}  {n}");
+    }
+    println!("\n{} words in all, stop words included.", cloud.total);
+    if !cloud.hidden.is_empty() {
+        println!("{} words hidden (--unhide to show one again).", cloud.hidden.len());
+    }
+
+    let config = crate::config::user_config::load_user_config();
+    if !config.remote_token.is_empty() {
+        if let Some(ip) = crate::remote::tailscale_addr() {
+            println!(
+                "Cloud: http://{ip}:{}/words?t={}",
+                config.remote_port, config.remote_token
+            );
+        }
+    }
+    Ok(())
+}
+
+/// `workbench prune-sessions`: count what is new, then delete the
+/// transcripts that are old, counted and not resumed by any agent.
+pub fn cmd_prune_sessions(days: u64, yes: bool) -> Result<()> {
+    use crate::pty::memory::human;
+
+    let path = crate::words::db_path()?;
+    eprintln!("Counting new words first…");
+    crate::words::scan(&path, |_, _| {})?;
+    let plan = crate::words::prune::plan(&path, std::time::Duration::from_secs(days * 86400))?;
+
+    for (provider, label) in [("anthropic", "Claude"), ("openai", "Codex")] {
+        let (n, bytes) = plan.bytes(provider);
+        println!("{label:<7} {n:>5} sessions  {:>9}", human(bytes));
+    }
+    println!(
+        "Kept although older than {days} days: {} that agents resume, {} open, {} not yet counted.",
+        plan.kept_resumed, plan.kept_open, plan.kept_unread
+    );
+    if plan.delete.is_empty() {
+        return Ok(());
+    }
+    if !yes {
+        println!("Nothing deleted. Run again with --yes to delete these.");
+        return Ok(());
+    }
+    let (n, bytes) = crate::words::prune::delete(&plan);
+    println!("Deleted {n} sessions, {}.", human(bytes));
+    Ok(())
+}
+
 #[cfg(test)]
 mod jobs_tests {
     use super::*;

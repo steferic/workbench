@@ -27,7 +27,7 @@ mod thread;
 
 pub use prompt::Prompt;
 pub use push::{push_origin, Push};
-pub use server::{new_token, Remote, RemoteCommand};
+pub use server::{new_token, tailscale_addr, Remote, RemoteCommand};
 pub use thread::{Cursor, Message};
 
 use serde::Serialize;

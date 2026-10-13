@@ -328,7 +328,12 @@ fn handle(
         return status(401, "unauthorized");
     }
 
-    if request.method().as_str() == "POST" && path != "/api/upload" {
+    // The instance check guards commands to agents across a restart. Hiding
+    // a word in the cloud is not one, and the words page has no instance id.
+    if request.method().as_str() == "POST"
+        && path != "/api/upload"
+        && !path.starts_with("/api/words/")
+    {
         let Some(instance) = request
             .headers()
             .iter()
@@ -378,6 +383,10 @@ fn handle(
             upload(request, &params)
         }
         ("GET", "/api/state") => state_body(request, &query_params(query), shared),
+        ("GET", "/words") => html(crate::words::page::HTML),
+        ("GET", "/api/words") => words_body(&query_params(query)),
+        ("POST", "/api/words/hide") => hide_words(request, true),
+        ("POST", "/api/words/unhide") => hide_words(request, false),
         ("POST", "/api/todo") => command_from(request, commands, |agent, text| {
             (!text.is_empty()).then_some(RemoteCommand::Todo { agent, text })
         }),
@@ -497,6 +506,61 @@ fn state_body(
             .with_header(header("ETag", &tag));
     }
     json(body).with_header(header("ETag", &tag))
+}
+
+/// The word cloud's counts. Asking for them is also what keeps them fresh:
+/// a scan of what was appended since the last one starts in the background,
+/// and the page asks again while it runs.
+fn words_body(params: &[(String, String)]) -> Response<std::io::Cursor<Vec<u8>>> {
+    let param = |name: &str| {
+        params
+            .iter()
+            .find(|(key, value)| key == name && !value.is_empty())
+            .map(|(_, value)| value.clone())
+    };
+    let filter = crate::words::Filter {
+        project: param("project"),
+        provider: param("provider"),
+        model: param("model"),
+        speaker: param("speaker"),
+        min_len: param("min_len").and_then(|v| v.parse().ok()).unwrap_or(0),
+    };
+    let limit = param("limit")
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(150usize)
+        .min(500);
+    crate::words::refresh_in_background();
+    let cloud = crate::words::db_path()
+        .and_then(|path| crate::words::open(&path))
+        .and_then(|connection| crate::words::query(&connection, &filter, limit));
+    match cloud {
+        Ok(cloud) => json(
+            serde_json::json!({ "cloud": cloud, "progress": crate::words::progress() })
+                .to_string(),
+        ),
+        Err(err) => status(500, &format!("word counts unavailable: {err:#}")),
+    }
+}
+
+/// `{"words": ["ok", "make"]}`: take them out of the cloud or put them back.
+fn hide_words(request: &mut Request, hide: bool) -> Response<std::io::Cursor<Vec<u8>>> {
+    let bytes = match read_limited(request.as_reader(), 64 * 1024) {
+        Ok(bytes) => bytes,
+        Err((code, reason)) => return status(code, reason),
+    };
+    let Some(words) = serde_json::from_slice::<serde_json::Value>(&bytes)
+        .ok()
+        .and_then(|body| serde_json::from_value::<Vec<String>>(body["words"].clone()).ok())
+    else {
+        return status(400, "expected {\"words\": [...]}");
+    };
+    let saved = crate::words::db_path()
+        .and_then(|path| crate::words::open(&path))
+        .and_then(|connection| crate::words::set_hidden(&connection, &words, hide));
+    match saved {
+        Ok(()) => status(204, ""),
+        Err(err) => status(500, &format!("could not save: {err:#}")),
+    }
 }
 
 fn etag(body: &str) -> String {

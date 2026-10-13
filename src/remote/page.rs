@@ -1403,6 +1403,7 @@ pub const HTML: &str = r##"<!doctype html>
   </div>
   <nav class="tools">
     <button class="icon" onclick="togglePalette()" title="theme" aria-label="Appearance" aria-controls="palette" aria-expanded="false">◑</button>
+    <button class="icon" onclick="location.href = q('/words')" title="words" aria-label="Word cloud">☁</button>
     <button class="icon" onclick="toggleManagers()" title="managers" aria-label="Managers and decisions" aria-controls="managersSheet" aria-expanded="false">◆<span class="badge" id="mbadge" hidden></span></button>
     <button class="icon" onclick="toggleDrawer()" title="projects" aria-label="Projects" aria-controls="drawer" aria-expanded="false">☰<span class="badge" id="hbadge" hidden></span></button>
   </nav>
@@ -1488,6 +1489,7 @@ pub const HTML: &str = r##"<!doctype html>
   <div class="drawer-actions">
     <button onclick="toggleDrawer(); pickFile()">Attach file</button>
     <button onclick="toggleDrawer(); queueMessage()">Queue draft</button>
+    <button onclick="location.href = q('/words')">Word cloud</button>
   </div>
   <button class="notify" id="notify" onclick="enablePush()">
     <span>Notify me when an agent is blocked</span>
