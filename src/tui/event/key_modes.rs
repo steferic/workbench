@@ -188,6 +188,7 @@ pub(super) fn handle_input_mode_key(key: &KeyEvent, state: &AppState) -> Option<
                     KeyCode::PageDown | KeyCode::Char('J') => Action::MachinesScroll(false),
                     KeyCode::Enter | KeyCode::Char('i') => Action::MachinesStartTyping,
                     KeyCode::Char('x') => Action::MachinesAskKill,
+                    KeyCode::Char('f') => Action::MachinesStartFile,
                     KeyCode::Char(c @ '1'..='9') => Action::MachinesAnswer(c.to_string()),
                     _ => Action::Tick,
                 }

@@ -98,6 +98,8 @@ pub enum Action {
     /// Scroll the conversation; `true` is back in time.
     MachinesScroll(bool),
     MachinesStartTyping,
+    /// `f`: type or drop the paths of files to send to the selected agent.
+    MachinesStartFile,
     MachinesCancel,
     MachinesInput(char),
     MachinesPaste(String),

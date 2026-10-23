@@ -334,6 +334,57 @@ pub fn request(
     headers: &[(String, String)],
     body: Option<&[u8]>,
 ) -> Result<Response> {
+    let body = body.unwrap_or_default();
+    let length = (method != "GET").then_some(body.len() as u64);
+    let mut stream = open(base, method, path, headers, length, Duration::from_secs(15))?;
+    stream.write_all(body)?;
+    read_response(stream)
+}
+
+/// A POST whose body is copied from `body` as it is sent, so a file of
+/// several gigabytes never sits in memory. `sent` hears the running total.
+pub fn request_stream(
+    base: &str,
+    path: &str,
+    headers: &[(String, String)],
+    body: &mut dyn Read,
+    length: u64,
+    sent: &mut dyn FnMut(u64),
+) -> Result<Response> {
+    let mut stream = open(
+        base,
+        "POST",
+        path,
+        headers,
+        Some(length),
+        Duration::from_secs(60),
+    )?;
+    let mut buffer = vec![0u8; 256 * 1024];
+    let mut total = 0u64;
+    loop {
+        let read = body.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        stream.write_all(&buffer[..read])?;
+        total += read as u64;
+        sent(total);
+    }
+    if total != length {
+        bail!("the file changed size while it was sent");
+    }
+    read_response(stream)
+}
+
+/// Connect and write the request head.
+fn open(
+    base: &str,
+    method: &str,
+    path: &str,
+    headers: &[(String, String)],
+    length: Option<u64>,
+    timeout: Duration,
+) -> Result<TcpStream> {
     let url = url::Url::parse(base).with_context(|| format!("bad url {base}"))?;
     if url.scheme() != "http" {
         bail!("only http:// addresses are supported, got {base}");
@@ -345,22 +396,23 @@ pub fn request(
         .next()
         .ok_or_else(|| anyhow!("{host} does not resolve"))?;
     let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(3))?;
-    stream.set_read_timeout(Some(Duration::from_secs(15)))?;
-    stream.set_write_timeout(Some(Duration::from_secs(15)))?;
+    stream.set_read_timeout(Some(timeout))?;
+    stream.set_write_timeout(Some(timeout))?;
 
     let mut head =
         format!("{method} {path} HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\n");
     for (name, value) in headers {
         head.push_str(&format!("{name}: {value}\r\n"));
     }
-    let body = body.unwrap_or_default();
-    if method != "GET" {
-        head.push_str(&format!("Content-Length: {}\r\n", body.len()));
+    if let Some(length) = length {
+        head.push_str(&format!("Content-Length: {length}\r\n"));
     }
     head.push_str("\r\n");
     stream.write_all(head.as_bytes())?;
-    stream.write_all(body)?;
+    Ok(stream)
+}
 
+fn read_response(stream: TcpStream) -> Result<Response> {
     let mut raw = Vec::new();
     stream.take(64 << 20).read_to_end(&mut raw)?;
     parse_response(&raw)
@@ -417,7 +469,7 @@ fn dechunk(mut raw: &[u8]) -> Result<Vec<u8>> {
     }
 }
 
-fn encode(value: &str) -> String {
+pub fn encode(value: &str) -> String {
     url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
 }
 

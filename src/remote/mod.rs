@@ -25,6 +25,7 @@ mod prompt;
 mod push;
 mod server;
 mod thread;
+pub mod transfer;
 
 pub use prompt::Prompt;
 pub use push::{push_origin, Push};

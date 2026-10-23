@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 use tiny_http::{Header, Response};
 use tokio::sync::mpsc;
 
+use super::transfer::{self, RECEIVE_PATH};
 use super::{page, Shared};
 use crate::app::Action;
 
@@ -330,10 +331,9 @@ fn handle(
 
     // The instance check guards commands to agents across a restart. Hiding
     // a word in the cloud is not one, and the words page has no instance id.
-    if request.method().as_str() == "POST"
-        && path != "/api/upload"
-        && !path.starts_with("/api/words/")
-    {
+    // A file from another Mac is not a command to an agent either.
+    let raw_body = path == "/api/upload" || path == RECEIVE_PATH || path.starts_with("/api/words/");
+    if request.method().as_str() == "POST" && !raw_body {
         let Some(instance) = request
             .headers()
             .iter()
@@ -355,10 +355,7 @@ fn handle(
     // Every write endpoint but the two above takes a small JSON body. Read
     // once here, so a command for an agent on another Mac can be passed on
     // before anything looks for that agent locally.
-    let body = if request.method().as_str() == "POST"
-        && path != "/api/upload"
-        && !path.starts_with("/api/words/")
-    {
+    let body = if request.method().as_str() == "POST" && !raw_body {
         let bytes = match read_limited(request.as_reader(), 256 * 1024) {
             Ok(bytes) => bytes,
             Err((code, reason)) => return status(code, reason),
@@ -405,6 +402,24 @@ fn handle(
                 return status(404, "This agent no longer exists.");
             }
             upload(request, &params)
+        }
+        ("POST", RECEIVE_PATH) => receive(request, &query_params(query)),
+        // Text from an agent or a person on another Mac. The agent is told
+        // which Mac, and how to send files back to it.
+        ("POST", "/api/message") => {
+            let params = query_params(query);
+            let claimed = params
+                .iter()
+                .find(|(key, _)| key == "from")
+                .map(|(_, value)| value.as_str())
+                .unwrap_or_default();
+            let sender = transfer::sender(request.peer(), claimed);
+            command_from(request, &body, commands, |agent, text| {
+                (!text.is_empty()).then(|| RemoteCommand::Reply {
+                    agent,
+                    text: transfer::framed(&sender, &text),
+                })
+            })
         }
         ("GET", "/api/state") => state_body(request, &query_params(query), shared),
         ("GET", "/words") => html(crate::words::page::HTML),
@@ -701,6 +716,52 @@ fn upload(
     }
 }
 
+/// Take one file another Mac sent, streamed to disk as it arrives.
+fn receive(
+    request: &mut Request,
+    params: &[(String, String)],
+) -> Response<std::io::Cursor<Vec<u8>>> {
+    let value = |key: &str| {
+        params
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
+            .unwrap_or_default()
+    };
+    if request
+        .body_length()
+        .is_some_and(|length| length as u64 > transfer::MAX_FILE)
+    {
+        return status(413, "that file is larger than 16 GB");
+    }
+    let sender = transfer::sender(request.peer(), value("from"));
+    let root = match transfer::inbox() {
+        Ok(root) => root,
+        Err(err) => return status(500, &format!("{err:#}")),
+    };
+    let (batch, name) = (value("batch").to_string(), value("name").to_string());
+    match transfer::receive(&root, &sender.name, &batch, &name, request.as_reader()) {
+        Ok(received) => {
+            crate::logger::info(format!(
+                "{} sent a file: {}",
+                sender.name,
+                received.path.display()
+            ));
+            json(
+                serde_json::json!({
+                    "path": received.path.to_string_lossy(),
+                    "folder": received.folder.to_string_lossy(),
+                })
+                .to_string(),
+            )
+        }
+        Err((code, reason)) => {
+            crate::logger::warn(format!("a file from {} failed: {reason}", sender.name));
+            status(code, &reason)
+        }
+    }
+}
+
 /// Write it beside the other cross-process state, under the agent it is for.
 ///
 /// The name is rebuilt rather than trusted: it arrives from a phone and ends
@@ -916,6 +977,77 @@ mod tests {
         read.read_to_string(&mut reply).unwrap();
         assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
         let _ = upload.shutdown(std::net::Shutdown::Both);
+    }
+
+    #[test]
+    fn another_mac_sends_files_and_tells_an_agent_where_they_are() {
+        use crate::config::user_config::MachineConfig;
+        let inbox = tempfile::tempdir().unwrap();
+        std::env::set_var("WORKBENCH_INBOX", inbox.path());
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let shared: Shared = Default::default();
+        {
+            let mut snapshot = shared.lock().unwrap();
+            snapshot.instance = "i1".into();
+            snapshot.agents.push(super::super::AgentView {
+                id: "ab12cd34".into(),
+                alias: Some("builder".into()),
+                provider: "Claude".into(),
+                ..Default::default()
+            });
+        }
+        let (tx, mut rx) = mpsc::unbounded_channel::<CommandRequest>();
+        start_workers(listener, "test", "", &shared, &tx);
+        let told = std::thread::spawn(move || {
+            let request = rx.blocking_recv().unwrap();
+            let _ = request.reply.send(Ok(()));
+            request.command
+        });
+
+        let wrong = MachineConfig {
+            name: "mbp6".into(),
+            url: url.clone(),
+            token: "nope".into(),
+        };
+        let refused = transfer::Remote::at(wrong).err().unwrap();
+        assert!(
+            format!("{refused:#}").contains("refused the token"),
+            "{refused:#}"
+        );
+
+        let remote = transfer::Remote::at(MachineConfig {
+            name: "mbp6".into(),
+            url,
+            token: "test".into(),
+        })
+        .unwrap();
+        let outgoing = tempfile::tempdir().unwrap();
+        let ship = outgoing.path().join("ship");
+        std::fs::create_dir_all(ship.join("tex")).unwrap();
+        let model: Vec<u8> = (0..3_000_000u32).map(|i| (i % 251) as u8).collect();
+        std::fs::write(ship.join("ship.glb"), &model).unwrap();
+        std::fs::write(ship.join("tex/hull.png"), b"png").unwrap();
+
+        let mut last = 0;
+        let sent = remote.send_files(&[ship], &mut |p| last = p.sent).unwrap();
+        assert_eq!((sent.bytes, last), (3_000_003, 3_000_003));
+        assert_eq!(sent.paths.len(), 2);
+        assert!(sent.folder.starts_with(&*inbox.path().to_string_lossy()));
+        assert_eq!(std::fs::read(&sent.paths[0]).unwrap(), model);
+        assert!(sent.paths[1].ends_with("ship/tex/hull.png"));
+
+        let agent = remote.agent("builder").unwrap().id.clone();
+        remote.tell(&agent, &transfer::notice(&sent, None)).unwrap();
+        match told.join().unwrap() {
+            RemoteCommand::Reply { agent, text } => {
+                assert_eq!(agent, "ab12cd34");
+                assert!(text.starts_with("[From "), "{text}");
+                assert!(text.contains(&sent.folder), "{text}");
+            }
+            other => panic!("expected a reply, got {other:?}"),
+        }
+        std::env::remove_var("WORKBENCH_INBOX");
     }
 
     #[test]

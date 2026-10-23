@@ -619,7 +619,7 @@ pub fn process_action(
 
                 // Global already handled
                 Action::SetSessionsTab(_) | Action::SelectServer(_) | Action::ServerScope | Action::ServerRefresh | Action::ServerDetails | Action::ServerOpen | Action::ServerAskStop | Action::ServerConfirmStop | Action::ServerClose | Action::ServerStopped(..) |
-                Action::OpenMachines | Action::CloseMachines | Action::MachinesMove(_) | Action::MachinesScroll(_) | Action::MachinesStartTyping | Action::MachinesCancel | Action::MachinesInput(_) | Action::MachinesPaste(_) | Action::MachinesBackspace | Action::MachinesSend | Action::MachinesAnswer(_) | Action::MachinesAskKill | Action::MachinesConfirmKill | Action::MachinesDone(_) |
+                Action::OpenMachines | Action::CloseMachines | Action::MachinesMove(_) | Action::MachinesScroll(_) | Action::MachinesStartTyping | Action::MachinesStartFile | Action::MachinesCancel | Action::MachinesInput(_) | Action::MachinesPaste(_) | Action::MachinesBackspace | Action::MachinesSend | Action::MachinesAnswer(_) | Action::MachinesAskKill | Action::MachinesConfirmKill | Action::MachinesDone(_) |
                 Action::OpenJobs | Action::CloseJobs | Action::SelectJob(_) | Action::JobsScope | Action::JobsRefresh | Action::JobsSwitchFocus | Action::JobsMove(_) | Action::JobsTab(_) | Action::JobRun | Action::JobRunForce | Action::JobImprove | Action::JobNew | Action::JobStart(_) | Action::JobsScanned(_) |
                 Action::MouseMove(_, _) |
                 Action::PreviewLatestMedia | Action::CloseMedia | Action::BrowseMedia |

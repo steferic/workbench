@@ -190,7 +190,10 @@ fn render_conversation(frame: &mut Frame, area: Rect, state: &AppState, row: Opt
         )
     } else if ui.typing {
         Line::from(vec![
-            Span::styled("› ", Style::default().fg(t.accent)),
+            Span::styled(
+                if ui.file { "file › " } else { "› " },
+                Style::default().fg(t.accent),
+            ),
             Span::raw(ui.draft.clone()),
             Span::styled("▏", Style::default().fg(t.accent)),
         ])
@@ -198,7 +201,7 @@ fn render_conversation(frame: &mut Frame, area: Rect, state: &AppState, row: Opt
         Line::styled(
             ui.message
                 .clone()
-                .unwrap_or_else(|| "Enter to reply.".into()),
+                .unwrap_or_else(|| "Enter to reply · f to send files.".into()),
             Style::default().fg(t.fg_dim),
         )
     };

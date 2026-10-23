@@ -10,6 +10,8 @@ use tiny_http::{Header, Method};
 
 pub struct Request {
     method: Method,
+    /// Who connected: on the tailnet, which Mac or phone this came from.
+    peer: Option<std::net::IpAddr>,
     url: String,
     headers: Vec<Header>,
     length: Option<usize>,
@@ -31,6 +33,9 @@ impl Request {
     }
     pub fn as_reader(&mut self) -> &mut dyn Read {
         &mut self.body
+    }
+    pub fn peer(&self) -> Option<std::net::IpAddr> {
+        self.peer
     }
 
     pub fn read(stream: &mut TcpStream) -> io::Result<Self> {
@@ -68,6 +73,13 @@ impl Request {
         let url = parsed.path.unwrap_or("").to_string();
         if !url.starts_with('/') {
             return Err(invalid("expected an origin-relative target"));
+        }
+        // A file from another Mac may be a model of several gigabytes on a
+        // slow link. It still has the 15 second idle timeout on each read.
+        if url.split('?').next() == Some(super::transfer::RECEIVE_PATH) {
+            let limits = reader.get_mut();
+            limits.deadline = Instant::now() + super::transfer::RECEIVE_TIME;
+            limits.remaining = super::transfer::MAX_FILE as usize + 1024 * 1024;
         }
         let mut headers = Vec::new();
         let mut length = None;
@@ -113,6 +125,7 @@ impl Request {
         };
         Ok(Self {
             method,
+            peer: stream.peer_addr().ok().map(|addr| addr.ip()),
             url,
             headers,
             length,
@@ -194,6 +207,7 @@ impl From<tiny_http::TestRequest> for Request {
         request.as_reader().read_to_end(&mut body).unwrap();
         Self {
             method: request.method().clone(),
+            peer: None,
             url: request.url().into(),
             headers: request.headers().to_vec(),
             length: Some(body.len()),

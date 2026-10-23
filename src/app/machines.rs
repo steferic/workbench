@@ -8,6 +8,8 @@
 use super::{Action, AppState, InputMode};
 use crate::remote::peers;
 use crate::remote::AgentView;
+use std::path::PathBuf;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 #[derive(Debug, Default)]
@@ -16,6 +18,8 @@ pub struct MachinesUi {
     /// the selection stays put while the lists refresh under it.
     pub selected: Option<String>,
     pub typing: bool,
+    /// What is being typed is the paths of files to send, not a reply.
+    pub file: bool,
     pub draft: String,
     pub confirm_kill: bool,
     /// Lines scrolled up from the end of the conversation.
@@ -88,6 +92,7 @@ pub fn is_action(action: &Action) -> bool {
             | Action::MachinesMove(_)
             | Action::MachinesScroll(_)
             | Action::MachinesStartTyping
+            | Action::MachinesStartFile
             | Action::MachinesCancel
             | Action::MachinesInput(_)
             | Action::MachinesPaste(_)
@@ -117,6 +122,7 @@ pub fn handle(state: &mut AppState, action: Action, action_tx: &mpsc::UnboundedS
         Action::CloseMachines => {
             if ui.typing || ui.confirm_kill {
                 ui.typing = false;
+                ui.file = false;
                 ui.confirm_kill = false;
             } else {
                 state.ui.input_mode = InputMode::Normal;
@@ -150,10 +156,18 @@ pub fn handle(state: &mut AppState, action: Action, action_tx: &mpsc::UnboundedS
         }
         Action::MachinesStartTyping => {
             ui.typing = true;
+            ui.file = false;
             ui.confirm_kill = false;
+        }
+        Action::MachinesStartFile => {
+            ui.typing = true;
+            ui.file = true;
+            ui.confirm_kill = false;
+            ui.draft.clear();
         }
         Action::MachinesCancel => {
             ui.typing = false;
+            ui.file = false;
             ui.confirm_kill = false;
         }
         Action::MachinesInput(c) => ui.draft.push(c),
@@ -168,6 +182,19 @@ pub fn handle(state: &mut AppState, action: Action, action_tx: &mpsc::UnboundedS
             }
             let Some(row) = selected(state) else { return };
             let ui = &mut state.ui.machines;
+            if ui.file {
+                let paths = parse_paths(&text);
+                if let Some(missing) = paths.iter().find(|p| !p.exists()) {
+                    ui.message = Some(format!("There is no file at {}.", missing.display()));
+                    return;
+                }
+                ui.draft.clear();
+                ui.typing = false;
+                ui.file = false;
+                ui.message = Some(format!("Sending to {}…", row.machine));
+                send_files(row, paths, action_tx);
+                return;
+            }
             ui.draft.clear();
             ui.typing = false;
             ui.scroll = 0;
@@ -209,6 +236,76 @@ pub fn handle(state: &mut AppState, action: Action, action_tx: &mpsc::UnboundedS
     }
 }
 
+/// Send files to the selected agent's Mac and tell that agent where they
+/// are, on a thread. Progress comes back as `MachinesDone` messages too.
+fn send_files(row: Row, paths: Vec<PathBuf>, action_tx: &mpsc::UnboundedSender<Action>) {
+    use crate::remote::transfer::{self, human_bytes};
+    let tx = action_tx.clone();
+    std::thread::spawn(move || {
+        let outcome = (|| -> anyhow::Result<String> {
+            let remote = transfer::connect(&row.machine)?;
+            let mut shown: Option<Instant> = None;
+            let sent = remote.send_files(&paths, &mut |p| {
+                if shown.is_none_or(|at| at.elapsed() >= Duration::from_millis(500)) {
+                    shown = Some(Instant::now());
+                    let _ = tx.send(Action::MachinesDone(Ok(format!(
+                        "Sending {}: {} of {}…",
+                        p.name,
+                        human_bytes(p.sent),
+                        human_bytes(p.total)
+                    ))));
+                }
+            })?;
+            remote.tell(&row.agent.id, &transfer::notice(&sent, None))?;
+            let count = sent.paths.len();
+            Ok(format!(
+                "Sent {count} file{} ({}) to {}, and told the agent.",
+                if count == 1 { "" } else { "s" },
+                human_bytes(sent.bytes),
+                row.machine
+            ))
+        })();
+        let _ = tx.send(Action::MachinesDone(
+            outcome.map_err(|err| format!("{err:#}")),
+        ));
+    });
+}
+
+/// What was typed or dropped: one path as it is, or several, the way a
+/// terminal pastes dropped files — separated by spaces, with a space inside
+/// a name escaped or the whole name quoted. `~/` is your home.
+fn parse_paths(text: &str) -> Vec<PathBuf> {
+    let home = |raw: &str| match (raw.strip_prefix("~/"), dirs::home_dir()) {
+        (Some(rest), Some(home)) => home.join(rest),
+        _ => PathBuf::from(raw),
+    };
+    let whole = text.trim().trim_matches(['"', '\'']);
+    if home(whole).exists() {
+        return vec![home(whole)];
+    }
+    let mut paths = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+    let mut chars = text.trim().chars();
+    while let Some(c) = chars.next() {
+        match (c, quote) {
+            ('\\', None) => current.extend(chars.next()),
+            ('"' | '\'', None) => quote = Some(c),
+            (c, Some(q)) if c == q => quote = None,
+            (' ', None) => {
+                if !current.is_empty() {
+                    paths.push(home(&std::mem::take(&mut current)));
+                }
+            }
+            (c, _) => current.push(c),
+        }
+    }
+    if !current.is_empty() {
+        paths.push(home(&current));
+    }
+    paths
+}
+
 /// Make the request on its own thread and report back with `MachinesDone`.
 fn send(
     row: Row,
@@ -235,4 +332,29 @@ fn send(
         };
         let _ = tx.send(Action::MachinesDone(outcome));
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dropped_files_split_on_spaces_that_are_not_escaped_or_quoted() {
+        assert_eq!(
+            parse_paths(r"/a/ship\ final.glb '/b/hull tex.png' /c/x"),
+            vec![
+                PathBuf::from("/a/ship final.glb"),
+                PathBuf::from("/b/hull tex.png"),
+                PathBuf::from("/c/x"),
+            ]
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let spaced = dir.path().join("a b.glb");
+        std::fs::write(&spaced, "x").unwrap();
+        assert_eq!(
+            parse_paths(&format!("  {}  ", spaced.display())),
+            vec![spaced],
+            "a path that exists as typed is taken whole"
+        );
+    }
 }

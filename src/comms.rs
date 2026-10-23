@@ -492,6 +492,19 @@ your user instead, since they are the only one who can unblock it.
 A consult costs the peer a full model turn — consult when the user asks you
 to or you are genuinely blocked, not by default.
 
+### Other Macs
+
+The user may run Workbench on other Macs too, listed in `[[machines]]`.
+Each Mac only sends files; nothing can read files off a Mac from outside.
+
+- `workbench machines` — list the other Macs and their agents, with the `<machine>~<agent>` address of each
+- `workbench send <machine> <files or folders…> --to <agent>` — send files; they land in `~/Workbench Inbox/<sender>/<date time>/` there, and the agent is told where
+- `workbench ask <machine>~<agent> "question" --wait` — put a question to an agent on another Mac and print its answer
+
+To get a file FROM another Mac, ask an agent there to send it to you. A
+message from another Mac starts with `[From <machine> through Workbench; …]`
+and names the command that sends files back to it.
+
 ### Choosing the right collaboration pattern
 
 Match the user's request to what is known to work; if it fits, just do it:

@@ -91,7 +91,8 @@ enum Commands {
     /// Queue a question for a live peer agent; prints a ticket
     Ask {
         /// Target agent: short id, alias, or provider name (if unique). A
-        /// bare name means this project; a full id reaches any project.
+        /// bare name means this project; a full id reaches any project;
+        /// `<machine>~<agent>` reaches an agent on another Mac.
         target: String,
         /// The question to deliver
         message: String,
@@ -101,6 +102,28 @@ enum Commands {
         /// Timeout in seconds for --wait
         #[arg(long, default_value_t = 600)]
         timeout: u64,
+    },
+    /// List your other Macs (`[[machines]]`) and the agents running on each
+    Machines {
+        /// Print one JSON array instead of a list
+        #[arg(long)]
+        json: bool,
+    },
+    /// Send files or folders to another Mac's Workbench. They land in
+    /// `~/Workbench Inbox/<this Mac>/<date time>/` there
+    Send {
+        /// The machine's name from `[[machines]]` (`workbench machines`)
+        machine: String,
+        /// Files and folders; a folder goes with everything in it
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+        /// Also tell this agent there where the files are: an id, an
+        /// alias, or a provider name only one agent there has
+        #[arg(long)]
+        to: Option<String>,
+        /// A line to add to what that agent is told
+        #[arg(long, requires = "to")]
+        note: Option<String>,
     },
     /// Ask a peer for a structured handoff summary of its work
     Handoff {
@@ -321,7 +344,19 @@ fn main() -> Result<()> {
             message,
             wait,
             timeout,
-        }) => cli::cmd_ask(target, message, wait, timeout)?,
+        }) => match remote::transfer::split_target(&target) {
+            Some((machine, agent)) => {
+                cli::cmd_ask_remote(&machine, &agent, &message, wait, timeout)?
+            }
+            None => cli::cmd_ask(target, message, wait, timeout)?,
+        },
+        Some(Commands::Machines { json }) => cli::cmd_machines(json)?,
+        Some(Commands::Send {
+            machine,
+            paths,
+            to,
+            note,
+        }) => cli::cmd_send(&machine, &paths, to.as_deref(), note.as_deref())?,
         Some(Commands::Handoff {
             target,
             wait,

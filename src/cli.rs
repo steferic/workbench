@@ -988,6 +988,180 @@ pub fn cmd_prune_sessions(days: u64, yes: bool) -> Result<()> {
     Ok(())
 }
 
+/// `workbench machines`: each configured Mac, whether it answers, and its
+/// agents, with the `<machine>~<agent>` address that reaches each one.
+pub fn cmd_machines(json_out: bool) -> Result<()> {
+    use crate::remote::transfer;
+    let machines = crate::config::user_config::load_user_config().machines;
+    if machines.is_empty() && !json_out {
+        println!("No other Macs are configured. Add an entry to user_config.toml:");
+        println!("  [[machines]]");
+        println!("  name = \"mbp6\"");
+        println!("  url = \"http://<its tailscale address>:<its port>\"");
+        println!("  token = \"<its remote_token>\"");
+        return Ok(());
+    }
+    let mut rows = Vec::new();
+    for machine in &machines {
+        let remote = match transfer::connect(&machine.name) {
+            Ok(remote) => remote,
+            Err(err) if json_out => {
+                rows.push(serde_json::json!({
+                    "machine": machine.name,
+                    "error": format!("{err:#}"),
+                }));
+                continue;
+            }
+            Err(err) => {
+                println!(
+                    "{}  {}\n  not reachable: {err:#}",
+                    machine.name, machine.url
+                );
+                continue;
+            }
+        };
+        if json_out {
+            let agents: Vec<_> = remote
+                .agents
+                .iter()
+                .map(|a| {
+                    serde_json::json!({
+                        "address": format!("{}~{}", machine.name, a.id),
+                        "alias": a.alias,
+                        "provider": a.provider,
+                        "project": a.project,
+                        "status": a.status,
+                    })
+                })
+                .collect();
+            rows.push(serde_json::json!({ "machine": machine.name, "agents": agents }));
+            continue;
+        }
+        println!("{}  {}", machine.name, machine.url);
+        if remote.agents.is_empty() {
+            println!("  no agents");
+        }
+        for agent in &remote.agents {
+            let alias = agent
+                .alias
+                .as_ref()
+                .map(|a| format!("  “{a}”"))
+                .unwrap_or_default();
+            println!(
+                "  {:<16} {:<20} {:<9} {:<8}{alias}",
+                format!("{}~{}", machine.name, agent.id),
+                agent.project.chars().take(20).collect::<String>(),
+                agent.provider.to_lowercase(),
+                agent.status,
+            );
+        }
+    }
+    if json_out {
+        println!("{}", serde_json::Value::Array(rows));
+    } else {
+        println!("\nsend files: workbench send <machine> <files…> [--to <agent>]");
+        println!("ask an agent there: workbench ask <machine>~<agent> \"…\" --wait");
+    }
+    Ok(())
+}
+
+/// `workbench send`: push files to another Mac, and tell an agent there.
+pub fn cmd_send(
+    machine: &str,
+    paths: &[PathBuf],
+    to: Option<&str>,
+    note: Option<&str>,
+) -> Result<()> {
+    use crate::remote::transfer::{self, human_bytes};
+    use std::io::{IsTerminal, Write};
+    let remote = transfer::connect(machine)?;
+    // Find the agent before the upload, so a wrong name costs nothing.
+    let agent = match to {
+        Some(query) => Some(remote.agent(query)?.id.clone()),
+        None => None,
+    };
+    let live = std::io::stderr().is_terminal();
+    let mut shown: Option<Instant> = None;
+    let sent = remote.send_files(paths, &mut |p| {
+        let due = shown.is_none_or(|at| at.elapsed() >= Duration::from_millis(250));
+        if live && (due || p.sent == p.total) {
+            shown = Some(Instant::now());
+            eprint!(
+                "\r\x1b[2K{}  {} of {}",
+                p.name,
+                human_bytes(p.sent),
+                human_bytes(p.total)
+            );
+            let _ = std::io::stderr().flush();
+        }
+    })?;
+    if live {
+        eprint!("\r\x1b[2K");
+    }
+    let count = sent.paths.len();
+    println!(
+        "sent {count} file{} ({}) to {machine}: {}",
+        if count == 1 { "" } else { "s" },
+        human_bytes(sent.bytes),
+        if count == 1 {
+            &sent.paths[0]
+        } else {
+            &sent.folder
+        }
+    );
+    if let Some(agent) = agent {
+        remote.tell(&agent, &transfer::notice(&sent, note))?;
+        println!("told {machine}~{agent} where they are");
+    }
+    Ok(())
+}
+
+/// `workbench ask <machine>~<agent>`: put the question in front of an agent
+/// on another Mac, and with `--wait` print what it answers. An agent there
+/// is not a consult peer — there is no ticket — so the answer is its own
+/// words once it stops working.
+pub fn cmd_ask_remote(
+    machine: &str,
+    target: &str,
+    message: &str,
+    wait: bool,
+    timeout_secs: u64,
+) -> Result<()> {
+    use crate::remote::transfer;
+    if message.trim().is_empty() {
+        bail!("empty message");
+    }
+    let remote = transfer::connect(machine)?;
+    let agent = remote.agent(target)?.clone();
+    let before = remote.read_agent(&agent.id)?.msg_total;
+    remote.tell(&agent.id, message)?;
+    let address = format!("{machine}~{}", agent.id);
+    if !wait {
+        println!("delivered to {address}; its answer shows in the Machines window (F10)");
+        return Ok(());
+    }
+    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
+    while Instant::now() < deadline {
+        std::thread::sleep(Duration::from_secs(2));
+        let now = remote.read_agent(&agent.id)?;
+        if let Some(answer) = transfer::answer_after(&now, before) {
+            println!("{answer}");
+            return Ok(());
+        }
+        if now.status == "blocked" || now.prompt.is_some() {
+            bail!(
+                "{address} stopped on a question only a person at {machine} can answer{}",
+                now.reason.map(|r| format!(": {r}")).unwrap_or_default()
+            );
+        }
+        if now.status == "stopped" {
+            bail!("{address} stopped before it answered");
+        }
+    }
+    eprintln!("no answer from {address} within {timeout_secs}s");
+    std::process::exit(EXIT_TIMEOUT);
+}
+
 #[cfg(test)]
 mod jobs_tests {
     use super::*;
