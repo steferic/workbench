@@ -74,10 +74,19 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         Style::default().fg(t.fg_faint)
     };
 
-    let action_bar = Paragraph::new(Line::from(vec![
+    let mut hints = vec![
         Span::styled("h", key_style),
         Span::styled(":settings", action_style),
-    ]));
+    ];
+    // Tab shows another Mac's projects (see app::remote_view).
+    if let Some(first) = crate::remote::peers::get().and_then(|p| p.machines().into_iter().next()) {
+        hints.push(Span::styled("  tab", key_style));
+        hints.push(Span::styled(
+            format!(":{}", first.config.name),
+            action_style,
+        ));
+    }
+    let action_bar = Paragraph::new(Line::from(hints));
 
     frame.render_widget(action_bar, action_area);
 }

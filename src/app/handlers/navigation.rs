@@ -512,6 +512,21 @@ fn handle_mouse_click(
     state.set_text_selection(TextSelection::default());
     clear_all_pinned_selections(state);
 
+    // Another Mac on show: its rows are not this Mac's, so a click there only
+    // moves the focus.
+    if crate::app::remote_view::active(state) {
+        for (area, panel) in [
+            (state.ui.workspace_area, FocusPanel::WorkspaceList),
+            (state.ui.session_area, FocusPanel::SessionList),
+            (state.ui.output_pane_area, FocusPanel::OutputPane),
+        ] {
+            if area.is_some_and(|area| is_in_area(x, y, area)) {
+                state.ui.focus = panel;
+                return;
+            }
+        }
+    }
+
     if let Some(area) = state.ui.workspace_area {
         if is_in_area(x, y, area) {
             state.ui.focus = FocusPanel::WorkspaceList;

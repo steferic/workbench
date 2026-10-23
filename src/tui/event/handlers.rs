@@ -93,6 +93,14 @@ impl EventHandler {
             return Action::EnterCommandPalette;
         }
 
+        // Another Mac on show: its panes take the keys (see app::remote_view).
+        // Before Shift+arrows, whose local move would start this Mac's agents.
+        if crate::app::remote_view::active(state) {
+            if let Some(action) = self.handle_remote_keys(key, state) {
+                return action;
+            }
+        }
+
         // Global window navigation with Shift+Left/Right arrows
         if key.modifiers.contains(KeyModifiers::SHIFT) {
             match key.code {
@@ -136,10 +144,74 @@ impl EventHandler {
                 _ => Action::Tick,
             },
             KeyCode::Char('D') => Action::ToggleDesk,
+            // Show another Mac's projects and agents, when there is one.
+            KeyCode::Tab if crate::remote::peers::get().is_some() => Action::RemoteNextMachine,
             KeyCode::Char('h') => Action::EnterConfigWindow,
             KeyCode::Char('?') => Action::EnterConfigWindow,
             _ => Action::Tick,
         }
+    }
+
+    /// Keys for the three panes while another Mac is on show. `None` leaves
+    /// the key to this Mac's own handling: the Utilities pane, and pinned
+    /// terminals, stay local.
+    fn handle_remote_keys(&self, key: KeyEvent, state: &AppState) -> Option<Action> {
+        use crate::app::remote_view;
+        let pane = state.ui.focus;
+        if !matches!(
+            pane,
+            FocusPanel::WorkspaceList | FocusPanel::SessionList | FocusPanel::OutputPane
+        ) {
+            return None;
+        }
+        if let Some(action) = check_global_keys(&key, &state.system.user_config) {
+            return Some(action);
+        }
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        if key.modifiers.contains(KeyModifiers::SHIFT) {
+            let next = match (key.code, pane) {
+                (KeyCode::Left, FocusPanel::OutputPane) => Some(FocusPanel::SessionList),
+                (KeyCode::Left, _) => Some(FocusPanel::WorkspaceList),
+                (KeyCode::Right, FocusPanel::WorkspaceList) => Some(FocusPanel::SessionList),
+                (KeyCode::Right, _) => Some(FocusPanel::OutputPane),
+                _ => None,
+            };
+            if let Some(next) = next {
+                return Some(Action::RemoteFocus(next));
+            }
+        }
+        Some(match pane {
+            FocusPanel::WorkspaceList => match key.code {
+                KeyCode::Tab => Action::RemoteNextMachine,
+                KeyCode::Char('j') | KeyCode::Down => Action::RemoteMoveProject(false),
+                KeyCode::Char('k') | KeyCode::Up => Action::RemoteMoveProject(true),
+                KeyCode::Char('l') | KeyCode::Enter | KeyCode::Right => {
+                    Action::RemoteFocus(FocusPanel::SessionList)
+                }
+                KeyCode::Char('?') => Action::EnterConfigWindow,
+                _ => Action::Tick,
+            },
+            FocusPanel::SessionList => match key.code {
+                KeyCode::Char('j') | KeyCode::Down => Action::RemoteMoveAgent(false),
+                KeyCode::Char('k') | KeyCode::Up => Action::RemoteMoveAgent(true),
+                KeyCode::Char('l') | KeyCode::Enter | KeyCode::Right => {
+                    Action::RemoteFocus(FocusPanel::OutputPane)
+                }
+                KeyCode::Char('h') | KeyCode::Left | KeyCode::Esc => {
+                    Action::RemoteFocus(FocusPanel::WorkspaceList)
+                }
+                _ => Action::Tick,
+            },
+            // Everything else goes to the agent there, Esc included, as it
+            // does for a local agent; Ctrl+H comes back out.
+            _ => match key.code {
+                KeyCode::Char('h') if ctrl => Action::RemoteFocus(FocusPanel::SessionList),
+                _ => match remote_view::key_bytes(&key) {
+                    Some(bytes) => Action::RemoteKeys(bytes),
+                    None => Action::Tick,
+                },
+            },
+        })
     }
 
     fn handle_session_list_keys(&self, key: KeyEvent, state: &AppState) -> Action {
@@ -783,5 +855,82 @@ mod quit_tests {
                 "{code:?}+{mods:?} should confirm"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod remote_view_tests {
+    use super::*;
+
+    fn press(state: &AppState, code: KeyCode, mods: KeyModifiers) -> Action {
+        EventHandler::test_key(KeyEvent::new(code, mods), state)
+    }
+
+    #[test]
+    fn another_macs_panes_take_the_keys_and_its_terminal_gets_them_as_bytes() {
+        let none = KeyModifiers::NONE;
+        let mut state = AppState::default();
+        state.ui.remote.machine = Some("mbp6".into());
+
+        state.ui.focus = FocusPanel::WorkspaceList;
+        assert!(matches!(
+            press(&state, KeyCode::Tab, none),
+            Action::RemoteNextMachine
+        ));
+        assert!(matches!(
+            press(&state, KeyCode::Char('j'), none),
+            Action::RemoteMoveProject(false)
+        ));
+        // Never the local FocusRight, which starts this Mac's agents.
+        for (code, mods) in [
+            (KeyCode::Enter, none),
+            (KeyCode::Right, KeyModifiers::SHIFT),
+        ] {
+            assert!(matches!(
+                press(&state, code, mods),
+                Action::RemoteFocus(FocusPanel::SessionList)
+            ));
+        }
+
+        state.ui.focus = FocusPanel::SessionList;
+        assert!(matches!(
+            press(&state, KeyCode::Char('k'), none),
+            Action::RemoteMoveAgent(true)
+        ));
+        assert!(matches!(
+            press(&state, KeyCode::Enter, none),
+            Action::RemoteFocus(FocusPanel::OutputPane)
+        ));
+
+        state.ui.focus = FocusPanel::OutputPane;
+        for (code, mods, bytes) in [
+            (KeyCode::Char('h'), none, b"h".to_vec()),
+            (KeyCode::Char(' '), none, b" ".to_vec()),
+            (KeyCode::Enter, none, b"\r".to_vec()),
+            (KeyCode::Esc, none, vec![0x1b]),
+            (KeyCode::Tab, none, b"\t".to_vec()),
+            (KeyCode::Char('c'), KeyModifiers::CONTROL, vec![3]),
+        ] {
+            match press(&state, code, mods) {
+                Action::RemoteKeys(sent) => assert_eq!(sent, bytes, "{code:?}"),
+                other => panic!("{code:?} gave {other:?}"),
+            }
+        }
+        for (code, mods) in [
+            (KeyCode::Char('h'), KeyModifiers::CONTROL),
+            (KeyCode::Left, KeyModifiers::SHIFT),
+        ] {
+            assert!(matches!(
+                press(&state, code, mods),
+                Action::RemoteFocus(FocusPanel::SessionList)
+            ));
+        }
+
+        // The Utilities pane stays this Mac's.
+        state.ui.focus = FocusPanel::UtilitiesPane;
+        assert!(matches!(
+            press(&state, KeyCode::Tab, none),
+            Action::ToggleUtilitySection
+        ));
     }
 }

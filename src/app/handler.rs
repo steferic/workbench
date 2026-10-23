@@ -91,6 +91,21 @@ pub fn process_action(
         super::machines::handle(state, action, action_tx);
         return Ok(());
     }
+    // Another Mac on show: a paste into its terminal goes to that agent.
+    let action = match action {
+        Action::Paste(text)
+            if super::remote_view::active(state)
+                && state.ui.focus == crate::app::FocusPanel::OutputPane
+                && state.ui.input_mode == crate::app::InputMode::Normal =>
+        {
+            Action::RemoteKeys(crate::app::agent_input::bracketed(&text))
+        }
+        other => other,
+    };
+    if super::remote_view::is_action(&action) {
+        super::remote_view::handle(state, action);
+        return Ok(());
+    }
     if machines_open
         && matches!(
             action,
@@ -620,6 +635,7 @@ pub fn process_action(
                 // Global already handled
                 Action::SetSessionsTab(_) | Action::SelectServer(_) | Action::ServerScope | Action::ServerRefresh | Action::ServerDetails | Action::ServerOpen | Action::ServerAskStop | Action::ServerConfirmStop | Action::ServerClose | Action::ServerStopped(..) |
                 Action::OpenMachines | Action::CloseMachines | Action::MachinesMove(_) | Action::MachinesScroll(_) | Action::MachinesStartTyping | Action::MachinesStartFile | Action::MachinesCancel | Action::MachinesInput(_) | Action::MachinesPaste(_) | Action::MachinesBackspace | Action::MachinesSend | Action::MachinesAnswer(_) | Action::MachinesAskKill | Action::MachinesConfirmKill | Action::MachinesDone(_) |
+                Action::RemoteNextMachine | Action::RemoteMoveProject(_) | Action::RemoteMoveAgent(_) | Action::RemoteFocus(_) | Action::RemoteKeys(_) |
                 Action::OpenJobs | Action::CloseJobs | Action::SelectJob(_) | Action::JobsScope | Action::JobsRefresh | Action::JobsSwitchFocus | Action::JobsMove(_) | Action::JobsTab(_) | Action::JobRun | Action::JobRunForce | Action::JobImprove | Action::JobNew | Action::JobStart(_) | Action::JobsScanned(_) |
                 Action::MouseMove(_, _) |
                 Action::PreviewLatestMedia | Action::CloseMedia | Action::BrowseMedia |
@@ -861,6 +877,7 @@ fn remote_tick(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) 
 
     crate::media::tick(state);
     crate::remote::publish(state, &state.system.remote_state.clone());
+    crate::remote::screen::publish_screens(state, &state.system.remote_state);
     notify_phone(state, action_tx);
     control_tick(state);
 
@@ -871,6 +888,13 @@ fn remote_tick(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) 
         }
     }
     for request in requests {
+        // Keys are never retried by id, and a long stretch of typing would
+        // fill the receipt book that guards retries; they skip it.
+        if matches!(request.command, crate::remote::RemoteCommand::Keys { .. }) {
+            let outcome = apply_remote(state, request.command, action_tx);
+            let _ = request.reply.send(outcome);
+            continue;
+        }
         let outcome = match state
             .system
             .remote_receipts
@@ -1821,6 +1845,7 @@ fn apply_remote(
     let agent = match &command {
         RemoteCommand::Todo { agent, .. }
         | RemoteCommand::Reply { agent, .. }
+        | RemoteCommand::Keys { agent, .. }
         | RemoteCommand::Answer { agent, .. }
         | RemoteCommand::Focus { agent }
         | RemoteCommand::Kill { agent } => agent.clone(),
@@ -1857,6 +1882,15 @@ fn apply_remote(
             }
             crate::logger::info(format!("phone queued for {agent}: {text}"));
             super::handlers::save_state(state, "failed to save a queued todo");
+        }
+        RemoteCommand::Keys { text, .. } => {
+            let running = state
+                .get_session(session_id)
+                .is_some_and(|s| s.status == crate::models::SessionStatus::Running);
+            if !running {
+                return Err(format!("{agent} is not running"));
+            }
+            dispatch_action(action_tx, Action::SendInput(session_id, text.into_bytes()));
         }
         RemoteCommand::Reply { text, .. } => {
             let running = state

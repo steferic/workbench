@@ -5,6 +5,7 @@ pub mod comms_tick;
 pub mod desk_view;
 mod handler;
 pub mod machines;
+pub mod remote_view;
 
 /// What the detail overlay is showing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

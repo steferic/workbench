@@ -69,6 +69,12 @@ pub enum RemoteCommand {
     Focus {
         agent: String,
     },
+    /// Bytes for an agent's terminal, from another Mac's Workbench showing
+    /// it: keys as the TUI would send them for a local agent.
+    Keys {
+        agent: String,
+        text: String,
+    },
     /// Stop an agent and its process tree: the TUI's `x`. From
     /// `workbench kill`, for an agent that has grown too large to keep.
     Kill {
@@ -422,6 +428,14 @@ fn handle(
             })
         }
         ("GET", "/api/state") => state_body(request, &query_params(query), shared),
+        ("GET", "/api/screen") => screen_body(request, &query_params(query), shared),
+        // Hex, because every command body is trimmed, and a key can be
+        // nothing but whitespace: Enter, Tab, a space.
+        ("POST", "/api/keys") => command_from(request, &body, commands, |agent, hex| {
+            let bytes = super::screen::from_hex(&hex)?;
+            let text = String::from_utf8(bytes).ok()?;
+            (!text.is_empty()).then_some(RemoteCommand::Keys { agent, text })
+        }),
         ("GET", "/words") => html(crate::words::page::HTML),
         ("GET", "/api/words") => words_body(&query_params(query)),
         ("POST", "/api/words/hide") => hide_words(request, true),
@@ -478,6 +492,43 @@ fn handle(
         }),
         _ => status(404, "not found"),
     }
+}
+
+/// An agent's terminal for another Mac (see `remote::screen`): 202 until its
+/// first frame is built, 304 when it has not changed since `If-None-Match`.
+fn screen_body(
+    request: &Request,
+    params: &[(String, String)],
+    shared: &Shared,
+) -> Response<std::io::Cursor<Vec<u8>>> {
+    let Some(agent) = params
+        .iter()
+        .find(|(key, _)| key == "agent")
+        .map(|(_, value)| value.as_str())
+    else {
+        return status(400, "which agent?");
+    };
+    let frame = match super::screen::watch(shared, agent) {
+        Ok(Some(frame)) => frame,
+        Ok(None) => return status(202, ""),
+        Err(()) => return status(404, "This agent no longer exists."),
+    };
+    let known = request
+        .headers()
+        .iter()
+        .find(|h| h.field.equiv("If-None-Match"))
+        .is_some_and(|h| h.value.as_str() == frame.tag);
+    if known {
+        return status(304, "");
+    }
+    Response::from_data(frame.bytes.to_vec())
+        .with_header(header("Content-Type", "application/octet-stream"))
+        .with_header(header("ETag", &frame.tag))
+        .with_header(header(
+            "X-Screen-Size",
+            &format!("{}x{}", frame.rows, frame.cols),
+        ))
+        .with_header(header("Cache-Control", "no-store"))
 }
 
 /// The snapshot, minus whatever the caller already has.
@@ -1048,6 +1099,79 @@ mod tests {
             other => panic!("expected a reply, got {other:?}"),
         }
         std::env::remove_var("WORKBENCH_INBOX");
+    }
+
+    #[test]
+    fn another_mac_reads_an_agents_screen_and_types_into_it() {
+        use std::io::{Read, Write};
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let shared: Shared = Default::default();
+        let mut parser = vt100::Parser::new(8, 30, 0);
+        parser.process(b"\x1b[32mready\x1b[0m\r\n> ");
+        let frame = super::super::screen::Frame::of(parser.screen());
+        {
+            let mut snapshot = shared.lock().unwrap();
+            snapshot.instance = "i1".into();
+            snapshot.agents.push(super::super::AgentView {
+                id: "ab12cd34".into(),
+                ..Default::default()
+            });
+            snapshot.screens.insert("ab12cd34".into(), frame.clone());
+        }
+        let (tx, mut rx) = mpsc::unbounded_channel::<CommandRequest>();
+        start_workers(listener, "test", "", &shared, &tx);
+
+        let get = |path: &str, tag: Option<&str>| {
+            let mut stream = std::net::TcpStream::connect(addr).unwrap();
+            let extra = tag
+                .map(|t| format!("If-None-Match: {t}\r\n"))
+                .unwrap_or_default();
+            write!(stream, "GET {path} HTTP/1.1\r\nHost: x\r\n{extra}\r\n").unwrap();
+            let mut raw = Vec::new();
+            stream.read_to_end(&mut raw).unwrap();
+            raw
+        };
+        let raw = get("/api/screen?agent=ab12cd34&t=test", None);
+        let head =
+            String::from_utf8_lossy(&raw[..raw.windows(4).position(|w| w == b"\r\n\r\n").unwrap()])
+                .to_string();
+        assert!(head.starts_with("HTTP/1.1 200"), "{head}");
+        assert!(head.contains("X-Screen-Size: 8x30"), "{head}");
+        assert!(raw.ends_with(&frame.bytes), "the body is the frame");
+        assert!(shared.lock().unwrap().screen_watch.contains_key("ab12cd34"));
+
+        let again = get("/api/screen?agent=ab12cd34&t=test", Some(&frame.tag));
+        assert!(again.starts_with(b"HTTP/1.1 304"));
+        assert!(get("/api/screen?agent=gone&t=test", None).starts_with(b"HTTP/1.1 404"));
+        assert!(get("/api/screen?agent=ab12cd34&t=bad", None).starts_with(b"HTTP/1.1 401"));
+
+        let typed = std::thread::spawn(move || {
+            let request = rx.blocking_recv().unwrap();
+            let _ = request.reply.send(Ok(()));
+            request.command
+        });
+        let keys = super::super::peers::request(
+            &format!("http://{addr}"),
+            "POST",
+            "/api/keys?t=test",
+            &[("X-Workbench-Instance".to_string(), "i1".to_string())],
+            Some(
+                format!(
+                    r#"{{"agent":"ab12cd34","text":"{}"}}"#,
+                    super::super::screen::to_hex(b"ls\r")
+                )
+                .as_bytes(),
+            ),
+        )
+        .unwrap();
+        assert_eq!(keys.status, 200, "{}", keys.text());
+        match typed.join().unwrap() {
+            RemoteCommand::Keys { agent, text } => {
+                assert_eq!((agent.as_str(), text.as_str()), ("ab12cd34", "ls\r"));
+            }
+            other => panic!("expected keys, got {other:?}"),
+        }
     }
 
     #[test]

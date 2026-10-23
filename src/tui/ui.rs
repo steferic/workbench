@@ -131,9 +131,16 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
         utilities_area.height,
     ));
 
-    // Render left components
-    workspace_list::render(frame, workspace_area, state);
-    session_list::render(frame, session_area, state);
+    // Render left components. With another Mac on show, its projects and
+    // agents take the top two panes.
+    let remote = crate::app::remote_view::active(state);
+    if remote {
+        crate::tui::components::remote_view::workspaces(frame, workspace_area, state);
+        crate::tui::components::remote_view::sessions(frame, session_area, state);
+    } else {
+        workspace_list::render(frame, workspace_area, state);
+        session_list::render(frame, session_area, state);
+    }
     utilities_pane::render(frame, utilities_area, state);
 
     // Render right panel: the desk when it is open, otherwise the active
@@ -157,7 +164,20 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
         output_area.width,
         output_area.height,
     ));
-    if state.ui.desk_open {
+    if remote {
+        // The other Mac's agent has the whole right side: no desk, no pinned
+        // terminals, which are this Mac's.
+        state.ui.output_pane_area = Some((
+            right_panel.x,
+            right_panel.y,
+            right_panel.width,
+            right_panel.height,
+        ));
+        for area in state.ui.pinned_pane_areas.iter_mut() {
+            *area = None;
+        }
+        crate::tui::components::remote_view::output(frame, right_panel, state);
+    } else if state.ui.desk_open {
         // Mouse interaction belongs to the whole Desk. Terminal sizing uses
         // terminal_output_area above; hidden pinned terminals retain their size.
         state.ui.output_pane_area = Some((

@@ -23,6 +23,7 @@ mod page;
 pub mod peers;
 mod prompt;
 mod push;
+pub mod screen;
 mod server;
 mod thread;
 pub mod transfer;
@@ -59,6 +60,13 @@ pub struct Snapshot {
     /// Conversations recently requested by independent browser clients.
     #[serde(skip)]
     pub watching: std::collections::HashMap<String, std::time::Instant>,
+    /// Agents whose terminal another Mac is showing, and when it last asked
+    /// (see `screen`).
+    #[serde(skip)]
+    pub screen_watch: std::collections::HashMap<String, std::time::Instant>,
+    /// Those agents' screens, rebuilt on the tick.
+    #[serde(skip)]
+    pub screens: std::collections::HashMap<String, screen::Frame>,
     /// Every project, including ones with no agents yet — you can start one
     /// there from the phone.
     pub projects: Vec<ProjectView>,

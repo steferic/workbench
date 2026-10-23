@@ -254,8 +254,17 @@ async fn run_main_loop(
     const IDLE_HEARTBEAT: std::time::Duration = std::time::Duration::from_secs(1);
     let mut needs_draw = true;
     let mut last_draw = std::time::Instant::now();
+    let mut drawn_remote_screen = 0;
 
     loop {
+        // Another Mac's terminal on show changes with no event here.
+        if crate::app::remote_view::active(state) {
+            let version = crate::remote::peers::screen_version();
+            if version != drawn_remote_screen {
+                drawn_remote_screen = version;
+                needs_draw = true;
+            }
+        }
         let since_last_draw = last_draw.elapsed();
         let draw_now = needs_draw
             || since_last_draw >= IDLE_HEARTBEAT

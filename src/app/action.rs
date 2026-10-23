@@ -111,6 +111,17 @@ pub enum Action {
     MachinesConfirmKill,
     /// A request to another Mac came back: what to say about it.
     MachinesDone(Result<String, String>),
+    // Another Mac in the main panes (see `app::remote_view`).
+    /// Tab in Workspaces: show the next Mac, or this one after the last.
+    RemoteNextMachine,
+    /// Select the project above (`true`) or below on the Mac on show.
+    RemoteMoveProject(bool),
+    /// Select the agent above (`true`) or below in that project.
+    RemoteMoveAgent(bool),
+    /// Move the focus without starting anything on this Mac.
+    RemoteFocus(crate::app::FocusPanel),
+    /// Bytes for the selected remote agent's terminal.
+    RemoteKeys(Vec<u8>),
     // The Jobs window (see `app::jobs`).
     OpenJobs,
     CloseJobs,

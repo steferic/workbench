@@ -14,6 +14,7 @@
 //! Reading `/api/state?local=1` asks a Workbench for its own agents only, so
 //! two Macs that list each other do not echo each other's agents back.
 
+use super::screen::Frame;
 use super::{AgentView, ProjectView, Snapshot};
 use crate::config::user_config::MachineConfig;
 use anyhow::{anyhow, bail, Context, Result};
@@ -33,6 +34,10 @@ const LIST_EVERY: Duration = Duration::from_secs(2);
 const DETAIL_EVERY: Duration = Duration::from_secs(1);
 /// A conversation nobody asked for in this long stops being read.
 const FOCUS_LASTS: Duration = Duration::from_secs(20);
+/// How often the terminal on show is read. Most reads are a 304.
+const SCREEN_EVERY: Duration = Duration::from_millis(60);
+/// A terminal nobody drew for this long stops being read.
+const SCREEN_LASTS: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
@@ -60,9 +65,23 @@ pub struct Peers {
     focus: Mutex<HashMap<(String, String), Instant>>,
     /// (machine, agent) → that agent with its conversation.
     details: Mutex<HashMap<(String, String), AgentView>>,
+    /// The one remote terminal on show here, and when it was last drawn.
+    screen_wanted: Mutex<Option<((String, String), Instant)>>,
+    /// Its latest frame, for that (machine, agent).
+    screen: Mutex<Option<((String, String), Frame)>>,
+    /// Keys for remote terminals, sent in order by one thread.
+    keys: Mutex<Option<std::sync::mpsc::Sender<((String, String), Vec<u8>)>>>,
 }
 
 static PEERS: OnceLock<Peers> = OnceLock::new();
+
+/// Goes up with every new remote frame, so the event loop knows to redraw
+/// a terminal that changed on another Mac — no local event says so.
+static SCREEN_VERSION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub fn screen_version() -> u64 {
+    SCREEN_VERSION.load(std::sync::atomic::Ordering::Relaxed)
+}
 
 /// Start reading the configured machines. Does nothing with none configured,
 /// or the second time.
@@ -88,6 +107,7 @@ pub fn start(configs: &[MachineConfig]) {
         return;
     }
     std::thread::spawn(poll);
+    std::thread::spawn(poll_screen);
 }
 
 pub fn get() -> Option<&'static Peers> {
@@ -107,6 +127,35 @@ impl Peers {
             focus.insert(key.clone(), Instant::now());
         }
         self.details.lock().ok()?.get(&key).cloned()
+    }
+
+    /// The latest frame of a remote agent's terminal, and a request to keep
+    /// reading it. Call it while drawing that terminal.
+    pub fn screen(&self, machine: &str, agent: &str) -> Option<Frame> {
+        let key = (machine.to_string(), agent.to_string());
+        if let Ok(mut wanted) = self.screen_wanted.lock() {
+            *wanted = Some((key.clone(), Instant::now()));
+        }
+        let screen = self.screen.lock().ok()?;
+        screen
+            .as_ref()
+            .filter(|(k, _)| *k == key)
+            .map(|(_, frame)| frame.clone())
+    }
+
+    /// Type into a remote agent's terminal. Keys go in the order given:
+    /// one thread sends them, joining whatever queued up while the last
+    /// request was on its way.
+    pub fn send_keys(&self, machine: &str, agent: &str, bytes: Vec<u8>) {
+        let Ok(mut keys) = self.keys.lock() else {
+            return;
+        };
+        let sender = keys.get_or_insert_with(|| {
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || send_queued_keys(rx));
+            tx
+        });
+        let _ = sender.send(((machine.to_string(), agent.to_string()), bytes));
     }
 
     fn config(&self, machine: &str) -> Option<(MachineConfig, String)> {
@@ -209,6 +258,105 @@ fn poll() {
             }
         }
         std::thread::sleep(DETAIL_EVERY);
+    }
+}
+
+fn send_queued_keys(rx: std::sync::mpsc::Receiver<((String, String), Vec<u8>)>) {
+    let mut held: Option<((String, String), Vec<u8>)> = None;
+    loop {
+        let (target, mut bytes) = match held.take() {
+            Some(next) => next,
+            None => match rx.recv() {
+                Ok(next) => next,
+                Err(_) => return,
+            },
+        };
+        while let Ok((next, more)) = rx.try_recv() {
+            if next == target {
+                bytes.extend(more);
+            } else {
+                held = Some((next, more));
+                break;
+            }
+        }
+        let hex = super::screen::to_hex(&bytes);
+        let (code, body) = forward(&target.0, "/api/keys", &target.1, &hex, &[]);
+        if code != 200 {
+            crate::logger::warn(format!(
+                "keys for {}{SEP}{} were refused: {code} {body}",
+                target.0, target.1
+            ));
+        }
+    }
+}
+
+fn poll_screen() {
+    let Some(peers) = get() else { return };
+    let mut tag: Option<((String, String), String)> = None;
+    loop {
+        let wanted = peers
+            .screen_wanted
+            .lock()
+            .ok()
+            .and_then(|w| w.clone())
+            .filter(|(_, at)| at.elapsed() < SCREEN_LASTS)
+            .map(|(key, _)| key);
+        let Some(key) = wanted else {
+            tag = None;
+            std::thread::sleep(Duration::from_millis(200));
+            continue;
+        };
+        let Some((config, _)) = peers.config(&key.0) else {
+            std::thread::sleep(Duration::from_millis(500));
+            continue;
+        };
+        let known = tag
+            .as_ref()
+            .filter(|(k, _)| *k == key)
+            .map(|(_, t)| t.clone());
+        match fetch_screen(&config, &key.1, known.as_deref()) {
+            Ok(Some(frame)) => {
+                tag = Some((key.clone(), frame.tag.clone()));
+                if let Ok(mut screen) = peers.screen.lock() {
+                    *screen = Some((key, frame));
+                }
+                SCREEN_VERSION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                std::thread::sleep(SCREEN_EVERY);
+            }
+            Ok(None) => std::thread::sleep(SCREEN_EVERY),
+            Err(_) => std::thread::sleep(Duration::from_millis(500)),
+        }
+    }
+}
+
+/// `Some` for a new frame; `None` when it is unchanged or not built yet.
+fn fetch_screen(config: &MachineConfig, agent: &str, tag: Option<&str>) -> Result<Option<Frame>> {
+    let path = format!(
+        "/api/screen?agent={}&t={}",
+        encode(agent),
+        encode(&config.token)
+    );
+    let mut headers = Vec::new();
+    if let Some(tag) = tag {
+        headers.push(("If-None-Match".to_string(), tag.to_string()));
+    }
+    let response = request(&config.url, "GET", &path, &headers, None)?;
+    match response.status {
+        200 => {
+            let size = response.header("x-screen-size").unwrap_or_default();
+            let (rows, cols) = size
+                .split_once('x')
+                .and_then(|(r, c)| Some((r.parse().ok()?, c.parse().ok()?)))
+                .context("the screen came without its size")?;
+            Ok(Some(Frame {
+                rows,
+                cols,
+                tag: response.header("etag").unwrap_or_default(),
+                bytes: std::sync::Arc::new(response.body),
+            }))
+        }
+        202 | 304 => Ok(None),
+        code => bail!("HTTP {code}: {}", response.text()),
     }
 }
 
