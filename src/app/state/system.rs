@@ -358,8 +358,26 @@ pub struct TranscriptBuffer {
     /// *replaces* the frame-diff reconstruction for display: the log is the
     /// deterministic record, the frame differ only a stand-in until it loads.
     log_history: Option<Vec<TranscriptLine>>,
+    /// The live screen, while it is scrolled over a log document. History
+    /// is then `log_history[..cut]` ++ `tail`, so the first step up moves the
+    /// screen you were reading down one line instead of swapping it for the
+    /// log's own rendering of the same conversation.
+    tail: Vec<TranscriptLine>,
+    /// How much of `log_history` sits above `tail`: everything before the
+    /// point where the screen's own text begins (see [`seam`]).
+    cut: usize,
+    /// The log's words with their line numbers, for [`seam`]. Built once per
+    /// log, not once per frame: a working agent changes its screen several
+    /// times a second, and the log can run to tens of thousands of lines.
+    log_words: Option<LogWords>,
     max_lines: usize,
     pub generation: u64,
+}
+
+struct LogWords {
+    words: Vec<(String, usize)>,
+    /// Lines up to and including the last one with text.
+    content: usize,
 }
 
 struct ReadingPosition {
@@ -380,6 +398,9 @@ impl TranscriptBuffer {
             visible: Vec::new(),
             prev_frame: Vec::new(),
             log_history: None,
+            tail: Vec::new(),
+            cut: 0,
+            log_words: None,
             max_lines: max_lines.max(1),
             generation: 0,
         }
@@ -396,6 +417,45 @@ impl TranscriptBuffer {
 
     pub fn follow_live(&mut self) {
         self.reading = None;
+        if !self.tail.is_empty() {
+            self.tail.clear();
+            self.generation = self.generation.wrapping_add(1);
+        }
+    }
+
+    /// Screen rows as history lines, the same way a frame is captured.
+    pub fn screen_rows(screen: &vt100::Screen, count: usize) -> Vec<TranscriptLine> {
+        let (rows, cols) = screen.size();
+        (0..rows.min(count.min(u16::MAX as usize) as u16))
+            .map(|row| snapshot_line_from_screen(screen, row, cols))
+            .collect()
+    }
+
+    /// Put the live screen under the log while it is scrolled. Only for a
+    /// log document: native terminal history already contains the screen.
+    pub fn set_live_tail(&mut self, rows: Vec<TranscriptLine>) {
+        if self.document.is_none() || rows == self.tail {
+            return;
+        }
+        self.tail = rows;
+        self.find_seam();
+        self.generation = self.generation.wrapping_add(1);
+    }
+
+    fn find_seam(&mut self) {
+        let Some(log) = self.log_history.as_deref() else {
+            self.cut = 0;
+            return;
+        };
+        let index = self.log_words.get_or_insert_with(|| LogWords::of(log));
+        let mut cut = seam(index, &self.tail);
+        // Both sides end and begin with paragraph spacing; one gap is enough.
+        if self.tail.first().is_some_and(TranscriptLine::is_empty) {
+            while cut > 0 && log[cut - 1].is_empty() {
+                cut -= 1;
+            }
+        }
+        self.cut = cut;
     }
 
     pub fn set_document(&mut self, history: crate::scrollback::History, cols: u16) {
@@ -477,6 +537,7 @@ impl TranscriptBuffer {
     /// generating" looks like from in here.
     fn history_len(&self) -> usize {
         match self.log_history.as_deref() {
+            Some(_) if !self.tail.is_empty() => self.cut + self.tail.len(),
             Some(log) => log.len(),
             None => self.lines.len(),
         }
@@ -485,6 +546,13 @@ impl TranscriptBuffer {
     /// One line of committed history. `VecDeque::get` walks the wrap for us.
     fn history_get(&self, index: usize) -> Option<&TranscriptLine> {
         match self.log_history.as_deref() {
+            Some(log) if !self.tail.is_empty() => {
+                if index < self.cut {
+                    log.get(index)
+                } else {
+                    self.tail.get(index - self.cut)
+                }
+            }
             Some(log) => log.get(index),
             None => self.lines.get(index),
         }
@@ -503,6 +571,10 @@ impl TranscriptBuffer {
             self.generation = self.generation.wrapping_add(1);
         }
         self.log_history = lines;
+        self.log_words = None;
+        if !self.tail.is_empty() {
+            self.find_seam();
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -634,6 +706,87 @@ impl TranscriptBuffer {
             .map(|row| snapshot_line_from_screen(screen, row, cols))
             .collect()
     }
+}
+
+/// Where in the log the live screen's text begins: the number of log lines
+/// to keep above the screen.
+///
+/// The log and the screen render the same conversation differently — other
+/// wrapping, other indentation, tool output summarised — so lines never match
+/// exactly. Words do. A run of words from the top of the screen is looked for
+/// in the log's words, latest first, and the log is cut at the line where it
+/// starts. The top rows of a screen are often tool output that the log only
+/// summarises, so each of the first rows is tried in turn. With no match at
+/// all the whole log stays above the screen: some text then shows twice, but
+/// nothing is lost.
+impl LogWords {
+    fn of(log: &[TranscriptLine]) -> Self {
+        let content = log
+            .iter()
+            .rposition(|line| !line.text().trim().is_empty())
+            .map_or(0, |last| last + 1);
+        let mut words_at = Vec::new();
+        for (index, line) in log[..content].iter().enumerate() {
+            words_at.extend(words(line.text()).map(|word| (word, index)));
+        }
+        LogWords {
+            words: words_at,
+            content,
+        }
+    }
+}
+
+fn seam(log: &LogWords, tail: &[TranscriptLine]) -> usize {
+    const RUN: usize = 8;
+    const MIN_RUN: usize = 3;
+    const TRY_ROWS: usize = 24;
+    // The screen shows the end of the conversation; look only that far back.
+    const SEARCH_WORDS: usize = 40_000;
+
+    let content = log.content;
+    let from = log.words.len().saturating_sub(SEARCH_WORDS);
+    let log_words = &log.words[from..];
+
+    let tail_words: Vec<(String, usize)> = tail
+        .iter()
+        .enumerate()
+        .flat_map(|(row, line)| words(line.text()).map(move |word| (word, row)).collect::<Vec<_>>())
+        .collect();
+    for row in 0..TRY_ROWS.min(tail.len()) {
+        let Some(start) = tail_words.iter().position(|(_, r)| *r == row) else {
+            continue;
+        };
+        let run: Vec<&str> = tail_words[start..]
+            .iter()
+            .take(RUN)
+            .map(|(word, _)| word.as_str())
+            .collect();
+        if run.len() < MIN_RUN {
+            break;
+        }
+        // A full run, or the log running out after enough of one: the last
+        // answer is often short, and below it the screen goes on with the
+        // input box, which the log never contains.
+        let found = (0..log_words.len()).rev().find(|&at| {
+            let matched = log_words[at..]
+                .iter()
+                .zip(&run)
+                .take_while(|((word, _), wanted)| word == *wanted)
+                .count();
+            matched == run.len() || (at + matched == log_words.len() && matched >= MIN_RUN)
+        });
+        if let Some(at) = found {
+            return log_words[at].1;
+        }
+    }
+    content
+}
+
+/// Lower-case letters and digits, split on everything else.
+fn words(text: &str) -> impl Iterator<Item = String> + '_ {
+    text.split(|c: char| !c.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_lowercase)
 }
 
 fn line_slice(line: &str, start: usize, end: usize) -> String {

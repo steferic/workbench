@@ -93,6 +93,12 @@ pub(super) fn build_terminal_view(
             .unwrap_or(false);
     let view = if use_transcript {
         let transcript = system.transcript_buffers.get_mut(&request.session_id)?;
+        // The screen goes under the log, padded to a full page the way the
+        // live view pads it, so its bottom row is where it was a step ago.
+        transcript.set_live_tail(TranscriptBuffer::screen_rows(
+            screen,
+            live_content_len.max(request.viewport_height),
+        ));
         let content_len = transcript.len();
         let (scroll_from_bottom, scroll_offset) =
             transcript.reading_position(request.scroll_from_bottom, request.viewport_height);
@@ -391,7 +397,9 @@ mod tests {
             .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
             .collect();
         assert_eq!(shown.matches("The final answer.").count(), 1);
-        assert!(!shown.contains("input chrome"));
+        // The live screen sits under the log, so a step up moves it down a
+        // line instead of replacing it; its input box comes along, once.
+        assert!(shown.matches("input chrome").count() <= 1);
         let anchor = system.transcript_buffers[&id]
             .styled_line(view.scroll_offset)
             .unwrap()

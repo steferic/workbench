@@ -217,3 +217,47 @@ fn terminal_reflow_preserves_wide_and_combining_characters() {
     parser.resize_reflow(4, 4);
     assert_eq!(parser.screen().contents(), "a界b");
 }
+
+/// Scrolling up from the live screen must move it down a line, not swap it
+/// for the log's own rendering of the same conversation — the log shows only
+/// what came before the screen's first line, and nothing appears twice.
+#[test]
+fn the_first_step_up_continues_from_the_live_screen_into_the_log() {
+    let mut file = tempfile::NamedTempFile::new().unwrap();
+    for record in [
+        serde_json::json!({"type":"user","message":{"content":"what is in dist"}}),
+        serde_json::json!({"type":"assistant","message":{"content":[{"type":"text","text":"It holds the old build of the marketing site."}]}}),
+        serde_json::json!({"type":"user","message":{"content":"rebuild the site"}}),
+        serde_json::json!({"type":"assistant","message":{"content":[{"type":"text","text":"I will remove dist and run the production build again. This takes about a minute."}]}}),
+    ] {
+        writeln!(file, "{record}").unwrap();
+    }
+    let cols = 60;
+    let document = history(LogFormat::Claude, file.path(), cols, Theme::DARK).unwrap();
+    let mut buffer = TranscriptBuffer::new(500);
+    buffer.set_document(document, cols);
+
+    // Claude's own screen: the same answer, wrapped and marked its own way.
+    let rows = 6;
+    let mut parser = vt100::Parser::new(rows, cols, 0);
+    parser.process(
+        "⏺ I will remove dist and run the production\r\n  build again. This takes about a minute.\r\n\r\n────\r\n❯ \r\n  ? for shortcuts"
+            .as_bytes(),
+    );
+    let screen = TranscriptBuffer::screen_rows(parser.screen(), rows as usize);
+    let first = screen[0].text().to_string();
+    buffer.set_live_tail(screen);
+
+    let all: Vec<String> = (0..buffer.len())
+        .map(|i| buffer.line(i).unwrap().to_string())
+        .collect();
+    let joined = all.join("\n");
+    assert_eq!(joined.matches("production").count(), 1, "the answer shows once:\n{joined}");
+    assert!(joined.contains("rebuild the site") && joined.contains("old build"));
+    assert_eq!(all.last().map(String::as_str), Some("  ? for shortcuts"));
+
+    // One step up: the screen, one line lower, with the log line above it.
+    let (_, row) = buffer.reading_position(1, rows as usize);
+    assert_eq!(buffer.line(row + 1), Some(first.as_str()));
+    assert!(!buffer.line(row).unwrap().contains("production"));
+}
