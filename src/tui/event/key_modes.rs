@@ -164,6 +164,35 @@ pub(super) fn handle_input_mode_key(key: &KeyEvent, state: &AppState) -> Option<
             KeyCode::Char(c) => Action::CommandPaletteInput(c),
             _ => Action::Tick,
         },
+        InputMode::MachinesWindow => {
+            let ui = &state.ui.machines;
+            if ui.typing {
+                match key.code {
+                    KeyCode::Esc => Action::MachinesCancel,
+                    KeyCode::Enter => Action::MachinesSend,
+                    KeyCode::Backspace => Action::MachinesBackspace,
+                    KeyCode::Char(c) => Action::MachinesInput(c),
+                    _ => Action::Tick,
+                }
+            } else if ui.confirm_kill {
+                match key.code {
+                    KeyCode::Char('y') | KeyCode::Char('Y') => Action::MachinesConfirmKill,
+                    _ => Action::MachinesCancel,
+                }
+            } else {
+                match key.code {
+                    KeyCode::Esc | KeyCode::Char('q') | KeyCode::F(10) => Action::CloseMachines,
+                    KeyCode::Char('j') | KeyCode::Down => Action::MachinesMove(false),
+                    KeyCode::Char('k') | KeyCode::Up => Action::MachinesMove(true),
+                    KeyCode::PageUp | KeyCode::Char('K') => Action::MachinesScroll(true),
+                    KeyCode::PageDown | KeyCode::Char('J') => Action::MachinesScroll(false),
+                    KeyCode::Enter | KeyCode::Char('i') => Action::MachinesStartTyping,
+                    KeyCode::Char('x') => Action::MachinesAskKill,
+                    KeyCode::Char(c @ '1'..='9') => Action::MachinesAnswer(c.to_string()),
+                    _ => Action::Tick,
+                }
+            }
+        }
         InputMode::JobsWindow => {
             use crate::app::jobs::DetailTab;
             match key.code {

@@ -12,7 +12,7 @@
 //! Providers with no readable journal keep the terminal tail — worse, but
 //! better than nothing.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::Path;
 
@@ -20,15 +20,17 @@ use crate::agent_tasks::Provider;
 
 /// Who said it. `tool` is not speech — it is the compact "▸ Bash · cargo test"
 /// line that stops a conversation from looking like it skipped a beat.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
+    #[default]
     You,
     Agent,
     Tool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Default, Deserialize)]
+#[serde(default)]
 pub struct Message {
     pub role: Role,
     pub text: String,

@@ -7,6 +7,7 @@ pub mod debug_overlay;
 pub mod decision_detail;
 pub mod desk_pane;
 pub mod jobs_window;
+pub mod machines_window;
 pub mod merge_confirm_modal;
 pub mod output_pane;
 pub mod parallel_merge_confirm_modal;

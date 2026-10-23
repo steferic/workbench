@@ -89,6 +89,26 @@ pub enum Action {
     ServerConfirmStop,
     ServerClose,
     ServerStopped(crate::ports::ServerKey, Result<(), String>),
+    // The Machines window (see `app::machines`).
+    OpenMachines,
+    /// Esc: leaves typing or a pending stop first, then the window.
+    CloseMachines,
+    /// Select the agent above (`true`) or below.
+    MachinesMove(bool),
+    /// Scroll the conversation; `true` is back in time.
+    MachinesScroll(bool),
+    MachinesStartTyping,
+    MachinesCancel,
+    MachinesInput(char),
+    MachinesPaste(String),
+    MachinesBackspace,
+    MachinesSend,
+    /// Pick one of the choices the selected agent is stopped on.
+    MachinesAnswer(String),
+    MachinesAskKill,
+    MachinesConfirmKill,
+    /// A request to another Mac came back: what to say about it.
+    MachinesDone(Result<String, String>),
     // The Jobs window (see `app::jobs`).
     OpenJobs,
     CloseJobs,

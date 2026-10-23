@@ -27,6 +27,7 @@ pub(super) fn check_global_keys(
                     "ForceRedraw" => Some(Action::ForceRedraw),
                     "ToggleDesk" => Some(Action::ToggleDesk),
                     "OpenJobs" => Some(Action::OpenJobs),
+                    "OpenMachines" => Some(Action::OpenMachines),
                     _ => None,
                 };
             }

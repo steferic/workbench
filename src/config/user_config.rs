@@ -10,7 +10,7 @@ use std::path::PathBuf;
 // Ctrl+arrows, which switch Spaces), and they deliberately leave Option+←/→
 // alone — macOS terminals encode those as the readline word-motions ESC b /
 // ESC f, which agents need for word-jump inside their composers.
-const GLOBAL_HOTKEY_DEFAULTS: [(&str, &str); 11] = [
+const GLOBAL_HOTKEY_DEFAULTS: [(&str, &str); 12] = [
     ("CyclePrevWorkspace", "Alt-Shift-Up"),
     ("CycleNextWorkspace", "Alt-Shift-Down"),
     ("CyclePrevSession", "Alt-Up"),
@@ -22,6 +22,7 @@ const GLOBAL_HOTKEY_DEFAULTS: [(&str, &str); 11] = [
     ("ForceRedraw", "F5"),
     ("ToggleDesk", "F3"),
     ("OpenJobs", "F4"),
+    ("OpenMachines", "F10"),
 ];
 
 /// Older defaults, moved forward so a saved config keeps working. Each entry
@@ -96,6 +97,11 @@ pub struct UserConfig {
     /// call (`workbench kill`). 0 turns the warning off.
     #[serde(default = "default_agent_memory_limit_mb")]
     pub agent_memory_limit_mb: u64,
+    /// Other Macs running Workbench on the tailnet, whose agents this one
+    /// shows in its Machines window and on the phone. Each entry is that
+    /// Mac's phone view: its address and its `remote_token`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub machines: Vec<MachineConfig>,
     #[serde(default = "default_true")]
     pub use_alternate_screen: bool,
 
@@ -175,6 +181,7 @@ pub fn global_hotkey_actions() -> &'static [&'static str] {
         "ForceRedraw",
         "ToggleDesk",
         "OpenJobs",
+        "OpenMachines",
     ]
 }
 
@@ -304,6 +311,7 @@ impl Default for UserConfig {
             remote_token: String::new(),
             expose_dev_servers: true,
             agent_memory_limit_mb: default_agent_memory_limit_mb(),
+            machines: Vec::new(),
             use_alternate_screen: default_true(),
             live_scrollback_rows: 0,
             transcript_max_lines: 0,
@@ -311,6 +319,22 @@ impl Default for UserConfig {
         config.apply_scrollback_derived();
         config
     }
+}
+
+/// Another Workbench, reached through its phone view.
+///
+/// ```toml
+/// [[machines]]
+/// name = "mbp6"
+/// url = "http://100.104.213.62:8765"
+/// token = "…its remote_token…"
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MachineConfig {
+    /// Short: it prefixes that Mac's projects here (`zeta-studio @ mbp6`).
+    pub name: String,
+    pub url: String,
+    pub token: String,
 }
 
 pub fn get_user_config_path() -> anyhow::Result<PathBuf> {

@@ -37,10 +37,11 @@
 //! what you are agreeing to. Both were verified to answer to the bare digit —
 //! no Enter, and no dependence on where the highlight sits.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// A question on an agent's screen, with the choices it will accept.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Default, Deserialize)]
+#[serde(default)]
 pub struct Prompt {
     pub id: String,
     /// What is being asked, as the agent laid it out: the command, the reason,
@@ -49,7 +50,8 @@ pub struct Prompt {
     pub options: Vec<PromptOption>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Default, Deserialize)]
+#[serde(default)]
 pub struct PromptOption {
     /// The keystroke that picks it.
     pub key: String,

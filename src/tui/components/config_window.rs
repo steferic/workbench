@@ -508,6 +508,7 @@ fn format_action_name(action: &str) -> &str {
         "ForceRedraw" => "Force Redraw",
         "ToggleDesk" => "Open the Desk",
         "OpenJobs" => "Open the Jobs window",
+        "OpenMachines" => "Open the Machines window",
         _ => action,
     }
 }

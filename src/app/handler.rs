@@ -78,6 +78,27 @@ pub fn process_action(
         super::jobs::handle(state, action, pty_manager, pty_tx);
         return Ok(());
     }
+    let machines_open = state.ui.input_mode == crate::app::InputMode::MachinesWindow;
+    let action = match action {
+        Action::Paste(text) if machines_open && state.ui.machines.typing => {
+            Action::MachinesPaste(text)
+        }
+        Action::MouseScrollUp(..) if machines_open => Action::MachinesScroll(true),
+        Action::MouseScrollDown(..) if machines_open => Action::MachinesScroll(false),
+        other => other,
+    };
+    if super::machines::is_action(&action) {
+        super::machines::handle(state, action, action_tx);
+        return Ok(());
+    }
+    if machines_open
+        && matches!(
+            action,
+            Action::MouseDrag(..) | Action::MouseUp(..) | Action::Paste(_)
+        )
+    {
+        return Ok(());
+    }
     if (state.ui.servers.dialog.is_some()
         || state.ui.input_mode == crate::app::InputMode::JobsWindow)
         && matches!(
@@ -598,6 +619,7 @@ pub fn process_action(
 
                 // Global already handled
                 Action::SetSessionsTab(_) | Action::SelectServer(_) | Action::ServerScope | Action::ServerRefresh | Action::ServerDetails | Action::ServerOpen | Action::ServerAskStop | Action::ServerConfirmStop | Action::ServerClose | Action::ServerStopped(..) |
+                Action::OpenMachines | Action::CloseMachines | Action::MachinesMove(_) | Action::MachinesScroll(_) | Action::MachinesStartTyping | Action::MachinesCancel | Action::MachinesInput(_) | Action::MachinesPaste(_) | Action::MachinesBackspace | Action::MachinesSend | Action::MachinesAnswer(_) | Action::MachinesAskKill | Action::MachinesConfirmKill | Action::MachinesDone(_) |
                 Action::OpenJobs | Action::CloseJobs | Action::SelectJob(_) | Action::JobsScope | Action::JobsRefresh | Action::JobsSwitchFocus | Action::JobsMove(_) | Action::JobsTab(_) | Action::JobRun | Action::JobRunForce | Action::JobImprove | Action::JobNew | Action::JobStart(_) | Action::JobsScanned(_) |
                 Action::MouseMove(_, _) |
                 Action::PreviewLatestMedia | Action::CloseMedia | Action::BrowseMedia |
@@ -797,6 +819,9 @@ fn refresh_agent_status(state: &mut AppState) {
 fn remote_tick(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) {
     use crate::remote::Remote;
 
+    // Other Macs are read whether or not this one serves a phone: the
+    // Machines window needs them either way. A no-op after the first call.
+    crate::remote::peers::start(&state.system.user_config.machines);
     if !state.system.remote_tried {
         state.system.remote_tried = true;
         let port = state.system.user_config.remote_port;

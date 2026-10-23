@@ -287,6 +287,19 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
                     Style::default().fg(t.fg_dim),
                 )],
             ),
+            InputMode::MachinesWindow => (
+                vec![Span::styled(
+                    " MACHINES ",
+                    Style::default()
+                        .fg(t.on_accent)
+                        .bg(t.active)
+                        .add_modifier(Modifier::BOLD),
+                )],
+                vec![Span::styled(
+                    "j/k: agent  Enter: reply  1-9: answer  x: stop  J/K: scroll  Esc: close",
+                    Style::default().fg(t.fg_dim),
+                )],
+            ),
             InputMode::JobsWindow => (
                 vec![Span::styled(
                     " JOBS ",

@@ -20,6 +20,7 @@
 pub mod commands;
 pub(crate) mod http;
 mod page;
+pub mod peers;
 mod prompt;
 mod push;
 mod server;
@@ -28,9 +29,9 @@ mod thread;
 pub use prompt::Prompt;
 pub use push::{push_origin, Push};
 pub use server::{new_token, tailscale_addr, Remote, RemoteCommand};
-pub use thread::{Cursor, Message};
+pub use thread::{Cursor, Message, Role};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
@@ -77,7 +78,8 @@ pub struct Snapshot {
     pub at: i64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Default, Deserialize)]
+#[serde(default)]
 pub struct ObjectiveView {
     pub id: String,
     pub text: String,
@@ -91,7 +93,8 @@ pub struct ObjectiveView {
 }
 
 /// A suggestion and what became of it, for whoever is reading state.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Default, Deserialize)]
+#[serde(default)]
 pub struct ProposalView {
     pub id: String,
     /// Where the work stands after approval: "working" | "rework" |
@@ -119,7 +122,8 @@ pub struct ProposalView {
 /// then proposed checks — is the contract, and two implementations of "what
 /// needs me, most urgent first" would drift the moment either grew a fifth
 /// kind. So the phone reads the desk's own list and only dresses it.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, Default, Deserialize)]
+#[serde(default)]
 pub struct DeskRowView {
     /// "blocked" | "needs_user" | "pending" | "check". What the row is, and
     /// therefore which buttons it carries and what `id` addresses.
@@ -142,7 +146,8 @@ pub struct DeskRowView {
     pub agent: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Default, Deserialize)]
+#[serde(default)]
 pub struct ProjectView {
     pub id: String,
     pub name: String,
@@ -160,7 +165,8 @@ pub struct ProjectView {
     pub jobs: Vec<JobView>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Default, Deserialize)]
+#[serde(default)]
 pub struct JobView {
     pub id: String,
     pub title: String,
@@ -176,7 +182,8 @@ pub struct JobView {
     pub last_summary: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Default, Deserialize)]
+#[serde(default)]
 pub struct ServerView {
     pub port: u16,
     /// The program listening, as the OS names it.
@@ -186,7 +193,8 @@ pub struct ServerView {
     pub url: String,
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AgentView {
     /// Short session id — the address for every write endpoint.
     pub id: String,
@@ -267,7 +275,8 @@ pub struct AgentView {
     pub memory_over_ago: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Default, Deserialize)]
+#[serde(default)]
 pub struct StepView {
     pub text: String,
     /// "done" | "doing" | "todo"

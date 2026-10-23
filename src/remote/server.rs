@@ -352,6 +352,27 @@ fn handle(
             );
         }
     }
+    // Every write endpoint but the two above takes a small JSON body. Read
+    // once here, so a command for an agent on another Mac can be passed on
+    // before anything looks for that agent locally.
+    let body = if request.method().as_str() == "POST"
+        && path != "/api/upload"
+        && !path.starts_with("/api/words/")
+    {
+        let bytes = match read_limited(request.as_reader(), 256 * 1024) {
+            Ok(bytes) => bytes,
+            Err((code, reason)) => return status(code, reason),
+        };
+        let Ok(body) = String::from_utf8(bytes) else {
+            return status(400, "unreadable body");
+        };
+        if let Some(response) = forward_to_peer(request, path, &body) {
+            return response;
+        }
+        body
+    } else {
+        String::new()
+    };
     match (request.method().as_str(), path) {
         ("GET", "/") => html(page::HTML),
         ("GET", "/manifest.webmanifest") => {
@@ -364,7 +385,7 @@ fn handle(
         // read state when a notification arrives.
         ("GET", "/sw.js") => with_type(page::SERVICE_WORKER, "text/javascript; charset=utf-8"),
         ("GET", "/api/push-key") => with_type(push_key, "text/plain; charset=utf-8"),
-        ("POST", "/api/subscribe") => command_from(request, commands, |_, endpoint| {
+        ("POST", "/api/subscribe") => command_from(request, &body, commands, |_, endpoint| {
             (!endpoint.is_empty()).then_some(RemoteCommand::Subscribe { endpoint })
         }),
         ("POST", "/api/upload") => {
@@ -373,6 +394,9 @@ fn handle(
                 .iter()
                 .find(|(key, _)| key == "agent")
                 .map(|(_, value)| value.as_str());
+            if agent.is_some_and(|id| super::peers::get().is_some_and(|p| p.split(id).is_some())) {
+                return status(501, "Attachments cannot go to an agent on another Mac yet.");
+            }
             if !shared
                 .lock()
                 .ok()
@@ -387,10 +411,10 @@ fn handle(
         ("GET", "/api/words") => words_body(&query_params(query)),
         ("POST", "/api/words/hide") => hide_words(request, true),
         ("POST", "/api/words/unhide") => hide_words(request, false),
-        ("POST", "/api/todo") => command_from(request, commands, |agent, text| {
+        ("POST", "/api/todo") => command_from(request, &body, commands, |agent, text| {
             (!text.is_empty()).then_some(RemoteCommand::Todo { agent, text })
         }),
-        ("POST", "/api/reply") => command_from(request, commands, |agent, text| {
+        ("POST", "/api/reply") => command_from(request, &body, commands, |agent, text| {
             (!text.is_empty()).then_some(RemoteCommand::Reply { agent, text })
         }),
         ("POST", "/api/answer") => {
@@ -400,7 +424,7 @@ fn handle(
                 .find(|h| h.field.equiv("X-Prompt-Id"))
                 .map(|h| h.value.as_str().to_string())
                 .unwrap_or_default();
-            command_from(request, commands, |agent, key| {
+            command_from(request, &body, commands, |agent, key| {
                 (!key.is_empty() && !prompt.is_empty()).then_some(RemoteCommand::Answer {
                     agent,
                     key,
@@ -408,10 +432,10 @@ fn handle(
                 })
             })
         }
-        ("POST", "/api/focus") => command_from(request, commands, |agent, _| {
+        ("POST", "/api/focus") => command_from(request, &body, commands, |agent, _| {
             Some(RemoteCommand::Focus { agent })
         }),
-        ("POST", "/api/proposal") => command_from(request, commands, |proposal, decision| {
+        ("POST", "/api/proposal") => command_from(request, &body, commands, |proposal, decision| {
             Some(RemoteCommand::Decide {
                 proposal,
                 approve: decision == "approve",
@@ -419,19 +443,22 @@ fn handle(
         }),
         // The desk's other two decisions. Same two-field shape as every
         // other write endpoint, so the page posts them the same way.
-        ("POST", "/api/check") => command_from(request, commands, |objective, decision| {
+        ("POST", "/api/check") => command_from(request, &body, commands, |objective, decision| {
             Some(RemoteCommand::DecideCheck {
                 objective,
                 approve: decision == "approve",
             })
         }),
-        ("POST", "/api/rearm") => command_from(request, commands, |proposal, _| {
+        ("POST", "/api/rearm") => command_from(request, &body, commands, |proposal, _| {
             Some(RemoteCommand::RearmReview { proposal })
         }),
-        ("POST", "/api/new-agent") => command_from(request, commands, |project, provider| {
+        ("POST", "/api/new-agent") => command_from(request, &body, commands, |project, provider| {
             Some(RemoteCommand::NewAgent { project, provider })
         }),
-        ("POST", "/api/job") => command_from(request, commands, |project, job| {
+        ("POST", "/api/kill") => command_from(request, &body, commands, |agent, _| {
+            Some(RemoteCommand::Kill { agent })
+        }),
+        ("POST", "/api/job") => command_from(request, &body, commands, |project, job| {
             Some(RemoteCommand::RunJob { project, job })
         }),
         _ => status(404, "not found"),
@@ -472,6 +499,11 @@ fn state_body(
             }
         }
         let mut selected = snapshot.clone();
+        // `local=1` is another Workbench reading this one; it gets this
+        // Mac's agents only, so two Macs that list each other do not echo.
+        if !params.iter().any(|(key, value)| key == "local" && value == "1") {
+            super::peers::merge(&mut selected, wanted.as_deref());
+        }
         selected.open = wanted;
         for agent in &mut selected.agents {
             if Some(&agent.id) != selected.open.as_ref() {
@@ -718,18 +750,53 @@ fn safe_part(raw: &str) -> String {
         .replace("..", "-")
 }
 
+/// A command whose agent or project lives on another Mac goes to that Mac,
+/// with the headers that make it the same command there. `None` means it is
+/// local.
+fn forward_to_peer(
+    request: &Request,
+    path: &str,
+    body: &str,
+) -> Option<Response<std::io::Cursor<Vec<u8>>>> {
+    const FORWARDED: [&str; 7] = [
+        "/api/todo",
+        "/api/reply",
+        "/api/answer",
+        "/api/focus",
+        "/api/kill",
+        "/api/new-agent",
+        "/api/job",
+    ];
+    if !FORWARDED.contains(&path) {
+        return None;
+    }
+    let (id, text) = parse_command_body(body)?;
+    let peers = super::peers::get()?;
+    let (machine, id) = peers.split(&id)?;
+    let passthrough: Vec<(String, String)> = request
+        .headers()
+        .iter()
+        .filter(|h| {
+            ["X-Prompt-Id", "X-Command-Id", "X-Command-Time"]
+                .iter()
+                .any(|name| h.field.equiv(name))
+        })
+        .map(|h| (h.field.as_str().to_string(), h.value.as_str().to_string()))
+        .collect();
+    let (code, text) = super::peers::forward(machine, path, id, &text, &passthrough);
+    Some(if code == 200 {
+        json(text)
+    } else {
+        status(code, &text)
+    })
+}
+
 fn command_from(
-    request: &mut Request,
+    request: &Request,
+    body: &str,
     commands: &mpsc::UnboundedSender<CommandRequest>,
     build: impl FnOnce(String, String) -> Option<RemoteCommand>,
 ) -> Response<std::io::Cursor<Vec<u8>>> {
-    let bytes = match read_limited(request.as_reader(), 256 * 1024) {
-        Ok(bytes) => bytes,
-        Err((code, reason)) => return status(code, reason),
-    };
-    let Ok(body) = String::from_utf8(bytes) else {
-        return status(400, "unreadable body");
-    };
     let value = |name: &'static str| {
         request
             .headers()
@@ -748,7 +815,7 @@ fn command_from(
         },
         None => chrono::Utc::now().timestamp(),
     };
-    let Some((agent, text)) = parse_command_body(&body) else {
+    let Some((agent, text)) = parse_command_body(body) else {
         return status(400, "expected {\"agent\": \"…\"}");
     };
     match build(agent, text) {
@@ -920,10 +987,9 @@ mod tests {
     fn command_responses_wait_for_the_app_and_return_rejections() {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let worker = std::thread::spawn(move || {
-            let mut request = tiny_http::TestRequest::new()
-                .with_body(r#"{"agent":"gone","text":"hello"}"#)
-                .into();
-            command_from(&mut request, &tx, |agent, text| {
+            let request = tiny_http::TestRequest::new().into();
+            let body = r#"{"agent":"gone","text":"hello"}"#;
+            command_from(&request, body, &tx, |agent, text| {
                 Some(RemoteCommand::Reply { agent, text })
             })
         });
@@ -1017,6 +1083,93 @@ mod tests {
         assert_ne!(a, b);
         // No look-alike characters: this gets read off a screen sometimes.
         assert!(!a.contains('l') && !a.contains('1') && !a.contains('0'));
+    }
+
+    /// Two Workbenches over loopback: this one lists the other's agent,
+    /// reads its conversation, and passes a reply and a stop on to it.
+    #[test]
+    fn another_macs_agent_is_listed_read_and_answered_through_its_phone_view() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let remote: Shared = Default::default();
+        {
+            let mut snapshot = remote.lock().unwrap();
+            snapshot.instance = "remote-1".into();
+            snapshot.projects.push(super::super::ProjectView {
+                id: "p1".into(),
+                name: "zeta".into(),
+                ..Default::default()
+            });
+            snapshot.agents.push(super::super::AgentView {
+                id: "ab12".into(),
+                project: "zeta".into(),
+                project_id: "p1".into(),
+                status: "idle".into(),
+                messages: vec![super::super::Message {
+                    role: super::super::Role::Agent,
+                    text: "hello from mbp6".into(),
+                    at: None,
+                }],
+                msg_total: 1,
+                ..Default::default()
+            });
+        }
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        start_workers(listener, "tok", "", &remote, &tx);
+        let (seen_tx, seen) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            while let Some(request) = rx.blocking_recv() {
+                let _ = seen_tx.send(format!("{:?}", request.command));
+                let _ = request.reply.send(Ok(()));
+            }
+        });
+
+        super::super::peers::start(&[crate::config::user_config::MachineConfig {
+            name: "mbp6".into(),
+            url: format!("http://{addr}"),
+            token: "tok".into(),
+        }]);
+
+        let local: Shared = Default::default();
+        local.lock().unwrap().instance = "local".into();
+        let read = |params: &[(String, String)]| -> serde_json::Value {
+            let request = tiny_http::TestRequest::new().into();
+            let response = state_body(&request, params, &local);
+            serde_json::from_slice(response.into_reader().get_ref()).unwrap()
+        };
+        let wanted = [("agent".to_string(), "mbp6~ab12".to_string())];
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let agent = loop {
+            let body = read(&wanted);
+            let found = body["agents"]
+                .as_array()
+                .and_then(|agents| agents.iter().find(|a| a["id"] == "mbp6~ab12").cloned());
+            if let Some(agent) = found.filter(|a| a["messages"][0]["text"].is_string()) {
+                break agent;
+            }
+            assert!(Instant::now() < deadline, "never saw the remote conversation: {body}");
+            std::thread::sleep(Duration::from_millis(200));
+        };
+        assert_eq!(agent["project"], "zeta @ mbp6");
+        assert_eq!(agent["project_id"], "mbp6~p1");
+        assert_eq!(agent["messages"][0]["text"], "hello from mbp6");
+        let mine_only = read(&[("local".to_string(), "1".to_string())]);
+        assert_eq!(mine_only["agents"], serde_json::json!([]), "another Workbench reads ours only");
+
+        let request: Request = tiny_http::TestRequest::new().into();
+        let reply = forward_to_peer(&request, "/api/reply", r#"{"agent":"mbp6~ab12","text":"hi"}"#)
+            .expect("a remote agent's reply is passed on");
+        assert_eq!(reply.status_code().0, 200);
+        assert!(seen.recv_timeout(Duration::from_secs(5)).unwrap().contains(r#"Reply { agent: "ab12", text: "hi" }"#));
+
+        let stop = forward_to_peer(&request, "/api/kill", r#"{"agent":"mbp6~ab12"}"#).unwrap();
+        assert_eq!(stop.status_code().0, 200);
+        assert!(seen.recv_timeout(Duration::from_secs(5)).unwrap().contains(r#"Kill { agent: "ab12" }"#));
+
+        assert!(
+            forward_to_peer(&request, "/api/reply", r#"{"agent":"ab12","text":"hi"}"#).is_none(),
+            "a local agent is handled here"
+        );
     }
 }
 

@@ -250,6 +250,9 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
         InputMode::ConfigWindow => {
             config_window::render(frame, state);
         }
+        InputMode::MachinesWindow => {
+            crate::tui::components::machines_window::render(frame, state);
+        }
         InputMode::JobsWindow => {
             // Drawn below, after the frame's hits are cleared: its own rows
             // and tabs are the only things clickable while it is open.

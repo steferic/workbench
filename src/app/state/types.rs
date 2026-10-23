@@ -12,6 +12,9 @@ pub enum InputMode {
     Normal,
     /// The Jobs window: a project's repeatable agent jobs (see `app::jobs`).
     JobsWindow,
+    /// The Machines window: agents in Workbench on your other Macs (see
+    /// `app::machines`).
+    MachinesWindow,
     SelectWorkspaceAction, // Choose between Create New or Open Existing
     CreateWorkspace,       // Browse to select existing directory (Open Existing)
     EnterWorkspaceName,    // Enter name for new workspace (Create New)
