@@ -1133,7 +1133,7 @@ pub fn cmd_ask_remote(
     }
     let remote = transfer::connect(machine)?;
     let agent = remote.agent(target)?.clone();
-    let before = remote.read_agent(&agent.id)?.msg_total;
+    let before = transfer::mark(&remote.read_agent(&agent.id)?);
     remote.tell(&agent.id, message)?;
     let address = format!("{machine}~{}", agent.id);
     if !wait {
@@ -1144,7 +1144,7 @@ pub fn cmd_ask_remote(
     while Instant::now() < deadline {
         std::thread::sleep(Duration::from_secs(2));
         let now = remote.read_agent(&agent.id)?;
-        if let Some(answer) = transfer::answer_after(&now, before) {
+        if let Some(answer) = transfer::answer_after(&now, &before, message) {
             println!("{answer}");
             return Ok(());
         }

@@ -492,14 +492,47 @@ pub fn notice(sent: &Sent, note: Option<&str>) -> String {
     text
 }
 
-/// The text a remote agent ends its last turn with, once it is done
-/// answering. `None` while it is still at work on what was asked.
-pub fn answer_after(agent: &AgentView, before: usize) -> Option<String> {
-    if agent.msg_total <= before || agent.status == "working" {
+/// Where an agent's conversation stood before a question went to it.
+#[derive(Debug, Clone, Default)]
+pub struct Mark {
+    total: usize,
+    epoch: String,
+}
+
+pub fn mark(agent: &AgentView) -> Mark {
+    Mark {
+        total: agent.msg_total,
+        epoch: agent.msg_epoch.clone(),
+    }
+}
+
+/// What a remote agent said in answer to `question`, once it stops working.
+/// `None` while it is still at work, or has said nothing yet.
+///
+/// The answer is what the agent said after the mark. The count is the sure
+/// way to find that; it holds only while the other Mac keeps the same count
+/// (the same epoch), and waking a stopped agent starts a new one. Then the
+/// question itself marks the place, found by its text: a journal does not
+/// always record a message as one you typed, so the last message of yours
+/// can be an older one.
+pub fn answer_after(agent: &AgentView, before: &Mark, question: &str) -> Option<String> {
+    let same = agent.msg_epoch == before.epoch;
+    if agent.status == "working" || (same && agent.msg_total <= before.total) {
         return None;
     }
-    let last_you = agent.messages.iter().rposition(|m| m.role == Role::You)?;
-    let said: Vec<&str> = agent.messages[last_you + 1..]
+    let messages = &agent.messages;
+    let owed = agent.msg_total.saturating_sub(before.total);
+    let start = if same && owed <= messages.len() {
+        messages.len() - owed
+    } else {
+        let probe: String = question.trim().chars().take(60).collect();
+        let asked = messages
+            .iter()
+            .rposition(|m| m.role != Role::Agent && m.text.contains(&probe))
+            .or_else(|| messages.iter().rposition(|m| m.role == Role::You))?;
+        asked + 1
+    };
+    let said: Vec<&str> = messages[start..]
         .iter()
         .filter(|m| m.role == Role::Agent)
         .map(|m| m.text.as_str())
@@ -701,26 +734,62 @@ mod tests {
     }
 
     #[test]
-    fn an_answer_is_the_agent_speech_after_the_question_once_it_stops() {
+    fn an_answer_is_only_what_the_agent_said_after_the_question() {
         let message = |role, text: &str| super::super::thread::Message {
             role,
             text: text.into(),
             at: None,
         };
+        // The first answer is in the window too, and the second question was
+        // not journalled as yours: the bug that printed both answers.
         let mut agent = AgentView {
             status: "working".into(),
-            msg_total: 5,
+            msg_epoch: "e1".into(),
+            msg_total: 6,
             messages: vec![
-                message(Role::You, "send the ship"),
-                message(Role::Tool, "workbench send"),
-                message(Role::Agent, "Sent it."),
+                message(
+                    Role::You,
+                    "[From mbp1 through Workbench; …] check the config",
+                ),
+                message(Role::Agent, "The config is fixed."),
+                message(Role::Tool, "[From mbp1 through Workbench; …] install wb"),
+                message(Role::Tool, "cp wb.fish"),
+                message(Role::Agent, "Installed wb."),
             ],
             ..Default::default()
         };
-        assert_eq!(answer_after(&agent, 2), None, "still working");
+        let before = Mark {
+            total: 3,
+            epoch: "e1".into(),
+        };
+        assert_eq!(
+            answer_after(&agent, &before, "install wb"),
+            None,
+            "still working"
+        );
         agent.status = "idle".into();
-        assert_eq!(answer_after(&agent, 5), None, "nothing new yet");
-        assert_eq!(answer_after(&agent, 2).as_deref(), Some("Sent it."));
+        assert_eq!(
+            answer_after(&agent, &before, "install wb").as_deref(),
+            Some("Installed wb.")
+        );
+        let now = mark(&agent);
+        assert_eq!(
+            answer_after(&agent, &now, "install wb"),
+            None,
+            "nothing new yet"
+        );
+
+        // A woken agent counts in a new epoch: the question marks the place.
+        let woken = Mark::default();
+        assert_eq!(
+            answer_after(&agent, &woken, "install wb").as_deref(),
+            Some("Installed wb.")
+        );
+        assert_eq!(
+            answer_after(&agent, &woken, "something never asked").as_deref(),
+            Some("The config is fixed.\n\nInstalled wb."),
+            "without the question, the last message of yours marks it"
+        );
     }
 
     #[test]
