@@ -246,11 +246,7 @@ fn start_workers(
                     Ok(mut request) => {
                         head = request.method().as_str() == "HEAD";
                         if request.url().starts_with("/media/") {
-                            let library = shared
-                                .lock()
-                                .map(|s| s.media_library.clone())
-                                .unwrap_or_default();
-                            library.response(request.url(), &request, &token)
+                            media_response(&request, &token, &shared)
                         } else {
                             handle(&mut request, &token, &push_key, &shared, &commands).boxed()
                         }
@@ -265,6 +261,46 @@ fn start_workers(
             }
         });
     }
+}
+
+fn media_response(request: &Request, token: &str, shared: &Shared) -> tiny_http::ResponseBox {
+    let (path, query) = request.url().split_once('?').unwrap_or((request.url(), ""));
+    if !authorized(request, &query_params(query), token) {
+        return status(401, "Unauthorized").boxed();
+    }
+    if !matches!(request.method().as_str(), "GET" | "HEAD") {
+        return status(405, "Use GET or HEAD").boxed();
+    }
+    if let Some((id, mode)) = path.strip_prefix("/media/").and_then(|s| s.split_once('/')) {
+        let id = percent_decode(id);
+        if let Some((machine, remote_id)) = super::peers::get().and_then(|p| p.split(&id)) {
+            if !matches!(mode, "file" | "poster") {
+                return status(404, "Not found").boxed();
+            }
+            let range = request
+                .headers()
+                .iter()
+                .find(|h| h.field.equiv("Range"))
+                .map(|h| h.value.as_str());
+            return match super::peers::media(
+                machine,
+                remote_id,
+                mode,
+                request.method().as_str(),
+                range,
+            ) {
+                Ok(response) => response,
+                Err(_) => {
+                    status(502, &format!("Could not load the preview from {machine}.")).boxed()
+                }
+            };
+        }
+    }
+    let library = shared
+        .lock()
+        .map(|s| s.media_library.clone())
+        .unwrap_or_default();
+    library.response(request.url(), request, token)
 }
 
 /// IBM Plex Mono, compiled in rather than fetched from Google.
@@ -331,6 +367,13 @@ fn handle(
     if let Some(font) = font_for(path) {
         return bytes(font, "font/woff2");
     }
+    // Hashed JS, CSS, and font assets contain no user data. The entry page,
+    // snapshots, commands, and media below still require the phone token.
+    if request.method().as_str() == "GET" {
+        if let Some((body, content_type)) = page::asset(path) {
+            return bytes(body, content_type);
+        }
+    }
     if !authorized(request, &query_params(query), token) {
         return status(401, "unauthorized");
     }
@@ -377,7 +420,7 @@ fn handle(
         String::new()
     };
     match (request.method().as_str(), path) {
-        ("GET", "/") => html(page::HTML),
+        ("GET", "/") => html(page::HTML).with_header(header("Cache-Control", "no-store")),
         ("GET", "/manifest.webmanifest") => {
             let mut manifest: serde_json::Value =
                 serde_json::from_str(page::MANIFEST).expect("valid embedded manifest");
@@ -397,8 +440,32 @@ fn handle(
                 .iter()
                 .find(|(key, _)| key == "agent")
                 .map(|(_, value)| value.as_str());
-            if agent.is_some_and(|id| super::peers::get().is_some_and(|p| p.split(id).is_some())) {
-                return status(501, "Attachments cannot go to an agent on another Mac yet.");
+            if let Some((machine, id)) =
+                agent.and_then(|id| super::peers::get().and_then(|p| p.split(id)))
+            {
+                if request.body_length().unwrap_or(0) > MAX_UPLOAD {
+                    return status(413, "that file is too large to send this way");
+                }
+                let bytes = match read_limited(request.as_reader(), MAX_UPLOAD) {
+                    Ok(bytes) => bytes,
+                    Err((code, reason)) => return status(code, reason),
+                };
+                if bytes.is_empty() {
+                    return status(400, "empty file");
+                }
+                let name = params
+                    .iter()
+                    .find(|(key, _)| key == "name")
+                    .map(|(_, value)| value.as_str())
+                    .unwrap_or("attachment");
+                return match super::peers::upload(machine, id, name, &bytes) {
+                    Ok(response) if response.status == 200 => json(response.text()),
+                    Ok(response) => status(response.status, &response.text()),
+                    Err(_) => status(
+                        502,
+                        &format!("Could not upload to {machine}. Your message has not been sent."),
+                    ),
+                };
             }
             if !shared
                 .lock()
@@ -870,7 +937,7 @@ fn forward_to_peer(
     path: &str,
     body: &str,
 ) -> Option<Response<std::io::Cursor<Vec<u8>>>> {
-    const FORWARDED: [&str; 7] = [
+    const FORWARDED: [&str; 10] = [
         "/api/todo",
         "/api/reply",
         "/api/answer",
@@ -878,6 +945,9 @@ fn forward_to_peer(
         "/api/kill",
         "/api/new-agent",
         "/api/job",
+        "/api/proposal",
+        "/api/check",
+        "/api/rearm",
     ];
     if !FORWARDED.contains(&path) {
         return None;
@@ -895,7 +965,13 @@ fn forward_to_peer(
         })
         .map(|h| (h.field.as_str().to_string(), h.value.as_str().to_string()))
         .collect();
-    let (code, text) = super::peers::forward(machine, path, id, &text, &passthrough);
+    let expected = request
+        .headers()
+        .iter()
+        .find(|h| h.field.equiv("X-Peer-Instance"))
+        .map(|h| h.value.as_str());
+    let (code, text) =
+        super::peers::forward_expected(machine, path, id, &text, &passthrough, expected);
     Some(if code == 200 {
         json(text)
     } else {
@@ -1005,6 +1081,44 @@ fn parse_command_body(body: &str) -> Option<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mobile_entry_and_data_require_auth_but_hashed_assets_can_load() {
+        use std::io::{Read, Write};
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let shared: Shared = Default::default();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        start_workers(listener, "test", "", &shared, &tx);
+        let get = |path: &str| {
+            let mut stream = std::net::TcpStream::connect(addr).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            write!(
+                stream,
+                "GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+            )
+            .unwrap();
+            let mut bytes = Vec::new();
+            stream.read_to_end(&mut bytes).unwrap();
+            String::from_utf8_lossy(&bytes).into_owned()
+        };
+        assert!(get("/").starts_with("HTTP/1.1 401"));
+        assert!(get("/api/state").starts_with("HTTP/1.1 401"));
+        assert!(get("/media/private/file").starts_with("HTTP/1.1 401"));
+        let entry = get("/?t=test");
+        assert!(entry.starts_with("HTTP/1.1 200"));
+        assert!(entry.contains("Cache-Control: no-store"));
+        let asset = page::HTML
+            .split('"')
+            .find(|s| s.starts_with("/_next/static/"))
+            .unwrap();
+        let response = get(asset);
+        assert!(response.starts_with("HTTP/1.1 200"));
+        assert!(response.contains("immutable"));
+        assert!(get("/_next/static/missing.js?t=test").starts_with("HTTP/1.1 404"));
+    }
 
     #[test]
     fn slow_uploads_do_not_block_state_reads_on_another_connection() {
@@ -1348,9 +1462,27 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let remote: Shared = Default::default();
+        let picture = tempfile::NamedTempFile::new().unwrap();
+        image::RgbaImage::new(2, 2)
+            .save_with_format(picture.path(), image::ImageFormat::Png)
+            .unwrap();
+        let preview = remote
+            .lock()
+            .unwrap()
+            .media_library
+            .present("ab12".into(), picture.path())
+            .unwrap();
         {
             let mut snapshot = remote.lock().unwrap();
             snapshot.instance = "remote-1".into();
+            snapshot.media = vec![preview.view.clone()];
+            snapshot.desk.push(super::super::DeskRowView {
+                kind: "pending".into(),
+                id: "proposal-1".into(),
+                project: "zeta".into(),
+                title: "Ship the update".into(),
+                ..Default::default()
+            });
             snapshot.projects.push(super::super::ProjectView {
                 id: "p1".into(),
                 name: "zeta".into(),
@@ -1375,7 +1507,7 @@ mod tests {
         let (seen_tx, seen) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             while let Some(request) = rx.blocking_recv() {
-                let _ = seen_tx.send(format!("{:?}", request.command));
+                let _ = seen_tx.send(format!("{:?}|{}", request.command, request.id));
                 let _ = request.reply.send(Ok(()));
             }
         });
@@ -1426,6 +1558,134 @@ mod tests {
             forward_to_peer(&request, "/api/reply", r#"{"agent":"ab12","text":"hi"}"#).is_none(),
             "a local agent is handled here"
         );
+
+        // A phone talks only to the gateway; all remote credentials stay there.
+        let gateway = TcpListener::bind("127.0.0.1:0").unwrap();
+        let origin = format!("http://{}", gateway.local_addr().unwrap());
+        let (local_tx, mut local_rx) = mpsc::unbounded_channel();
+        start_workers(gateway, "phone", "", &local, &local_tx);
+        let fetch =
+            |method: &str, path: &str, headers: &[(String, String)], body: Option<&[u8]>| {
+                super::super::peers::request(&origin, method, path, headers, body).unwrap()
+            };
+        let state = fetch("GET", "/api/state?t=phone&agent=mbp6%7Eab12", &[], None);
+        let state: serde_json::Value = serde_json::from_slice(&state.body).unwrap();
+        assert_eq!(state["machines"][0]["name"], "mbp6");
+        assert_eq!(state["machines"][0]["status"], "online");
+        assert_eq!(state["machines"][0]["instance"], "remote-1");
+        assert!(state["machines"][0].get("token").is_none());
+        assert!(state["machines"][0].get("url").is_none());
+        assert_eq!(state["desk"][0]["id"], "mbp6~proposal-1");
+        assert_eq!(state["media"][0]["agent"], "mbp6~ab12");
+        assert_eq!(mine_only["media"], serde_json::json!([]));
+        assert_eq!(mine_only["desk"], serde_json::json!([]));
+        assert_eq!(mine_only["machines"], serde_json::json!([]));
+
+        let id = uuid::Uuid::new_v4().to_string();
+        let headers = vec![
+            ("X-Workbench-Instance".into(), "local".into()),
+            ("X-Peer-Instance".into(), "remote-1".into()),
+            ("X-Command-Id".into(), id.clone()),
+            ("X-Prompt-Id".into(), "remote-prompt".into()),
+        ];
+        for (endpoint, expected) in [
+            ("reply", "Reply"),
+            ("todo", "Todo"),
+            ("answer", "Answer"),
+            ("proposal", "Decide"),
+            ("check", "DecideCheck"),
+            ("rearm", "RearmReview"),
+            ("new-agent", "NewAgent"),
+            ("job", "RunJob"),
+        ] {
+            let mut action_headers = headers.clone();
+            let action_id = if endpoint == "reply" { id.clone() } else { uuid::Uuid::new_v4().to_string() };
+            action_headers[2].1 = action_id.clone();
+            let body = br#"{"agent":"mbp6~ab12","text":"1"}"#;
+            let response = fetch(
+                "POST",
+                &format!("/api/{endpoint}?t=phone"),
+                &action_headers,
+                Some(body),
+            );
+            assert_eq!(response.status, 200, "{endpoint}: {}", response.text());
+            let command = seen.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert!(command.contains(expected), "{command}");
+            assert!(command.contains(&action_id), "command identity survives the relay");
+            if endpoint == "answer" {
+                assert!(command.contains("remote-prompt"));
+            }
+        }
+        assert!(
+            local_rx.try_recv().is_err(),
+            "remote commands never reach a local agent"
+        );
+
+        let response = fetch(
+            "POST",
+            "/api/upload?t=phone&agent=mbp6%7Eab12&name=phone.txt",
+            &[],
+            Some(b"from the phone"),
+        );
+        assert_eq!(response.status, 200, "{}", response.text());
+        let upload: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+        let upload = std::path::Path::new(upload["path"].as_str().unwrap());
+        assert_eq!(std::fs::read(upload).unwrap(), b"from the phone");
+        assert!(
+            !upload.to_string_lossy().contains("mbp6"),
+            "path belongs to the remote short agent id"
+        );
+        let _ = std::fs::remove_file(upload);
+        assert_eq!(
+            fetch("POST", "/api/upload?agent=mbp6~ab12", &[], Some(b"secret")).status,
+            401
+        );
+
+        let media = format!("/media/mbp6%7E{}/file", preview.view.id);
+        assert_eq!(fetch("GET", &media, &[], None).status, 401);
+        let response = fetch("GET", &format!("{media}?t=phone"), &[], None);
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body, std::fs::read(picture.path()).unwrap());
+        let response = fetch(
+            "GET",
+            &format!("{media}?t=phone"),
+            &[("Range".into(), "bytes=0-7".into())],
+            None,
+        );
+        assert_eq!(response.status, 206);
+        assert_eq!(response.body, b"\x89PNG\r\n\x1a\n");
+        assert_eq!(
+            fetch("HEAD", &format!("{media}?t=phone"), &[], None).status,
+            200
+        );
+        assert_eq!(
+            fetch("POST", &format!("{media}?t=phone"), &[], None).status,
+            405
+        );
+        assert_eq!(
+            fetch(
+                "GET",
+                &format!("{media}?t=phone"),
+                &[("Range".into(), "bytes=999999-".into())],
+                None
+            )
+            .status,
+            416
+        );
+
+        remote.lock().unwrap().instance = "remote-2".into();
+        let response = fetch(
+            "POST",
+            "/api/reply?t=phone",
+            &headers,
+            Some(br#"{"agent":"mbp6~ab12","text":"1"}"#),
+        );
+        assert_eq!(
+            response.status, 409,
+            "a retry cannot cross a remote restart"
+        );
+        assert!(response.text().contains("restarted"));
+        assert!(seen.try_recv().is_err());
     }
 }
 

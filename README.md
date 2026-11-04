@@ -61,6 +61,8 @@ cd workbench
 cargo build --release   # binary at target/release/workbench
 ```
 
+The phone frontend is embedded in the binary. Frontend development and rebuild instructions are in [workbench-mobile/README.md](workbench-mobile/README.md).
+
 ## Managing local servers
 
 Click **Servers** in the Sessions pane, or focus Sessions and press `Tab` to cycle through Agents, Terminals, and Servers. The list refreshes every five seconds and includes servers running inside your open projects and their agent worktrees. It works without phone access enabled.

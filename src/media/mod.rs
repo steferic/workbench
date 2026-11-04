@@ -7,7 +7,7 @@ use anyhow::{bail, Context, Result};
 pub use preview::{
     browse, close, flush_cleanup, latest, present_if_visible, render, resized, tick, Preview,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::VecDeque,
     fs::File,
@@ -20,16 +20,18 @@ use uuid::Uuid;
 const MAX_FILE: u64 = 256 * 1024 * 1024;
 const MAX_LIBRARY: u64 = 512 * 1024 * 1024;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct View {
     pub id: String,
     pub agent: String,
     pub name: String,
     pub kind: String,
+    #[serde(default)]
     pub poster: bool,
     /// When it was presented, RFC3339 like a message's `at`, so the phone
     /// can place it in the conversation where it happened rather than under
     /// everything said since.
+    #[serde(default)]
     pub at: String,
 }
 

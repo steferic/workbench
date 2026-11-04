@@ -15,10 +15,10 @@
 //! two Macs that list each other do not echo each other's agents back.
 
 use super::screen::Frame;
-use super::{AgentView, ProjectView, Snapshot};
+use super::{AgentView, DeskRowView, ProjectView, Snapshot};
 use crate::config::user_config::MachineConfig;
 use anyhow::{anyhow, bail, Context, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -45,7 +45,17 @@ pub struct PeerSnapshot {
     pub instance: String,
     pub projects: Vec<ProjectView>,
     pub agents: Vec<AgentView>,
+    pub media: Vec<crate::media::View>,
+    pub desk: Vec<DeskRowView>,
     pub at: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MachineView {
+    pub name: String,
+    pub status: &'static str,
+    /// The remote process that a phone command was composed against.
+    pub instance: String,
 }
 
 #[derive(Debug, Clone)]
@@ -211,8 +221,20 @@ fn poll() {
                 continue;
             };
             match result {
-                Ok(Fetched::Same) => machine.seen = Some(Instant::now()),
+                Ok(Fetched::Same) => {
+                    machine.error = None;
+                    machine.seen = Some(Instant::now());
+                }
                 Ok(Fetched::New(mut snapshot, tag)) => {
+                    if machine
+                        .snapshot
+                        .as_ref()
+                        .is_some_and(|old| old.instance != snapshot.instance)
+                    {
+                        if let Ok(mut details) = peers.details.lock() {
+                            details.retain(|(name, _), _| name != &config.name);
+                        }
+                    }
                     // The list carries a conversation only for whatever that
                     // Mac's own phone has open; the detail reads below are
                     // what this side shows.
@@ -397,16 +419,39 @@ pub fn forward(
     text: &str,
     passthrough: &[(String, String)],
 ) -> (u16, String) {
+    forward_expected(machine, path, id, text, passthrough, None)
+}
+
+/// A phone retry must remain bound to the remote process it first saw.
+pub fn forward_expected(
+    machine: &str,
+    path: &str,
+    id: &str,
+    text: &str,
+    passthrough: &[(String, String)],
+    expected: Option<&str>,
+) -> (u16, String) {
     let Some((config, instance)) = get().and_then(|p| p.config(machine)) else {
         return (404, format!("No machine named {machine} is configured."));
     };
     if instance.is_empty() {
         return (503, format!("{machine} has not answered yet."));
     }
+    if expected.is_some_and(|expected| expected != instance) {
+        return (
+            409,
+            format!(
+                "Workbench on {machine} restarted. Review the conversation before sending again."
+            ),
+        );
+    }
     let body = serde_json::json!({ "agent": id, "text": text }).to_string();
     let mut headers = vec![
         ("Content-Type".to_string(), "application/json".to_string()),
-        ("X-Workbench-Instance".to_string(), instance),
+        (
+            "X-Workbench-Instance".to_string(),
+            expected.unwrap_or(&instance).to_string(),
+        ),
     ];
     headers.extend(passthrough.iter().cloned());
     let path = format!("{path}?t={}", encode(&config.token));
@@ -421,21 +466,60 @@ pub fn forward(
 /// conversation from the detail reads.
 pub fn merge(snapshot: &mut Snapshot, wanted: Option<&str>) {
     let Some(peers) = get() else { return };
+    merge_from(peers, snapshot, wanted);
+}
+
+fn merge_from(peers: &Peers, snapshot: &mut Snapshot, wanted: Option<&str>) {
     let wanted = wanted.and_then(|id| peers.split(id));
     for machine in peers.machines() {
         let name = &machine.config.name;
+        snapshot.machines.push(MachineView {
+            name: name.clone(),
+            status: if machine.error.is_some()
+                || machine
+                    .seen
+                    .is_some_and(|seen| seen.elapsed() > Duration::from_secs(15))
+            {
+                "offline"
+            } else if machine.snapshot.is_some() {
+                "online"
+            } else {
+                "connecting"
+            },
+            instance: machine
+                .snapshot
+                .as_ref()
+                .map(|s| s.instance.clone())
+                .unwrap_or_default(),
+        });
         let Some(remote) = machine.snapshot else {
             continue;
         };
-        for project in remote.projects {
-            snapshot.projects.push(ProjectView {
-                id: format!("{name}{SEP}{}", project.id),
-                name: project_name(&project.name, name),
-                // Deciding them goes through ids this side does not have.
-                objectives: Vec::new(),
-                proposals: Vec::new(),
-                ..project
-            });
+        for mut project in remote.projects {
+            project.id = format!("{name}{SEP}{}", project.id);
+            project.name = project_name(&project.name, name);
+            for objective in &mut project.objectives {
+                objective.id = format!("{name}{SEP}{}", objective.id);
+            }
+            for proposal in &mut project.proposals {
+                proposal.id = format!("{name}{SEP}{}", proposal.id);
+                proposal.objective = proposal
+                    .objective
+                    .as_ref()
+                    .map(|id| format!("{name}{SEP}{id}"));
+                proposal.agent = proposal.agent.as_ref().map(|id| format!("{name}{SEP}{id}"));
+            }
+            snapshot.projects.push(project);
+        }
+        for mut row in remote.desk {
+            row.id = format!("{name}{SEP}{}", row.id);
+            row.project = project_name(&row.project, name);
+            snapshot.desk.push(row);
+        }
+        for mut media in remote.media {
+            media.id = format!("{name}{SEP}{}", media.id);
+            media.agent = format!("{name}{SEP}{}", media.agent);
+            snapshot.media.push(media);
         }
         for mut agent in remote.agents {
             let short = agent.id.clone();
@@ -450,6 +534,91 @@ pub fn merge(snapshot: &mut Snapshot, wanted: Option<&str>) {
             snapshot.agents.push(agent);
         }
     }
+}
+
+/// Upload to the owning Mac; the returned path is on that Mac, never this one.
+pub fn upload(machine: &str, agent: &str, name: &str, body: &[u8]) -> Result<Response> {
+    let (config, _) = get()
+        .and_then(|p| p.config(machine))
+        .context("Unknown computer")?;
+    let path = format!(
+        "/api/upload?agent={}&name={}&t={}",
+        encode(agent),
+        encode(name),
+        encode(&config.token)
+    );
+    request(&config.url, "POST", &path, &[], Some(body))
+}
+
+/// Relay only an explicitly presented preview, streaming its bytes and ranges.
+/// No peer token, redirect, arbitrary URL, or filesystem path reaches the phone.
+pub fn media(
+    machine: &str,
+    id: &str,
+    mode: &str,
+    method: &str,
+    range: Option<&str>,
+) -> Result<tiny_http::ResponseBox> {
+    use std::io::{BufReader, Read};
+    use tiny_http::{Header, StatusCode};
+    let (config, _) = get()
+        .and_then(|p| p.config(machine))
+        .context("Unknown computer")?;
+    let path = format!("/media/{}/{mode}?t={}", encode(id), encode(&config.token));
+    let headers = range
+        .map(|value| vec![("Range".to_string(), value.to_string())])
+        .unwrap_or_default();
+    let stream = open(
+        &config.url,
+        method,
+        &path,
+        &headers,
+        None,
+        Duration::from_secs(30),
+    )?;
+    let mut reader = BufReader::new(stream);
+    let mut head = Vec::new();
+    while !head.ends_with(b"\r\n\r\n") {
+        if head.len() >= 32 * 1024 {
+            bail!("Preview response headers are too large");
+        }
+        let mut byte = [0];
+        reader.read_exact(&mut byte)?;
+        head.push(byte[0]);
+    }
+    let response = parse_response(&head)?;
+    if ![200, 206, 404, 416].contains(&response.status) {
+        bail!("Preview unavailable (HTTP {})", response.status);
+    }
+    let length: usize = response
+        .header("content-length")
+        .context("Preview length is missing")?
+        .parse()?;
+    if length > 256 * 1024 * 1024 || response.header("transfer-encoding").is_some() {
+        bail!("Unsupported preview response");
+    }
+    let mut headers = Vec::new();
+    for name in ["Content-Type", "Content-Range", "Accept-Ranges"] {
+        if let Some(value) = response.header(name) {
+            headers.push(
+                Header::from_bytes(name, value).map_err(|_| anyhow!("Invalid preview header"))?,
+            );
+        }
+    }
+    headers.push(Header::from_bytes("Cache-Control", "private, no-store").unwrap());
+    headers.push(Header::from_bytes("X-Content-Type-Options", "nosniff").unwrap());
+    let body: Box<dyn Read + Send> = if method == "HEAD" {
+        Box::new(std::io::empty())
+    } else {
+        Box::new(reader.take(length as u64))
+    };
+    Ok(tiny_http::Response::new(
+        StatusCode(response.status),
+        headers,
+        body,
+        Some(length),
+        None,
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -624,6 +793,67 @@ pub fn encode(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn offline_computers_keep_projects_without_exposing_connection_secrets() {
+        let peers = Peers {
+            machines: Mutex::new(vec![
+                Machine {
+                    config: MachineConfig {
+                        name: "studio".into(),
+                        url: "http://private-host:1234".into(),
+                        token: "private-token".into(),
+                    },
+                    snapshot: Some(PeerSnapshot {
+                        instance: "process-1".into(),
+                        projects: vec![ProjectView {
+                            id: "same-project".into(),
+                            name: "Workbench".into(),
+                            objectives: vec![super::super::ObjectiveView {
+                                id: "objective".into(),
+                                ..Default::default()
+                            }],
+                            ..Default::default()
+                        }],
+                        agents: vec![AgentView {
+                            id: "same-agent".into(),
+                            project_id: "same-project".into(),
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    }),
+                    error: Some("private connection error".into()),
+                    seen: Some(Instant::now()),
+                },
+                Machine {
+                    config: MachineConfig {
+                        name: "new-mac".into(),
+                        url: "http://private-host:5678".into(),
+                        token: "another-token".into(),
+                    },
+                    snapshot: None,
+                    error: None,
+                    seen: None,
+                },
+            ]),
+            ..Default::default()
+        };
+        let mut snapshot = Snapshot::default();
+        snapshot.agents.push(AgentView {
+            id: "same-agent".into(),
+            project_id: "same-project".into(),
+            ..Default::default()
+        });
+        merge_from(&peers, &mut snapshot, None);
+        assert_eq!(snapshot.agents[0].id, "same-agent");
+        assert_eq!(snapshot.agents[1].id, "studio~same-agent");
+        assert_eq!(snapshot.projects[0].id, "studio~same-project");
+        assert_eq!(snapshot.projects[0].objectives[0].id, "studio~objective");
+        assert_eq!(snapshot.machines[0].status, "offline");
+        assert_eq!(snapshot.machines[1].status, "connecting");
+        let json = serde_json::to_string(&snapshot).unwrap();
+        assert!(!json.contains("private") && !json.contains("another-token"));
+    }
 
     #[test]
     fn a_response_reads_with_or_without_chunks() {

@@ -71,6 +71,8 @@ pub struct Snapshot {
     /// there from the phone.
     pub projects: Vec<ProjectView>,
     pub agents: Vec<AgentView>,
+    /// Public connection state only; peer addresses and tokens stay on this Mac.
+    pub machines: Vec<peers::MachineView>,
     /// The agent whose conversation is being published (short id), if any.
     /// Focus lives in workbench memory and restarts as "none", while the
     /// page's idea of it lives in localStorage and survives — without this
