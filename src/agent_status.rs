@@ -116,6 +116,68 @@ pub struct AgentStatus {
     pub model: Option<String>,
 }
 
+pub enum OscStatus {
+    Clear,
+    Report(AgentStatus),
+}
+
+pub fn from_osc(payload: &[u8]) -> Option<OscStatus> {
+    use base64::Engine;
+    if payload.len() > 4096 {
+        return None;
+    }
+    let payload = std::str::from_utf8(payload).ok()?;
+    let mut state = None;
+    let mut kind = "";
+    let mut message = None;
+    for (key, value) in payload.split(':').filter_map(|field| field.split_once('=')) {
+        let value = value.trim();
+        match key.trim() {
+            // Workbench consumes the pane's root status. A child job's
+            // status cannot decide whether to send the agent its next task.
+            "id" => return None,
+            "state" => state = Some(value),
+            "kind" => kind = value,
+            "msg" => message = Some(value),
+            _ => {}
+        }
+    }
+    let state = state?;
+    let activity = match state {
+        "clear" => return Some(OscStatus::Clear),
+        "working" => Activity::Working,
+        "done" | "idle" => Activity::Idle,
+        "error" => Activity::NeedsAttention(Attention::Input),
+        "blocked" => Activity::NeedsAttention(match kind {
+            "permission" => Attention::Permission,
+            "question" => Attention::Question,
+            _ => Attention::Input,
+        }),
+        _ => return None,
+    };
+    let reason = if let Some(message) = message {
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(message)
+            .or_else(|_| base64::engine::general_purpose::STANDARD_NO_PAD.decode(message))
+            .ok()?;
+        let text = String::from_utf8(bytes).ok()?;
+        if text.chars().any(char::is_control) {
+            return None;
+        }
+        text
+    } else {
+        format!("Terminal reports {state}")
+    };
+    Some(OscStatus::Report(AgentStatus {
+        activity,
+        reason,
+        at: Utc::now(),
+        event: "OSC 7501".into(),
+        transcript: None,
+        model: None,
+    }))
+}
+
 impl AgentStatus {
     /// Hook data this old is treated as absent: the agent may have died
     /// without a `SessionEnd`, and a stale "working" is worse than falling

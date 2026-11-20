@@ -472,6 +472,33 @@ fn dispatch(
                     .ok_or_else(|| ("no_such_agent", format!("no agent {wanted}")))
             })
         }
+        "agent.explain" => {
+            let wanted = text_param(params, "agent")?;
+            with_snapshot(shared, |snapshot| {
+                let agent = snapshot
+                    .agents
+                    .iter()
+                    .find(|agent| agent.id.eq_ignore_ascii_case(&wanted))
+                    .ok_or_else(|| ("no_such_agent", format!("no agent {wanted}")))?;
+                let source = if agent.status == "stopped" {
+                    "session lifecycle"
+                } else if agent.prompt.is_some() {
+                    "visible prompt"
+                } else if agent.status_event.as_deref() == Some("OSC 7501") {
+                    "OSC 7501"
+                } else if agent.status_event.is_some() {
+                    "provider hook"
+                } else {
+                    "output timing"
+                };
+                Ok(json!({
+                    "id": agent.id, "status": agent.status, "source": source,
+                    "report_event": agent.status_event, "reason": agent.reason,
+                    "queue_hold": agent.holding, "queue_running": agent.running.is_some(),
+                    "queue_pending": agent.queued.len(), "queue_paused": agent.paused,
+                }))
+            })
+        }
         "projects.list" => with_snapshot(shared, |snapshot| Ok(to_value(&snapshot.projects))),
 
         // Dispatching work is not a manager's to do — not yet, and not this
@@ -732,6 +759,7 @@ fn schema() -> Value {
             {"name": "api.schema", "params": [], "kind": "read"},
             {"name": "state.get", "params": [], "kind": "read"},
             {"name": "agents.list", "params": [], "kind": "read"},
+            {"name": "agent.explain", "params": ["agent"], "kind": "read"},
             {"name": "agent.get", "params": ["agent"], "kind": "read"},
             {"name": "projects.list", "params": [], "kind": "read"},
             {"name": "agent.prompt", "params": ["agent", "text"], "kind": "write"},
@@ -799,6 +827,7 @@ mod tests {
             model: Some("Opus 5".into()),
             status: status.into(),
             reason: None,
+            status_event: None,
             running: None,
             steps: Vec::new(),
             queued: Vec::new(),

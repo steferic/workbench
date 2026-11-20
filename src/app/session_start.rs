@@ -108,7 +108,10 @@ pub fn start_workspace_sessions(
         .map(|sessions| {
             sessions
                 .iter()
-                .filter(|s| matches!(s.status, SessionStatus::Stopped | SessionStatus::Errored))
+                .filter(|s| {
+                    s.helper_run.is_none()
+                        && matches!(s.status, SessionStatus::Stopped | SessionStatus::Errored)
+                })
                 .map(|s| {
                     (
                         s.id,
@@ -180,7 +183,10 @@ pub fn queue_selected_workspace_sessions(state: &mut AppState) {
         .map(|sessions| {
             sessions
                 .iter()
-                .filter(|s| matches!(s.status, SessionStatus::Stopped | SessionStatus::Errored))
+                .filter(|s| {
+                    s.helper_run.is_none()
+                        && matches!(s.status, SessionStatus::Stopped | SessionStatus::Errored)
+                })
                 .map(|s| PendingSessionStart {
                     session_id: s.id,
                     workspace_id,

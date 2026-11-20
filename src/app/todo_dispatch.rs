@@ -84,6 +84,9 @@ pub fn holding(state: &AppState, session_id: Uuid) -> Holding {
     if session.status != SessionStatus::Running {
         return Holding::NotRunning;
     }
+    if state.system.remote_prompts.contains_key(&session_id) {
+        return Holding::AgentBlocked;
+    }
     match state.activity(session_id) {
         Activity::NeedsAttention(_) => return Holding::AgentBlocked,
         Activity::Working => return Holding::AgentBusy,
@@ -165,6 +168,7 @@ fn claim_open_jobs(state: &mut AppState, action_tx: &mpsc::UnboundedSender<Actio
             .flatten()
             .find(|s| {
                 s.status == SessionStatus::Running
+                    && s.helper_run.is_none()
                     && s.agent_type.is_directable()
                     && s.todo_queue.running().is_none()
                     && s.todo_queue.next_pending().is_none()
@@ -379,10 +383,15 @@ fn retire_finished(
     let started = sent_at
         .map(|at| Utc::now() - at > chrono::TimeDelta::seconds(2))
         .unwrap_or(true);
-    if !started {
+    if !started || state.system.remote_prompts.contains_key(&session_id) {
         return;
     }
 
+    if let (Some(sent_at), Some(report)) = (sent_at, state.effective_status(session_id)) {
+        if (report.event == "OSC 7501" || session.helper_run.is_some()) && report.at <= sent_at {
+            return;
+        }
+    }
     if state.activity(session_id).is_free() {
         let finished = state
             .get_session_mut(session_id)

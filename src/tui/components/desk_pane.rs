@@ -161,7 +161,6 @@ fn card(
             let why = state
                 .activity_reason(*session_id)
                 .filter(|reason| !reason.is_empty())
-                .map(str::to_string)
                 .unwrap_or_else(|| "stopped on a question".into());
             head("blocked", t.warning, project, name);
             text(lines, None, &why, t.fg, text_width);

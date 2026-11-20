@@ -138,6 +138,41 @@ workbench prompts                         # analyze submitted prompts
 workbench prompts --json                  # export recent prompts with metadata
 ```
 
+## Detach and reattach
+
+On macOS and Linux, launch with `workbench --persistent`. Press **Ctrl+\** to
+detach, or close the terminal window. The background runtime keeps sessions,
+queued work, the control socket, and the configured phone service running.
+Run `workbench` again from a terminal to reattach. **Ctrl+Q** and confirmation
+shut down the runtime. One terminal client can attach at a time. Pass
+`--workspace` when starting the background runtime to add a workspace.
+
+## Helper runs
+
+From a regular agent session, start a Claude or Codex helper and collect the
+result by run ID. The helper starts in the parent's project or worktree with
+its usual permission prompts. The result includes the parent session and the
+queued task or job run when one is active.
+
+```sh
+workbench helper start codex "Review the current diff and summarize any regressions"
+workbench helper status <run-id>
+workbench helper wait <run-id> --timeout 600
+```
+
+The helper records its result with `workbench helper report "summary"` (add
+`--failed` for a failed run). A stopped session records an aborted run, and a
+turn that ends without a report records an unreported run. Results are stored
+locally, outside the project. Start a fresh run to retry an interrupted helper.
+
+## Status diagnostics
+
+Run `workbench explain <session-id>` to see the state, its source, and why the
+queue is holding. Agent panes accept root
+[OSC 7501](https://www.superlogical.com/rex/docs/build/program-status) reports
+alongside provider hooks. A visible prompt can also explain why an agent
+appears blocked.
+
 ## Images, video, and links
 
 Agents can present files directly:

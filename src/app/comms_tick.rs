@@ -210,7 +210,9 @@ fn build_roster(state: &AppState, ws_id: Uuid, ws_name: &str, ws_path: &std::pat
             let (status, _) = crate::remote::agent_state(state, s);
             let cwd = s
                 .worktree_path
-                .clone()
+                .as_ref()
+                .or(s.helper_workdir.as_ref())
+                .cloned()
                 .unwrap_or_else(|| ws_path.to_path_buf())
                 .to_string_lossy()
                 .to_string();

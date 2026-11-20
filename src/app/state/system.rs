@@ -923,6 +923,7 @@ fn align_shift(prev: &[TranscriptLine], cur: &[TranscriptLine]) -> Option<isize>
 }
 
 pub struct SystemState {
+    pub helpers: crate::helpers::Runtime,
     pub native_history_sessions: std::collections::HashSet<Uuid>,
     pub native_history_dirty: std::collections::HashSet<Uuid>,
     pub cleanup_jobs: crate::app::cleanup::CleanupJobs,
@@ -1100,6 +1101,7 @@ pub struct ThreadCache {
 impl SystemState {
     pub fn new() -> Self {
         Self {
+            helpers: Default::default(),
             cleanup_jobs: Default::default(),
             pty_handles: HashMap::new(),
             output_buffers: HashMap::new(),

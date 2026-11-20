@@ -2,12 +2,15 @@ mod agent_status;
 mod agent_tasks;
 mod app;
 mod audio;
+#[cfg(unix)]
+mod background;
 mod canvas;
 mod cli;
 mod comms;
 mod config;
 mod control;
 mod git;
+mod helpers;
 mod jobs;
 mod lifecycle;
 mod links;
@@ -49,10 +52,33 @@ struct Cli {
     /// Disable alternate screen mode (overrides config setting)
     #[arg(long)]
     no_alt_screen: bool,
+
+    /// Start or attach to a detachable Workbench runtime (Unix)
+    #[arg(long, conflicts_with_all = ["no_alt_screen", "foreground"])]
+    persistent: bool,
+
+    #[arg(long, hide = true)]
+    foreground: bool,
 }
 
 #[derive(Subcommand)]
 enum Commands {
+    #[cfg(unix)]
+    #[command(hide = true)]
+    BackgroundRuntime {
+        cols: u16,
+        rows: u16,
+        #[arg(long)]
+        workspace: Option<PathBuf>,
+    },
+
+    /// Start, wait for, and report on a helper agent
+    Helper {
+        #[command(subcommand)]
+        command: helpers::Command,
+    },
+    /// Explain an agent status and queue hold (session ID)
+    Explain { agent: String },
     /// Present an image or video in Workbench
     Preview {
         path: PathBuf,
@@ -315,6 +341,21 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        #[cfg(unix)]
+        Some(Commands::BackgroundRuntime {
+            cols,
+            rows,
+            workspace,
+        }) => {
+            background::serve(cols, rows, workspace.as_deref())?;
+        }
+
+        Some(Commands::Helper { command }) => helpers::cli(command)?,
+        Some(Commands::Explain { agent }) => {
+            let mut client = control::Client::connect()?;
+            let explanation = client.call("agent.explain", serde_json::json!({"agent": agent}))?;
+            println!("{}", serde_json::to_string_pretty(&explanation)?);
+        }
         Some(Commands::Preview { path, agent }) => media::cli(path, agent)?,
         Some(Commands::Add { path, name }) => {
             let abs_path = if path.is_absolute() {
@@ -440,13 +481,27 @@ fn main() -> Result<()> {
                 println!("{}", prompt_log::analysis_lines(limit)?.join("\n"));
             }
         }
+        None if cli.persistent => {
+            #[cfg(unix)]
+            background::attach(cli.workspace)?;
+            #[cfg(not(unix))]
+            anyhow::bail!("detachable Workbench currently requires Unix");
+        }
         None => {
+            #[cfg(unix)]
+            if !cli.foreground && !cli.no_alt_screen && background::running() {
+                return background::attach(cli.workspace);
+            }
+            #[cfg(unix)]
+            let _state_lock = background::lock_state()?;
             // Do this before the runtime, sockets, and restored PTYs consume
             // the small descriptor allowance inherited from a GUI launcher.
             resource_limits::prepare();
             // Load config to get default, CLI flag overrides
             let config = load_user_config();
-            let use_alt_screen = if cli.no_alt_screen {
+            let use_alt_screen = if std::env::var_os("WORKBENCH_BACKGROUND_TUI").is_some() {
+                true
+            } else if cli.no_alt_screen {
                 false
             } else {
                 config.use_alternate_screen

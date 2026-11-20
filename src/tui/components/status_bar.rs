@@ -339,7 +339,6 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
                         let detail = state
                             .activity_reason(session_id)
                             .filter(|reason| !reason.is_empty())
-                            .map(str::to_string)
                             .unwrap_or_else(|| kind.label().to_string());
                         (
                             vec![Span::styled(

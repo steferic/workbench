@@ -232,6 +232,8 @@ pub struct AgentView {
     pub status: String,
     /// The agent's own words when it is blocked ("needs your permission to…").
     pub reason: Option<String>,
+    #[serde(default)]
+    pub status_event: Option<String>,
     /// The queued item the agent is on, if any.
     pub running: Option<String>,
     /// That item's steps, as the agent reports them.
@@ -657,7 +659,10 @@ fn publish_with(
                 alias: session.alias.clone(),
                 model: state.session_model(session.id),
                 status: status.to_string(),
-                reason: state.activity_reason(session.id).map(str::to_string),
+                reason: state.activity_reason(session.id),
+                status_event: state
+                    .effective_status(session.id)
+                    .map(|report| report.event),
                 running,
                 steps,
                 queued: queue
@@ -899,7 +904,7 @@ pub fn phone_desk_rows(state: &AppState) -> Vec<DeskRowView> {
                 let detail = prompt_on_screen(state, session_id)
                     .map(|prompt| prompt.lines.join("\n"))
                     .filter(|lines| !lines.trim().is_empty())
-                    .or_else(|| state.activity_reason(session_id).map(str::to_string));
+                    .or_else(|| state.activity_reason(session_id));
                 Some(DeskRowView {
                     kind: "blocked".into(),
                     project,
@@ -1431,6 +1436,7 @@ mod tests {
             model: Some("Opus 5".into()),
             status: "working".into(),
             reason: None,
+            status_event: None,
             running: None,
             steps: Vec::new(),
             queued: Vec::new(),
@@ -1491,6 +1497,7 @@ mod tests {
             model: None,
             status: "working".into(),
             reason: None,
+            status_event: None,
             running: None,
             steps: Vec::new(),
             queued: Vec::new(),
@@ -1661,6 +1668,7 @@ mod tests {
             model: None,
             status: "idle".into(),
             reason: None,
+            status_event: None,
             running: None,
             steps: Vec::new(),
             queued: Vec::new(),

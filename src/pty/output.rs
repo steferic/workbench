@@ -22,9 +22,14 @@ impl TerminalOutput {
             queries: vte::Parser::new(),
             detector: Detector {
                 event: None,
+                reported_status: None,
                 strip_alt_screen,
             },
         }
+    }
+
+    pub fn reported_status(&self) -> Option<crate::agent_status::AgentStatus> {
+        self.detector.reported_status.clone()
     }
 
     pub fn screen(&self) -> &vt100::Screen {
@@ -94,6 +99,7 @@ impl TerminalOutput {
                     Query::Status => output.replies.extend_from_slice(b"\x1b[0n"),
                     Query::Primary => output.replies.extend_from_slice(b"\x1b[?6c"),
                     Query::Secondary => output.replies.extend_from_slice(b"\x1b[>0;0;0c"),
+                    Query::ProgramStatus => output.replies.extend_from_slice(b"\x1b]7501;?\x1b\\"),
                 }
             }
         }
@@ -108,6 +114,7 @@ enum Query {
     Status,
     Primary,
     Secondary,
+    ProgramStatus,
 }
 enum Event {
     Query(Query),
@@ -117,9 +124,30 @@ enum Event {
 struct Detector {
     event: Option<Event>,
     strip_alt_screen: bool,
+    reported_status: Option<crate::agent_status::AgentStatus>,
 }
 
 impl Perform for Detector {
+    fn osc_dispatch(&mut self, params: &[&[u8]], _: bool) {
+        use crate::agent_status::{Activity, OscStatus};
+        match params {
+            [b"7501", b"?"] => self.event = Some(Event::Query(Query::ProgramStatus)),
+            [b"7501", payload] => match crate::agent_status::from_osc(payload) {
+                Some(OscStatus::Report(status)) => self.reported_status = Some(status),
+                Some(OscStatus::Clear) => self.reported_status = None,
+                None => {}
+            },
+            [b"133", b"A", ..]
+                if self.reported_status.as_ref().is_some_and(|s| {
+                    matches!(s.activity, Activity::Working | Activity::NeedsAttention(_))
+                }) =>
+            {
+                self.reported_status = None
+            }
+            _ => {}
+        }
+    }
+
     fn csi_dispatch(
         &mut self,
         params: &vte::Params,
@@ -164,8 +192,12 @@ impl Perform for Detector {
     }
 
     fn esc_dispatch(&mut self, intermediates: &[u8], ignore: bool, byte: u8) {
-        if !ignore && intermediates.is_empty() && byte == b'Z' {
-            self.event = Some(Event::Query(Query::Primary));
+        if !ignore && intermediates.is_empty() {
+            match byte {
+                b'Z' => self.event = Some(Event::Query(Query::Primary)),
+                b'c' => self.reported_status = None,
+                _ => {}
+            }
         }
     }
 }
@@ -173,6 +205,34 @@ impl Perform for Detector {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn program_status_uses_the_root_record_and_clears_on_shell_prompt() {
+        use crate::agent_status::{Activity, Attention};
+        let mut terminal = TerminalOutput::new(4, 20, false);
+        terminal.process(b"\x1b]7501;state=block");
+        terminal.process(b"ed:kind=permission:msg=QXBwcm92ZQ\x1b\\");
+        let report = terminal.reported_status().unwrap();
+        assert_eq!(
+            report.activity,
+            Activity::NeedsAttention(Attention::Permission)
+        );
+        assert_eq!(report.reason, "Approve");
+        terminal.process(b"\x1b]7501;state=idle:id=child\x07");
+        assert_eq!(
+            terminal.reported_status().unwrap().activity,
+            report.activity
+        );
+        assert_eq!(
+            terminal.process(b"\x1b]7501;?\x07").replies,
+            b"\x1b]7501;?\x1b\\"
+        );
+        terminal.process(b"\x1b]133;A\x07");
+        assert!(terminal.reported_status().is_none());
+        terminal.process(b"\x1b]7501;state=working\x07");
+        terminal.process(b"\x1b]7501;state=clear\x07");
+        assert!(terminal.reported_status().is_none());
+    }
 
     #[test]
     fn reflow_keeps_reader_replies_aligned_with_the_ui_parser() {

@@ -239,6 +239,7 @@ pub fn process_action(
             remote_tick(state, action_tx);
             sync_repository_map(state);
             super::todo_dispatch::tick(state, action_tx);
+            crate::helpers::Runtime::tick(state, pty_manager, pty_tx);
             tasks::sync_selection(state);
             refresh_agent_tasks(state, action_tx);
             refresh_scrollback(state, action_tx);
@@ -1982,7 +1983,9 @@ fn plan_task_refresh(state: &AppState) -> TaskRefreshPlan {
             }
             let cwd = session
                 .worktree_path
-                .clone()
+                .as_ref()
+                .or(session.helper_workdir.as_ref())
+                .cloned()
                 .unwrap_or_else(|| workspace.path.clone());
             sources.insert(
                 session.id,

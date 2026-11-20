@@ -458,6 +458,7 @@ The `workbench` CLI lets you discover and communicate with peers:
 - `workbench transcript <id|alias> --lines 200` — read a peer's recent conversation (exported each time it goes idle)
 - `workbench ask <id|alias> "question" --wait` — deliver a question to a live peer and collect its answer (or collect later: `workbench replies <ticket> --wait`)
 - `workbench handoff <id|alias> --wait` — ask a peer for a structured summary of its work (done/remaining/decisions/gotchas) before taking over or building on it
+- `workbench helper start <claude|codex> "task"` — start a separate reviewer or test agent for the current task. Collect its result with `workbench helper wait <run-id>` or check it with `workbench helper status <run-id>`.
 - `workbench alias <name>` — set your own alias
 - `workbench wait <id|alias>` — block until a peer stops working (add `--json` for a parseable line, `--state idle` to insist it is not merely blocked)
 

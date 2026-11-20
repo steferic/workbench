@@ -67,6 +67,13 @@ impl Drop for PtyHandle {
 }
 
 impl PtyHandle {
+    pub fn reported_status(&self) -> Option<crate::agent_status::AgentStatus> {
+        self.output
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .reported_status()
+    }
+
     pub fn send_input(&mut self, data: &[u8]) -> Result<()> {
         self.writer.write_all(data)?;
         self.writer.flush()?;

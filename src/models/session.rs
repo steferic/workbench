@@ -60,6 +60,12 @@ pub struct Session {
     /// `jobs`). Persisted so a restart still knows which ledger line to close.
     #[serde(default)]
     pub job: Option<JobLink>,
+    /// One-shot helpers stay in the workspace for transcript review.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub helper_run: Option<Uuid>,
+    /// A helper can read a parent's checkout without owning its lifecycle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub helper_workdir: Option<PathBuf>,
 }
 
 /// Which job and which run of it a session belongs to.
@@ -101,6 +107,8 @@ impl Session {
             journal_path: None,
             todo_queue,
             job: None,
+            helper_run: None,
+            helper_workdir: None,
         }
     }
 
@@ -129,6 +137,8 @@ impl Session {
             journal_path: None,
             todo_queue: super::TodoQueue::default(),
             job: None,
+            helper_run: None,
+            helper_workdir: None,
         }
     }
 
@@ -158,6 +168,8 @@ impl Session {
             journal_path: None,
             todo_queue: super::TodoQueue::default(),
             job: None,
+            helper_run: None,
+            helper_workdir: None,
         }
     }
 
@@ -181,6 +193,8 @@ impl Session {
             journal_path: None,
             todo_queue: super::TodoQueue::default(),
             job: None,
+            helper_run: None,
+            helper_workdir: None,
         }
     }
 

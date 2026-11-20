@@ -70,6 +70,7 @@ pub async fn run_tui(initial_workspace: Option<PathBuf>, use_alternate_screen: b
 
     // Create app state and load persisted data
     let mut state = AppState::new();
+    state.system.helpers = crate::helpers::Runtime::start();
     state.system.use_alternate_screen = use_alternate_screen;
 
     state.system.media_picker = ratatui_image::picker::Picker::from_query_stdio()
@@ -179,6 +180,7 @@ pub async fn run_tui(initial_workspace: Option<PathBuf>, use_alternate_screen: b
     .await;
 
     super::cleanup::shutdown(&mut state);
+    state.system.helpers.recover();
     super::comms_tick::retire_all(&mut state);
     if let Some(save) = state.system.state_save.take() {
         if let Err(err) = save.await {
@@ -255,6 +257,7 @@ async fn run_main_loop(
     let mut needs_draw = true;
     let mut last_draw = std::time::Instant::now();
     let mut drawn_remote_screen = 0;
+    let detachable = std::env::var_os("WORKBENCH_BACKGROUND_TUI").is_some();
 
     loop {
         // Another Mac's terminal on show changes with no event here.
@@ -339,7 +342,9 @@ async fn run_main_loop(
 
         // ForceRedraw needs the terminal handle, which only this loop holds:
         // drop ratatui's back buffer so the next draw repaints every cell.
-        if matches!(&action, Action::ForceRedraw) {
+        if matches!(&action, Action::ForceRedraw)
+            || (detachable && matches!(&action, Action::Resize(..)))
+        {
             terminal.clear()?;
         }
 

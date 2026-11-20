@@ -710,10 +710,8 @@ impl AppState {
             return Activity::Exited;
         }
 
-        if let Some(status) = self.system.agent_status.get(&session_id) {
-            if status.is_fresh(chrono::Utc::now()) && status.activity != Activity::Exited {
-                return status.activity;
-            }
+        if let Some(status) = self.effective_status(session_id) {
+            return status.activity;
         }
 
         if self.is_session_working(session_id) {
@@ -732,37 +730,47 @@ impl AppState {
     /// bytes stopped arriving — which a screen that merely repainted also
     /// satisfies.
     pub fn activity_is_reported(&self, session_id: Uuid) -> bool {
-        self.system
-            .agent_status
-            .get(&session_id)
-            .is_some_and(|status| {
-                status.is_fresh(chrono::Utc::now()) && status.activity != Activity::Exited
-            })
+        self.effective_status(session_id).is_some()
+    }
+
+    /// Prefer the latest report while retaining provider hook metadata for
+    /// conversation discovery. Terminal reports are scoped to the live PTY.
+    pub fn effective_status(&self, id: Uuid) -> Option<crate::agent_status::AgentStatus> {
+        if self.get_session(id)?.status != SessionStatus::Running {
+            return None;
+        }
+        let hook = self.system.agent_status.get(&id).filter(|status| {
+            status.is_fresh(chrono::Utc::now()) && status.activity != Activity::Exited
+        });
+        let osc = self
+            .system
+            .pty_handles
+            .get(&id)
+            .and_then(|handle| handle.reported_status());
+        match (hook, osc) {
+            (Some(hook), Some(osc)) if hook.at >= osc.at => Some(hook.clone()),
+            (_, Some(osc)) => Some(osc),
+            (hook, None) => hook.cloned(),
+        }
     }
 
     /// The prose behind `activity`, when the agent supplied any.
-    pub fn activity_reason(&self, session_id: Uuid) -> Option<&str> {
-        let status = self.system.agent_status.get(&session_id)?;
-        status
-            .is_fresh(chrono::Utc::now())
-            .then(|| status.reason.as_str())
+    pub fn activity_reason(&self, session_id: Uuid) -> Option<String> {
+        self.effective_status(session_id)
+            .map(|status| status.reason)
     }
 
     /// Sessions that stopped and are waiting on the user, newest report first.
     pub fn sessions_needing_attention(&self) -> Vec<(Uuid, Attention)> {
-        let now = chrono::Utc::now();
         let mut waiting: Vec<(Uuid, Attention, chrono::DateTime<chrono::Utc>)> = self
-            .system
-            .agent_status
-            .iter()
-            .filter(|(_, status)| status.is_fresh(now))
-            .filter_map(|(id, status)| {
+            .data
+            .sessions
+            .values()
+            .flatten()
+            .filter_map(|session| {
+                let status = self.effective_status(session.id)?;
                 let kind = status.activity.needs_attention()?;
-                let running = self
-                    .get_session(*id)
-                    .map(|s| s.status == SessionStatus::Running)
-                    .unwrap_or(false);
-                running.then_some((*id, kind, status.at))
+                Some((session.id, kind, status.at))
             })
             .collect();
         waiting.sort_by(|a, b| b.2.cmp(&a.2));

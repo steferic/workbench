@@ -365,7 +365,12 @@ fn finish_session_spawn(
         Ok(handle) => {
             state.system.pty_handles.insert(session_id, handle);
             let is_terminal = session.agent_type.is_terminal();
+            let helper = session.helper_run.is_some();
             state.add_session(session);
+            if helper {
+                save_state(state, save_msg);
+                return true;
+            }
             state.set_active_session_id(Some(session_id));
             state.ui.focus = FocusPanel::SessionList;
             // Show the tab the new session is on. Making a terminal while the
@@ -482,12 +487,14 @@ pub(crate) fn create_session_in(
         Vec::new(),
         pty_manager,
         pty_tx,
+        None,
     )
 }
 
 /// Start an agent in the workspace directory itself, with extra environment
 /// for the child. The common tail of an ordinary session and a job's.
-fn spawn_in_workspace(
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn spawn_in_workspace(
     state: &mut AppState,
     workspace_id: Uuid,
     agent_type: AgentType,
@@ -495,13 +502,21 @@ fn spawn_in_workspace(
     extra_env: Vec<(String, String)>,
     pty_manager: &PtyManager,
     pty_tx: &mpsc::Sender<Action>,
+    helper: Option<(Uuid, Option<&std::path::Path>)>,
 ) -> Option<Uuid> {
     let workspace_path = state.get_workspace(workspace_id)?.path.clone();
-    let session = Session::new(
+    let mut session = Session::new(
         workspace_id,
         agent_type.clone(),
         dangerously_skip_permissions,
     );
+    let working_dir = if let Some((id, dir)) = helper {
+        session.helper_run = Some(id);
+        session.helper_workdir = dir.map(std::path::Path::to_path_buf);
+        dir.unwrap_or(&workspace_path)
+    } else {
+        &workspace_path
+    };
     let session_id = session.id;
 
     let pty_rows = state.pane_rows();
@@ -514,7 +529,7 @@ fn spawn_in_workspace(
         session_id,
         workspace_id,
         agent_type,
-        working_dir: &workspace_path,
+        working_dir,
         rows: pty_rows,
         cols,
         pty_tx: pty_tx.clone(),
@@ -566,6 +581,7 @@ pub(crate) fn create_job_session(
         env,
         pty_manager,
         pty_tx,
+        None,
     )
 }
 
@@ -769,6 +785,10 @@ fn restart_session(
     action_tx: &mpsc::UnboundedSender<Action>,
     pty_tx: &mpsc::Sender<Action>,
 ) {
+    if state.get_session(session_id).is_some_and(|session| session.helper_run.is_some()) {
+        show_toast(state, "Start a new helper run to retry this task", ToastLevel::Warning);
+        return;
+    }
     let session_info = state
         .data
         .sessions
