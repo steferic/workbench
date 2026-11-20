@@ -267,7 +267,43 @@ pub fn get_session_worktree_path(workspace_path: &Path, session_id_short: &str) 
 
 /// Generate a branch name for a session worktree
 pub fn session_branch_name(agent_name: &str, session_id_short: &str) -> String {
-    format!("agent-{}-{}", agent_name.to_lowercase(), session_id_short)
+    // An agent's name is whatever the config calls it ("Claude API", "Codex
+    // manager"), and a space is not something git will take in a ref.
+    let agent: String = agent_name
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    let agent = agent
+        .split('-')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+    format!("agent-{agent}-{session_id_short}")
+}
+
+#[cfg(test)]
+mod branch_name_tests {
+    use super::session_branch_name;
+
+    #[test]
+    fn a_plain_agent_name_is_unchanged() {
+        assert_eq!(session_branch_name("Claude", "ab12cd34"), "agent-claude-ab12cd34");
+    }
+
+    /// Alt+0 on the API-billed Claude: the name has a space, the branch
+    /// cannot.
+    #[test]
+    fn a_name_with_a_space_still_makes_a_branch_git_accepts() {
+        assert_eq!(
+            session_branch_name("Claude API", "ab12cd34"),
+            "agent-claude-api-ab12cd34"
+        );
+        assert_eq!(
+            session_branch_name("Opus 5 · API", "ab12cd34"),
+            "agent-opus-5-api-ab12cd34"
+        );
+    }
 }
 
 /// Check if a worktree has any uncommitted changes

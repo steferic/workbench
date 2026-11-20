@@ -123,6 +123,30 @@ Install the CLIs for whichever agents you want to drive (workbench spawns them b
 
 Custom agents (any command) can be added in `~/.config/workbench/user_config.toml` or via the in-app settings (`h`).
 
+### Billing an agent to an API key
+
+An agent normally runs on its CLI's own login. To run Claude on an Anthropic API key instead, add a second entry for the same command with an `api_key_cmd`: a shell command that prints the key.
+
+```toml
+[[agents]]
+command = "claude"
+display_name = "Claude API"
+badge = "A"
+hotkey = "0"
+enabled = true
+api_key_cmd = "security find-generic-password -s anthropic-api-key -w"
+```
+
+`0` then starts Claude on the key, `)` (Shift+0) starts it without permission prompts, and Alt+0 starts it in a worktree; `1` stays on the subscription. It is the same Claude session in every other respect (hooks, resume, transcripts, tasks).
+
+- The command runs each time the agent starts and its output is handed to that one process as `ANTHROPIC_API_KEY`. The key is never written to the config, the saved state or the log; only the command is.
+- If the command fails, prints nothing or takes longer than 20 seconds, the agent does not start and the reason is shown. It is never started on the subscription instead.
+- A session keeps its billing when it is restarted, including after workbench itself restarts.
+- It is marked wherever agents are listed: `· API` after the model in the Sessions pane and on the phone, `claude api` in `workbench agents`, and `"api_key": true` on the control socket.
+- A job asks for it as `agent = "claude-api"`; `claude` always means the subscription one.
+
+Claude Code asks once, the first time it sees a new key, whether to use it. Answer yes in the pane. Its claude.ai connectors are unavailable while it runs on an API key.
+
 ### Optional
 
 - **VLC** — only needed for the classical radio stream (`brew install vlc` / `apt install vlc`). All other sounds are built in.

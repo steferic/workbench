@@ -825,6 +825,7 @@ mod tests {
             manager: false,
             alias: None,
             model: Some("Opus 5".into()),
+            api_key: false,
             status: status.into(),
             reason: None,
             status_event: None,

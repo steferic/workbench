@@ -228,6 +228,10 @@ pub struct AgentView {
     /// `provider`. Both agents let you change model mid-session, so this can
     /// change under a running conversation.
     pub model: Option<String>,
+    /// Whether this agent is billed to an API key rather than to its CLI's
+    /// own login. `model` and `provider` already say so in words; this is
+    /// the same fact for a caller that would rather not read names.
+    pub api_key: bool,
     /// "blocked" | "working" | "idle" | "stopped"
     pub status: String,
     /// The agent's own words when it is blocked ("needs your permission to…").
@@ -657,7 +661,12 @@ fn publish_with(
                 provider: session.agent_type.display_name(),
                 manager: session.agent_type.is_manager(),
                 alias: session.alias.clone(),
-                model: state.session_model(session.id),
+                // The phone names an agent by its model, which is the same
+                // on either account, so the billing rides along in the name.
+                model: state
+                    .session_model(session.id)
+                    .map(|model| session.agent_type.billed_name(model)),
+                api_key: session.agent_type.api_key_cmd().is_some(),
                 status: status.to_string(),
                 reason: state.activity_reason(session.id),
                 status_event: state
@@ -1434,6 +1443,7 @@ mod tests {
             manager: false,
             alias: None,
             model: Some("Opus 5".into()),
+            api_key: false,
             status: "working".into(),
             reason: None,
             status_event: None,
@@ -1495,6 +1505,7 @@ mod tests {
             manager: false,
             alias: None,
             model: None,
+            api_key: false,
             status: "working".into(),
             reason: None,
             status_event: None,
@@ -1666,6 +1677,7 @@ mod tests {
             manager: false,
             alias: None,
             model: None,
+            api_key: false,
             status: "idle".into(),
             reason: None,
             status_event: None,

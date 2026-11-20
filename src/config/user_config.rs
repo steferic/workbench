@@ -1,3 +1,4 @@
+use crate::models::AgentType;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -52,6 +53,58 @@ pub struct AgentConfig {
     pub hotkey: String,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// Bill this agent to an API key instead of the CLI's own login: a shell
+    /// command that prints the key, run each time the agent starts and
+    /// handed to it as `ANTHROPIC_API_KEY`. A command rather than the key so
+    /// that the secret stays wherever it is kept (a keychain, a password
+    /// manager) and never sits in this file. An agent that cannot get its
+    /// key does not start; it is never quietly put on the login instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key_cmd: Option<String>,
+}
+
+impl AgentConfig {
+    /// The key command, if one is actually set. An empty string is what
+    /// clearing the field in a hand-edited file leaves behind.
+    pub fn api_key_cmd(&self) -> Option<&str> {
+        self.api_key_cmd
+            .as_deref()
+            .map(str::trim)
+            .filter(|cmd| !cmd.is_empty())
+    }
+
+    /// The name this entry answers to where an agent is asked for by name (a
+    /// job's `agent`): its command, or `<command>-api` when it is billed to
+    /// an API key, so asking for `claude` never lands on the paid one.
+    pub fn provider_label(&self) -> String {
+        match self.api_key_cmd() {
+            Some(_) => format!("{}-api", self.command),
+            None => self.command.clone(),
+        }
+    }
+
+    /// The agent this entry starts.
+    ///
+    /// A built-in command is its built-in agent unless the entry bills to an
+    /// API key. That one has to be told apart on screen and has to remember
+    /// its key command, so it is a custom agent running the same CLI.
+    /// Everything that decides how an agent is driven keys off the command,
+    /// so it is still a full Claude (or Codex) session.
+    pub fn agent_type(&self) -> AgentType {
+        let api_key_cmd = self.api_key_cmd().map(str::to_string);
+        match (self.command.as_str(), &api_key_cmd) {
+            ("claude", None) => AgentType::Claude,
+            ("gemini", None) => AgentType::Gemini,
+            ("codex", None) => AgentType::Codex,
+            ("grok", None) => AgentType::Grok,
+            _ => AgentType::Custom {
+                command: self.command.clone(),
+                display_name: self.display_name.clone(),
+                badge: self.badge.clone(),
+                api_key_cmd,
+            },
+        }
+    }
 }
 
 fn default_true() -> bool {
@@ -122,6 +175,7 @@ fn default_agents() -> Vec<AgentConfig> {
             badge: "C".into(),
             hotkey: "1".into(),
             enabled: true,
+            api_key_cmd: None,
         },
         AgentConfig {
             command: "gemini".into(),
@@ -129,6 +183,7 @@ fn default_agents() -> Vec<AgentConfig> {
             badge: "G".into(),
             hotkey: "2".into(),
             enabled: true,
+            api_key_cmd: None,
         },
         AgentConfig {
             command: "codex".into(),
@@ -136,6 +191,7 @@ fn default_agents() -> Vec<AgentConfig> {
             badge: "X".into(),
             hotkey: "3".into(),
             enabled: true,
+            api_key_cmd: None,
         },
         AgentConfig {
             command: "grok".into(),
@@ -143,6 +199,7 @@ fn default_agents() -> Vec<AgentConfig> {
             badge: "K".into(),
             hotkey: "4".into(),
             enabled: true,
+            api_key_cmd: None,
         },
         AgentConfig {
             command: "opencode".into(),
@@ -150,6 +207,7 @@ fn default_agents() -> Vec<AgentConfig> {
             badge: "O".into(),
             hotkey: "5".into(),
             enabled: true,
+            api_key_cmd: None,
         },
         AgentConfig {
             command: "hermes".into(),
@@ -157,6 +215,7 @@ fn default_agents() -> Vec<AgentConfig> {
             badge: "H".into(),
             hotkey: "6".into(),
             enabled: true,
+            api_key_cmd: None,
         },
         AgentConfig {
             command: "pi".into(),
@@ -164,6 +223,7 @@ fn default_agents() -> Vec<AgentConfig> {
             badge: "P".into(),
             hotkey: "7".into(),
             enabled: true,
+            api_key_cmd: None,
         },
     ]
 }
@@ -461,5 +521,42 @@ mod tests {
             Some(&"Alt-Shift-Down".to_string())
         );
         assert_eq!(hotkeys.get("CyclePrevSession"), Some(&String::new()));
+    }
+
+    /// The entry as the README gives it, read from the file and written back
+    /// (the settings window rewrites the whole file on every edit).
+    #[test]
+    fn an_api_key_command_is_read_from_the_file_and_kept_on_save() {
+        let file = r#"
+[[agents]]
+command = "claude"
+display_name = "Claude"
+badge = "C"
+hotkey = "1"
+
+[[agents]]
+command = "claude"
+display_name = "Claude API"
+badge = "A"
+hotkey = "0"
+api_key_cmd = "security find-generic-password -s anthropic-api-key -w"
+"#;
+        let config: UserConfig = toml::from_str(file).unwrap();
+        assert_eq!(config.agents[0].api_key_cmd(), None);
+        assert_eq!(config.agents[0].agent_type(), AgentType::Claude);
+        assert_eq!(
+            config.agents[1].api_key_cmd(),
+            Some("security find-generic-password -s anthropic-api-key -w")
+        );
+        assert_eq!(config.agents[1].provider_label(), "claude-api");
+
+        let saved = toml::to_string(&config).unwrap();
+        let again: UserConfig = toml::from_str(&saved).unwrap();
+        assert_eq!(
+            again.agents[1].api_key_cmd(),
+            config.agents[1].api_key_cmd()
+        );
+        // An entry without one gains no empty field.
+        assert_eq!(saved.matches("api_key_cmd").count(), 1);
     }
 }

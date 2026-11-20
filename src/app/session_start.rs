@@ -361,4 +361,92 @@ mod tests {
         assert_eq!(queued_ids, vec![selected_session_id]);
         assert!(!queued_ids.contains(&other_session_id));
     }
+
+    /// An API-billed session as it comes back after workbench restarts:
+    /// stopped, and read from saved state rather than built from the config.
+    #[cfg(unix)]
+    fn restored_api_session(
+        dir: &std::path::Path,
+        api_key_cmd: &str,
+    ) -> (AppState, Uuid, tokio::sync::mpsc::Sender<crate::app::Action>) {
+        use std::os::unix::fs::PermissionsExt;
+        let script = dir.join("agent");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\nprintf '%s' \"${ANTHROPIC_API_KEY-unset}\" > started\nexec sleep 20\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        let workspace = Workspace::new("restart".into(), dir.to_path_buf());
+        let mut session = Session::new(
+            workspace.id,
+            AgentType::Custom {
+                command: script.to_string_lossy().into(),
+                display_name: "Claude API".into(),
+                badge: "A".into(),
+                api_key_cmd: Some(api_key_cmd.into()),
+            },
+            true,
+        );
+        session.status = SessionStatus::Stopped;
+        // Through the file format and back, as a restart does.
+        let saved = serde_json::to_string(&session).unwrap();
+        // The command is saved. What it prints is not there to be saved.
+        assert!(saved.contains("api_key_cmd"), "{saved}");
+        assert!(!saved.contains("sk-restart-key"), "{saved}");
+        let session: Session = serde_json::from_str(&saved).unwrap();
+        let id = session.id;
+
+        let mut state = AppState::default();
+        state.data.workspaces = vec![workspace];
+        state.add_session(session);
+        let (pty_tx, _rx) = tokio::sync::mpsc::channel(32);
+        (state, id, pty_tx)
+    }
+
+    /// Restarting must not be a way off the API key: the session reads its
+    /// key again and comes back billed the way it was started.
+    #[cfg(unix)]
+    #[test]
+    fn a_restarted_api_session_is_given_its_key_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut state, id, pty_tx) = restored_api_session(dir.path(), "printf '%s-%s' sk restart-key");
+
+        super::start_workspace_sessions(&mut state, &crate::pty::PtyManager::new(), &pty_tx);
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let started = loop {
+            match std::fs::read_to_string(dir.path().join("started")) {
+                Ok(seen) if !seen.is_empty() => break seen,
+                _ => assert!(std::time::Instant::now() < deadline, "never started"),
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        };
+        assert_eq!(started, "sk-restart-key");
+        assert_eq!(state.get_session(id).unwrap().status, SessionStatus::Running);
+        if let Some(handle) = state.system.pty_handles.get_mut(&id) {
+            let _ = handle.kill();
+        }
+    }
+
+    /// And when the key is gone by then (the keychain item was deleted), the
+    /// session stays down and says why, rather than resuming on the login.
+    #[cfg(unix)]
+    #[test]
+    fn a_restarted_api_session_without_its_key_stays_stopped_and_says_why() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut state, id, pty_tx) =
+            restored_api_session(dir.path(), "echo 'item could not be found' >&2; exit 44");
+
+        super::start_workspace_sessions(&mut state, &crate::pty::PtyManager::new(), &pty_tx);
+
+        assert_eq!(state.get_session(id).unwrap().status, SessionStatus::Errored);
+        assert!(!state.system.pty_handles.contains_key(&id));
+        let (shown, _) = state.ui.session_start_error.clone().unwrap();
+        assert!(shown.contains("item could not be found"), "{shown}");
+        assert!(shown.contains("not started"), "{shown}");
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(!dir.path().join("started").exists());
+    }
 }

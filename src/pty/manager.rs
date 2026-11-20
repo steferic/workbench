@@ -538,6 +538,15 @@ impl PtyManager {
         let rows = rows.max(1);
         let cols = cols.max(1);
 
+        // An agent billed to an API key gets it now, before anything is
+        // opened for it. Failing here is the point: without its key it does
+        // not start, on any path that reaches a spawn (new, restarted,
+        // worktree, job), rather than start on the subscription login.
+        let api_key = agent_type
+            .api_key_cmd()
+            .map(super::api_key::read)
+            .transpose()?;
+
         // Create PTY pair
         let pair = self
             .pty_system
@@ -619,6 +628,10 @@ impl PtyManager {
         }
         for (key, value) in &extra_env {
             cmd.env(key, value);
+        }
+        // Last, so nothing above can stand in for it.
+        if let Some(key) = &api_key {
+            cmd.env(super::api_key::ENV, key);
         }
 
         // Do NOT export LINES/COLUMNS. Exported, they override the live
@@ -972,6 +985,7 @@ mod tests {
                     command: "some-other-agent".into(),
                     display_name: "Other".into(),
                     badge: "O".into(),
+                    api_key_cmd: None,
                 },
                 Resume::MostRecent,
                 id,
@@ -989,6 +1003,7 @@ mod tests {
                 command: command.into(),
                 display_name: "X".into(),
                 badge: "X".into(),
+                api_key_cmd: None,
             };
 
             assert_eq!(
@@ -1020,6 +1035,7 @@ mod tests {
                 command: "grok".into(),
                 display_name: "Grok".into(),
                 badge: "K".into(),
+                api_key_cmd: None,
             };
             assert_eq!(
                 agent_args(&grok, id, &Resume::No, true, true, None),
@@ -1038,6 +1054,7 @@ mod tests {
                         command: "grok".into(),
                         display_name: "Grok".into(),
                         badge: "K".into(),
+                        api_key_cmd: None,
                     },
                     r,
                     id,
@@ -1061,6 +1078,7 @@ mod tests {
                         command: "pi".into(),
                         display_name: "Pi".into(),
                         badge: "P".into(),
+                        api_key_cmd: None,
                     },
                     r,
                     id,
@@ -1082,6 +1100,7 @@ mod tests {
                 command: "hermes".into(),
                 display_name: "Hermes".into(),
                 badge: "H".into(),
+                api_key_cmd: None,
             };
             assert_eq!(
                 args(

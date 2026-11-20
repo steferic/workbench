@@ -136,6 +136,7 @@ pub fn handle_config_action(state: &mut AppState, action: Action) {
                     badge: "N".into(),
                     hotkey: next_key,
                     enabled: true,
+                    api_key_cmd: None,
                 });
                 state.ui.config.selected_row = state.system.user_config.agents.len() - 1;
                 save_current_user_config(state);

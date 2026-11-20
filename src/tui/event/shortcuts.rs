@@ -66,6 +66,7 @@ pub(super) fn agent_shortcut(
         "&" => Some("7"),
         "*" => Some("8"),
         "(" => Some("9"),
+        ")" => Some("0"),
         _ => None,
     };
 
@@ -76,7 +77,7 @@ pub(super) fn agent_shortcut(
         let matches =
             agent.hotkey == key_char || unshifted.map(|s| s == agent.hotkey).unwrap_or(false);
         if matches {
-            let agent_type = config_to_agent_type(agent);
+            let agent_type = agent.agent_type();
             let skip_perms = shifted || unshifted.is_some();
             return Some((agent_type, skip_perms, with_worktree));
         }
@@ -84,19 +85,6 @@ pub(super) fn agent_shortcut(
     None
 }
 
-fn config_to_agent_type(agent: &crate::config::user_config::AgentConfig) -> AgentType {
-    match agent.command.as_str() {
-        "claude" => AgentType::Claude,
-        "gemini" => AgentType::Gemini,
-        "codex" => AgentType::Codex,
-        "grok" => AgentType::Grok,
-        _ => AgentType::Custom {
-            command: agent.command.clone(),
-            display_name: agent.display_name.clone(),
-            badge: agent.badge.clone(),
-        },
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -167,6 +155,7 @@ mod tests {
             badge: "C".to_string(),
             hotkey: hotkey.to_string(),
             enabled: true,
+            api_key_cmd: None,
         }
     }
 
@@ -199,5 +188,80 @@ mod tests {
         let key = KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE);
 
         assert!(agent_shortcut(&key, &[disabled]).is_none());
+    }
+
+    fn api_claude(hotkey: &str) -> AgentConfig {
+        AgentConfig {
+            command: "claude".into(),
+            display_name: "Claude API".into(),
+            badge: "A".into(),
+            hotkey: hotkey.into(),
+            enabled: true,
+            api_key_cmd: Some("print-the-key".into()),
+        }
+    }
+
+    fn claude(hotkey: &str) -> AgentConfig {
+        AgentConfig {
+            api_key_cmd: None,
+            display_name: "Claude".into(),
+            badge: "C".into(),
+            ..api_claude(hotkey)
+        }
+    }
+
+    /// Two entries for one CLI: `1` is the subscription, `0` the API key.
+    /// Each key has to start its own, in either order in the file.
+    #[test]
+    fn zero_starts_the_api_billed_claude_and_one_the_subscription() {
+        let agents = [claude("1"), api_claude("0")];
+
+        let key = KeyEvent::new(KeyCode::Char('0'), KeyModifiers::NONE);
+        let (agent_type, skip_permissions, with_worktree) =
+            agent_shortcut(&key, &agents).unwrap();
+        assert_eq!(agent_type.command(), "claude");
+        assert_eq!(agent_type.api_key_cmd(), Some("print-the-key"));
+        assert_eq!(agent_type.display_name(), "Claude API");
+        assert!(!skip_permissions);
+        assert!(!with_worktree);
+
+        let key = KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE);
+        let (agent_type, _, _) = agent_shortcut(&key, &agents).unwrap();
+        assert_eq!(agent_type, AgentType::Claude);
+        assert_eq!(agent_type.api_key_cmd(), None);
+    }
+
+    /// Shift+0 arrives as `)`, with or without the modifier reported,
+    /// depending on the terminal. Either way it is hotkey 0 without prompts.
+    #[test]
+    fn shift_zero_starts_it_without_permission_prompts() {
+        for modifiers in [KeyModifiers::SHIFT, KeyModifiers::NONE] {
+            let key = KeyEvent::new(KeyCode::Char(')'), modifiers);
+            let (agent_type, skip_permissions, with_worktree) =
+                agent_shortcut(&key, &[claude("1"), api_claude("0")]).unwrap();
+            assert_eq!(agent_type.api_key_cmd(), Some("print-the-key"));
+            assert!(skip_permissions);
+            assert!(!with_worktree);
+        }
+    }
+
+    #[test]
+    fn alt_zero_starts_it_in_a_worktree() {
+        let key = KeyEvent::new(KeyCode::Char('0'), KeyModifiers::ALT);
+        let (agent_type, skip_permissions, with_worktree) =
+            agent_shortcut(&key, &[api_claude("0")]).unwrap();
+        assert_eq!(agent_type.api_key_cmd(), Some("print-the-key"));
+        assert!(!skip_permissions);
+        assert!(with_worktree);
+    }
+
+    /// A field cleared by hand leaves an empty string behind. That is an
+    /// ordinary Claude, not an API one with no way to get its key.
+    #[test]
+    fn an_empty_key_command_is_no_key_command() {
+        let mut blank = api_claude("0");
+        blank.api_key_cmd = Some("  ".into());
+        assert_eq!(blank.agent_type(), AgentType::Claude);
+        assert_eq!(blank.provider_label(), "claude");
     }
 }

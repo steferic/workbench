@@ -442,7 +442,10 @@ pub fn process_action(
                         .filter(|s| {
                             s.status == crate::models::SessionStatus::Running
                                 && s.agent_type.is_directable()
-                                && s.agent_type.command() == agent_type.command()
+                                // Same CLI on the same account: work given
+                                // to the API-billed agent must not land on
+                                // the subscription one, or the reverse.
+                                && s.agent_type.provider_label() == agent_type.provider_label()
                         })
                         .map(|s| (s.id, state.activity(s.id).is_free()))
                         .max_by_key(|(_, free)| *free)

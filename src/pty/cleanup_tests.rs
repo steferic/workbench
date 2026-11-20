@@ -106,6 +106,7 @@ impl Case {
                     command: script.to_string_lossy().into(),
                     display_name: "fixture".into(),
                     badge: "T".into(),
+                    api_key_cmd: None,
                 },
                 working_dir: dir.path(),
                 rows: 24,

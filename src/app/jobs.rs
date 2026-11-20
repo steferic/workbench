@@ -282,25 +282,15 @@ pub fn agent_for(state: &AppState, wanted: Option<&str>) -> Result<AgentType, St
     let config = match wanted {
         Some(command) => agents
             .iter()
-            .find(|a| a.enabled && a.command.eq_ignore_ascii_case(command))
+            .find(|a| a.enabled && a.provider_label().eq_ignore_ascii_case(command))
             .ok_or_else(|| format!("no configured agent runs `{command}` (see h → Agents)"))?,
         None => agents
             .iter()
-            .find(|a| a.enabled && a.command == "claude")
+            .find(|a| a.enabled && a.provider_label() == "claude")
             .or_else(|| agents.iter().find(|a| a.enabled))
             .ok_or_else(|| "no agents are configured".to_string())?,
     };
-    Ok(match config.command.as_str() {
-        "claude" => AgentType::Claude,
-        "gemini" => AgentType::Gemini,
-        "codex" => AgentType::Codex,
-        "grok" => AgentType::Grok,
-        _ => AgentType::Custom {
-            command: config.command.clone(),
-            display_name: config.display_name.clone(),
-            badge: config.badge.clone(),
-        },
-    })
+    Ok(config.agent_type())
 }
 
 pub fn handle(

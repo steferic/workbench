@@ -179,6 +179,10 @@ fn render_quickref_tab(frame: &mut Frame, area: Rect, state: &AppState) {
         Span::raw("Same but skip permissions"),
     ]));
     lines.push(Line::from(vec![
+        Span::styled("  5-9, 0             ", key_style),
+        Span::raw("Your other agents (see Agents); Shift skips permissions"),
+    ]));
+    lines.push(Line::from(vec![
         Span::styled("  Alt+1-4            ", key_style),
         Span::raw("Create in isolated worktree"),
     ]));
@@ -459,6 +463,17 @@ fn render_agents_tab(frame: &mut Frame, area: Rect, state: &AppState) {
             Span::styled(name_display, cell_style(1)),
             Span::styled(cmd_display, cell_style(2)),
             Span::styled(badge_display, cell_style(3)),
+            // Not a column to edit here: the key command lives in
+            // user_config.toml. Shown so the row that costs API money is not
+            // mistaken for its twin on the subscription.
+            Span::styled(
+                if agent.api_key_cmd().is_some() {
+                    "API key"
+                } else {
+                    ""
+                },
+                Style::default().fg(t.special).bg(row_bg),
+            ),
         ]));
     }
 
@@ -484,6 +499,14 @@ fn render_agents_tab(frame: &mut Frame, area: Rect, state: &AppState) {
         Span::styled("[J/K]", Style::default().fg(t.accent)),
         Span::raw(" Reorder"),
     ]));
+    lines.push(Line::from(Span::styled(
+        "  Shift+key starts an agent without permission prompts, Alt+key in a worktree.",
+        Style::default().fg(t.fg_faint),
+    )));
+    lines.push(Line::from(Span::styled(
+        "  To bill an agent to an API key, give its entry an api_key_cmd in user_config.toml.",
+        Style::default().fg(t.fg_faint),
+    )));
 
     let block = Block::default()
         .borders(Borders::ALL)

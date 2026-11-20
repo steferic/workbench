@@ -686,11 +686,14 @@ impl AppState {
     /// What to call a session on screen: its model if it has named one, else
     /// the agent it is running in.
     pub fn session_label(&self, session_id: Uuid) -> String {
-        self.session_model(session_id).unwrap_or_else(|| {
-            self.get_session(session_id)
-                .map(|s| s.agent_type.display_name())
-                .unwrap_or_default()
-        })
+        let Some(session) = self.get_session(session_id) else {
+            return self.session_model(session_id).unwrap_or_default();
+        };
+        let name = self
+            .session_model(session_id)
+            .unwrap_or_else(|| session.agent_type.display_name());
+        // Which account pays outlives the switch from agent name to model.
+        session.agent_type.billed_name(name)
     }
 
     /// What a session is doing, preferring what the agent reported over what

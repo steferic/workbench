@@ -65,13 +65,23 @@ pub fn render(frame: &mut Frame, state: &AppState) {
                 Style::default().fg(t.special),
             ),
             Span::raw(agent.display_name.clone()),
+            // Which account pays is worth a word at the moment of choosing:
+            // this one runs on an API key, not on the CLI's login.
+            Span::styled(
+                if agent.api_key_cmd().is_some() {
+                    "  API key"
+                } else {
+                    ""
+                },
+                Style::default().fg(t.fg_faint),
+            ),
         ]));
     }
 
     if for_assign {
         content.push(Line::from(""));
         content.push(Line::from(vec![
-            Span::styled("  [0] ", Style::default().fg(t.accent)),
+            Span::styled("  [b] ", Style::default().fg(t.accent)),
             Span::styled("[·] ", Style::default().fg(t.special)),
             Span::raw("Anyone — board it, first idle agent claims"),
         ]));

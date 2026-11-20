@@ -82,9 +82,14 @@ pub(super) fn handle_input_mode_key(key: &KeyEvent, state: &AppState) -> Option<
         }
         InputMode::AssignAgent => {
             // Same provider keys as everywhere else; the difference is only
-            // what the chosen agent is immediately handed. Zero posts it to
-            // the board instead: whoever goes idle first takes it.
-            if let Some((agent_type, skip_permissions, with_worktree)) =
+            // what the chosen agent is immediately handed. `b` posts it to
+            // the board instead: whoever goes idle first takes it. That is
+            // asked first, so no agent's hotkey can take the board's key.
+            // It used to be zero, which is now free for an agent; zero still
+            // boards for as long as no agent is configured on it.
+            if key.code == KeyCode::Char('b') && key.modifiers.is_empty() {
+                Action::PostProposalToBoard
+            } else if let Some((agent_type, skip_permissions, with_worktree)) =
                 agent_shortcut(key, &state.system.user_config.agents)
             {
                 Action::AssignProposalAgent(agent_type, skip_permissions, with_worktree)
@@ -261,4 +266,75 @@ pub(super) fn handle_input_mode_key(key: &KeyEvent, state: &AppState) -> Option<
     };
 
     Some(action)
+}
+
+#[cfg(test)]
+mod assign_agent_tests {
+    use super::handle_input_mode_key;
+    use crate::app::{Action, AppState, InputMode};
+    use crate::config::user_config::AgentConfig;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn assigning(agents: Vec<AgentConfig>) -> AppState {
+        let mut state = AppState::default();
+        state.ui.input_mode = InputMode::AssignAgent;
+        state.system.user_config.agents = agents;
+        state
+    }
+
+    fn agent(hotkey: &str, api_key_cmd: Option<&str>) -> AgentConfig {
+        AgentConfig {
+            command: "claude".into(),
+            display_name: "Claude".into(),
+            badge: "C".into(),
+            hotkey: hotkey.into(),
+            enabled: true,
+            api_key_cmd: api_key_cmd.map(str::to_string),
+        }
+    }
+
+    fn press(state: &AppState, key: char) -> Option<Action> {
+        handle_input_mode_key(&KeyEvent::new(KeyCode::Char(key), KeyModifiers::NONE), state)
+    }
+
+    /// Zero used to board a proposal. With an agent on zero it now assigns
+    /// to that agent, and `b` is the board's key whatever is configured.
+    #[test]
+    fn zero_assigns_to_the_agent_on_zero_and_b_posts_to_the_board() {
+        let state = assigning(vec![agent("1", None), agent("0", Some("print-the-key"))]);
+        match press(&state, '0') {
+            Some(Action::AssignProposalAgent(agent_type, false, false)) => {
+                assert_eq!(agent_type.api_key_cmd(), Some("print-the-key"));
+            }
+            other => panic!("zero should assign to the API agent, got {other:?}"),
+        }
+        assert!(matches!(
+            press(&state, 'b'),
+            Some(Action::PostProposalToBoard)
+        ));
+    }
+
+    /// Nobody on zero: the old key keeps working.
+    #[test]
+    fn zero_still_posts_to_the_board_while_no_agent_has_it() {
+        let state = assigning(vec![agent("1", None)]);
+        assert!(matches!(
+            press(&state, '0'),
+            Some(Action::PostProposalToBoard)
+        ));
+        assert!(matches!(
+            press(&state, 'b'),
+            Some(Action::PostProposalToBoard)
+        ));
+    }
+
+    /// The board keeps its key even from an agent configured onto it.
+    #[test]
+    fn an_agent_on_b_does_not_take_the_boards_key() {
+        let state = assigning(vec![agent("b", None)]);
+        assert!(matches!(
+            press(&state, 'b'),
+            Some(Action::PostProposalToBoard)
+        ));
+    }
 }

@@ -14,6 +14,8 @@ export type Agent = {
   project: string
   provider: string
   model?: string
+  /** Billed to an API key, not the CLI's login. `model` says so too. */
+  api_key?: boolean
   alias?: string
   status: "idle" | "working" | "blocked" | "stopped"
   manager?: boolean

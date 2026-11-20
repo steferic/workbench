@@ -64,6 +64,7 @@ impl Fixture {
             badge: "F".into(),
             hotkey: "1".into(),
             enabled: true,
+            api_key_cmd: None,
         }];
         let workspace = Workspace::new("zeta".into(), root.to_path_buf());
         let workspace_id = workspace.id;

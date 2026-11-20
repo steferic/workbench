@@ -85,6 +85,13 @@ pub enum AgentType {
         command: String,
         display_name: String,
         badge: String,
+        /// A shell command whose output is this agent's `ANTHROPIC_API_KEY`
+        /// (see `AgentConfig::api_key_cmd`). Carried on the agent rather than
+        /// looked up in the config at spawn, so a session started on API
+        /// billing is still on it after a restart, whatever the config says
+        /// by then. The command is stored; the key never is.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        api_key_cmd: Option<String>,
     },
     Terminal(String), // Named terminal with custom name
     /// An agent given a manager's brief: it works toward the project's
@@ -96,6 +103,10 @@ pub enum AgentType {
         command: String,
         display_name: String,
         badge: String,
+        /// As on `Custom`: a manager made from an API-billed agent is billed
+        /// the same way.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        api_key_cmd: Option<String>,
     },
 }
 
@@ -139,6 +150,43 @@ impl AgentType {
             AgentType::Custom { badge, .. } => badge.clone(),
             AgentType::Manager { badge, .. } => badge.clone(),
             AgentType::Terminal(_) => "T".to_string(),
+        }
+    }
+
+    /// The command that prints this agent's API key, when it is billed to an
+    /// API key rather than to the CLI's own login.
+    pub fn api_key_cmd(&self) -> Option<&str> {
+        match self {
+            AgentType::Custom { api_key_cmd, .. } | AgentType::Manager { api_key_cmd, .. } => {
+                api_key_cmd.as_deref()
+            }
+            _ => None,
+        }
+    }
+
+    /// The CLI and the account that pays for it, as one word: `claude`, or
+    /// `claude-api` when it is billed to an API key. Two sessions are the
+    /// same kind of agent only when both agree, and this is the name a job
+    /// asks for one by (see `AgentConfig::provider_label`).
+    pub fn provider_label(&self) -> String {
+        if self.api_key_cmd().is_some() {
+            format!("{}-api", self.command())
+        } else {
+            self.command().to_string()
+        }
+    }
+
+    /// A name for this agent that says when it is billed to an API key.
+    ///
+    /// Rows show the model once a turn has been journalled ("Opus 5"), and
+    /// the model is the same whoever pays, so the two kinds of Claude would
+    /// read alike exactly where they are listed side by side. A name that
+    /// already says so (the configured "Claude API") is left as it is.
+    pub fn billed_name(&self, name: String) -> String {
+        if self.api_key_cmd().is_none() || name.to_lowercase().contains("api") {
+            name
+        } else {
+            format!("{name} · API")
         }
     }
 
@@ -192,10 +240,16 @@ impl AgentType {
         } else {
             AgentType::from_command(command).display_name()
         };
+        // Billing follows the CLI: the key belongs to the agent this was
+        // made from, and means nothing to a different command.
+        let api_key_cmd = (self.command() == command)
+            .then(|| self.api_key_cmd().map(str::to_string))
+            .flatten();
         AgentType::Manager {
             command: command.to_string(),
             display_name: format!("{name} manager"),
             badge: "M".to_string(),
+            api_key_cmd,
         }
     }
 
@@ -217,6 +271,7 @@ impl AgentType {
                     command: other.to_string(),
                     display_name,
                     badge: "?".to_string(),
+                    api_key_cmd: None,
                 }
             }
         }
@@ -331,5 +386,88 @@ mod manager_tests {
         assert!(!AgentType::Terminal("shell".into()).is_directable());
         assert!(manager("claude").is_manager());
         assert!(!AgentType::Claude.is_manager());
+    }
+}
+
+#[cfg(test)]
+mod api_billing_tests {
+    use super::AgentType;
+
+    fn api_claude() -> AgentType {
+        AgentType::Custom {
+            command: "claude".into(),
+            display_name: "Claude API".into(),
+            badge: "A".into(),
+            api_key_cmd: Some("print-the-key".into()),
+        }
+    }
+
+    /// It is billed differently and nothing else: every decision about how
+    /// an agent is driven keys off the command, which is still `claude`.
+    #[test]
+    fn an_api_billed_claude_is_still_a_claude() {
+        let agent = api_claude();
+        assert_eq!(agent.command(), "claude");
+        assert!(agent.is_redraw_style());
+        assert!(agent.is_directable());
+        assert_eq!(agent.api_key_cmd(), Some("print-the-key"));
+        assert_eq!(AgentType::Claude.api_key_cmd(), None);
+    }
+
+    /// Work handed to "the API Claude" must not be matched to a subscription
+    /// Claude that happens to be idle, so the two have different names.
+    #[test]
+    fn it_is_a_different_provider_from_the_subscription_claude() {
+        assert_eq!(api_claude().provider_label(), "claude-api");
+        assert_eq!(AgentType::Claude.provider_label(), "claude");
+    }
+
+    /// The restart case: the session is saved, workbench exits, and the saved
+    /// agent is all a later spawn has. It must still name its key command.
+    #[test]
+    fn the_key_command_survives_being_saved_and_loaded() {
+        let saved = serde_json::to_string(&api_claude()).unwrap();
+        let loaded: AgentType = serde_json::from_str(&saved).unwrap();
+        assert_eq!(loaded, api_claude());
+        assert_eq!(loaded.api_key_cmd(), Some("print-the-key"));
+    }
+
+    /// State written before this field existed has custom agents and
+    /// managers without it. They load, and they are not API-billed.
+    #[test]
+    fn agents_saved_before_api_billing_still_load() {
+        let custom: AgentType = serde_json::from_str(
+            r#"{"Custom":{"command":"pi","display_name":"Pi","badge":"P"}}"#,
+        )
+        .unwrap();
+        assert_eq!(custom.api_key_cmd(), None);
+        let manager: AgentType = serde_json::from_str(
+            r#"{"Manager":{"command":"claude","display_name":"Claude manager","badge":"M"}}"#,
+        )
+        .unwrap();
+        assert_eq!(manager.api_key_cmd(), None);
+        // And an agent without a key writes nothing new into the file.
+        assert!(!serde_json::to_string(&custom).unwrap().contains("api_key_cmd"));
+    }
+
+    /// `m` then `0`: a manager made from the API agent pays the same way. One
+    /// that runs a different CLI has no use for another CLI's key.
+    #[test]
+    fn a_manager_is_billed_like_the_agent_it_was_made_from() {
+        let manager = api_claude().as_manager();
+        assert!(manager.is_manager());
+        assert_eq!(manager.api_key_cmd(), Some("print-the-key"));
+        assert_eq!(manager.display_name(), "Claude API manager");
+        assert_eq!(api_claude().as_manager_of("codex").api_key_cmd(), None);
+        assert_eq!(AgentType::Claude.as_manager().api_key_cmd(), None);
+    }
+
+    /// Rows show the model, which is the same on either account.
+    #[test]
+    fn a_model_name_says_when_the_api_key_pays_for_it() {
+        assert_eq!(api_claude().billed_name("Opus 5".into()), "Opus 5 · API");
+        // Already says so.
+        assert_eq!(api_claude().billed_name("Claude API".into()), "Claude API");
+        assert_eq!(AgentType::Claude.billed_name("Opus 5".into()), "Opus 5");
     }
 }
